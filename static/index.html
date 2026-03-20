@@ -874,20 +874,23 @@
           <div class="page-header">
             <div style="display:flex;align-items:center;gap:8px;">
               <h2>S3 Buckets</h2>
-              <span id="s3-svc-badge" style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;background:var(--surface2);color:var(--text-3);">unknown</span>
+              <!-- Clickable service badge — click to open start/stop/restart menu -->
+              <div style="position:relative;">
+                <span id="s3-svc-badge" onclick="s3ServiceMenu()" style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;background:var(--surface2);color:var(--text-3);cursor:pointer;user-select:none;">unknown</span>
+                <!-- Service dropdown anchored to the badge -->
+                <div id="s3-svc-dropdown" class="hidden" style="position:absolute;left:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:140px;overflow:hidden;">
+                  <button onclick="s3ServiceAction('start')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">▶ Start</button>
+                  <button onclick="s3ServiceAction('stop')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">■ Stop</button>
+                  <button onclick="s3ServiceAction('restart')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">↺ Restart</button>
+                </div>
+              </div>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
-              <button class="btn btn-ghost btn-sm" onclick="s3ServiceMenu()" id="s3-svc-menu-btn" style="display:none;">Service ▾</button>
+              <a id="s3-portal-link" href="#" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="color:var(--text-3);text-decoration:none;">↗ MinIO Portal</a>
               <button class="btn btn-ghost btn-sm" onclick="openS3UsersModal()">👤 S3 Users</button>
               <button class="btn btn-ghost btn-sm" onclick="openS3ConfigureModal()">⚙ Configure</button>
               <button class="btn btn-primary btn-sm" onclick="openNewS3BucketModal()">+ New S3 Bucket</button>
             </div>
-          </div>
-          <!-- Service dropdown (hidden, triggered by Service button) -->
-          <div id="s3-svc-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:140px;overflow:hidden;">
-            <button onclick="s3ServiceAction('start')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">▶ Start</button>
-            <button onclick="s3ServiceAction('stop')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">■ Stop</button>
-            <button onclick="s3ServiceAction('restart')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">↺ Restart</button>
           </div>
           <!-- Buckets table -->
           <div class="table-wrap">
@@ -3447,11 +3450,21 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="form-group">
           <label>API Port <i class="info-tip" data-tip="TCP port MinIO listens on for S3 API requests (AWS CLI, SDKs, s3cmd, etc.). Default: 9000."></i></label>
-          <input type="number" id="s3cfg-port" value="9000" min="1" max="65535">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="number" id="s3cfg-port" value="9000" min="1" max="65535" style="flex:1;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:13px;font-weight:normal;cursor:pointer;white-space:nowrap;">
+              <input type="checkbox" id="s3cfg-api-tls"> SSL/TLS
+            </label>
+          </div>
         </div>
         <div class="form-group">
           <label>Console Port <i class="info-tip" data-tip="TCP port for the built-in MinIO web management console. Must differ from the API port. Default: 9001."></i></label>
-          <input type="number" id="s3cfg-console-port" value="9001" min="1" max="65535">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="number" id="s3cfg-console-port" value="9001" min="1" max="65535" style="flex:1;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:13px;font-weight:normal;cursor:pointer;white-space:nowrap;">
+              <input type="checkbox" id="s3cfg-console-tls"> SSL/TLS
+            </label>
+          </div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -3606,6 +3619,30 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="document.getElementById('modal-s3-bucket').classList.add('hidden')">Cancel</button>
       <button id="s3bkt-submit-btn" class="btn btn-primary" onclick="submitS3Bucket()">Create Bucket</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete S3 Bucket Modal -->
+<div class="modal-backdrop hidden" id="modal-delete-s3-bucket">
+  <div class="modal" style="max-width:440px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">⚠ Delete S3 Bucket</h3>
+      <button class="modal-close" onclick="document.getElementById('modal-delete-s3-bucket').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="s3-delete-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">
+        You are about to permanently delete the bucket <strong id="s3-delete-bucket-name" style="font-family:monospace;color:var(--accent-danger);"></strong>.
+      </p>
+      <p style="font-size:13px;color:var(--text-2);margin-bottom:6px;">
+        All objects stored in this bucket will be <strong>deleted forever</strong>. There is no way to recover them after this action.
+      </p>
+      <p style="font-size:12px;color:var(--text-3);">The operation may take a while if the bucket contains many objects.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-delete-s3-bucket').classList.add('hidden')">Cancel</button>
+      <button id="btn-s3-delete-confirm" class="btn" style="background:var(--accent-danger);color:#fff;" onclick="_executeDeleteS3Bucket()">Delete Forever</button>
     </div>
   </div>
 </div>
@@ -11207,6 +11244,8 @@ async function confirmDeleteISCSIShare() {
 
 // Called from the prereqs page — installs targetcli-fb with progress feedback.
 // ===== S3 Object Server (MinIO) =====
+let _s3BucketsCache = [];
+let _s3DeleteBucketName = '';
 
 function navS3() {
   const btn = document.getElementById('nav-s3');
@@ -11235,7 +11274,7 @@ function _updateS3NavDot(status) {
   const dot = document.getElementById('nav-s3-dot');
   if (!btn) return;
 
-  if (!status.prereqs_installed || !status.enabled) {
+  if (!status.prereqs_installed) {
     btn.dataset.prereqsMissing = '1';
     btn.style.opacity = '0.45';
     btn.title = 'S3 Object Server requires MinIO — see Prerequisites';
@@ -11273,7 +11312,7 @@ async function loadS3Page() {
     const configureBanner = document.getElementById('s3-configure-banner');
     const content         = document.getElementById('s3-content');
 
-    if (!s.prereqs_installed || !s.enabled) {
+    if (!s.prereqs_installed) {
       prereqBanner.classList.remove('hidden');
       configureBanner.classList.add('hidden');
       content.classList.add('hidden');
@@ -11291,12 +11330,16 @@ async function loadS3Page() {
 
     const badge = document.getElementById('s3-svc-badge');
     if (badge) {
-      badge.textContent       = s.service_status;
+      badge.textContent       = s.service_status + ' ▾';
       badge.style.background  = s.service_active ? 'rgba(48,209,88,0.15)'  : 'rgba(255,69,58,0.15)';
       badge.style.color       = s.service_active ? '#30d158' : '#ff453a';
     }
-    const svcBtn = document.getElementById('s3-svc-menu-btn');
-    if (svcBtn) svcBtn.style.display = '';
+    // Set MinIO portal link to the console port with the correct scheme.
+    const portalLink = document.getElementById('s3-portal-link');
+    if (portalLink && s.console_port) {
+      const scheme = s.console_tls ? 'https' : 'http';
+      portalLink.href = scheme + '://' + window.location.hostname + ':' + s.console_port;
+    }
 
     await loadS3Buckets();
   } catch (_) {}
@@ -11310,6 +11353,7 @@ async function loadS3Buckets() {
     const r = await fetch('/api/minio/buckets');
     if (!r.ok) throw new Error(await r.text());
     const buckets = await r.json();
+    _s3BucketsCache = buckets || [];
     if (!buckets.length) {
       tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px;">No buckets yet. Click "+ New S3 Bucket" to create one.</td></tr>';
       return;
@@ -11324,7 +11368,7 @@ async function loadS3Buckets() {
         <td style="font-size:12px;color:var(--text-3);">${(b.user_keys||[]).length ? esc((b.user_keys||[]).join(', ')) : '<span style="color:var(--text-3);">root only</span>'}</td>
         <td style="font-size:13px;color:var(--text-3);">${esc(b.comment||'')}</td>
         <td style="white-space:nowrap;">
-          <button class="btn btn-ghost btn-sm" onclick="openEditS3BucketModal(${JSON.stringify(b).replace(/</g,'\\u003c')})">Edit</button>
+          <button class="btn btn-ghost btn-sm" onclick="openEditS3BucketModal('${esc(b.name)}')">Edit</button>
           <button class="btn btn-ghost btn-sm" style="color:var(--accent-danger);" onclick="confirmDeleteS3Bucket('${esc(b.name)}')">Delete</button>
         </td>
       </tr>`).join('');
@@ -11388,7 +11432,9 @@ async function openS3ConfigureModal() {
       .join('');
 
   document.getElementById('s3cfg-port').value         = cfg.port         || 9000;
+  document.getElementById('s3cfg-api-tls').checked    = !!cfg.api_tls;
   document.getElementById('s3cfg-console-port').value = cfg.console_port || 9001;
+  document.getElementById('s3cfg-console-tls').checked = !!cfg.console_tls;
   document.getElementById('s3cfg-root-user').value    = cfg.root_user    || 'minioadmin';
   document.getElementById('s3cfg-root-password').value = '';
   document.getElementById('s3cfg-region').value       = cfg.region       || 'us-east-1';
@@ -11410,7 +11456,9 @@ async function submitS3Configure() {
   const body = {
     dataset_path:  document.getElementById('s3cfg-dataset').value,
     port:          parseInt(document.getElementById('s3cfg-port').value),
+    api_tls:       document.getElementById('s3cfg-api-tls').checked,
     console_port:  parseInt(document.getElementById('s3cfg-console-port').value),
+    console_tls:   document.getElementById('s3cfg-console-tls').checked,
     root_user:     document.getElementById('s3cfg-root-user').value.trim(),
     root_password: document.getElementById('s3cfg-root-password').value,
     region:        document.getElementById('s3cfg-region').value.trim() || 'us-east-1',
@@ -11584,7 +11632,11 @@ async function openNewS3BucketModal() {
   document.getElementById('modal-s3-bucket').classList.remove('hidden');
 }
 
-async function openEditS3BucketModal(bucket) {
+async function openEditS3BucketModal(nameOrObj) {
+  const bucket = typeof nameOrObj === 'string'
+    ? _s3BucketsCache.find(b => b.name === nameOrObj)
+    : nameOrObj;
+  if (!bucket) return;
   document.getElementById('s3bkt-modal-title').textContent = 'Edit S3 Bucket — ' + bucket.name;
   document.getElementById('s3bkt-submit-btn').textContent  = 'Save Changes';
   document.getElementById('s3bkt-name').value    = bucket.name;
@@ -11674,8 +11726,24 @@ async function submitS3Bucket() {
   }
 }
 
-async function confirmDeleteS3Bucket(name) {
-  if (!confirm(`Delete bucket "${name}" and ALL its objects? This cannot be undone.`)) return;
+function confirmDeleteS3Bucket(name) {
+  _s3DeleteBucketName = name;
+  document.getElementById('s3-delete-bucket-name').textContent = name;
+  document.getElementById('s3-delete-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-s3-delete-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Delete Forever';
+  document.getElementById('modal-delete-s3-bucket').classList.remove('hidden');
+}
+
+async function _executeDeleteS3Bucket() {
+  const name = _s3DeleteBucketName;
+  if (!name) return;
+  const btn = document.getElementById('btn-s3-delete-confirm');
+  const alertEl = document.getElementById('s3-delete-alert');
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  alertEl.classList.add('hidden');
   const jobId = 's3-del-' + Date.now();
   addActiveJob(jobId, 'Deleting S3 bucket ' + name + '…');
   try {
@@ -11684,11 +11752,23 @@ async function confirmDeleteS3Bucket(name) {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ name }),
     });
-    if (!r.ok) { const d = await r.json(); alert('Error: ' + (d.error || JSON.stringify(d))); return; }
+    const d = await r.json();
+    if (!r.ok) {
+      alertEl.textContent = d.error || JSON.stringify(d);
+      alertEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = 'Delete Forever';
+      return;
+    }
+    document.getElementById('modal-delete-s3-bucket').classList.add('hidden');
+    _s3DeleteBucketName = '';
     loadS3Buckets();
     loadS3NavStatus();
   } catch (e) {
-    alert('Error: ' + e.message);
+    alertEl.textContent = 'Error: ' + e.message;
+    alertEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Delete Forever';
   } finally {
     removeActiveJob(jobId);
   }

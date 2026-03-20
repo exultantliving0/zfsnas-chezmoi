@@ -205,7 +205,11 @@ func ApplyMinIOConfig(cfg *config.MinIOConfig) error {
 
 // SetupMCAlias registers the "zfsnas" mc alias pointing at the local MinIO instance.
 func SetupMCAlias(cfg *config.MinIOConfig) error {
-	url := fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
+	scheme := "http"
+	if cfg.APITLS {
+		scheme = "https"
+	}
+	url := fmt.Sprintf("%s://127.0.0.1:%d", scheme, cfg.Port)
 	out, err := exec.Command("mc", "alias", "set", "zfsnas", url, cfg.RootUser, cfg.RootPassword).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))

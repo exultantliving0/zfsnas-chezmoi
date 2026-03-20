@@ -50,7 +50,9 @@ type MinIOConfig struct {
 	DatasetPath  string     `json:"dataset_path"`  // ZFS dataset path used as backend
 	DataDir      string     `json:"data_dir"`       // absolute mountpoint of that dataset
 	Port         int        `json:"port"`           // API port, default 9000
+	APITLS       bool       `json:"api_tls"`        // API port uses TLS
 	ConsolePort  int        `json:"console_port"`   // web console port, default 9001
+	ConsoleTLS   bool       `json:"console_tls"`    // console port uses TLS
 	RootUser     string     `json:"root_user"`
 	RootPassword string     `json:"root_password"`
 	Region       string     `json:"region"`
