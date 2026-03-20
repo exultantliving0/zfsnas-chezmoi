@@ -113,7 +113,7 @@ func ListDisks(configDir string) ([]DiskInfo, error) {
 		if !strings.EqualFold(dev.Type, "disk") {
 			continue
 		}
-		if strings.HasPrefix(dev.Name, "loop") || strings.HasPrefix(dev.Name, "ram") {
+		if strings.HasPrefix(dev.Name, "loop") || strings.HasPrefix(dev.Name, "ram") || strings.HasPrefix(dev.Name, "zd") {
 			continue
 		}
 
