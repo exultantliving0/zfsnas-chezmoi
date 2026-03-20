@@ -685,13 +685,15 @@ func PrepareZFSPartition(device string) (string, error) {
 	if out, err := exec.Command("sudo", "sgdisk", "-n", "1:0:0", "-t", "1:BF01", device).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("sgdisk create partition on %s: %s", device, strings.TrimSpace(string(out)))
 	}
-	// Inform the kernel of the new partition table.
-	exec.Command("sudo", "partprobe", device).Run() //nolint
+	// Inform the kernel of the new partition table, then wait for udev to
+	// fully process the new partition (creates device node + by-partuuid symlink).
+	exec.Command("sudo", "partprobe", device).Run()          //nolint
+	exec.Command("sudo", "udevadm", "settle", "--timeout=15").Run() //nolint
 
 	// Locate the new partition's by-partuuid symlink.
 	devName := filepath.Base(device) // e.g. "sda" or "nvme0n1"
 	const dir = "/dev/disk/by-partuuid"
-	for i := 0; i < 20; i++ { // up to 10 s
+	for i := 0; i < 20; i++ { // up to 10 s fallback poll
 		entries, err := os.ReadDir(dir)
 		if err == nil {
 			for _, entry := range entries {
@@ -729,11 +731,7 @@ func CreatePool(name, layout string, ashift int, compression, dedup string, devi
 		if err != nil {
 			return fmt.Errorf("prepare %s: %w", dev, err)
 		}
-		realPath, err := filepath.EvalSymlinks(puPath)
-		if err != nil {
-			realPath = puPath // fall back to the symlink path if resolution fails
-		}
-		devPaths = append(devPaths, realPath)
+		devPaths = append(devPaths, puPath)
 	}
 
 	args := []string{"zpool", "create",
