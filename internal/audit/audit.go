@@ -89,6 +89,13 @@ const (
 	ActionDeleteISCSIShare      = "delete_iscsi_share"
 	ActionCreateISCSICredential = "create_iscsi_credential"
 	ActionDeleteISCSICredential = "delete_iscsi_credential"
+	// MinIO / S3 Object Server events.
+	ActionEditMinIOConfig = "edit_minio_config"
+	ActionCreateS3User    = "create_s3_user"
+	ActionDeleteS3User    = "delete_s3_user"
+	ActionCreateS3Bucket  = "create_s3_bucket"
+	ActionDeleteS3Bucket  = "delete_s3_bucket"
+	ActionEditS3Bucket    = "edit_s3_bucket"
 	// Replication events.
 	ActionCreateReplication = "create_replication"
 	ActionEditReplication   = "edit_replication"

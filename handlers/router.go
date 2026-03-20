@@ -308,6 +308,34 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/prereqs/install",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallPackage)))).Methods("POST")
 
+	// --- MinIO / S3 Object Server ---
+	r.Handle("/api/minio/status",
+		RequireAuth(http.HandlerFunc(HandleMinIOStatus(appCfg)))).Methods("GET")
+	r.Handle("/api/minio/service",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleMinIOServiceAction(appCfg))))).Methods("POST")
+	r.Handle("/api/minio/config",
+		RequireAuth(http.HandlerFunc(HandleGetMinIOConfig(appCfg)))).Methods("GET")
+	r.Handle("/api/minio/config",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSaveMinIOConfig(appCfg))))).Methods("POST")
+	r.Handle("/api/minio/users",
+		RequireAuth(http.HandlerFunc(HandleListS3Users(appCfg)))).Methods("GET")
+	r.Handle("/api/minio/user/create",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateS3User(appCfg))))).Methods("POST")
+	r.Handle("/api/minio/user/delete",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteS3User(appCfg))))).Methods("POST")
+	r.Handle("/api/minio/user/status",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetS3UserStatus(appCfg))))).Methods("POST")
+	r.Handle("/api/minio/user/password",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetS3UserPassword(appCfg))))).Methods("POST")
+	r.Handle("/api/minio/buckets",
+		RequireAuth(http.HandlerFunc(HandleListS3Buckets(appCfg)))).Methods("GET")
+	r.Handle("/api/minio/bucket/create",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateS3Bucket(appCfg))))).Methods("POST")
+	r.Handle("/api/minio/bucket/delete",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteS3Bucket(appCfg))))).Methods("POST")
+	r.Handle("/api/minio/bucket/edit",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleEditS3Bucket(appCfg))))).Methods("POST")
+
 	// --- NFS shares ---
 	r.Handle("/api/nfs/status",
 		RequireAuth(http.HandlerFunc(HandleNFSStatus))).Methods("GET")

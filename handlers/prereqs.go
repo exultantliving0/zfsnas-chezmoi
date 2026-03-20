@@ -266,9 +266,28 @@ func HandleInstallPackage(w http.ResponseWriter, r *http.Request) {
 
 	allowlist := map[string]bool{
 		"targetcli-fb": true,
+		"minio":        true,
 	}
 	if !allowlist[req.Package] {
 		jsonErr(w, http.StatusBadRequest, "package not in allowlist")
+		return
+	}
+
+	// MinIO uses a custom binary installation (not apt-get).
+	if req.Package == "minio" {
+		if err := system.InstallMinIO(); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionInstallPrereqs,
+			Result:  audit.ResultOK,
+			Details: "installed: minio, mc",
+		})
+		jsonOK(w, map[string]string{"message": "minio installed"})
 		return
 	}
 

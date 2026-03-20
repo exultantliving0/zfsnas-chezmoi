@@ -74,12 +74,13 @@ func HandleCheckBinaryUpdate(appCfg *config.AppConfig) http.HandlerFunc {
 				current, latest, updateAvailable, sigValid)
 		}
 		jsonOK(w, map[string]interface{}{
-			"current":          current,
-			"latest":           latest,
-			"update_available": updateAvailable,
-			"download_url":     info.DownloadURL,
-			"sig_valid":        sigValid,
-			"sig_error":        sigError,
+			"current":           current,
+			"latest":            latest,
+			"update_available":  updateAvailable,
+			"download_url":      info.DownloadURL,
+			"sig_valid":         sigValid,
+			"sig_error":         sigError,
+			"service_installed": system.IsServiceInstalled(),
 		})
 	}
 }

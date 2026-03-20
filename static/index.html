@@ -269,6 +269,7 @@
     <button class="nav-item" onclick="showPage('shares')"    id="nav-shares">   <span class="nav-icon">🔗</span><span class="nav-label"> SMB Shares</span><span id="nav-smb-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
     <button class="nav-item" onclick="showPage('nfs')"       id="nav-nfs">      <span class="nav-icon">🌐</span><span class="nav-label"> NFS Shares</span><span id="nav-nfs-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
     <button class="nav-item" id="nav-iscsi" onclick="navISCSI()" style="opacity:0.45;" data-prereqs-missing="1" title="iSCSI requires targetcli-fb — see Prerequisites"><span class="nav-icon"><img src="/static/iscsi.svg" class="iscsi-icon" alt=""></span><span class="nav-label"> iSCSI Shares</span><span id="nav-iscsi-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
+    <button class="nav-item" id="nav-s3" onclick="navS3()" style="opacity:0.45;" data-prereqs-missing="1" title="S3 Object Server requires MinIO — see Prerequisites"><span class="nav-icon" style="font-size:14px;">🪣</span><span class="nav-label"> S3 Buckets</span><span id="nav-s3-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
 
     <div class="sidebar-section">System</div>
     <button class="nav-item" onclick="showPage('users')"     id="nav-users">    <span class="nav-icon">👤</span><span class="nav-label"> Users</span></button>
@@ -602,6 +603,15 @@
             </button>
           </div>
 
+          <!-- Systemd service -->
+          <h3 style="margin-top:24px;margin-bottom:12px;">Systemd Service</h3>
+          <div id="service-status" style="color:var(--text-3);font-size:14px;">Checking…</div>
+          <div id="btn-install-service-wrap" class="hidden" style="margin-top:12px;">
+            <button class="btn btn-primary btn-sm" onclick="installService()">Install as Systemd Service</button>
+          </div>
+
+          <hr style="border:none;border-top:1px solid var(--border);margin:24px 0 0;">
+
           <!-- Optional iSCSI feature -->
           <h3 id="prereq-optional-features" style="margin-top:24px;margin-bottom:8px;color:var(--text-2);">Optional Features</h3>
           <p style="font-size:13px;color:var(--text-3);margin-bottom:14px;">These packages are not required for core ZFS NAS functionality but enable additional features.</p>
@@ -614,12 +624,14 @@
             <span id="prereq-iscsi-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-iscsi-btn" class="btn btn-ghost btn-sm" onclick="enableISCSIFeature()" style="font-size:12px;white-space:nowrap;">Enable iSCSI Feature</button>
           </div>
-
-          <!-- Systemd service -->
-          <h3 style="margin-top:24px;margin-bottom:12px;">Systemd Service</h3>
-          <div id="service-status" style="color:var(--text-3);font-size:14px;">Checking…</div>
-          <div id="btn-install-service-wrap" class="hidden" style="margin-top:12px;">
-            <button class="btn btn-primary btn-sm" onclick="installService()">Install as Systemd Service</button>
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
+            <div style="flex:1;">
+              <span style="color:var(--text-2);font-size:14px;">minio + mc</span>
+              <i class="info-tip" data-tip="Required for the S3 Object Server feature. Installs the MinIO server binary and the mc management client.&#10;Both binaries are downloaded directly from dl.min.io.&#10;MinIO runs as a dedicated system user (minio-user) via a systemd service."></i>
+              <div style="font-size:12px;color:var(--text-3);margin-top:2px;">S3-compatible object storage server via MinIO</div>
+            </div>
+            <span id="prereq-minio-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
+            <button id="prereq-minio-btn" class="btn btn-ghost btn-sm" onclick="enableMinIOFeature()" style="font-size:12px;white-space:nowrap;">Enable S3 Object Server</button>
           </div>
         </div>
       </div>
@@ -846,6 +858,60 @@
         </div>
       </div>
 
+      <!-- S3 BUCKETS (MinIO) -->
+      <div class="page hidden" id="page-s3">
+        <!-- Prerequisites banner -->
+        <div id="s3-prereqs-banner" class="hidden" style="padding:18px 20px;margin-bottom:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);opacity:0.85;">
+          <span style="font-size:14px;color:var(--text-2);">S3 Object Server requires <strong>MinIO</strong> to be installed. Go to <a onclick="showPage('prereqs')" style="color:var(--accent);cursor:pointer;text-decoration:underline;">Prerequisites</a> to enable this feature.</span>
+        </div>
+        <!-- Configure required banner -->
+        <div id="s3-configure-banner" class="hidden" style="padding:18px 20px;margin-bottom:20px;background:rgba(100,210,255,0.07);border:1px solid rgba(100,210,255,0.25);border-radius:var(--radius-sm);">
+          <span style="font-size:14px;color:var(--text-2);">MinIO is installed but not yet configured. Click <strong>Configure</strong> to set up the S3 Object Server.</span>
+          <button class="btn btn-primary btn-sm" onclick="openS3ConfigureModal()" style="margin-left:12px;">⚙ Configure</button>
+        </div>
+        <!-- Main content -->
+        <div id="s3-content" class="hidden">
+          <div class="page-header">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <h2>S3 Buckets</h2>
+              <span id="s3-svc-badge" style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;background:var(--surface2);color:var(--text-3);">unknown</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn btn-ghost btn-sm" onclick="s3ServiceMenu()" id="s3-svc-menu-btn" style="display:none;">Service ▾</button>
+              <button class="btn btn-ghost btn-sm" onclick="openS3UsersModal()">👤 S3 Users</button>
+              <button class="btn btn-ghost btn-sm" onclick="openS3ConfigureModal()">⚙ Configure</button>
+              <button class="btn btn-primary btn-sm" onclick="openNewS3BucketModal()">+ New S3 Bucket</button>
+            </div>
+          </div>
+          <!-- Service dropdown (hidden, triggered by Service button) -->
+          <div id="s3-svc-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:140px;overflow:hidden;">
+            <button onclick="s3ServiceAction('start')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">▶ Start</button>
+            <button onclick="s3ServiceAction('stop')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">■ Stop</button>
+            <button onclick="s3ServiceAction('restart')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">↺ Restart</button>
+          </div>
+          <!-- Buckets table -->
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Bucket</th>
+                  <th>Versioning</th>
+                  <th>Object Lock</th>
+                  <th>Quota</th>
+                  <th>Anonymous</th>
+                  <th>Users</th>
+                  <th>Comment</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="s3-buckets-tbody">
+                <tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Replication page ===== -->
       <div class="page hidden" id="page-replication">
         <div class="page-header" style="display:flex;align-items:center;margin-bottom:20px;">
@@ -951,8 +1017,13 @@
 
           <!-- Instant Update button -->
           <div id="btn-apply-binary-wrap" class="hidden">
-            <button class="btn btn-sm" onclick="applyBinaryUpdate()"
+            <button id="btn-apply-binary-active" class="btn btn-sm" onclick="applyBinaryUpdate()"
               style="background:var(--accent-warn);color:#000;font-weight:700;border:none;">⚡ Instant Update Now</button>
+            <div id="btn-apply-binary-nosvc" style="display:none;">
+              <button class="btn btn-sm" disabled
+                style="opacity:0.45;cursor:not-allowed;background:var(--accent-warn);color:#000;font-weight:700;border:none;">⚡ Instant Update Now</button>
+              <div style="margin-top:8px;font-size:12px;color:var(--text-3);">Live update is only available when ZFS NAS is running as a systemd service. <button class="btn btn-ghost btn-sm" style="font-size:12px;padding:2px 8px;" onclick="showPage('prereqs')">Go to Prerequisites →</button></div>
+            </div>
           </div>
 
         </div>
@@ -3358,6 +3429,187 @@
   </div>
 </div>
 
+<!-- ===== S3 Object Server Modals ===== -->
+
+<!-- S3 Configure Modal -->
+<div class="modal-backdrop hidden" id="modal-s3-configure">
+  <div class="modal" style="max-width:600px;">
+    <div class="modal-header">
+      <h3>Configure S3 Object Server</h3>
+      <button class="modal-close" onclick="document.getElementById('modal-s3-configure').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body" style="display:grid;gap:16px;">
+      <div id="s3cfg-error" class="alert alert-error hidden"></div>
+      <div class="form-group">
+        <label>Backend Dataset <i class="info-tip" data-tip="The ZFS dataset whose mountpoint MinIO will use to store all S3 objects. ZFSNAS will ensure the minio-user owns this directory. Choose a dataset with enough free space."></i></label>
+        <select id="s3cfg-dataset"><option value="">Loading datasets…</option></select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label>API Port <i class="info-tip" data-tip="TCP port MinIO listens on for S3 API requests (AWS CLI, SDKs, s3cmd, etc.). Default: 9000."></i></label>
+          <input type="number" id="s3cfg-port" value="9000" min="1" max="65535">
+        </div>
+        <div class="form-group">
+          <label>Console Port <i class="info-tip" data-tip="TCP port for the built-in MinIO web management console. Must differ from the API port. Default: 9001."></i></label>
+          <input type="number" id="s3cfg-console-port" value="9001" min="1" max="65535">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label>Root User <i class="info-tip" data-tip="MinIO root admin username (MINIO_ROOT_USER). This is the superuser for MinIO, separate from ZFSNAS portal users. Minimum 3 characters."></i></label>
+          <input type="text" id="s3cfg-root-user" placeholder="minioadmin" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label>Root Password <i class="info-tip" data-tip="MinIO root password (MINIO_ROOT_PASSWORD). Minimum 8 characters. Leave blank to keep the existing password."></i></label>
+          <input type="password" id="s3cfg-root-password" placeholder="Leave blank to keep existing" autocomplete="new-password">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label>Region <i class="info-tip" data-tip="S3 region name reported to clients (MINIO_SITE_REGION). Most clients default to us-east-1. Change only if your tooling requires a specific region string."></i></label>
+          <input type="text" id="s3cfg-region" placeholder="us-east-1">
+        </div>
+        <div class="form-group">
+          <label>Site Name <i class="info-tip" data-tip="Optional human-readable name for this MinIO instance (MINIO_SITE_NAME). Shown in the MinIO web console header."></i></label>
+          <input type="text" id="s3cfg-site-name" placeholder="Optional">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Server URL <i class="info-tip" data-tip="Optional public URL when MinIO is behind a reverse proxy (MINIO_SERVER_URL). Example: https://s3.yourdomain.com. Leave blank if clients connect directly to this server's IP and port."></i></label>
+        <input type="text" id="s3cfg-server-url" placeholder="https://s3.yourdomain.com  (optional)">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-s3-configure').classList.add('hidden')">Cancel</button>
+      <button class="btn btn-primary" id="s3cfg-submit-btn" onclick="submitS3Configure()">Save &amp; Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- S3 Users Modal -->
+<div class="modal-backdrop hidden" id="modal-s3-users">
+  <div class="modal" style="max-width:620px;">
+    <div class="modal-header">
+      <h3>S3 Users</h3>
+      <button class="modal-close" onclick="document.getElementById('modal-s3-users').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:6px 8px;font-size:12px;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--border);">Access Key</th>
+            <th style="text-align:left;padding:6px 8px;font-size:12px;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--border);">Status</th>
+            <th style="text-align:right;padding:6px 8px;font-size:12px;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--border);">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="s3-users-tbody">
+          <tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:20px;">Loading…</td></tr>
+        </tbody>
+      </table>
+      <hr style="border:none;border-top:1px solid var(--border);margin:20px 0;">
+      <div style="font-weight:600;font-size:14px;margin-bottom:12px;">Add S3 User</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;">
+        <div class="form-group" style="margin:0;">
+          <label style="font-size:12px;">Access Key <i class="info-tip" data-tip="The username / access key ID for S3 clients. Minimum 3 characters, alphanumeric and hyphens."></i></label>
+          <input type="text" id="s3u-access-key" placeholder="backup-user" autocomplete="off">
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label style="font-size:12px;">Secret Key <i class="info-tip" data-tip="The password / secret access key for S3 clients. Minimum 8 characters."></i></label>
+          <input type="password" id="s3u-secret-key" placeholder="min 8 characters" autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary btn-sm" style="height:36px;" onclick="submitCreateS3User()">Add</button>
+      </div>
+      <div id="s3u-create-error" style="color:var(--accent-danger);font-size:12px;margin-top:6px;display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-s3-users').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- S3 Change Password Modal -->
+<div class="modal-backdrop hidden" id="modal-s3-chpwd">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <h3>Change S3 User Password</h3>
+      <button class="modal-close" onclick="document.getElementById('modal-s3-chpwd').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-2);margin-bottom:16px;">New password for <strong id="s3-chpwd-key"></strong></p>
+      <div class="form-group">
+        <label>New Secret Key <i class="info-tip" data-tip="The new secret access key for this S3 user. Minimum 8 characters."></i></label>
+        <input type="password" id="s3-chpwd-secret" placeholder="min 8 characters" autocomplete="new-password">
+      </div>
+      <div id="s3-chpwd-error" style="color:var(--accent-danger);font-size:12px;margin-top:6px;display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-s3-chpwd').classList.add('hidden')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitS3ChangePassword()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- New / Edit S3 Bucket Modal -->
+<div class="modal-backdrop hidden" id="modal-s3-bucket">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-header">
+      <h3 id="s3bkt-modal-title">New S3 Bucket</h3>
+      <button class="modal-close" onclick="document.getElementById('modal-s3-bucket').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body" style="display:grid;gap:16px;">
+      <div id="s3bkt-error" class="alert alert-error hidden"></div>
+      <div class="form-group">
+        <label>Bucket Name <i class="info-tip" data-tip="S3 bucket names must be 3–63 characters, lowercase, use only letters, numbers, and hyphens, and cannot start or end with a hyphen. Example: my-backups-2026"></i></label>
+        <input type="text" id="s3bkt-name" placeholder="my-bucket-name" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label>Comment <i class="info-tip" data-tip="Optional label stored in the ZFSNAS configuration. Not visible to S3 clients."></i></label>
+        <input type="text" id="s3bkt-comment" placeholder="Optional description">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label>Versioning <i class="info-tip" data-tip="When enabled, MinIO preserves previous versions of objects on every write. Suspended keeps existing versions but stops creating new ones. Required for Object Lock."></i></label>
+          <select id="s3bkt-versioning" onchange="_s3BktVersioningChange()">
+            <option value="off">Off</option>
+            <option value="enabled">Enabled</option>
+            <option value="suspended">Suspended</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Object Lock <i class="info-tip" data-tip="Prevents objects from being deleted or overwritten (WORM). Requires Versioning = Enabled. Cannot be changed after bucket creation."></i></label>
+          <select id="s3bkt-object-lock" disabled>
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Storage Quota <i class="info-tip" data-tip="Maximum total size for all objects in this bucket. Use suffixes: K, M, G, T (e.g. 50G). Leave blank for unlimited."></i></label>
+        <input type="text" id="s3bkt-quota" placeholder="e.g. 50G — leave blank for unlimited">
+      </div>
+      <div class="form-group">
+        <label>Anonymous Access <i class="info-tip" data-tip="Controls what unauthenticated S3 clients can do.&#10;• Private — no anonymous access (recommended).&#10;• Public Read — anyone can download objects (e.g. static file hosting).&#10;• Public R/W — anyone can read and write (not recommended for production)."></i></label>
+        <select id="s3bkt-anon-access">
+          <option value="none">Private — no anonymous access (recommended)</option>
+          <option value="download">Public Read — anyone can download</option>
+          <option value="public">Public R/W — anyone can read and write</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:13px;font-weight:600;margin-bottom:8px;display:block;">Allowed Users <i class="info-tip" data-tip="S3 users that will have read/write access to this bucket via an IAM policy. If no users are selected, only the root admin can access the bucket."></i></label>
+        <div id="s3bkt-users-list" style="display:flex;flex-wrap:wrap;gap:8px;min-height:28px;">
+          <span style="color:var(--text-3);font-size:13px;">Loading users…</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-3);margin-top:6px;">No users selected = root admin access only.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-s3-bucket').classList.add('hidden')">Cancel</button>
+      <button id="s3bkt-submit-btn" class="btn btn-primary" onclick="submitS3Bucket()">Create Bucket</button>
+    </div>
+  </div>
+</div>
+
 <!-- New Replication Task Modal -->
 <div class="modal-backdrop hidden" id="modal-new-replication">
   <div class="modal" style="max-width:560px;">
@@ -4051,6 +4303,7 @@ let _dashCharts      = {};
   startActivityBarRefresh();
   checkPrereqsBanner();
   loadISCSINavStatus();
+  loadS3NavStatus();
   await refreshPoolBar();
   updateServiceNavDots();
   updateDatasetNavDot();
@@ -4108,6 +4361,7 @@ function showPage(name) {
   if (name === 'shares')    loadShares();
   if (name === 'nfs')       loadNFSShares();
   if (name === 'iscsi')     loadISCSIPage();
+  if (name === 's3')        loadS3Page();
   if (name === 'settings')  { loadSettings(); loadAlerts(); loadKeyMgmtSettings(); }
   if (name === 'updates')   initUpdatesPage();
   if (name !== 'dashboard') { clearInterval(_dashRefreshTimer); _dashRefreshTimer = null; }
@@ -4432,8 +4686,9 @@ async function loadPrereqs() {
     }
   }
 
-  // Update optional iSCSI row status.
+  // Update optional feature row statuses.
   _updateISCSIPrereqStatus();
+  _updateMinIOPrereqStatus();
 }
 
 async function _updateISCSIPrereqStatus() {
@@ -10951,6 +11206,546 @@ async function confirmDeleteISCSIShare() {
 }
 
 // Called from the prereqs page — installs targetcli-fb with progress feedback.
+// ===== S3 Object Server (MinIO) =====
+
+function navS3() {
+  const btn = document.getElementById('nav-s3');
+  if (btn && btn.dataset.prereqsMissing === '1') {
+    showPage('prereqs');
+    setTimeout(() => requestAnimationFrame(() => {
+      const el = document.getElementById('prereq-optional-features');
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' });
+    }), 50);
+  } else {
+    showPage('s3');
+  }
+}
+
+async function loadS3NavStatus() {
+  try {
+    const r = await fetch('/api/minio/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    _updateS3NavDot(s);
+  } catch (_) {}
+}
+
+function _updateS3NavDot(status) {
+  const btn = document.getElementById('nav-s3');
+  const dot = document.getElementById('nav-s3-dot');
+  if (!btn) return;
+
+  if (!status.prereqs_installed || !status.enabled) {
+    btn.dataset.prereqsMissing = '1';
+    btn.style.opacity = '0.45';
+    btn.title = 'S3 Object Server requires MinIO — see Prerequisites';
+    if (dot) dot.style.display = 'none';
+    return;
+  }
+
+  delete btn.dataset.prereqsMissing;
+  btn.style.opacity = '';
+  btn.title = 'S3 Buckets';
+
+  const hasBuckets = (status.bucket_count || 0) > 0;
+  if (!hasBuckets || !dot) {
+    if (dot) dot.style.display = 'none';
+    return;
+  }
+  dot.style.display = 'inline-block';
+  if (status.service_active) {
+    dot.style.background = '#30d158';
+    dot.style.boxShadow  = '0 0 4px rgba(48,209,88,0.6)';
+  } else {
+    dot.style.background = 'var(--accent-danger)';
+    dot.style.boxShadow  = '0 0 4px rgba(255,69,58,0.6)';
+  }
+}
+
+async function loadS3Page() {
+  try {
+    const r = await fetch('/api/minio/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    _updateS3NavDot(s);
+
+    const prereqBanner    = document.getElementById('s3-prereqs-banner');
+    const configureBanner = document.getElementById('s3-configure-banner');
+    const content         = document.getElementById('s3-content');
+
+    if (!s.prereqs_installed || !s.enabled) {
+      prereqBanner.classList.remove('hidden');
+      configureBanner.classList.add('hidden');
+      content.classList.add('hidden');
+      return;
+    }
+    prereqBanner.classList.add('hidden');
+
+    if (!s.configured) {
+      configureBanner.classList.remove('hidden');
+      content.classList.add('hidden');
+      return;
+    }
+    configureBanner.classList.add('hidden');
+    content.classList.remove('hidden');
+
+    const badge = document.getElementById('s3-svc-badge');
+    if (badge) {
+      badge.textContent       = s.service_status;
+      badge.style.background  = s.service_active ? 'rgba(48,209,88,0.15)'  : 'rgba(255,69,58,0.15)';
+      badge.style.color       = s.service_active ? '#30d158' : '#ff453a';
+    }
+    const svcBtn = document.getElementById('s3-svc-menu-btn');
+    if (svcBtn) svcBtn.style.display = '';
+
+    await loadS3Buckets();
+  } catch (_) {}
+}
+
+async function loadS3Buckets() {
+  const tbody = document.getElementById('s3-buckets-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:24px;">Loading…</td></tr>';
+  try {
+    const r = await fetch('/api/minio/buckets');
+    if (!r.ok) throw new Error(await r.text());
+    const buckets = await r.json();
+    if (!buckets.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px;">No buckets yet. Click "+ New S3 Bucket" to create one.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = buckets.map(b => `
+      <tr>
+        <td style="font-family:monospace;font-weight:600;">${esc(b.name)}</td>
+        <td style="font-size:13px;color:var(--text-2);">${b.versioning || 'off'}</td>
+        <td style="font-size:13px;">${b.object_lock ? '<span style="color:#f0b429;">🔒 On</span>' : '<span style="color:var(--text-3);">—</span>'}</td>
+        <td style="font-size:13px;color:var(--text-2);">${esc(b.quota || '—')}</td>
+        <td>${_s3AnonBadge(b.anon_access)}</td>
+        <td style="font-size:12px;color:var(--text-3);">${(b.user_keys||[]).length ? esc((b.user_keys||[]).join(', ')) : '<span style="color:var(--text-3);">root only</span>'}</td>
+        <td style="font-size:13px;color:var(--text-3);">${esc(b.comment||'')}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn-ghost btn-sm" onclick="openEditS3BucketModal(${JSON.stringify(b).replace(/</g,'\\u003c')})">Edit</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--accent-danger);" onclick="confirmDeleteS3Bucket('${esc(b.name)}')">Delete</button>
+        </td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--accent-danger);padding:24px;">Failed to load buckets: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function _s3AnonBadge(access) {
+  if (access === 'public')   return '<span style="color:#ff9f0a;font-size:12px;">Public R/W</span>';
+  if (access === 'download') return '<span style="color:#64d2ff;font-size:12px;">Public Read</span>';
+  return '<span style="color:var(--text-3);font-size:12px;">Private</span>';
+}
+
+function s3ServiceMenu() {
+  const d = document.getElementById('s3-svc-dropdown');
+  if (d) d.classList.toggle('hidden');
+}
+
+async function s3ServiceAction(action) {
+  const d = document.getElementById('s3-svc-dropdown');
+  if (d) d.classList.add('hidden');
+  const jobId = 's3-svc-' + Date.now();
+  addActiveJob(jobId, action + ' MinIO service…');
+  try {
+    const r = await fetch('/api/minio/service', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ action }),
+    });
+    const d2 = await r.json();
+    if (!r.ok) { alert('Error: ' + (d2.error || JSON.stringify(d2))); return; }
+    await loadS3Page();
+    loadS3NavStatus();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    removeActiveJob(jobId);
+  }
+}
+
+// ── Configure ────────────────────────────────────────────────────────────────
+
+async function openS3ConfigureModal() {
+  const errEl = document.getElementById('s3cfg-error');
+  if (errEl) errEl.classList.add('hidden');
+
+  // Fetch current config and all datasets in parallel.
+  const [cfgR, dsR] = await Promise.all([
+    fetch('/api/minio/config'),
+    fetch('/api/datasets'),
+  ]);
+  const cfg = cfgR.ok ? await cfgR.json() : {};
+  const datasets = dsR.ok ? (await dsR.json() || []) : [];
+
+  const dsSel = document.getElementById('s3cfg-dataset');
+  dsSel.innerHTML = '<option value="">Select a dataset…</option>' +
+    datasets
+      .filter(d => d.mountpoint && d.mountpoint !== 'none' && d.mountpoint !== 'legacy')
+      .map(d => `<option value="${esc(d.name)}" ${d.name === cfg.dataset_path ? 'selected' : ''}>${esc(d.name)} (${esc(d.mountpoint)})</option>`)
+      .join('');
+
+  document.getElementById('s3cfg-port').value         = cfg.port         || 9000;
+  document.getElementById('s3cfg-console-port').value = cfg.console_port || 9001;
+  document.getElementById('s3cfg-root-user').value    = cfg.root_user    || 'minioadmin';
+  document.getElementById('s3cfg-root-password').value = '';
+  document.getElementById('s3cfg-region').value       = cfg.region       || 'us-east-1';
+  document.getElementById('s3cfg-site-name').value    = cfg.site_name    || '';
+  document.getElementById('s3cfg-server-url').value   = cfg.server_url   || '';
+
+  const btn = document.getElementById('s3cfg-submit-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Save & Apply'; }
+
+  document.getElementById('modal-s3-configure').classList.remove('hidden');
+}
+
+async function submitS3Configure() {
+  const errEl = document.getElementById('s3cfg-error');
+  errEl.classList.add('hidden');
+  const btn = document.getElementById('s3cfg-submit-btn');
+  btn.disabled = true; btn.textContent = 'Applying…';
+
+  const body = {
+    dataset_path:  document.getElementById('s3cfg-dataset').value,
+    port:          parseInt(document.getElementById('s3cfg-port').value),
+    console_port:  parseInt(document.getElementById('s3cfg-console-port').value),
+    root_user:     document.getElementById('s3cfg-root-user').value.trim(),
+    root_password: document.getElementById('s3cfg-root-password').value,
+    region:        document.getElementById('s3cfg-region').value.trim() || 'us-east-1',
+    site_name:     document.getElementById('s3cfg-site-name').value.trim(),
+    server_url:    document.getElementById('s3cfg-server-url').value.trim(),
+  };
+  const jobId = 's3-cfg-' + Date.now();
+  addActiveJob(jobId, 'Applying MinIO configuration…');
+  try {
+    const r = await fetch('/api/minio/config', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      errEl.textContent = d.error || JSON.stringify(d);
+      errEl.classList.remove('hidden');
+      return;
+    }
+    document.getElementById('modal-s3-configure').classList.add('hidden');
+    loadS3NavStatus();
+    loadS3Page();
+  } catch (e) {
+    errEl.textContent = 'Error: ' + e.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save & Apply';
+    removeActiveJob(jobId);
+  }
+}
+
+// ── S3 Users ─────────────────────────────────────────────────────────────────
+
+async function openS3UsersModal() {
+  document.getElementById('modal-s3-users').classList.remove('hidden');
+  document.getElementById('s3u-access-key').value = '';
+  document.getElementById('s3u-secret-key').value = '';
+  const errEl = document.getElementById('s3u-create-error');
+  if (errEl) errEl.style.display = 'none';
+  await _loadS3UsersTable();
+}
+
+async function _loadS3UsersTable() {
+  const tbody = document.getElementById('s3-users-tbody');
+  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:16px;">Loading…</td></tr>';
+  try {
+    const r = await fetch('/api/minio/users');
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    const users = await r.json();
+    if (!users.length) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-3);padding:16px;">No S3 users yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = users.map(u => `
+      <tr>
+        <td style="padding:8px;font-family:monospace;font-size:13px;">${esc(u.accessKey)}</td>
+        <td style="padding:8px;font-size:13px;color:${u.status==='enabled'?'#30d158':'var(--text-3)'};">
+          ${u.status === 'enabled' ? '● Enabled' : '○ Disabled'}
+        </td>
+        <td style="padding:8px;text-align:right;white-space:nowrap;">
+          <button class="btn btn-ghost btn-sm" onclick="toggleS3UserStatus('${esc(u.accessKey)}', ${u.status !== 'enabled'})">${u.status === 'enabled' ? 'Disable' : 'Enable'}</button>
+          <button class="btn btn-ghost btn-sm" onclick="openS3ChangePasswordModal('${esc(u.accessKey)}')">Change Password</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--accent-danger);" onclick="confirmDeleteS3User('${esc(u.accessKey)}')">Delete</button>
+        </td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--accent-danger);padding:16px;">${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function submitCreateS3User() {
+  const errEl = document.getElementById('s3u-create-error');
+  errEl.style.display = 'none';
+  const key = document.getElementById('s3u-access-key').value.trim();
+  const secret = document.getElementById('s3u-secret-key').value;
+  if (key.length < 3) { errEl.textContent = 'Access key must be at least 3 characters.'; errEl.style.display = ''; return; }
+  if (secret.length < 8) { errEl.textContent = 'Secret key must be at least 8 characters.'; errEl.style.display = ''; return; }
+  try {
+    const r = await fetch('/api/minio/user/create', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ access_key: key, secret_key: secret }),
+    });
+    const d = await r.json();
+    if (!r.ok) { errEl.textContent = d.error || JSON.stringify(d); errEl.style.display = ''; return; }
+    document.getElementById('s3u-access-key').value = '';
+    document.getElementById('s3u-secret-key').value = '';
+    await _loadS3UsersTable();
+  } catch (e) {
+    errEl.textContent = 'Error: ' + e.message; errEl.style.display = '';
+  }
+}
+
+async function toggleS3UserStatus(accessKey, enable) {
+  try {
+    const r = await fetch('/api/minio/user/status', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ access_key: accessKey, enabled: enable }),
+    });
+    if (!r.ok) { const d = await r.json(); alert('Error: ' + (d.error || JSON.stringify(d))); return; }
+    await _loadS3UsersTable();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function confirmDeleteS3User(accessKey) {
+  if (!confirm(`Delete S3 user "${accessKey}"? This cannot be undone.`)) return;
+  try {
+    const r = await fetch('/api/minio/user/delete', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ access_key: accessKey }),
+    });
+    if (!r.ok) { const d = await r.json(); alert('Error: ' + (d.error || JSON.stringify(d))); return; }
+    await _loadS3UsersTable();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+function openS3ChangePasswordModal(accessKey) {
+  document.getElementById('s3-chpwd-key').textContent = accessKey;
+  document.getElementById('s3-chpwd-secret').value = '';
+  const errEl = document.getElementById('s3-chpwd-error');
+  if (errEl) errEl.style.display = 'none';
+  document.getElementById('modal-s3-chpwd').classList.remove('hidden');
+}
+
+async function submitS3ChangePassword() {
+  const errEl = document.getElementById('s3-chpwd-error');
+  errEl.style.display = 'none';
+  const accessKey = document.getElementById('s3-chpwd-key').textContent;
+  const secret = document.getElementById('s3-chpwd-secret').value;
+  if (secret.length < 8) { errEl.textContent = 'Secret key must be at least 8 characters.'; errEl.style.display = ''; return; }
+  try {
+    const r = await fetch('/api/minio/user/password', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ access_key: accessKey, secret_key: secret }),
+    });
+    const d = await r.json();
+    if (!r.ok) { errEl.textContent = d.error || JSON.stringify(d); errEl.style.display = ''; return; }
+    document.getElementById('modal-s3-chpwd').classList.add('hidden');
+  } catch (e) {
+    errEl.textContent = 'Error: ' + e.message; errEl.style.display = '';
+  }
+}
+
+// ── S3 Buckets ───────────────────────────────────────────────────────────────
+
+function _s3BktVersioningChange() {
+  const v = document.getElementById('s3bkt-versioning').value;
+  const lockSel = document.getElementById('s3bkt-object-lock');
+  lockSel.disabled = (v !== 'enabled');
+  if (v !== 'enabled') lockSel.value = 'false';
+}
+
+async function openNewS3BucketModal() {
+  document.getElementById('s3bkt-modal-title').textContent = 'New S3 Bucket';
+  document.getElementById('s3bkt-submit-btn').textContent  = 'Create Bucket';
+  document.getElementById('s3bkt-name').value        = '';
+  document.getElementById('s3bkt-name').disabled     = false;
+  document.getElementById('s3bkt-comment').value     = '';
+  document.getElementById('s3bkt-versioning').value  = 'off';
+  document.getElementById('s3bkt-object-lock').value = 'false';
+  document.getElementById('s3bkt-object-lock').disabled = false;
+  document.getElementById('s3bkt-quota').value       = '';
+  document.getElementById('s3bkt-anon-access').value = 'none';
+  document.getElementById('s3bkt-error').classList.add('hidden');
+  _s3BktVersioningChange();
+  await _populateS3UserChips([]);
+  document.getElementById('modal-s3-bucket').classList.remove('hidden');
+}
+
+async function openEditS3BucketModal(bucket) {
+  document.getElementById('s3bkt-modal-title').textContent = 'Edit S3 Bucket — ' + bucket.name;
+  document.getElementById('s3bkt-submit-btn').textContent  = 'Save Changes';
+  document.getElementById('s3bkt-name').value    = bucket.name;
+  document.getElementById('s3bkt-name').disabled = true;
+  document.getElementById('s3bkt-comment').value     = bucket.comment || '';
+  document.getElementById('s3bkt-versioning').value  = bucket.versioning || 'off';
+  document.getElementById('s3bkt-object-lock').value = bucket.object_lock ? 'true' : 'false';
+  document.getElementById('s3bkt-object-lock').disabled = true;
+  document.getElementById('s3bkt-quota').value       = bucket.quota || '';
+  document.getElementById('s3bkt-anon-access').value = bucket.anon_access || 'none';
+  document.getElementById('s3bkt-error').classList.add('hidden');
+  _s3BktVersioningChange();
+  // Re-enable versioning change in edit mode (object lock stays locked).
+  document.getElementById('s3bkt-versioning').disabled = false;
+  await _populateS3UserChips(bucket.user_keys || []);
+  document.getElementById('modal-s3-bucket').classList.remove('hidden');
+}
+
+async function _populateS3UserChips(selectedKeys) {
+  const container = document.getElementById('s3bkt-users-list');
+  container.innerHTML = '<span style="color:var(--text-3);font-size:13px;">Loading users…</span>';
+  try {
+    const r = await fetch('/api/minio/users');
+    if (!r.ok) throw new Error('failed');
+    const users = await r.json();
+    if (!users.length) {
+      container.innerHTML = '<span style="color:var(--text-3);font-size:12px;">No S3 users yet. Add users via "S3 Users".</span>';
+      return;
+    }
+    container.innerHTML = users.map(u => {
+      const checked = selectedKeys.includes(u.accessKey);
+      return `<label style="display:flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:13px;">
+        <input type="checkbox" data-key="${esc(u.accessKey)}" ${checked ? 'checked' : ''}>
+        <span style="font-family:monospace;">${esc(u.accessKey)}</span>
+      </label>`;
+    }).join('');
+  } catch (_) {
+    container.innerHTML = '<span style="color:var(--accent-danger);font-size:12px;">Could not load users.</span>';
+  }
+}
+
+async function submitS3Bucket() {
+  const errEl = document.getElementById('s3bkt-error');
+  errEl.classList.add('hidden');
+  const name   = document.getElementById('s3bkt-name').value.trim();
+  const isEdit = document.getElementById('s3bkt-name').disabled;
+  const checkedKeys = Array.from(
+    document.querySelectorAll('#s3bkt-users-list input[type=checkbox]:checked')
+  ).map(cb => cb.dataset.key);
+
+  const body = {
+    name:        name.toLowerCase(),
+    comment:     document.getElementById('s3bkt-comment').value.trim(),
+    versioning:  document.getElementById('s3bkt-versioning').value,
+    object_lock: document.getElementById('s3bkt-object-lock').value === 'true',
+    quota:       document.getElementById('s3bkt-quota').value.trim(),
+    anon_access: document.getElementById('s3bkt-anon-access').value,
+    user_keys:   checkedKeys,
+  };
+
+  const btn = document.getElementById('s3bkt-submit-btn');
+  btn.disabled = true; btn.textContent = isEdit ? 'Saving…' : 'Creating…';
+  const endpoint = isEdit ? '/api/minio/bucket/edit' : '/api/minio/bucket/create';
+  const jobId = 's3-bkt-' + Date.now();
+  addActiveJob(jobId, (isEdit ? 'Editing' : 'Creating') + ' S3 bucket ' + name + '…');
+  try {
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      errEl.textContent = d.error || JSON.stringify(d);
+      errEl.classList.remove('hidden');
+      return;
+    }
+    document.getElementById('modal-s3-bucket').classList.add('hidden');
+    loadS3Buckets();
+    loadS3NavStatus();
+  } catch (e) {
+    errEl.textContent = 'Error: ' + e.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = isEdit ? 'Save Changes' : 'Create Bucket';
+    removeActiveJob(jobId);
+  }
+}
+
+async function confirmDeleteS3Bucket(name) {
+  if (!confirm(`Delete bucket "${name}" and ALL its objects? This cannot be undone.`)) return;
+  const jobId = 's3-del-' + Date.now();
+  addActiveJob(jobId, 'Deleting S3 bucket ' + name + '…');
+  try {
+    const r = await fetch('/api/minio/bucket/delete', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name }),
+    });
+    if (!r.ok) { const d = await r.json(); alert('Error: ' + (d.error || JSON.stringify(d))); return; }
+    loadS3Buckets();
+    loadS3NavStatus();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    removeActiveJob(jobId);
+  }
+}
+
+// ── MinIO Prerequisites ───────────────────────────────────────────────────────
+
+async function _updateMinIOPrereqStatus() {
+  const statusEl = document.getElementById('prereq-minio-status');
+  const btnEl    = document.getElementById('prereq-minio-btn');
+  if (!statusEl) return;
+  try {
+    const r = await fetch('/api/minio/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    if (s.prereqs_installed) {
+      statusEl.textContent   = '✓ Installed';
+      statusEl.style.color   = '#30d158';
+      statusEl.style.fontWeight = '600';
+      if (btnEl) btnEl.style.display = 'none';
+    }
+  } catch (_) {}
+}
+
+async function enableMinIOFeature() {
+  const btn = document.getElementById('prereq-minio-btn');
+  const statusEl = document.getElementById('prereq-minio-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+  const jobId = 'minio-install-' + Date.now();
+  addActiveJob(jobId, 'Installing MinIO and mc…');
+  try {
+    const r = await fetch('/api/prereqs/install', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ package: 'minio' }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Enable S3 Object Server'; }
+      alert('Installation failed: ' + (d.error || JSON.stringify(d)));
+      return;
+    }
+    if (statusEl) {
+      statusEl.textContent      = '✓ Installed';
+      statusEl.style.color      = '#30d158';
+      statusEl.style.fontWeight = '600';
+    }
+    if (btn) btn.style.display = 'none';
+    loadS3NavStatus();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Enable S3 Object Server'; }
+    alert('Error: ' + e.message);
+  } finally {
+    removeActiveJob(jobId);
+  }
+}
+
 async function enableISCSIFeature() {
   const btn = document.getElementById('prereq-iscsi-btn');
   const statusEl = document.getElementById('prereq-iscsi-status');
@@ -11146,7 +11941,7 @@ async function _autoBinaryVersionCheck() {
     const dot = document.getElementById('nav-updates-dot');
     if (data.update_available) {
       latestEl.style.color = 'var(--accent-warn)';
-      if (data.sig_valid === true) applyWrap.classList.remove('hidden');
+      if (data.sig_valid === true) _showApplyBinaryWrap(data.service_installed === true);
       uptodateEl.classList.add('hidden');
       const badge = document.getElementById('sidebar-update-badge');
       if (badge) { badge.textContent = '⬆ v' + data.latest; badge.classList.remove('hidden'); }
@@ -11942,6 +12737,21 @@ function _applyBupSigBadge(data) {
   }
 }
 
+function _showApplyBinaryWrap(serviceInstalled) {
+  const applyWrap = document.getElementById('btn-apply-binary-wrap');
+  const activeBtn = document.getElementById('btn-apply-binary-active');
+  const noSvcMsg  = document.getElementById('btn-apply-binary-nosvc');
+  if (!applyWrap) return;
+  applyWrap.classList.remove('hidden');
+  if (serviceInstalled) {
+    if (activeBtn) activeBtn.style.display = '';
+    if (noSvcMsg)  noSvcMsg.style.display  = 'none';
+  } else {
+    if (activeBtn) activeBtn.style.display = 'none';
+    if (noSvcMsg)  noSvcMsg.style.display  = '';
+  }
+}
+
 async function checkBinaryUpdate() {
   const currentEl  = document.getElementById('bup-current');
   const latestEl   = document.getElementById('bup-latest');
@@ -11966,7 +12776,7 @@ async function checkBinaryUpdate() {
     _applyBupSigBadge(data);
     if (data.update_available) {
       latestEl.style.color = 'var(--accent-warn)';
-      if (data.sig_valid === true) applyWrap.classList.remove('hidden');
+      if (data.sig_valid === true) _showApplyBinaryWrap(data.service_installed === true);
     } else {
       uptodateEl.classList.remove('hidden');
     }

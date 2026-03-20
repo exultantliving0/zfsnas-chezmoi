@@ -32,6 +32,33 @@ const (
 	RoleSMBOnly  = "smb-only"
 )
 
+// S3Bucket is a MinIO bucket managed by ZFSNAS and tracked in portal config.
+type S3Bucket struct {
+	Name      string   `json:"name"`
+	Comment   string   `json:"comment"`
+	Versioning string  `json:"versioning"`  // "off", "enabled", "suspended"
+	ObjectLock bool    `json:"object_lock"` // immutable after creation
+	Quota     string   `json:"quota"`       // human string e.g. "50G", "" = unlimited
+	AnonAccess string  `json:"anon_access"` // "none", "download", "public"
+	UserKeys  []string `json:"user_keys"`
+	CreatedAt int64    `json:"created_at"`
+}
+
+// MinIOConfig holds all persistent MinIO / S3 Object Server settings.
+type MinIOConfig struct {
+	Enabled      bool       `json:"enabled"`
+	DatasetPath  string     `json:"dataset_path"`  // ZFS dataset path used as backend
+	DataDir      string     `json:"data_dir"`       // absolute mountpoint of that dataset
+	Port         int        `json:"port"`           // API port, default 9000
+	ConsolePort  int        `json:"console_port"`   // web console port, default 9001
+	RootUser     string     `json:"root_user"`
+	RootPassword string     `json:"root_password"`
+	Region       string     `json:"region"`
+	SiteName     string     `json:"site_name"`
+	ServerURL    string     `json:"server_url"`
+	Buckets      []S3Bucket `json:"buckets"`
+}
+
 // ISCSIHost is a known initiator that can be granted access to iSCSI shares.
 type ISCSIHost struct {
 	ID      string `json:"id"`
@@ -86,6 +113,7 @@ type AppConfig struct {
 	TreeMapSchedule    string      `json:"treemap_schedule,omitempty"`     // daily | weekly | biweekly | monthly | "" (off)
 	TreeMapHour        int         `json:"treemap_hour"`                   // hour of day to run treemap scan (0-23)
 	ISCSI              ISCSIConfig      `json:"iscsi,omitempty"`
+	MinIO              MinIOConfig      `json:"minio,omitempty"`
 	Replication        []ReplicationTask `json:"replication,omitempty"`
 }
 
@@ -223,6 +251,21 @@ func LoadAppConfig() (*AppConfig, error) {
 	}
 	if cfg.Replication == nil {
 		cfg.Replication = []ReplicationTask{}
+	}
+	if cfg.MinIO.Port == 0 {
+		cfg.MinIO.Port = 9000
+	}
+	if cfg.MinIO.ConsolePort == 0 {
+		cfg.MinIO.ConsolePort = 9001
+	}
+	if cfg.MinIO.Region == "" {
+		cfg.MinIO.Region = "us-east-1"
+	}
+	if cfg.MinIO.RootUser == "" {
+		cfg.MinIO.RootUser = "minioadmin"
+	}
+	if cfg.MinIO.Buckets == nil {
+		cfg.MinIO.Buckets = []S3Bucket{}
 	}
 	// Migrate legacy WeeklyScrub bool to ScrubSchedule string.
 	if cfg.ScrubSchedule == "" {
