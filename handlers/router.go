@@ -262,7 +262,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 
 	// --- iSCSI sharing ---
 	r.Handle("/api/iscsi/status",
-		RequireAuth(http.HandlerFunc(HandleISCSIStatus))).Methods("GET")
+		RequireAuth(http.HandlerFunc(HandleISCSIStatus(appCfg)))).Methods("GET")
 	r.Handle("/api/iscsi/service",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleISCSIServiceAction)))).Methods("POST")
 	r.Handle("/api/iscsi/config",
@@ -306,7 +306,11 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 
 	// --- Prerequisites: install optional packages (admin only) ---
 	r.Handle("/api/prereqs/install",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallPackage)))).Methods("POST")
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallPackage(appCfg))))).Methods("POST")
+	r.Handle("/api/prereqs/uninstall",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUninstallPackage(appCfg))))).Methods("POST")
+	r.Handle("/api/prereqs/feature-nav",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetFeatureNavVisibility(appCfg))))).Methods("POST")
 
 	// --- MinIO / S3 Object Server ---
 	r.Handle("/api/minio/status",

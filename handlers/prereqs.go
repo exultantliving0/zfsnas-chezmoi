@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"zfsnas/internal/audit"
+	"zfsnas/internal/config"
 	"zfsnas/system"
 
 	"github.com/gorilla/websocket"
@@ -254,59 +255,151 @@ WantedBy=multi-user.target
 // HandleInstallPackage installs a single optional package from an allowlist.
 // Body: { "package": "targetcli-fb" }
 // The allowlist prevents arbitrary package installation.
-func HandleInstallPackage(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Package string `json:"package"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	req.Package = strings.TrimSpace(req.Package)
-
-	allowlist := map[string]bool{
-		"targetcli-fb": true,
-		"minio":        true,
-	}
-	if !allowlist[req.Package] {
-		jsonErr(w, http.StatusBadRequest, "package not in allowlist")
-		return
-	}
-
-	// MinIO uses a custom binary installation (not apt-get).
-	if req.Package == "minio" {
-		if err := system.InstallMinIO(); err != nil {
-			jsonErr(w, http.StatusInternalServerError, err.Error())
+func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Package string `json:"package"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
+		req.Package = strings.TrimSpace(req.Package)
+
+		allowlist := map[string]bool{
+			"targetcli-fb": true,
+			"minio":        true,
+		}
+		if !allowlist[req.Package] {
+			jsonErr(w, http.StatusBadRequest, "package not in allowlist")
+			return
+		}
+
 		sess := MustSession(r)
+
+		// MinIO uses a custom binary installation (not apt-get).
+		if req.Package == "minio" {
+			if err := system.InstallMinIO(); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			appCfg.MinIO.HideNav = false
+			_ = config.SaveAppConfig(appCfg)
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionInstallPrereqs,
+				Result:  audit.ResultOK,
+				Details: "installed: minio, mc",
+			})
+			jsonOK(w, map[string]string{"message": "minio installed"})
+			return
+		}
+
+		out, err := exec.Command("sudo", "apt-get", "install", "-y", "-q", req.Package).CombinedOutput()
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, string(out))
+			return
+		}
+
+		if req.Package == "targetcli-fb" {
+			appCfg.ISCSI.HideNav = false
+			_ = config.SaveAppConfig(appCfg)
+			_ = system.StartISCSIService()
+		}
+
 		audit.Log(audit.Entry{
 			User:    sess.Username,
 			Role:    sess.Role,
 			Action:  audit.ActionInstallPrereqs,
 			Result:  audit.ResultOK,
-			Details: "installed: minio, mc",
+			Details: "installed: " + req.Package,
 		})
-		jsonOK(w, map[string]string{"message": "minio installed"})
-		return
+
+		jsonOK(w, map[string]string{"message": req.Package + " installed"})
 	}
+}
 
-	out, err := exec.Command("sudo", "apt-get", "install", "-y", "-q", req.Package).CombinedOutput()
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, string(out))
-		return
+// HandleUninstallPackage stops and removes an optional feature from an allowlist.
+// Body: { "package": "targetcli-fb" | "minio" }
+func HandleUninstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Package string `json:"package"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		req.Package = strings.TrimSpace(req.Package)
+
+		sess := MustSession(r)
+		switch req.Package {
+		case "minio":
+			if err := system.UninstallMinIO(); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			appCfg.MinIO.Enabled = false
+			appCfg.MinIO.TLS = false
+			_ = config.SaveAppConfig(appCfg)
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionInstallPrereqs,
+				Result:  audit.ResultOK,
+				Details: "uninstalled: minio, mc",
+			})
+		case "targetcli-fb":
+			if err := system.UninstallISCSI(); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			appCfg.ISCSI.Enabled = false
+			_ = config.SaveAppConfig(appCfg)
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionInstallPrereqs,
+				Result:  audit.ResultOK,
+				Details: "uninstalled: targetcli-fb",
+			})
+		default:
+			jsonErr(w, http.StatusBadRequest, "package not in allowlist")
+			return
+		}
+
+		jsonOK(w, map[string]string{"message": req.Package + " uninstalled"})
 	}
+}
 
-	sess := MustSession(r)
-	audit.Log(audit.Entry{
-		User:    sess.Username,
-		Role:    sess.Role,
-		Action:  audit.ActionInstallPrereqs,
-		Result:  audit.ResultOK,
-		Details: "installed: " + req.Package,
-	})
-
-	jsonOK(w, map[string]string{"message": req.Package + " installed"})
+// HandleSetFeatureNavVisibility shows or hides an optional feature's nav item.
+// Body: { "feature": "iscsi" | "minio", "hidden": true | false }
+func HandleSetFeatureNavVisibility(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Feature string `json:"feature"`
+			Hidden  bool   `json:"hidden"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		switch req.Feature {
+		case "iscsi":
+			appCfg.ISCSI.HideNav = req.Hidden
+		case "minio":
+			appCfg.MinIO.HideNav = req.Hidden
+		default:
+			jsonErr(w, http.StatusBadRequest, "unknown feature")
+			return
+		}
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonOK(w, map[string]bool{"ok": true})
+	}
 }
 
 // mustJSON marshals v to JSON, panics on error (only for internal use).

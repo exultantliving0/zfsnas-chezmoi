@@ -18,7 +18,7 @@ func StartTreeMapScheduler(appCfg *config.AppConfig) {
 		tick := time.NewTicker(time.Minute)
 		defer tick.Stop()
 		for now := range tick.C {
-			if !shouldRunTreeMap(now, appCfg.TreeMapSchedule, appCfg.TreeMapHour) {
+			if !shouldRunTreeMap(now, appCfg.TreeMapSchedule, appCfg.TreeMapHour, appCfg.TreeMapMinute) {
 				continue
 			}
 			runTreeMapSchedule(appCfg)
@@ -26,11 +26,11 @@ func StartTreeMapScheduler(appCfg *config.AppConfig) {
 	}()
 }
 
-func shouldRunTreeMap(now time.Time, schedule string, hour int) bool {
+func shouldRunTreeMap(now time.Time, schedule string, hour, minute int) bool {
 	if schedule == "" {
 		return false
 	}
-	if now.Hour() != hour || now.Minute() != 0 {
+	if now.Hour() != hour || now.Minute() != minute {
 		return false
 	}
 	switch schedule {
@@ -118,6 +118,7 @@ func HandleGetTreeMapSchedule(appCfg *config.AppConfig) http.HandlerFunc {
 		jsonOK(w, map[string]interface{}{
 			"schedule": appCfg.TreeMapSchedule,
 			"hour":     appCfg.TreeMapHour,
+			"minute":   appCfg.TreeMapMinute,
 		})
 	}
 }
@@ -128,6 +129,7 @@ func HandleSetTreeMapSchedule(appCfg *config.AppConfig) http.HandlerFunc {
 		var req struct {
 			Schedule string `json:"schedule"`
 			Hour     int    `json:"hour"`
+			Minute   int    `json:"minute"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -144,8 +146,13 @@ func HandleSetTreeMapSchedule(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "hour must be 0-23")
 			return
 		}
+		if req.Minute < 0 || req.Minute > 59 {
+			jsonErr(w, http.StatusBadRequest, "minute must be 0-59")
+			return
+		}
 		appCfg.TreeMapSchedule = req.Schedule
 		appCfg.TreeMapHour = req.Hour
+		appCfg.TreeMapMinute = req.Minute
 		if err := config.SaveAppConfig(appCfg); err != nil {
 			jsonErr(w, http.StatusInternalServerError, "failed to save config")
 			return
@@ -153,6 +160,7 @@ func HandleSetTreeMapSchedule(appCfg *config.AppConfig) http.HandlerFunc {
 		jsonOK(w, map[string]interface{}{
 			"schedule": appCfg.TreeMapSchedule,
 			"hour":     appCfg.TreeMapHour,
+			"minute":   appCfg.TreeMapMinute,
 		})
 	}
 }

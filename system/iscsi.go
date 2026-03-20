@@ -64,6 +64,18 @@ func StopISCSIService() error {
 	return nil
 }
 
+// UninstallISCSI stops the iSCSI service, disables it, and removes targetcli-fb.
+func UninstallISCSI() error {
+	svc := iscsiServiceName()
+	exec.Command("sudo", "systemctl", "stop", svc).Run()
+	exec.Command("sudo", "systemctl", "disable", svc).Run()
+	if out, err := exec.Command("sudo", "apt-get", "remove", "-y", "targetcli-fb").CombinedOutput(); err != nil {
+		return fmt.Errorf("apt-get remove: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	exec.Command("sudo", "apt-get", "autoremove", "-y").Run()
+	return nil
+}
+
 // RestartISCSIService restarts the iSCSI daemon.
 func RestartISCSIService() error {
 	out, err := exec.Command("sudo", "systemctl", "restart", iscsiServiceName()).CombinedOutput()

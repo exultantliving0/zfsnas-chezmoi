@@ -1,8 +1,16 @@
 package system
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,6 +173,9 @@ func WriteMinIOEnvFile(cfg *config.MinIOConfig) error {
 	if out, err := tee.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
+	// Restrict access: root-owned, readable only by root and minio-user (via group).
+	exec.Command("sudo", "chown", "root:minio-user", "/etc/default/minio").Run()
+	exec.Command("sudo", "chmod", "640", "/etc/default/minio").Run()
 
 	// Ensure DataDir exists and is owned by minio-user.
 	if cfg.DataDir != "" {
@@ -179,8 +190,18 @@ func WriteMinIOEnvFile(cfg *config.MinIOConfig) error {
 	return nil
 }
 
-// ApplyMinIOConfig writes the env file, restarts the service, and refreshes the mc alias.
+// ApplyMinIOConfig writes the env file, installs/removes TLS certs, restarts the service,
+// and refreshes the mc alias.
 func ApplyMinIOConfig(cfg *config.MinIOConfig) error {
+	// Install or remove TLS certs before writing the env file.
+	if cfg.TLS {
+		if err := EnableMinIOTLS(); err != nil {
+			return fmt.Errorf("enable TLS: %w", err)
+		}
+	} else {
+		_ = DisableMinIOTLS()
+	}
+
 	if err := WriteMinIOEnvFile(cfg); err != nil {
 		return err
 	}
@@ -203,17 +224,162 @@ func ApplyMinIOConfig(cfg *config.MinIOConfig) error {
 	return nil
 }
 
+const minIOCertsDir = "/var/lib/minio/.minio/certs"
+
+// EnableMinIOTLS generates a fresh self-signed cert for MinIO (all local IPs included),
+// installs it into the MinIO certs directory, and restarts the service.
+func EnableMinIOTLS() error {
+	// Generate cert in a temp dir, then sudo-copy into place.
+	tmp, err := os.MkdirTemp("", "minio-tls-*")
+	if err != nil {
+		return fmt.Errorf("tmpdir: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+
+	certFile := filepath.Join(tmp, "public.crt")
+	keyFile := filepath.Join(tmp, "private.key")
+	if err := generateMinIOCert(certFile, keyFile); err != nil {
+		return fmt.Errorf("generate cert: %w", err)
+	}
+
+	// Ensure the certs directory exists and is owned by minio-user.
+	if out, err := exec.Command("sudo", "mkdir", "-p", minIOCertsDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mkdir certs: %s", strings.TrimSpace(string(out)))
+	}
+	for _, pair := range [][2]string{
+		{certFile, filepath.Join(minIOCertsDir, "public.crt")},
+		{keyFile, filepath.Join(minIOCertsDir, "private.key")},
+	} {
+		if out, err := exec.Command("sudo", "cp", pair[0], pair[1]).CombinedOutput(); err != nil {
+			return fmt.Errorf("copy %s: %s", filepath.Base(pair[1]), strings.TrimSpace(string(out)))
+		}
+	}
+	if out, err := exec.Command("sudo", "chown", "-R", "minio-user:minio-user", minIOCertsDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("chown: %s", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("sudo", "chmod", "640", filepath.Join(minIOCertsDir, "private.key")).CombinedOutput(); err != nil {
+		return fmt.Errorf("chmod key: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// DisableMinIOTLS removes MinIO cert files so MinIO starts in plain-HTTP mode.
+func DisableMinIOTLS() error {
+	for _, f := range []string{"public.crt", "private.key"} {
+		path := filepath.Join(minIOCertsDir, f)
+		exec.Command("sudo", "rm", "-f", path).Run() // ignore errors (file may not exist)
+	}
+	return nil
+}
+
+// generateMinIOCert creates a self-signed ECDSA cert including all local IP addresses.
+func generateMinIOCert(certFile, keyFile string) error {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+
+	// Collect all local unicast IPs to embed as SANs.
+	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			addrs, _ := iface.Addrs()
+			for _, addr := range addrs {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip != nil && !ip.IsLoopback() && (ip.To4() != nil || ip.To16() != nil) {
+					ips = append(ips, ip)
+				}
+			}
+		}
+	}
+
+	hostname, _ := os.Hostname()
+	dnsNames := []string{"localhost", "minio"}
+	if hostname != "" {
+		dnsNames = append(dnsNames, hostname)
+	}
+
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			Organization: []string{"ZFS NAS — MinIO"},
+			CommonName:   "minio",
+		},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           ips,
+		DNSNames:              dnsNames,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		return err
+	}
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		return err
+	}
+	defer certOut.Close()
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return err
+	}
+
+	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer keyOut.Close()
+	privDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return err
+	}
+	return pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER})
+}
+
 // SetupMCAlias registers the "zfsnas" mc alias pointing at the local MinIO instance.
 func SetupMCAlias(cfg *config.MinIOConfig) error {
 	scheme := "http"
-	if cfg.APITLS {
+	if cfg.TLS {
 		scheme = "https"
 	}
 	url := fmt.Sprintf("%s://127.0.0.1:%d", scheme, cfg.Port)
-	out, err := exec.Command("mc", "alias", "set", "zfsnas", url, cfg.RootUser, cfg.RootPassword).CombinedOutput()
+	args := []string{}
+	if cfg.TLS {
+		args = append(args, "--insecure")
+	}
+	args = append(args, "alias", "set", "zfsnas", url, cfg.RootUser, cfg.RootPassword)
+	out, err := exec.Command("mc", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}
+	return nil
+}
+
+// UninstallMinIO stops the MinIO service, disables it, removes the binaries,
+// and cleans up the systemd unit and env file.
+func UninstallMinIO() error {
+	exec.Command("sudo", "systemctl", "stop", "minio").Run()
+	exec.Command("sudo", "systemctl", "disable", "minio").Run()
+	for _, f := range []string{
+		"/usr/local/bin/minio",
+		"/usr/local/bin/mc",
+		"/etc/systemd/system/minio.service",
+		"/etc/default/minio",
+	} {
+		exec.Command("sudo", "rm", "-f", f).Run()
+	}
+	exec.Command("sudo", "systemctl", "daemon-reload").Run()
 	return nil
 }
 

@@ -11,14 +11,17 @@ import (
 )
 
 // HandleISCSIStatus returns prereq + service status.
-func HandleISCSIStatus(w http.ResponseWriter, r *http.Request) {
-	prereqs := system.ISCSIPrereqsInstalled()
-	svc := system.GetISCSIServiceStatus()
-	jsonOK(w, map[string]interface{}{
-		"prereqs_installed": prereqs,
-		"service_active":    svc.Active,
-		"service_status":    svc.Status,
-	})
+func HandleISCSIStatus(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		prereqs := system.ISCSIPrereqsInstalled()
+		svc := system.GetISCSIServiceStatus()
+		jsonOK(w, map[string]interface{}{
+			"prereqs_installed": prereqs,
+			"service_active":    svc.Active,
+			"service_status":    svc.Status,
+			"hide_nav":          appCfg.ISCSI.HideNav,
+		})
+	}
 }
 
 // HandleISCSIServiceAction starts/stops/restarts the iSCSI daemon.

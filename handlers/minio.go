@@ -26,7 +26,8 @@ func HandleMinIOStatus(appCfg *config.AppConfig) http.HandlerFunc {
 			"service_status":    svc.Status,
 			"bucket_count":      len(appCfg.MinIO.Buckets),
 			"console_port":      appCfg.MinIO.ConsolePort,
-			"console_tls":       appCfg.MinIO.ConsoleTLS,
+			"tls":               appCfg.MinIO.TLS,
+			"hide_nav":          appCfg.MinIO.HideNav,
 		})
 	}
 }
@@ -71,9 +72,8 @@ func HandleGetMinIOConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			"dataset_path": appCfg.MinIO.DatasetPath,
 			"data_dir":     appCfg.MinIO.DataDir,
 			"port":         appCfg.MinIO.Port,
-			"api_tls":      appCfg.MinIO.APITLS,
 			"console_port": appCfg.MinIO.ConsolePort,
-			"console_tls":  appCfg.MinIO.ConsoleTLS,
+			"tls":          appCfg.MinIO.TLS,
 			"root_user":    appCfg.MinIO.RootUser,
 			"region":       appCfg.MinIO.Region,
 			"site_name":    appCfg.MinIO.SiteName,
@@ -89,9 +89,8 @@ func HandleSaveMinIOConfig(appCfg *config.AppConfig) http.HandlerFunc {
 		var req struct {
 			DatasetPath  string `json:"dataset_path"`
 			Port         int    `json:"port"`
-			APITLS       bool   `json:"api_tls"`
 			ConsolePort  int    `json:"console_port"`
-			ConsoleTLS   bool   `json:"console_tls"`
+			TLS          bool   `json:"tls"`
 			RootUser     string `json:"root_user"`
 			RootPassword string `json:"root_password"`
 			Region       string `json:"region"`
@@ -166,9 +165,8 @@ func HandleSaveMinIOConfig(appCfg *config.AppConfig) http.HandlerFunc {
 		appCfg.MinIO.DatasetPath = req.DatasetPath
 		appCfg.MinIO.DataDir = dataDir
 		appCfg.MinIO.Port = req.Port
-		appCfg.MinIO.APITLS = req.APITLS
 		appCfg.MinIO.ConsolePort = req.ConsolePort
-		appCfg.MinIO.ConsoleTLS = req.ConsoleTLS
+		appCfg.MinIO.TLS = req.TLS
 		appCfg.MinIO.RootUser = req.RootUser
 		appCfg.MinIO.RootPassword = password
 		appCfg.MinIO.Region = req.Region

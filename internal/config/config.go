@@ -47,12 +47,12 @@ type S3Bucket struct {
 // MinIOConfig holds all persistent MinIO / S3 Object Server settings.
 type MinIOConfig struct {
 	Enabled      bool       `json:"enabled"`
+	HideNav      bool       `json:"hide_nav"`     // hide nav item when not installed
 	DatasetPath  string     `json:"dataset_path"`  // ZFS dataset path used as backend
 	DataDir      string     `json:"data_dir"`       // absolute mountpoint of that dataset
 	Port         int        `json:"port"`           // API port, default 9000
-	APITLS       bool       `json:"api_tls"`        // API port uses TLS
 	ConsolePort  int        `json:"console_port"`   // web console port, default 9001
-	ConsoleTLS   bool       `json:"console_tls"`    // console port uses TLS
+	TLS          bool       `json:"tls"`            // enable TLS on both ports
 	RootUser     string     `json:"root_user"`
 	RootPassword string     `json:"root_password"`
 	Region       string     `json:"region"`
@@ -94,6 +94,7 @@ type ISCSIShare struct {
 // ISCSIConfig holds all persistent iSCSI settings.
 type ISCSIConfig struct {
 	Enabled     bool              `json:"enabled"`
+	HideNav     bool              `json:"hide_nav"`    // hide nav item when not installed
 	BaseName    string            `json:"base_name"`
 	Port        int               `json:"port"`
 	Hosts       []ISCSIHost       `json:"hosts"`
@@ -114,6 +115,7 @@ type AppConfig struct {
 	MaxSmbdProcesses   int    `json:"max_smbd_processes,omitempty"`   // Samba max smbd processes (0 = use default 100)
 	TreeMapSchedule    string      `json:"treemap_schedule,omitempty"`     // daily | weekly | biweekly | monthly | "" (off)
 	TreeMapHour        int         `json:"treemap_hour"`                   // hour of day to run treemap scan (0-23)
+	TreeMapMinute      int         `json:"treemap_minute"`                 // minute of hour to run treemap scan (0-59)
 	ISCSI              ISCSIConfig      `json:"iscsi,omitempty"`
 	MinIO              MinIOConfig      `json:"minio,omitempty"`
 	Replication        []ReplicationTask `json:"replication,omitempty"`

@@ -623,6 +623,10 @@
             </div>
             <span id="prereq-iscsi-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-iscsi-btn" class="btn btn-ghost btn-sm" onclick="enableISCSIFeature()" style="font-size:12px;white-space:nowrap;">Enable iSCSI Feature</button>
+            <div style="position:relative;" id="prereq-iscsi-menu-wrap" class="hidden">
+              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('iscsi')" style="padding:4px 9px;font-size:15px;line-height:1;" title="Options">☰</button>
+              <div id="prereq-iscsi-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
+            </div>
           </div>
           <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
             <div style="flex:1;">
@@ -632,6 +636,10 @@
             </div>
             <span id="prereq-minio-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-minio-btn" class="btn btn-ghost btn-sm" onclick="enableMinIOFeature()" style="font-size:12px;white-space:nowrap;">Enable S3 Object Server</button>
+            <div style="position:relative;" id="prereq-minio-menu-wrap" class="hidden">
+              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('minio')" style="padding:4px 9px;font-size:15px;line-height:1;" title="Options">☰</button>
+              <div id="prereq-minio-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -1072,13 +1080,23 @@
         <div class="page-header">
           <h2>Settings</h2>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:20px;align-items:start;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:20px;">
 
         <!-- ── 1. General (always first) ── -->
         <div class="card">
           <h3 style="margin-bottom:20px;">General</h3>
           <div id="settings-alert" class="alert alert-error hidden"></div>
           <div id="settings-ok" class="alert alert-success hidden" style="margin-bottom:16px;"></div>
+
+          <!-- Theme -->
+          <div class="form-group">
+            <label>Login Screen Theme</label>
+            <select id="settings-theme" style="max-width:260px;">
+              <option value="dark">Dark Theme</option>
+              <option value="light">Light Theme</option>
+              <option value="auto">Auto (browser preference)</option>
+            </select>
+          </div>
 
           <!-- Storage unit -->
           <div class="form-group">
@@ -1101,8 +1119,11 @@
           <!-- Port -->
           <div class="form-group">
             <label>Server Port</label>
-            <input type="number" id="settings-port" min="1025" max="65535" value="8443">
-            <div class="text-3 text-sm" style="margin-top:4px;">Requires a server restart to take effect.</div>
+            <input type="number" id="settings-port" min="1025" max="65535" value="8443" oninput="checkPortChanged()">
+            <div style="margin-top:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span class="text-3 text-sm">A quick Portal restart is required to apply the new port.</span>
+              <button id="btn-restart-for-port" class="btn btn-ghost btn-sm hidden" style="padding:2px 10px;font-size:12px;" onclick="saveAndRestartPortal()">Save and Restart Now</button>
+            </div>
           </div>
 
           <!-- Samba (SMB) -->
@@ -1183,7 +1204,9 @@
               at
               <select id="treemap-hour-select" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text-1);padding:5px 8px;font-size:13px;cursor:pointer;" onchange="setTreeMapSchedule()">
               </select>
-              :00
+              :
+              <select id="treemap-minute-select" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text-1);padding:5px 8px;font-size:13px;cursor:pointer;" onchange="setTreeMapSchedule()">
+              </select>
             </div>
           </div>
         </div>
@@ -3447,33 +3470,29 @@
         <label>Backend Dataset <i class="info-tip" data-tip="The ZFS dataset whose mountpoint MinIO will use to store all S3 objects. ZFSNAS will ensure the minio-user owns this directory. Choose a dataset with enough free space."></i></label>
         <select id="s3cfg-dataset"><option value="">Loading datasets…</option></select>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="form-group">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:end;">
+        <div class="form-group" style="margin-bottom:0;">
           <label>API Port <i class="info-tip" data-tip="TCP port MinIO listens on for S3 API requests (AWS CLI, SDKs, s3cmd, etc.). Default: 9000."></i></label>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="number" id="s3cfg-port" value="9000" min="1" max="65535" style="flex:1;">
-            <label style="display:flex;align-items:center;gap:5px;font-size:13px;font-weight:normal;cursor:pointer;white-space:nowrap;">
-              <input type="checkbox" id="s3cfg-api-tls"> SSL/TLS
-            </label>
-          </div>
+          <input type="number" id="s3cfg-port" value="9000" min="1" max="65535">
         </div>
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom:0;">
           <label>Console Port <i class="info-tip" data-tip="TCP port for the built-in MinIO web management console. Must differ from the API port. Default: 9001."></i></label>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="number" id="s3cfg-console-port" value="9001" min="1" max="65535" style="flex:1;">
-            <label style="display:flex;align-items:center;gap:5px;font-size:13px;font-weight:normal;cursor:pointer;white-space:nowrap;">
-              <input type="checkbox" id="s3cfg-console-tls"> SSL/TLS
-            </label>
-          </div>
+          <input type="number" id="s3cfg-console-port" value="9001" min="1" max="65535">
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>SSL/TLS <i class="info-tip" data-tip="Enable TLS on both the API and console ports. ZFSNAS generates a self-signed certificate covering all local IPs and installs it automatically.&#10;&#10;To use your own certificate instead, place your files here after saving:&#10;  /var/lib/minio/.minio/certs/public.crt&#10;  /var/lib/minio/.minio/certs/private.key&#10;&#10;Then restart the MinIO service from this page."></i></label>
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 0;font-size:14px;font-weight:normal;cursor:pointer;">
+            <input type="checkbox" id="s3cfg-tls"> Enable SSL/TLS
+          </label>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="form-group">
-          <label>Root User <i class="info-tip" data-tip="MinIO root admin username (MINIO_ROOT_USER). This is the superuser for MinIO, separate from ZFSNAS portal users. Minimum 3 characters."></i></label>
+          <label>Admin User <i class="info-tip" data-tip="MinIO administrator username (MINIO_ROOT_USER). This is the superuser for MinIO, separate from ZFSNAS portal users. Minimum 3 characters."></i></label>
           <input type="text" id="s3cfg-root-user" placeholder="minioadmin" autocomplete="off">
         </div>
         <div class="form-group">
-          <label>Root Password <i class="info-tip" data-tip="MinIO root password (MINIO_ROOT_PASSWORD). Minimum 8 characters. Leave blank to keep the existing password."></i></label>
+          <label>Admin Password <i class="info-tip" data-tip="MinIO administrator password (MINIO_ROOT_PASSWORD). Minimum 8 characters. Leave blank to keep the existing password.&#10;&#10;⚠ MinIO stores this credential in cleartext in /etc/default/minio. ZFSNAS automatically restricts access to that file."></i></label>
           <input type="password" id="s3cfg-root-password" placeholder="Leave blank to keep existing" autocomplete="new-password">
         </div>
       </div>
@@ -3643,6 +3662,49 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="document.getElementById('modal-delete-s3-bucket').classList.add('hidden')">Cancel</button>
       <button id="btn-s3-delete-confirm" class="btn" style="background:var(--accent-danger);color:#fff;" onclick="_executeDeleteS3Bucket()">Delete Forever</button>
+    </div>
+  </div>
+</div>
+
+<!-- Uninstall Optional Feature Modal -->
+<div class="modal-backdrop hidden" id="modal-uninstall-feature">
+  <div class="modal" style="max-width:440px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">⚠ Uninstall Feature</h3>
+      <button class="modal-close" onclick="_closeUninstallModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="uninstall-feat-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">
+        You are about to uninstall <strong id="uninstall-feat-name" style="font-family:monospace;color:var(--accent-danger);"></strong>.
+      </p>
+      <p style="font-size:13px;color:var(--text-2);margin-bottom:6px;" id="uninstall-feat-desc"></p>
+      <p style="font-size:12px;color:var(--text-3);">Your configuration will be preserved. You can re-enable this feature at any time from the Prerequisites page.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="_closeUninstallModal()">Cancel</button>
+      <button id="btn-uninstall-feat-confirm" class="btn" style="background:var(--accent-danger);color:#fff;" onclick="_executeUninstallFeature()">Uninstall</button>
+    </div>
+  </div>
+</div>
+
+<!-- S3 Service Action Error Modal -->
+<div class="modal-backdrop hidden" id="modal-s3-svc-error">
+  <div class="modal" style="max-width:480px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">⚠ Service Action Failed</h3>
+      <button class="modal-close" onclick="document.getElementById('modal-s3-svc-error').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="s3-svc-err-hint" style="font-size:13px;color:var(--text-2);margin-bottom:14px;line-height:1.6;"></p>
+      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:10px 12px;">
+        <p style="font-size:11px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em;">System error</p>
+        <pre id="s3-svc-err-detail" style="font-size:12px;color:var(--text-2);white-space:pre-wrap;word-break:break-all;margin:0;"></pre>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-s3-svc-error').classList.add('hidden')">Close</button>
+      <button id="s3-svc-err-cfg-btn" class="btn btn-primary btn-sm hidden" onclick="document.getElementById('modal-s3-svc-error').classList.add('hidden'); openS3ConfigureModal()">⚙ Open Configure</button>
     </div>
   </div>
 </div>
@@ -4729,8 +4791,9 @@ async function loadPrereqs() {
 }
 
 async function _updateISCSIPrereqStatus() {
-  const statusEl = document.getElementById('prereq-iscsi-status');
-  const btnEl    = document.getElementById('prereq-iscsi-btn');
+  const statusEl  = document.getElementById('prereq-iscsi-status');
+  const btnEl     = document.getElementById('prereq-iscsi-btn');
+  const menuWrap  = document.getElementById('prereq-iscsi-menu-wrap');
   if (!statusEl) return;
   try {
     const r = await fetch('/api/iscsi/status');
@@ -4741,11 +4804,19 @@ async function _updateISCSIPrereqStatus() {
       statusEl.style.color = '#30d158';
       statusEl.style.fontWeight = '600';
       if (btnEl) btnEl.style.display = 'none';
+      if (menuWrap) {
+        menuWrap.classList.remove('hidden');
+        _renderOptFeatMenu('iscsi', true, s.hide_nav);
+      }
     } else {
       statusEl.textContent = 'Not installed';
       statusEl.style.color = 'var(--text-3)';
       statusEl.style.fontWeight = '';
       if (btnEl) btnEl.style.display = '';
+      if (menuWrap) {
+        menuWrap.classList.remove('hidden');
+        _renderOptFeatMenu('iscsi', false, s.hide_nav);
+      }
     }
   } catch (_) {}
 }
@@ -5221,6 +5292,8 @@ async function loadAudit() {
 }
 
 // ===== Settings =====
+let _savedPort = null;
+
 async function loadSettings() {
   try {
     const resp = await fetch('/api/settings');
@@ -5228,7 +5301,9 @@ async function loadSettings() {
     const data = await resp.json();
     appSettings = { ...appSettings, ...data };
     const portEl = document.getElementById('settings-port');
-    if (portEl) portEl.value = appSettings.port;
+    if (portEl) { portEl.value = appSettings.port; _savedPort = appSettings.port; }
+    const themeEl = document.getElementById('settings-theme');
+    if (themeEl) themeEl.value = localStorage.getItem('login_theme') || 'dark';
     selectStorageUnit(appSettings.storage_unit || 'gb', false);
     const liveToggle = document.getElementById('live-update-toggle');
     if (liveToggle) liveToggle.checked = !!appSettings.live_update_enabled;
@@ -5239,25 +5314,53 @@ async function loadSettings() {
   loadTreeMapScheduleSettings();
 }
 
+function checkPortChanged() {
+  const portEl = document.getElementById('settings-port');
+  const btn = document.getElementById('btn-restart-for-port');
+  if (!portEl || !btn) return;
+  const changed = _savedPort !== null && parseInt(portEl.value) !== _savedPort;
+  btn.classList.toggle('hidden', !changed);
+}
+
+async function saveAndRestartPortal() {
+  const btn = document.getElementById('btn-restart-for-port');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  await saveSettings();
+  if (btn) btn.textContent = 'Restarting…';
+  try {
+    await fetch('/api/system/restart-portal', { method: 'POST' });
+  } catch {}
+}
+
 async function loadTreeMapScheduleSettings() {
   try {
     const resp = await fetch('/api/treemap/schedule');
     if (!resp.ok) return;
     const sched = await resp.json();
-    const schedSel = document.getElementById('treemap-schedule-select');
-    const hourSel  = document.getElementById('treemap-hour-select');
-    const hourWrap = document.getElementById('treemap-hour-wrap');
+    const schedSel  = document.getElementById('treemap-schedule-select');
+    const hourSel   = document.getElementById('treemap-hour-select');
+    const minuteSel = document.getElementById('treemap-minute-select');
+    const hourWrap  = document.getElementById('treemap-hour-wrap');
     if (hourSel && hourSel.options.length === 0) {
       for (let h = 0; h < 24; h++) {
         const opt = document.createElement('option');
         opt.value = h;
-        opt.textContent = String(h).padStart(2, '0') + ':00';
+        opt.textContent = String(h).padStart(2, '0');
         hourSel.appendChild(opt);
       }
     }
-    if (schedSel) schedSel.value = sched.schedule || '';
-    if (hourSel)  hourSel.value  = sched.hour ?? 2;
-    if (hourWrap) hourWrap.style.display = sched.schedule ? 'flex' : 'none';
+    if (minuteSel && minuteSel.options.length === 0) {
+      for (let m = 0; m < 60; m++) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = String(m).padStart(2, '0');
+        minuteSel.appendChild(opt);
+      }
+    }
+    if (schedSel)  schedSel.value  = sched.schedule || '';
+    if (hourSel)   hourSel.value   = sched.hour ?? 2;
+    if (minuteSel) minuteSel.value = sched.minute ?? 0;
+    if (hourWrap)  hourWrap.style.display = sched.schedule ? 'flex' : 'none';
   } catch {}
 }
 
@@ -5297,9 +5400,6 @@ async function saveTimezone() {
   if (!resp.ok) {
     alertEl.textContent = data.error || 'Failed to set timezone.';
     alertEl.classList.remove('hidden');
-  } else {
-    okEl.textContent = `Timezone set to ${data.timezone}.`;
-    okEl.classList.remove('hidden');
   }
 }
 
@@ -5322,6 +5422,10 @@ async function saveSettings() {
   alertEl.classList.add('hidden');
   okEl.classList.add('hidden');
 
+  // Login screen theme is localStorage-only — save it immediately.
+  const themeEl = document.getElementById('settings-theme');
+  if (themeEl) saveLoginTheme(themeEl.value);
+
   const portEl = document.getElementById('settings-port');
   const port   = portEl ? parseInt(portEl.value) : appSettings.port;
 
@@ -5335,10 +5439,9 @@ async function saveSettings() {
     alertEl.textContent = data.error || 'Failed to save settings.';
     alertEl.classList.remove('hidden');
   } else {
-    okEl.textContent = data.message || 'Settings saved.';
-    okEl.classList.remove('hidden');
-    // Re-render pool bar with updated units.
     renderPoolBar();
+    _savedPort = port;
+    checkPortChanged();
   }
 }
 
@@ -5366,8 +5469,6 @@ async function saveSmbSettings() {
     alertEl.classList.remove('hidden');
   } else {
     appSettings.max_smbd_processes = val;
-    okEl.textContent = 'Samba settings applied.';
-    okEl.classList.remove('hidden');
   }
 }
 
@@ -6067,7 +6168,7 @@ async function updateServiceNavDots() {
 
     applyDot('nav-smb-dot',  smb,   smbCount);
     applyDot('nav-nfs-dot',  nfs,   nfsCount);
-    applyDot('nav-iscsi-dot', iscsi && { status: iscsi.service_active ? 'active' : iscsi.service_status }, iscsiCount);
+    applyDot('nav-iscsi-dot', (iscsi && iscsi.prereqs_installed) ? { status: iscsi.service_active ? 'active' : iscsi.service_status } : null, iscsiCount);
   } catch (_) {}
 }
 
@@ -6810,12 +6911,13 @@ async function setScrubSchedule() {
 async function setTreeMapSchedule() {
   const schedule = document.getElementById('treemap-schedule-select')?.value ?? '';
   const hour     = parseInt(document.getElementById('treemap-hour-select')?.value ?? '2', 10);
+  const minute   = parseInt(document.getElementById('treemap-minute-select')?.value ?? '0', 10);
   const hourWrap = document.getElementById('treemap-hour-wrap');
   if (hourWrap) hourWrap.style.display = schedule ? 'flex' : 'none';
   await fetch('/api/treemap/schedule', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ schedule, hour }),
+    body: JSON.stringify({ schedule, hour, minute }),
   });
 }
 
@@ -10023,6 +10125,9 @@ function toggleShareRecycle() {
 function closeShareModal() {
   document.getElementById('modal-share').classList.add('hidden');
   shareEditName = null;
+  const submitBtn = document.getElementById('share-submit-btn');
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Create Share';
 }
 
 async function submitShare(e) {
@@ -10487,6 +10592,7 @@ async function loadISCSINavStatus() {
     if (!btn) return;
     if (s.prereqs_installed) {
       delete btn.dataset.prereqsMissing;
+      btn.style.display = '';
       btn.style.opacity = '';
       btn.title = 'iSCSI Shares';
       // Show dot only when at least one non-orphaned share is configured.
@@ -10505,6 +10611,7 @@ async function loadISCSINavStatus() {
       }
     } else {
       btn.dataset.prereqsMissing = '1';
+      btn.style.display = s.hide_nav ? 'none' : '';
       btn.style.opacity = '0.45';
       btn.title = 'iSCSI requires targetcli-fb — see Prerequisites';
       if (dot) dot.style.display = 'none';
@@ -11276,6 +11383,7 @@ function _updateS3NavDot(status) {
 
   if (!status.prereqs_installed) {
     btn.dataset.prereqsMissing = '1';
+    btn.style.display = status.hide_nav ? 'none' : '';
     btn.style.opacity = '0.45';
     btn.title = 'S3 Object Server requires MinIO — see Prerequisites';
     if (dot) dot.style.display = 'none';
@@ -11283,6 +11391,7 @@ function _updateS3NavDot(status) {
   }
 
   delete btn.dataset.prereqsMissing;
+  btn.style.display = '';
   btn.style.opacity = '';
   btn.title = 'S3 Buckets';
 
@@ -11334,11 +11443,10 @@ async function loadS3Page() {
       badge.style.background  = s.service_active ? 'rgba(48,209,88,0.15)'  : 'rgba(255,69,58,0.15)';
       badge.style.color       = s.service_active ? '#30d158' : '#ff453a';
     }
-    // Set MinIO portal link to the console port with the correct scheme.
+    // Set MinIO portal link using the correct scheme.
     const portalLink = document.getElementById('s3-portal-link');
     if (portalLink && s.console_port) {
-      const scheme = s.console_tls ? 'https' : 'http';
-      portalLink.href = scheme + '://' + window.location.hostname + ':' + s.console_port;
+      portalLink.href = (s.tls ? 'https' : 'http') + '://' + window.location.hostname + ':' + s.console_port;
     }
 
     await loadS3Buckets();
@@ -11388,6 +11496,21 @@ function s3ServiceMenu() {
   if (d) d.classList.toggle('hidden');
 }
 
+function _showS3SvcError(action, msg) {
+  const hint = document.getElementById('s3-svc-err-hint');
+  const detail = document.getElementById('s3-svc-err-detail');
+  const cfgBtn = document.getElementById('s3-svc-err-cfg-btn');
+  detail.textContent = msg;
+  if (action === 'start' || action === 'restart') {
+    hint.textContent = 'MinIO could not start. This usually happens when the S3 Object Server has not been configured yet, or when the configuration contains invalid values (wrong dataset path, port conflict, missing credentials). Make sure all settings are correct in the Configure menu.';
+    cfgBtn.classList.remove('hidden');
+  } else {
+    hint.textContent = 'The MinIO service action failed. Check that the service is installed correctly and that sufficient permissions are available.';
+    cfgBtn.classList.add('hidden');
+  }
+  document.getElementById('modal-s3-svc-error').classList.remove('hidden');
+}
+
 async function s3ServiceAction(action) {
   const d = document.getElementById('s3-svc-dropdown');
   if (d) d.classList.add('hidden');
@@ -11400,11 +11523,11 @@ async function s3ServiceAction(action) {
       body: JSON.stringify({ action }),
     });
     const d2 = await r.json();
-    if (!r.ok) { alert('Error: ' + (d2.error || JSON.stringify(d2))); return; }
+    if (!r.ok) { _showS3SvcError(action, d2.error || JSON.stringify(d2)); return; }
     await loadS3Page();
     loadS3NavStatus();
   } catch (e) {
-    alert('Error: ' + e.message);
+    _showS3SvcError(action, e.message);
   } finally {
     removeActiveJob(jobId);
   }
@@ -11432,9 +11555,8 @@ async function openS3ConfigureModal() {
       .join('');
 
   document.getElementById('s3cfg-port').value         = cfg.port         || 9000;
-  document.getElementById('s3cfg-api-tls').checked    = !!cfg.api_tls;
   document.getElementById('s3cfg-console-port').value = cfg.console_port || 9001;
-  document.getElementById('s3cfg-console-tls').checked = !!cfg.console_tls;
+  document.getElementById('s3cfg-tls').checked        = !!cfg.tls;
   document.getElementById('s3cfg-root-user').value    = cfg.root_user    || 'minioadmin';
   document.getElementById('s3cfg-root-password').value = '';
   document.getElementById('s3cfg-region').value       = cfg.region       || 'us-east-1';
@@ -11456,9 +11578,8 @@ async function submitS3Configure() {
   const body = {
     dataset_path:  document.getElementById('s3cfg-dataset').value,
     port:          parseInt(document.getElementById('s3cfg-port').value),
-    api_tls:       document.getElementById('s3cfg-api-tls').checked,
     console_port:  parseInt(document.getElementById('s3cfg-console-port').value),
-    console_tls:   document.getElementById('s3cfg-console-tls').checked,
+    tls:           document.getElementById('s3cfg-tls').checked,
     root_user:     document.getElementById('s3cfg-root-user').value.trim(),
     root_password: document.getElementById('s3cfg-root-password').value,
     region:        document.getElementById('s3cfg-region').value.trim() || 'us-east-1',
@@ -11779,6 +11900,7 @@ async function _executeDeleteS3Bucket() {
 async function _updateMinIOPrereqStatus() {
   const statusEl = document.getElementById('prereq-minio-status');
   const btnEl    = document.getElementById('prereq-minio-btn');
+  const menuWrap = document.getElementById('prereq-minio-menu-wrap');
   if (!statusEl) return;
   try {
     const r = await fetch('/api/minio/status');
@@ -11789,8 +11911,126 @@ async function _updateMinIOPrereqStatus() {
       statusEl.style.color   = '#30d158';
       statusEl.style.fontWeight = '600';
       if (btnEl) btnEl.style.display = 'none';
+      if (menuWrap) {
+        menuWrap.classList.remove('hidden');
+        _renderOptFeatMenu('minio', true, s.hide_nav);
+      }
+    } else {
+      statusEl.textContent   = 'Not installed';
+      statusEl.style.color   = 'var(--text-3)';
+      statusEl.style.fontWeight = '';
+      if (btnEl) btnEl.style.display = '';
+      if (menuWrap) {
+        menuWrap.classList.remove('hidden');
+        _renderOptFeatMenu('minio', false, s.hide_nav);
+      }
     }
   } catch (_) {}
+}
+
+function _renderOptFeatMenu(feature, installed, hidden) {
+  const dd = document.getElementById('prereq-' + feature + '-dropdown');
+  if (!dd) return;
+  const pkg = feature === 'minio' ? 'minio' : 'targetcli-fb';
+  let html = '';
+  if (installed) {
+    html = `<button onclick="uninstallFeature('${pkg}')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🗑 Uninstall Feature</button>`;
+  } else if (hidden) {
+    html = `<button onclick="setFeatureNavVisibility('${feature}', false)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">👁 Unhide from menu</button>`;
+  } else {
+    html = `<button onclick="setFeatureNavVisibility('${feature}', true)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🙈 Hide from menu</button>`;
+  }
+  dd.innerHTML = html;
+}
+
+function _optFeatMenu(feature) {
+  const dd = document.getElementById('prereq-' + feature + '-dropdown');
+  if (dd) dd.classList.toggle('hidden');
+}
+
+async function setFeatureNavVisibility(feature, hidden) {
+  ['iscsi', 'minio'].forEach(f => {
+    const dd = document.getElementById('prereq-' + f + '-dropdown');
+    if (dd) dd.classList.add('hidden');
+  });
+  try {
+    await fetch('/api/prereqs/feature-nav', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ feature, hidden }),
+    });
+    await _updateISCSIPrereqStatus();
+    await _updateMinIOPrereqStatus();
+    loadISCSINavStatus();
+    loadS3NavStatus();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+let _uninstallPkg = '';
+const _uninstallDesc = {
+  'targetcli-fb': 'The iSCSI service will be stopped and targetcli-fb will be removed from the system.',
+  'minio':        'The MinIO service will be stopped and the minio and mc binaries will be removed from the system.',
+};
+
+function uninstallFeature(pkg) {
+  ['iscsi', 'minio'].forEach(f => {
+    const dd = document.getElementById('prereq-' + f + '-dropdown');
+    if (dd) dd.classList.add('hidden');
+  });
+  _uninstallPkg = pkg;
+  document.getElementById('uninstall-feat-name').textContent = pkg;
+  document.getElementById('uninstall-feat-desc').textContent = _uninstallDesc[pkg] || '';
+  document.getElementById('uninstall-feat-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-uninstall-feat-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Uninstall';
+  document.getElementById('modal-uninstall-feature').classList.remove('hidden');
+}
+
+function _closeUninstallModal() {
+  document.getElementById('modal-uninstall-feature').classList.add('hidden');
+}
+
+async function _executeUninstallFeature() {
+  const pkg = _uninstallPkg;
+  if (!pkg) return;
+  const btn = document.getElementById('btn-uninstall-feat-confirm');
+  const alertEl = document.getElementById('uninstall-feat-alert');
+  btn.disabled = true;
+  btn.textContent = 'Uninstalling…';
+  alertEl.classList.add('hidden');
+  const jobId = 'uninstall-' + pkg + '-' + Date.now();
+  addActiveJob(jobId, 'Uninstalling ' + pkg + '…');
+  try {
+    const r = await fetch('/api/prereqs/uninstall', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ package: pkg }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      alertEl.textContent = d.error || JSON.stringify(d);
+      alertEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = 'Uninstall';
+      return;
+    }
+    _closeUninstallModal();
+    _uninstallPkg = '';
+    await _updateISCSIPrereqStatus();
+    await _updateMinIOPrereqStatus();
+    loadISCSINavStatus();
+    loadS3NavStatus();
+  } catch (e) {
+    alertEl.textContent = 'Error: ' + e.message;
+    alertEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Uninstall';
+  } finally {
+    removeActiveJob(jobId);
+  }
 }
 
 async function enableMinIOFeature() {
@@ -13057,8 +13297,13 @@ document.addEventListener('click', function(e) {
 })();
 
 // ===== Theme toggle =====
+const _themeMediaQuery = window.matchMedia('(prefers-color-scheme: light)');
+
 function applyTheme(theme) {
-  if (theme === 'light') {
+  const effective = theme === 'auto'
+    ? (_themeMediaQuery.matches ? 'light' : 'dark')
+    : theme;
+  if (effective === 'light') {
     document.body.classList.add('light');
     document.getElementById('theme-icon-sun').style.display = 'none';
     document.getElementById('theme-icon-moon').style.display = '';
@@ -13068,11 +13313,20 @@ function applyTheme(theme) {
     document.getElementById('theme-icon-moon').style.display = 'none';
   }
 }
+function saveLoginTheme(theme) {
+  localStorage.setItem('login_theme', theme);
+}
+function setTheme(theme) {
+  localStorage.setItem('theme', theme);
+  applyTheme(theme);
+}
 function toggleTheme() {
   const next = document.body.classList.contains('light') ? 'dark' : 'light';
-  localStorage.setItem('theme', next);
-  applyTheme(next);
+  setTheme(next);
 }
+_themeMediaQuery.addEventListener('change', () => {
+  if ((localStorage.getItem('theme') || 'dark') === 'auto') applyTheme('auto');
+});
 applyTheme(localStorage.getItem('theme') || 'dark');
 
 // ── Wipe Disk ─────────────────────────────────────────────────────────────────

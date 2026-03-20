@@ -12,6 +12,15 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <script>
+    (function() {
+      var theme = localStorage.getItem('login_theme') || 'dark';
+      var effective = theme === 'auto'
+        ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+        : theme;
+      if (effective === 'light') document.body.classList.add('light');
+    })();
+  </script>
   <div class="auth-page">
     <div class="auth-card">
 
