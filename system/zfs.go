@@ -719,14 +719,21 @@ func PrepareZFSPartition(device string) (string, error) {
 // dedup: "off" | "on" | "verify"
 // keyFilePath: absolute path to 32-byte raw key file, or "" for no encryption
 func CreatePool(name, layout string, ashift int, compression, dedup string, devices []string, keyFilePath string) error {
-	// Prepare each disk and collect the stable partuuid paths.
-	partuuidPaths := make([]string, 0, len(devices))
+	// Prepare each disk, then resolve the partuuid symlink to the real partition
+	// device path before passing to zpool create.  On some systems the symlink
+	// exists but its target is not yet accessible when zpool create runs,
+	// causing "cannot resolve path" errors.
+	devPaths := make([]string, 0, len(devices))
 	for _, dev := range devices {
 		puPath, err := PrepareZFSPartition(dev)
 		if err != nil {
 			return fmt.Errorf("prepare %s: %w", dev, err)
 		}
-		partuuidPaths = append(partuuidPaths, puPath)
+		realPath, err := filepath.EvalSymlinks(puPath)
+		if err != nil {
+			realPath = puPath // fall back to the symlink path if resolution fails
+		}
+		devPaths = append(devPaths, realPath)
 	}
 
 	args := []string{"zpool", "create",
@@ -750,7 +757,7 @@ func CreatePool(name, layout string, ashift int, compression, dedup string, devi
 	if layout == "mirror" || layout == "raidz1" || layout == "raidz2" {
 		args = append(args, layout)
 	}
-	args = append(args, partuuidPaths...)
+	args = append(args, devPaths...)
 	debugLog("zpool create: %v", args)
 	out, err := exec.Command("sudo", args...).CombinedOutput()
 	if err != nil {
