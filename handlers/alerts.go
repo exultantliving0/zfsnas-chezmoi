@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -169,7 +170,56 @@ var (
 	healthEvPoolStates     = map[string]string{}
 	healthEvMemberStates   = map[string][]string{}
 	lastNotifiedPoolHealth = map[string]string{} // pool name → health at last notification send
+	healthStatePath        string                // set by StartHealthPoller
 )
+
+type persistedHealthState struct {
+	PoolStates     map[string]string   `json:"pool_states"`
+	MemberStates   map[string][]string `json:"member_states"`
+	NotifiedHealth map[string]string   `json:"notified_health"`
+}
+
+func loadHealthState(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // file doesn't exist yet — start fresh
+	}
+	var s persistedHealthState
+	if err := json.Unmarshal(data, &s); err != nil {
+		log.Printf("alerts: failed to parse health state: %v", err)
+		return
+	}
+	if s.PoolStates != nil {
+		healthEvPoolStates = s.PoolStates
+	}
+	if s.MemberStates != nil {
+		healthEvMemberStates = s.MemberStates
+	}
+	if s.NotifiedHealth != nil {
+		lastNotifiedPoolHealth = s.NotifiedHealth
+	}
+}
+
+// saveHealthState writes the current health maps to disk. Must be called under healthEvMu.
+func saveHealthState() {
+	if healthStatePath == "" {
+		return
+	}
+	s := persistedHealthState{
+		PoolStates:     healthEvPoolStates,
+		MemberStates:   healthEvMemberStates,
+		NotifiedHealth: lastNotifiedPoolHealth,
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		return
+	}
+	tmp := healthStatePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, healthStatePath)
+}
 
 // LogPoolHealthEvents checks for pool/disk state changes and writes audit entries.
 func LogPoolHealthEvents(pool *system.Pool) {
@@ -202,6 +252,8 @@ func LogPoolHealthEvents(pool *system.Pool) {
 			Result:  audit.ResultOK,
 			Details: "pool health restored: " + currHealth,
 		})
+		// Re-arm notification so the next degradation triggers a fresh alert.
+		delete(lastNotifiedPoolHealth, pool.Name)
 	}
 	healthEvPoolStates[pool.Name] = currHealth
 
@@ -241,11 +293,17 @@ func LogPoolHealthEvents(pool *system.Pool) {
 		}
 	}
 	healthEvMemberStates[pool.Name] = append([]string{}, pool.MemberStatuses...)
+	saveHealthState()
 }
 
 // StartHealthPoller launches a background goroutine that checks pool health
 // and disk wearout every 5 minutes and dispatches alerts to all enabled targets.
 func StartHealthPoller(configDir string) {
+	healthEvMu.Lock()
+	healthStatePath = configDir + "/health_state.json"
+	loadHealthState(healthStatePath)
+	healthEvMu.Unlock()
+
 	go func() {
 		lastWearoutAlerted  := map[string]time.Time{}
 		lastSmartAlerted    := map[string]time.Time{}
@@ -317,6 +375,7 @@ func runHealthCheck(
 			if isBadPoolHealth(pool.Health) && prevNotified != pool.Health {
 				healthEvMu.Lock()
 				lastNotifiedPoolHealth[pool.Name] = pool.Health
+				saveHealthState()
 				healthEvMu.Unlock()
 				name, h := pool.Name, pool.Health
 				go func() {
