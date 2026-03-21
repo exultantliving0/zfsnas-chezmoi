@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 	"zfsnas/internal/alerts"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
+	"zfsnas/system"
 
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
@@ -64,23 +66,25 @@ func HandleListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type safeUser struct {
-		ID          string    `json:"id"`
-		Username    string    `json:"username"`
-		Email       string    `json:"email"`
-		Role        string    `json:"role"`
-		CreatedAt   time.Time `json:"created_at"`
-		TOTPEnabled bool      `json:"totp_enabled"`
+		ID            string    `json:"id"`
+		Username      string    `json:"username"`
+		Email         string    `json:"email"`
+		Role          string    `json:"role"`
+		CreatedAt     time.Time `json:"created_at"`
+		TOTPEnabled   bool      `json:"totp_enabled"`
+		SMBHomeFolder bool      `json:"smb_home_folder"`
 	}
 
 	out := make([]safeUser, len(users))
 	for i, u := range users {
 		out[i] = safeUser{
-			ID:          u.ID,
-			Username:    u.Username,
-			Email:       u.Email,
-			Role:        u.Role,
-			CreatedAt:   u.CreatedAt,
-			TOTPEnabled: u.TOTPEnabled,
+			ID:            u.ID,
+			Username:      u.Username,
+			Email:         u.Email,
+			Role:          u.Role,
+			CreatedAt:     u.CreatedAt,
+			TOTPEnabled:   u.TOTPEnabled,
+			SMBHomeFolder: u.SMBHomeFolder,
 		}
 	}
 	jsonOK(w, out)
@@ -89,10 +93,11 @@ func HandleListUsers(w http.ResponseWriter, r *http.Request) {
 // HandleCreateUser creates a new user (admin only).
 func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Username      string `json:"username"`
+		Email         string `json:"email"`
+		Password      string `json:"password"`
+		Role          string `json:"role"`
+		SMBHomeFolder bool   `json:"smb_home_folder"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -138,18 +143,35 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := config.User{
-		ID:           newID(),
-		Username:     req.Username,
-		Email:        req.Email,
-		PasswordHash: passwordHash,
-		Role:         req.Role,
-		CreatedAt:    time.Now(),
+		ID:            newID(),
+		Username:      req.Username,
+		Email:         req.Email,
+		PasswordHash:  passwordHash,
+		Role:          req.Role,
+		CreatedAt:     time.Now(),
+		SMBHomeFolder: req.SMBHomeFolder,
 	}
 	users = append(users, user)
 
 	if err := config.SaveUsers(users); err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to save user")
 		return
+	}
+
+	// Create SMB home directory and update smb.conf valid users if applicable.
+	if appCfg, err := config.LoadAppConfig(); err == nil && appCfg.SMBHomeDataset != "" {
+		if req.SMBHomeFolder {
+			if err := system.EnsureSMBHomeDir(appCfg.SMBHomeDataset, req.Username); err != nil {
+				log.Printf("users: EnsureSMBHomeDir for %s: %v", req.Username, err)
+			}
+		}
+		if system.IsSambaInstalled() {
+			if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames()); err != nil {
+				log.Printf("users: ApplySmbGlobal: %v", err)
+			} else {
+				_ = system.ReloadSamba()
+			}
+		}
 	}
 
 	sess := MustSession(r)
@@ -188,9 +210,10 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Email         string `json:"email"`
+		Password      string `json:"password"`
+		Role          string `json:"role"`
+		SMBHomeFolder *bool  `json:"smb_home_folder"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -220,9 +243,34 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		user.PasswordHash = string(hash)
 	}
 
+	enabledHome := false
+	if req.SMBHomeFolder != nil {
+		wasEnabled := user.SMBHomeFolder
+		user.SMBHomeFolder = *req.SMBHomeFolder
+		enabledHome = *req.SMBHomeFolder && !wasEnabled
+	}
+
 	if err := config.SaveUsers(users); err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to save users")
 		return
+	}
+
+	// Create SMB home directory when the flag is newly enabled.
+	if req.SMBHomeFolder != nil {
+		if appCfg, err := config.LoadAppConfig(); err == nil && appCfg.SMBHomeDataset != "" {
+			if enabledHome {
+				if err := system.EnsureSMBHomeDir(appCfg.SMBHomeDataset, user.Username); err != nil {
+					log.Printf("users: EnsureSMBHomeDir for %s: %v", user.Username, err)
+				}
+			}
+			if system.IsSambaInstalled() {
+				if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames()); err != nil {
+					log.Printf("users: ApplySmbGlobal: %v", err)
+				} else {
+					_ = system.ReloadSamba()
+				}
+			}
+		}
 	}
 
 	sess := MustSession(r)

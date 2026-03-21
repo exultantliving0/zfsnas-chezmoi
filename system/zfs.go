@@ -206,7 +206,7 @@ func zpoolStatusDevices(poolName, section string, withFullPaths bool) []string {
 		"ONLINE": true, "DEGRADED": true, "FAULTED": true,
 		"OFFLINE": true, "REMOVED": true, "UNAVAIL": true,
 	}
-	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-"}
+	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
 	skipSections := map[string]bool{"cache": true, "log": true, "spare": true}
 
 	inConfig := false
@@ -353,7 +353,7 @@ func poolMemberRoles(poolName string, count int) []string {
 		"ONLINE": true, "DEGRADED": true, "FAULTED": true,
 		"OFFLINE": true, "REMOVED": true, "UNAVAIL": true,
 	}
-	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-"}
+	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
 	skipSections := map[string]bool{"cache": true, "log": true, "spare": true}
 	inConfig, inData, seenPool := false, true, false
 	poolIndent := -1
@@ -474,7 +474,7 @@ func poolMemberStatuses(poolName string) []string {
 		"ONLINE": true, "DEGRADED": true, "FAULTED": true,
 		"OFFLINE": true, "REMOVED": true, "UNAVAIL": true,
 	}
-	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-"}
+	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
 	skipSections := map[string]bool{"cache": true, "log": true, "spare": true}
 
 	inConfig, inData := false, true
@@ -553,6 +553,23 @@ func SetDiskOffline(poolName, device string) error {
 // SetDiskOnline brings an offline pool member disk back online using `zpool online`.
 func SetDiskOnline(poolName, device string) error {
 	out, err := exec.Command("sudo", "zpool", "online", poolName, device).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// ReplacePoolDisk replaces a failed or missing pool member with a new device.
+// oldDev is the raw member path as tracked by ZFS (from Pool.Members).
+// newDev is the canonical /dev/sdX path of the replacement disk.
+// The new disk is first wiped and partitioned (GPT, type BF01) so ZFS tracks
+// it by stable PARTUUID. ZFS starts a resilver automatically after the replacement.
+func ReplacePoolDisk(poolName, oldDev, newDev string) error {
+	puPath, err := PrepareZFSPartition(newDev)
+	if err != nil {
+		return fmt.Errorf("prepare %s: %w", newDev, err)
+	}
+	out, err := exec.Command("sudo", "zpool", "replace", "-f", poolName, oldDev, puPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -734,7 +751,7 @@ func CreatePool(name, layout string, ashift int, compression, dedup string, devi
 		devPaths = append(devPaths, puPath)
 	}
 
-	args := []string{"zpool", "create",
+	args := []string{"zpool", "create", "-f",
 		"-o", fmt.Sprintf("ashift=%d", ashift),
 		"-O", "atime=off",
 	}
@@ -1047,6 +1064,12 @@ func LoadPoolKey(poolName, keyFilePath string) error {
 		return fmt.Errorf("zfs load-key: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// DatasetExists returns true when the named ZFS dataset (or zvol) exists.
+func DatasetExists(name string) bool {
+	err := exec.Command("sudo", "zfs", "list", "-H", name).Run()
+	return err == nil
 }
 
 // MountDataset mounts a ZFS dataset. Silently ignores "already mounted" errors.
@@ -1533,12 +1556,12 @@ func CreateDataset(name string, opts DatasetCreateOptions) error {
 }
 
 // SetDatasetProps sets one or more ZFS properties on a dataset.
-// A value of "" clears the property via `zfs inherit` (only meaningful for user properties).
+// A value of "" or "inherit" resets the property to its inherited value via `zfs inherit`.
 func SetDatasetProps(name string, props map[string]string) error {
 	for k, v := range props {
 		var out []byte
 		var err error
-		if v == "" {
+		if v == "" || v == "inherit" {
 			out, err = exec.Command("sudo", "zfs", "inherit", k, name).CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("zfs inherit %s: %s", k, strings.TrimSpace(string(out)))

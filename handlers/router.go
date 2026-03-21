@@ -107,6 +107,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleClearPool)))).Methods("POST")
 	r.Handle("/api/pool/fixer/online",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePoolFixerOnline)))).Methods("POST")
+	r.Handle("/api/pool/fixer/replace",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePoolFixerReplace)))).Methods("POST")
 	r.Handle("/api/pool/disk/offline",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskOffline)))).Methods("POST")
 	r.Handle("/api/pool/disk/online",
@@ -179,6 +181,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleWipeDisk)))).Methods("POST")
 
 	// --- SMB Shares ---
+	r.Handle("/api/smb/global-config",
+		RequireAuth(http.HandlerFunc(HandleGetSMBGlobalConfig(appCfg)))).Methods("GET")
+	r.Handle("/api/smb/global-config",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateSMBGlobalConfig(appCfg))))).Methods("PUT")
 	r.Handle("/api/shares/status",
 		RequireAuth(http.HandlerFunc(HandleSMBStatus))).Methods("GET")
 	r.Handle("/api/shares/service",

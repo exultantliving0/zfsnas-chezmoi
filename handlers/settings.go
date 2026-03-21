@@ -78,7 +78,7 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 			}
 			// Apply Samba global parameters and reload if Samba is installed.
 			if req.MaxSmbdProcesses != nil && system.IsSambaInstalled() {
-				if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses); err != nil {
+				if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames()); err != nil {
 					log.Printf("settings: ApplySmbGlobal: %v", err)
 				} else if err := system.ReloadSamba(); err != nil {
 					log.Printf("settings: ReloadSamba: %v", err)

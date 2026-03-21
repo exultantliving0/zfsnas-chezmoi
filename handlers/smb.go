@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"zfsnas/internal/alerts"
@@ -11,6 +12,89 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+// HandleGetSMBGlobalConfig returns global Samba settings (max processes, home dataset).
+func HandleGetSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		jsonOK(w, map[string]interface{}{
+			"max_smbd_processes": appCfg.MaxSmbdProcesses,
+			"home_dataset":       appCfg.SMBHomeDataset,
+		})
+	}
+}
+
+// HandleUpdateSMBGlobalConfig saves global Samba settings and applies them immediately.
+func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			MaxSmbdProcesses *int    `json:"max_smbd_processes"`
+			HomeDataset      *string `json:"home_dataset"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		changed := false
+		if req.MaxSmbdProcesses != nil {
+			if *req.MaxSmbdProcesses < 1 || *req.MaxSmbdProcesses > 10000 {
+				jsonErr(w, http.StatusBadRequest, "max_smbd_processes must be between 1 and 10000")
+				return
+			}
+			appCfg.MaxSmbdProcesses = *req.MaxSmbdProcesses
+			changed = true
+		}
+		if req.HomeDataset != nil {
+			ds := strings.TrimSpace(*req.HomeDataset)
+			if ds != "" && !system.DatasetExists(ds) {
+				jsonErr(w, http.StatusBadRequest, "dataset not found: "+ds)
+				return
+			}
+			appCfg.SMBHomeDataset = ds
+			changed = true
+		}
+
+		if !changed {
+			jsonOK(w, map[string]string{"message": "no changes"})
+			return
+		}
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to save settings")
+			return
+		}
+		if system.IsSambaInstalled() {
+			if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames()); err != nil {
+				log.Printf("smb global config: ApplySmbGlobal: %v", err)
+			} else if err := system.ReloadSamba(); err != nil {
+				log.Printf("smb global config: ReloadSamba: %v", err)
+			}
+		}
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionUpdateSettings,
+			Result:  audit.ResultOK,
+			Details: "SMB global config updated",
+		})
+		jsonOK(w, map[string]string{"message": "SMB global settings saved"})
+	}
+}
+
+// smbHomeUsernames returns the usernames of all users with SMBHomeFolder enabled.
+func smbHomeUsernames() []string {
+	users, err := config.LoadUsers()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, u := range users {
+		if u.SMBHomeFolder {
+			names = append(names, u.Username)
+		}
+	}
+	return names
+}
 
 // HandleGetSMBSessions returns active Samba connections grouped by share name.
 func HandleGetSMBSessions(w http.ResponseWriter, r *http.Request) {

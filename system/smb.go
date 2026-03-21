@@ -189,16 +189,35 @@ func applySMBConf(shares []SMBShare) error {
 		newConf = strings.TrimRight(newConf, "\n") + "\n\n" + global
 	}
 
+
 	return writeFileSudo(smbConfPath, newConf)
 }
 
-// ApplySmbGlobal writes a managed [global] block into smb.conf that sets
-// performance-related global parameters. Samba merges multiple [global]
-// sections, with later values taking precedence, so this block is safe to
-// append alongside an existing [global] section written by the distro.
-func ApplySmbGlobal(maxSmbdProcesses int) error {
-	managed := fmt.Sprintf("%s\n[global]\n   max smbd processes = %d\n%s\n",
-		smbGlobalBeginMarker, maxSmbdProcesses, smbGlobalEndMarker)
+// ApplySmbGlobal writes a managed block into smb.conf that contains the
+// [global] performance parameters and, when homeDataset is non-empty and
+// homeUsers is non-empty, a [homes] section restricted to those users.
+// Samba merges multiple [global] sections (later values win), so this block
+// is safe alongside the distro-written [global].
+func ApplySmbGlobal(maxSmbdProcesses int, homeDataset string, homeUsers []string) error {
+	var sb strings.Builder
+	sb.WriteString(smbGlobalBeginMarker + "\n")
+	sb.WriteString(fmt.Sprintf("[global]\n   max smbd processes = %d\n", maxSmbdProcesses))
+
+	if homeDataset != "" && len(homeUsers) > 0 {
+		mountpoint := datasetMountpoint(homeDataset)
+		if mountpoint != "" {
+			sb.WriteString("\n[homes]\n")
+			sb.WriteString("   comment = User Home Directories\n")
+			sb.WriteString(fmt.Sprintf("   path = %s/%%U\n", mountpoint))
+			sb.WriteString("   valid users = " + strings.Join(homeUsers, " ") + "\n")
+			sb.WriteString("   read only = no\n")
+			sb.WriteString("   browseable = no\n")
+			sb.WriteString("   create mask = 0700\n")
+			sb.WriteString("   directory mask = 0700\n")
+		}
+	}
+	sb.WriteString(smbGlobalEndMarker + "\n")
+	managed := sb.String()
 
 	existing, err := os.ReadFile(smbConfPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -216,7 +235,91 @@ func ApplySmbGlobal(maxSmbdProcesses int) error {
 		newConf = strings.TrimRight(conf, "\n") + "\n\n" + managed
 	}
 
+	// When our managed [homes] is active, comment out any pre-existing [homes]
+	// sections outside the managed block so Samba doesn't merge them.
+	if homeDataset != "" {
+		newConf = commentOutHomesOutsideManaged(newConf, smbGlobalBeginMarker, smbGlobalEndMarker)
+	}
+
 	return writeFileSudo(smbConfPath, newConf)
+}
+
+// commentOutHomesOutsideManaged scans conf line-by-line and prefixes with "; "
+// any [homes] section (header + body) that lies outside the managed markers.
+// Lines already commented with # or ; are left untouched.
+func commentOutHomesOutsideManaged(conf, managedBegin, managedEnd string) string {
+	lines := strings.Split(conf, "\n")
+	var out strings.Builder
+	inManaged := false
+	inHomes   := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Track managed block boundaries.
+		if strings.Contains(line, managedBegin) {
+			inManaged = true
+			inHomes   = false
+			out.WriteString(line + "\n")
+			continue
+		}
+		if strings.Contains(line, managedEnd) {
+			inManaged = false
+			out.WriteString(line + "\n")
+			continue
+		}
+		if inManaged {
+			out.WriteString(line + "\n")
+			continue
+		}
+		// Outside managed block: detect section headers.
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			section := strings.ToLower(strings.TrimSpace(trimmed[1 : len(trimmed)-1]))
+			inHomes = (section == "homes")
+		}
+		// Comment out any active line that belongs to a [homes] section.
+		if inHomes && trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";") {
+			out.WriteString("; " + line + "\n")
+		} else {
+			out.WriteString(line + "\n")
+		}
+	}
+	result := out.String()
+	// Remove the trailing newline added by the last iteration.
+	return strings.TrimSuffix(result, "\n")
+}
+
+// datasetMountpoint returns the mountpoint of a ZFS dataset, or "" on error.
+func datasetMountpoint(dataset string) string {
+	out, err := exec.Command("sudo", "zfs", "get", "-H", "-o", "value", "mountpoint", dataset).Output()
+	if err != nil {
+		return ""
+	}
+	mp := strings.TrimSpace(string(out))
+	if mp == "none" || mp == "-" || mp == "" {
+		return ""
+	}
+	return mp
+}
+
+// EnsureSMBHomeDir creates <mountpoint>/<username>/ under the given ZFS dataset
+// if it does not already exist, and sets ownership to the Linux user.
+// The Linux user must already exist (created via EnsureSambaUser or useradd).
+func EnsureSMBHomeDir(dataset, username string) error {
+	mountpoint := datasetMountpoint(dataset)
+	if mountpoint == "" {
+		return fmt.Errorf("cannot determine mountpoint for dataset %q", dataset)
+	}
+	dir := mountpoint + "/" + username
+	if out, err := exec.Command("sudo", "mkdir", "-p", dir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mkdir %s: %s", dir, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("sudo", "chmod", "0700", dir).CombinedOutput(); err != nil {
+		return fmt.Errorf("chmod %s: %s", dir, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("sudo", "chown", username+":"+username, dir).CombinedOutput(); err != nil {
+		// Non-fatal: Linux user may not exist yet (SMB-only users created lazily).
+		_ = out
+	}
+	return nil
 }
 
 // ReloadSamba reloads the Samba configuration without dropping connections.

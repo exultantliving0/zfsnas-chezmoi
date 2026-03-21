@@ -113,6 +113,7 @@ type AppConfig struct {
 	ScrubHour         int       `json:"scrub_hour"`                    // hour of day to run scrub (0-23), default 2
 	LiveUpdateEnabled  bool   `json:"live_update_enabled,omitempty"`  // enable in-place binary self-update
 	MaxSmbdProcesses   int    `json:"max_smbd_processes,omitempty"`   // Samba max smbd processes (0 = use default 100)
+	SMBHomeDataset     string `json:"smb_home_dataset,omitempty"`     // ZFS dataset path for SMB user home folders; "" = disabled
 	TreeMapSchedule    string      `json:"treemap_schedule,omitempty"`     // daily | weekly | biweekly | monthly | "" (off)
 	TreeMapHour        int         `json:"treemap_hour"`                   // hour of day to run treemap scan (0-23)
 	TreeMapMinute      int         `json:"treemap_minute"`                 // minute of hour to run treemap scan (0-59)
@@ -137,8 +138,9 @@ type User struct {
 	Role         string          `json:"role"` // admin, read-only, smb-only
 	CreatedAt    time.Time       `json:"created_at"`
 	Preferences  UserPreferences `json:"preferences,omitempty"`
-	TOTPSecret   string          `json:"totp_secret,omitempty"`  // base32-encoded TOTP secret
-	TOTPEnabled  bool            `json:"totp_enabled,omitempty"` // 2FA active
+	TOTPSecret    string          `json:"totp_secret,omitempty"`     // base32-encoded TOTP secret
+	TOTPEnabled   bool            `json:"totp_enabled,omitempty"`    // 2FA active
+	SMBHomeFolder bool            `json:"smb_home_folder,omitempty"` // home dir under SMBHomeDataset
 }
 
 // EncryptionKey is metadata for a stored ZFS encryption key file.

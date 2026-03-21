@@ -626,6 +626,44 @@ func HandlePoolFixerOnline(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, pool)
 }
 
+// HandlePoolFixerReplace replaces a failed/missing pool member with a spare disk.
+// Used by the Pool Fixer Wizard for DEGRADED pools where the failed disk is absent.
+// POST /api/pool/fixer/replace  { pool, old_device, new_device }
+func HandlePoolFixerReplace(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pool      string `json:"pool"`
+		OldDevice string `json:"old_device"`
+		NewDevice string `json:"new_device"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Pool      = strings.TrimSpace(req.Pool)
+	req.OldDevice = strings.TrimSpace(req.OldDevice)
+	req.NewDevice = strings.TrimSpace(req.NewDevice)
+	if req.Pool == "" || req.OldDevice == "" || req.NewDevice == "" {
+		jsonErr(w, http.StatusBadRequest, "pool, old_device, and new_device are required")
+		return
+	}
+	if err := system.ReplacePoolDisk(req.Pool, req.OldDevice, req.NewDevice); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionUpdatePool,
+		Target:  req.Pool,
+		Result:  audit.ResultOK,
+		Details: fmt.Sprintf("pool fixer: zpool replace %s %s", req.OldDevice, req.NewDevice),
+	})
+	pool, _ := system.GetPoolByName(req.Pool)
+	LogPoolHealthEvents(pool)
+	jsonOK(w, pool)
+}
+
 func HandleDiskOffline(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Pool   string `json:"pool"`

@@ -802,7 +802,10 @@
               </div>
             </div>
           </div>
-          <button class="btn btn-primary btn-sm" onclick="openCreateShare()" id="btn-create-share">+ New Share</button>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn btn-ghost btn-sm" onclick="openSMBConfigureModal()" id="btn-smb-configure">&#9881; Configure</button>
+            <button class="btn btn-primary btn-sm" onclick="openCreateShare()" id="btn-create-share">+ New Share</button>
+          </div>
         </div>
         <div id="smb-status-banner" style="margin-bottom:16px;"></div>
         <div id="shares-content">
@@ -875,17 +878,14 @@
                       onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">↺ Restart</button>
             </div>
           </div>
-          <div style="margin-left:auto;">
-            <button class="btn btn-primary btn-sm" onclick="openISCSIConfigModal()">⚙ Configure</button>
+          <div style="display:flex;gap:8px;align-items:center;margin-left:auto;">
+            <button class="btn btn-ghost btn-sm" onclick="openISCSIConfigModal()">⚙ Configure</button>
+            <button class="btn btn-primary btn-sm" onclick="openNewISCSIShareModal()">+ New iSCSI Share</button>
           </div>
         </div>
 
         <!-- Shares section (prereqs installed) -->
         <div id="iscsi-content" class="hidden">
-          <div style="display:flex;align-items:center;margin-bottom:12px;">
-            <span style="font-size:15px;font-weight:700;color:var(--text-2);">iSCSI Shares</span>
-            <button class="btn btn-primary btn-sm" onclick="openNewISCSIShareModal()" style="margin-left:auto;">+ New iSCSI Share</button>
-          </div>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
@@ -1166,19 +1166,6 @@
             </div>
           </div>
 
-          <!-- Samba (SMB) -->
-          <h4 style="margin:20px 0 4px;font-size:14px;">Samba (SMB)</h4>
-          <p style="color:var(--text-3);font-size:13px;margin-bottom:20px;">Performance and resource tuning for the Samba file sharing service.</p>
-          <div id="smb-settings-alert" class="alert alert-error hidden"></div>
-          <div id="smb-settings-ok"    class="alert alert-success hidden" style="margin-bottom:16px;"></div>
-          <div class="form-group">
-            <label>Max smbd Processes
-              <i class="info-tip tip-down" data-tip="Controls the maximum number of simultaneous smbd processes Samba will spawn. Each connected client session forks a new smbd process.&#10;&#10;Memory impact:&#10;• Each smbd process uses ~15–30 MB of RAM at peak.&#10;• 100 processes ≈ 1.5–3 GB RAM — recommended for 4 GB systems.&#10;• Lower this value (e.g. 50) on systems with 2 GB or less.&#10;• Raise it (e.g. 200–500) only if you have 8 GB+ RAM and many concurrent users.&#10;&#10;Adjust with care: setting this too high on a low-memory NAS will cause the system to swap, degrading performance for all services."></i>
-            </label>
-            <input type="number" id="settings-max-smbd" min="1" max="10000" value="100" style="max-width:160px;">
-            <div class="text-3 text-sm" style="margin-top:4px;">Applied immediately to smb.conf and reloads Samba. Default: 100.</div>
-          </div>
-
           <!-- Timezone -->
           <h4 style="margin:20px 0 4px;font-size:14px;">Server Timezone
             <i class="info-tip tip-down" style="margin-left:6px;" data-tip="Sets the system clock timezone for the entire server.&#10;&#10;This affects:&#10;• Snapshot schedules — cron times are interpreted in this timezone, so &quot;daily at 02:00&quot; means 2 AM local time.&#10;• Scrub schedule (Sunday 02:00 local time).&#10;• Audit log timestamps shown in the portal.&#10;• Any scheduled tasks or alerts.&#10;&#10;Change takes effect immediately — no restart required."></i>
@@ -1193,7 +1180,7 @@
             </select>
           </div>
 
-          <button class="btn btn-primary btn-sm" onclick="saveSettings();saveSmbSettings();saveTimezone();" style="margin-top:8px;">Apply</button>
+          <button class="btn btn-primary btn-sm" onclick="saveSettings();saveTimezone();" style="margin-top:8px;">Apply</button>
         </div>
 
         <!-- ── 2. Encryption Key Management ── -->
@@ -2228,6 +2215,11 @@
       <div id="new-smb-hint" class="hidden" style="font-size:13px;color:var(--text-3);margin-bottom:16px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border);">
         SMB-Only users do not have a portal password. After creation, set their Samba password from the user list.
       </div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;margin-bottom:16px;">
+        <input type="checkbox" id="new-smb-home" style="width:15px;height:15px;accent-color:var(--accent-2);">
+        Home User Folder
+        <i class="info-tip tip-down" data-tip="When enabled and a home-folder dataset is configured in SMB Shares &gt; Configure, this user's personal folder is created inside that dataset and served as their SMB home share (\\server\username)."></i>
+      </label>
       <div class="flex gap-2" style="margin-top:8px;">
         <button type="button" class="btn btn-ghost" onclick="closeCreateUser()">Cancel</button>
         <button type="submit" class="btn btn-primary" style="flex:1;">Create User</button>
@@ -2351,6 +2343,12 @@
         SMB-Only users do not have a portal password. Use "Set SMB Password" to manage their Samba credentials.
       </div>
 
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;margin-top:16px;">
+        <input type="checkbox" id="eu-smb-home" style="width:15px;height:15px;accent-color:var(--accent-2);">
+        Home User Folder
+        <i class="info-tip tip-down" data-tip="When enabled and a home-folder dataset is configured in SMB Shares &gt; Configure, this user's personal folder is created inside that dataset and served as their SMB home share (\\server\username)."></i>
+      </label>
+
       <!-- 2FA section — only shown when editing own account -->
       <div id="eu-2fa-section" class="hidden" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -2384,6 +2382,40 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeEditUser()">Cancel</button>
       <button class="btn btn-primary" id="btn-edit-user-save" onclick="submitEditUser()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- SMB Global Configure Modal -->
+<div class="modal-backdrop hidden" id="modal-smb-configure">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-header">
+      <h3>SMB Global Settings</h3>
+      <button class="modal-close" onclick="closeSMBConfigureModal()">&#10005;</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:18px;">
+      <div id="smb-configure-alert" class="alert alert-error hidden"></div>
+      <div id="smb-configure-ok"    class="alert alert-success hidden"></div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Max smbd Processes
+          <i class="info-tip tip-down" data-tip="Controls the maximum number of simultaneous smbd processes Samba will spawn. Each connected client session forks a new smbd process.&#10;&#10;Memory impact:&#10;• Each smbd process uses ~15–30 MB of RAM at peak.&#10;• 100 processes ≈ 1.5–3 GB RAM — recommended for 4 GB systems.&#10;• Lower this value (e.g. 50) on systems with 2 GB or less.&#10;• Raise it (e.g. 200–500) only if you have 8 GB+ RAM and many concurrent users.&#10;&#10;Adjust with care: setting this too high on a low-memory NAS will cause the system to swap, degrading performance for all services."></i>
+        </label>
+        <input type="number" id="smb-cfg-max-processes" min="1" max="10000" value="100" style="max-width:160px;">
+        <div class="text-3 text-sm" style="margin-top:4px;">Applied immediately to smb.conf and reloads Samba. Default: 100.</div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Home Folder Dataset
+          <i class="info-tip tip-down" data-tip="When set, SMB users with 'Home User Folder' enabled get a personal share at \\server\username pointing to &lt;dataset_mountpoint&gt;/&lt;username&gt;.&#10;&#10;Samba's [homes] section is automatically configured. Set to Disabled to remove it."></i>
+        </label>
+        <select id="smb-cfg-home-dataset" style="width:100%;">
+          <option value="">Disabled</option>
+        </select>
+        <div class="text-3 text-sm" style="margin-top:4px;">User home directories will be created inside this dataset when the user has 'Home User Folder' enabled.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSMBConfigureModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-smb-cfg-save" onclick="saveSMBGlobalConfig()">Save</button>
     </div>
   </div>
 </div>
@@ -2448,7 +2480,20 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="form-group" style="margin-bottom:0;">
           <label>Compression <i class="info-tip tip-down" data-tip="LZ4: fast, low-CPU, good ratio — recommended for general use.&#10;ZSTD: higher compression ratio at the cost of more CPU — ideal for cold data or backups.&#10;Off: disable compression.&#10;Inherit: use the pool-level setting."></i></label>
-          <select id="cds-compression"><option value="inherit">Inherit from pool</option><option value="lz4">LZ4</option><option value="zstd">ZSTD</option><option value="off">Off</option></select>
+          <select id="cds-compression">
+            <option value="inherit">Inherit from pool</option>
+            <option value="lz4">LZ4 — fast, lightweight, recommended default</option>
+            <option value="zstd">ZSTD — balanced speed &amp; ratio</option>
+            <option value="zstd-1">ZSTD-1 — fast with good ratio</option>
+            <option value="zstd-3">ZSTD-3 — moderate ratio, moderate speed</option>
+            <option value="zstd-6">ZSTD-6 — high ratio, slower</option>
+            <option value="zstd-9">ZSTD-9 — maximum ratio, slow</option>
+            <option value="gzip">Gzip — classic, broad compatibility</option>
+            <option value="gzip-1">Gzip-1 — fastest gzip</option>
+            <option value="gzip-9">Gzip-9 — best gzip compression</option>
+            <option value="lzjb">LZJB — legacy, low overhead</option>
+            <option value="none">None — no compression</option>
+          </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>Record Size <i class="info-tip tip-down" data-tip="The block size ZFS uses for this dataset. Smaller values (4K–16K) suit databases and random-access workloads. Larger values (128K–1M) suit media files and sequential workloads. A mismatch causes read/write amplification. Only affects new data — existing blocks are not re-chunked.&#10;&#10;Inherit: uses the pool default (usually 128K)."></i></label>
@@ -2564,7 +2609,20 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="form-group" style="margin-bottom:0;">
           <label>Compression <i class="info-tip tip-down" data-tip="LZ4: fast, low-CPU, good ratio — recommended for general use.&#10;ZSTD: higher compression ratio at the cost of more CPU — ideal for cold data or backups.&#10;Off: disable compression.&#10;Inherit: use the pool-level setting."></i></label>
-          <select id="eds-compression"><option value="inherit">Inherit</option><option value="lz4">LZ4</option><option value="zstd">ZSTD</option><option value="off">Off</option></select>
+          <select id="eds-compression">
+            <option value="inherit">Inherit</option>
+            <option value="lz4">LZ4 — fast, lightweight, recommended default</option>
+            <option value="zstd">ZSTD — balanced speed &amp; ratio</option>
+            <option value="zstd-1">ZSTD-1 — fast with good ratio</option>
+            <option value="zstd-3">ZSTD-3 — moderate ratio, moderate speed</option>
+            <option value="zstd-6">ZSTD-6 — high ratio, slower</option>
+            <option value="zstd-9">ZSTD-9 — maximum ratio, slow</option>
+            <option value="gzip">Gzip — classic, broad compatibility</option>
+            <option value="gzip-1">Gzip-1 — fastest gzip</option>
+            <option value="gzip-9">Gzip-9 — best gzip compression</option>
+            <option value="lzjb">LZJB — legacy, low overhead</option>
+            <option value="none">None — no compression</option>
+          </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>Record Size <i class="info-tip tip-down" data-tip="The block size ZFS uses for this dataset. Smaller values (4K–16K) suit databases and random-access workloads. Larger values (128K–1M) suit media files and sequential workloads. Only affects new data — existing blocks are not re-chunked."></i></label>
@@ -5019,6 +5077,7 @@ function openEditUser(id) {
   document.getElementById('eu-email').value    = u.email || '';
   document.getElementById('eu-role').value     = u.role;
   document.getElementById('eu-password').value = '';
+  document.getElementById('eu-smb-home').checked = !!u.smb_home_folder;
   document.getElementById('edit-user-alert').classList.add('hidden');
   document.getElementById('edit-user-ok').classList.add('hidden');
 
@@ -5061,8 +5120,9 @@ async function submitEditUser() {
 
   const role = document.getElementById('eu-role').value;
   const body = {
-    email: document.getElementById('eu-email').value.trim(),
+    email:           document.getElementById('eu-email').value.trim(),
     role,
+    smb_home_folder: document.getElementById('eu-smb-home').checked,
   };
   const pw = document.getElementById('eu-password').value;
   if (pw && role !== 'smb-only') body.password = pw;
@@ -5131,6 +5191,7 @@ function openCreateUser() {
   document.getElementById('new-email').value    = '';
   document.getElementById('new-password').value = '';
   document.getElementById('new-role').value     = 'admin';
+  document.getElementById('new-smb-home').checked = false;
   document.getElementById('modal-user-alert').classList.add('hidden');
   onNewRoleChange();
   document.getElementById('modal-create-user').classList.remove('hidden');
@@ -5154,9 +5215,10 @@ async function submitCreateUser(e) {
   alertEl.classList.add('hidden');
   const role    = document.getElementById('new-role').value;
   const body    = {
-    username: document.getElementById('new-username').value.trim(),
-    email:    document.getElementById('new-email').value.trim(),
+    username:       document.getElementById('new-username').value.trim(),
+    email:          document.getElementById('new-email').value.trim(),
     role,
+    smb_home_folder: document.getElementById('new-smb-home').checked,
   };
   if (role !== 'smb-only') body.password = document.getElementById('new-password').value;
   const resp = await fetch('/api/users', {
@@ -5358,8 +5420,6 @@ async function loadSettings() {
     selectStorageUnit(appSettings.storage_unit || 'gb', false);
     const liveToggle = document.getElementById('live-update-toggle');
     if (liveToggle) liveToggle.checked = !!appSettings.live_update_enabled;
-    const maxSmbd = document.getElementById('settings-max-smbd');
-    if (maxSmbd) maxSmbd.value = appSettings.max_smbd_processes || 100;
   } catch {}
   loadTimezone();
   loadTreeMapScheduleSettings();
@@ -5496,30 +5556,77 @@ async function saveSettings() {
   }
 }
 
-async function saveSmbSettings() {
-  const alertEl = document.getElementById('smb-settings-alert');
-  const okEl    = document.getElementById('smb-settings-ok');
+// ===== SMB Configure Modal =====
+async function openSMBConfigureModal() {
+  document.getElementById('smb-configure-alert').classList.add('hidden');
+  document.getElementById('smb-configure-ok').classList.add('hidden');
+
+  const sel = document.getElementById('smb-cfg-home-dataset');
+  sel.innerHTML = '<option value="">Disabled</option>';
+
+  // Fetch all datasets from API (may not be cached if Datasets tab not visited).
+  try {
+    const resp = await fetch('/api/datasets');
+    if (resp.ok) {
+      const datasets = await resp.json() || [];
+      datasets.forEach(ds => {
+        const opt = document.createElement('option');
+        opt.value = ds.name;
+        opt.textContent = ds.name;
+        sel.appendChild(opt);
+      });
+    }
+  } catch (_) {}
+
+  // Fetch current config and apply values.
+  try {
+    const resp = await fetch('/api/smb/global-config');
+    if (resp.ok) {
+      const cfg = await resp.json();
+      document.getElementById('smb-cfg-max-processes').value = cfg.max_smbd_processes || 100;
+      sel.value = cfg.home_dataset || '';
+    }
+  } catch (_) {}
+
+  document.getElementById('modal-smb-configure').classList.remove('hidden');
+}
+
+function closeSMBConfigureModal() {
+  document.getElementById('modal-smb-configure').classList.add('hidden');
+}
+
+async function saveSMBGlobalConfig() {
+  const alertEl = document.getElementById('smb-configure-alert');
+  const okEl    = document.getElementById('smb-configure-ok');
+  const btn     = document.getElementById('btn-smb-cfg-save');
   alertEl.classList.add('hidden');
   okEl.classList.add('hidden');
 
-  const val = parseInt(document.getElementById('settings-max-smbd').value);
-  if (!val || val < 1 || val > 10000) {
-    alertEl.textContent = 'Value must be between 1 and 10000.';
+  const maxVal = parseInt(document.getElementById('smb-cfg-max-processes').value);
+  if (!maxVal || maxVal < 1 || maxVal > 10000) {
+    alertEl.textContent = 'Max smbd processes must be between 1 and 10000.';
     alertEl.classList.remove('hidden');
     return;
   }
+  const homeDataset = document.getElementById('smb-cfg-home-dataset').value;
 
-  const resp = await fetch('/api/settings', {
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const resp = await fetch('/api/smb/global-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_smbd_processes: val }),
+    body: JSON.stringify({ max_smbd_processes: maxVal, home_dataset: homeDataset }),
   });
   const data = await resp.json();
+  btn.disabled = false; btn.textContent = 'Save';
+
   if (!resp.ok) {
-    alertEl.textContent = data.error || 'Failed to save Samba settings.';
+    alertEl.textContent = data.error || 'Failed to save SMB settings.';
     alertEl.classList.remove('hidden');
   } else {
-    appSettings.max_smbd_processes = val;
+    appSettings.max_smbd_processes = maxVal;
+    okEl.textContent = 'SMB settings saved.';
+    okEl.classList.remove('hidden');
+    setTimeout(closeSMBConfigureModal, 1200);
   }
 }
 
@@ -6322,8 +6429,8 @@ function renderPoolExists(el, pool) {
     const present = pool.member_present && pool.member_present[i];
     return st !== 'ONLINE' && present;
   });
-  const showFixer = currentUser.role === 'admin' && pool.health === 'SUSPENDED' &&
-    (allDisksOnline || recoverableDisks.length > 0);
+  const showFixer = currentUser.role === 'admin' &&
+    (pool.health === 'SUSPENDED' || pool.health === 'DEGRADED');
   const fixerBtn = showFixer
     ? `<button class="btn btn-sm" onclick="openPoolFixerWizard()"
         style="background:linear-gradient(135deg,#6e40c9 0%,#2d7dd2 50%,#0dbbbd 100%);color:#fff;border:none;font-weight:600;letter-spacing:.02em;box-shadow:0 0 12px rgba(110,64,201,0.45);">✦ Pool Fixer Wizard</button>`
@@ -7573,13 +7680,35 @@ async function submitDiskOnline(poolName, device) {
 }
 
 // ===== Pool Fixer Wizard =====
-let _fixerScene = 'clear'; // 'clear' | 'online'
-let _fixerOnlineDisks = []; // raw member paths to bring online (scene B)
+// Scenes:
+//   SUSPENDED pool: 'clear' (all disks visible) | 'online' (some disks back, need clear+online)
+//   DEGRADED pool:  'degraded-online' (offline disk still present)
+//                   'degraded-replace' (disk absent, spare available)
+//                   'degraded-unknown' (no actionable path found)
+let _fixerScene = 'clear';
+let _fixerOnlineDisks  = []; // raw member paths to bring online
+let _fixerOldDevice    = ''; // raw member path of failed disk (replace scene)
+let _fixerNewDevice    = ''; // /dev/sdX of replacement disk (replace scene)
 
-function openPoolFixerWizard() {
+async function openPoolFixerWizard() {
   const pool = allPoolsData.find(p => p.name === selectedPoolName);
   if (!pool) return;
 
+  document.getElementById('pool-fixer-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-pool-fixer-fix');
+  btn.disabled = false;
+  btn.style.display = '';
+
+  if (pool.health === 'SUSPENDED') {
+    _openFixerSuspended(pool, btn);
+  } else {
+    await _openFixerDegraded(pool, btn);
+  }
+
+  document.getElementById('modal-pool-fixer').classList.remove('hidden');
+}
+
+function _openFixerSuspended(pool, btn) {
   const allOnline = (pool.member_statuses || []).length > 0 &&
     pool.member_statuses.every(s => s === 'ONLINE');
   const recoverable = (pool.members || []).filter((m, i) => {
@@ -7587,10 +7716,6 @@ function openPoolFixerWizard() {
     const present = pool.member_present && pool.member_present[i];
     return st !== 'ONLINE' && present;
   });
-
-  document.getElementById('pool-fixer-alert').classList.add('hidden');
-  const btn = document.getElementById('btn-pool-fixer-fix');
-  btn.disabled = false;
 
   if (allOnline) {
     _fixerScene = 'clear';
@@ -7641,8 +7766,133 @@ function openPoolFixerWizard() {
         ⚠ Before proceeding, confirm that the root cause (loose cable, HBA reset, power blip) has been physically resolved. ZFS suspended the pool to prevent data corruption — if the disks are unstable, the pool may suspend again. No data will be written or deleted by this operation.
       </div>`;
   }
+}
 
-  document.getElementById('modal-pool-fixer').classList.remove('hidden');
+async function _openFixerDegraded(pool, btn) {
+  // Offline members that are still physically present (can be brought online).
+  const offlinePresent = (pool.members || []).filter((m, i) => {
+    const st = (pool.member_statuses && pool.member_statuses[i]) || 'ONLINE';
+    const present = pool.member_present && pool.member_present[i];
+    return st !== 'ONLINE' && present;
+  });
+
+  // Non-online members that are NOT present (disk is gone / dead).
+  const absentFailed = (pool.members || []).filter((m, i) => {
+    const st = (pool.member_statuses && pool.member_statuses[i]) || 'ONLINE';
+    const present = pool.member_present && pool.member_present[i];
+    return st !== 'ONLINE' && !present;
+  });
+
+  // Scene A: offline disk still present — just bring it back online.
+  if (offlinePresent.length > 0) {
+    _fixerScene = 'degraded-online';
+    _fixerOnlineDisks = offlinePresent;
+    btn.textContent = '✦ Bring Online';
+    const diskList = offlinePresent.map(m => {
+      const short = m.includes('/by-partuuid/') ? m.split('/').pop() : m;
+      return `<li style="font-family:monospace;font-size:12px;color:var(--text-2);padding:3px 0;">${esc(m)}<span style="font-size:11px;color:var(--text-3);margin-left:6px;">(partuuid: ${esc(short)})</span></li>`;
+    }).join('');
+    document.getElementById('pool-fixer-content').innerHTML = `
+      <div style="display:flex;align-items:flex-start;gap:14px;padding:14px;background:rgba(247,181,0,0.07);border:1px solid rgba(247,181,0,0.35);border-radius:var(--radius-sm);">
+        <span style="flex-shrink:0;color:var(--text-2);">${diskSVG(28)}</span>
+        <div>
+          <div style="font-weight:600;font-size:14px;color:var(--text-1);margin-bottom:4px;">Pool is DEGRADED — offline disk still connected</div>
+          <div style="font-size:13px;color:var(--text-2);line-height:1.55;">Your pool is <strong style="color:var(--accent-warn);">DEGRADED</strong> because ${offlinePresent.length > 1 ? 'some member disks are' : 'a member disk is'} marked <strong>OFFLINE</strong> but still physically present on this system. This can happen after a manual <em>zpool offline</em>, a transient I/O error, or a temporary connection problem that has since been resolved.</div>
+        </div>
+      </div>
+      <div style="font-size:13px;color:var(--text-2);">
+        <strong style="color:var(--text-1);">Disk${offlinePresent.length > 1 ? 's' : ''} that will be brought back online:</strong>
+        <ul style="margin:6px 0 0 0;padding:0;list-style:none;">${diskList}</ul>
+      </div>
+      <div style="font-size:13px;color:var(--text-3);background:var(--surface2);border-radius:var(--radius-sm);padding:10px 14px;line-height:1.55;">
+        ⚠ Only proceed if the disk is healthy and the root cause has been resolved. ZFS will run <code style="background:var(--surface);padding:1px 5px;border-radius:4px;">zpool online</code> and may start a resilver to verify data integrity.
+      </div>`;
+    return;
+  }
+
+  // Scene B: absent/failed disk + free replacement available.
+  if (absentFailed.length > 0) {
+    let freeDisks = [];
+    try {
+      const resp = await fetch('/api/disks');
+      if (resp.ok) {
+        const all = await resp.json();
+        freeDisks = all.filter(d => !d.in_use);
+      }
+    } catch (_) {}
+
+    if (freeDisks.length > 0) {
+      _fixerScene = 'degraded-replace';
+      _fixerOldDevice = absentFailed[0]; // replace first absent member
+      _fixerNewDevice = '';
+      btn.textContent = '✦ Replace Disk';
+      btn.disabled = true; // enabled once user selects a disk
+
+      const failedShort = _fixerOldDevice.includes('/by-partuuid/')
+        ? _fixerOldDevice.split('/').pop() : _fixerOldDevice;
+
+      const diskOptions = freeDisks.map((d, idx) => {
+        const label = [d.model || d.name, d.size, d.serial ? `SN:${d.serial}` : ''].filter(Boolean).join(' · ');
+        return `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;margin-bottom:6px;transition:border-color .15s;"
+          onmouseover="this.style.borderColor='var(--accent)'" onmouseout="if(!this.querySelector('input').checked)this.style.borderColor='var(--border)'">
+          <input type="radio" name="fixer-replace-disk" value="${esc(d.device)}" onchange="document.getElementById('btn-pool-fixer-fix').disabled=false;_fixerNewDevice=this.value;this.closest('label').parentElement.querySelectorAll('label').forEach(l=>{l.style.borderColor=l.querySelector('input').checked?'var(--accent)':'var(--border)'});" style="accent-color:var(--accent);">
+          <div>
+            <div style="font-weight:600;font-size:13px;color:var(--text-1);">${esc(d.device)} — ${esc(d.size)}</div>
+            <div style="font-size:12px;color:var(--text-3);">${esc(label)}</div>
+          </div>
+        </label>`;
+      }).join('');
+
+      document.getElementById('pool-fixer-content').innerHTML = `
+        <div style="display:flex;align-items:flex-start;gap:14px;padding:14px;background:rgba(255,59,48,0.07);border:1px solid rgba(255,59,48,0.3);border-radius:var(--radius-sm);">
+          <span style="flex-shrink:0;color:var(--accent-danger);">${diskSVG(28)}</span>
+          <div>
+            <div style="font-weight:600;font-size:14px;color:var(--text-1);margin-bottom:4px;">Pool is DEGRADED — disk missing or unreadable</div>
+            <div style="font-size:13px;color:var(--text-2);line-height:1.55;">Your pool is <strong style="color:var(--accent-danger);">DEGRADED</strong> because a member disk is no longer visible on this system. The disk may have failed, been removed, or encountered a permanent I/O fault.</div>
+          </div>
+        </div>
+        <div style="font-size:13px;color:var(--text-2);">
+          <strong style="color:var(--text-1);">Failed / missing member:</strong>
+          <div style="font-family:monospace;font-size:12px;color:var(--text-3);margin-top:4px;padding:6px 10px;background:var(--surface2);border-radius:var(--radius-sm);">${esc(_fixerOldDevice)}<span style="font-size:11px;margin-left:6px;">(partuuid: ${esc(failedShort)})</span></div>
+        </div>
+        <div style="font-size:13px;color:var(--text-2);">
+          <strong style="color:var(--text-1);">Select a replacement disk:</strong>
+          <div style="font-size:12px;color:var(--text-3);margin:4px 0 10px;">The replacement disk must be at least as large as the failed disk. ZFS will start a resilver automatically after replacement.</div>
+          <div id="fixer-disk-list">${diskOptions}</div>
+        </div>
+        <div style="font-size:13px;color:var(--text-3);background:var(--surface2);border-radius:var(--radius-sm);padding:10px 14px;line-height:1.55;">
+          ⚠ <code style="background:var(--surface);padding:1px 5px;border-radius:4px;">zpool replace</code> will detach the failed vdev slot and resilver data onto the new disk. This is non-destructive to existing pool data but the pool will be DEGRADED until the resilver completes.
+        </div>`;
+      return;
+    }
+  }
+
+  // Scene C: no actionable path — show status and link to docs.
+  _fixerScene = 'degraded-unknown';
+  btn.style.display = 'none';
+  let statusText = '';
+  try {
+    const resp = await fetch('/api/pool/status?name=' + encodeURIComponent(selectedPoolName || ''));
+    if (resp.ok) { const d = await resp.json(); statusText = d.output || ''; }
+  } catch (_) {}
+  document.getElementById('pool-fixer-content').innerHTML = `
+    <div style="display:flex;align-items:flex-start;gap:14px;padding:14px;background:rgba(247,181,0,0.07);border:1px solid rgba(247,181,0,0.35);border-radius:var(--radius-sm);">
+      <span style="font-size:26px;line-height:1;flex-shrink:0;">⚠</span>
+      <div>
+        <div style="font-weight:600;font-size:14px;color:var(--text-1);margin-bottom:4px;">Pool is DEGRADED — manual intervention may be needed</div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.55;">The wizard could not identify a simple automated fix for this degraded state. This may be due to multiple simultaneous disk faults, a RAIDZ with more faults than redundancy, a cache/log device issue, or another complex scenario.</div>
+      </div>
+    </div>
+    ${statusText ? `<div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-3);margin-bottom:6px;">Current pool status:</div>
+      <pre style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11px;overflow-x:auto;line-height:1.5;color:var(--text-2);white-space:pre-wrap;word-break:break-word;">${esc(statusText)}</pre>
+    </div>` : ''}
+    <div style="font-size:13px;color:var(--text-2);line-height:1.6;">
+      For complex pool recovery scenarios, refer to the ZFS documentation:
+      <a href="https://openzfs.github.io/openzfs-docs/man/master/8/zpool.8.html" target="_blank" rel="noopener"
+         style="color:var(--accent);text-decoration:underline;">OpenZFS zpool(8) manual</a>
+      — in particular the <strong>DEVICE FAILURE AND RECOVERY</strong> section.
+    </div>`;
 }
 
 function closePoolFixerWizard() {
@@ -7653,36 +7903,79 @@ async function submitPoolFixer() {
   const btn     = document.getElementById('btn-pool-fixer-fix');
   const alertEl = document.getElementById('pool-fixer-alert');
   btn.disabled = true;
-  btn.textContent = _fixerScene === 'online' ? 'Recovering…' : 'Fixing…';
   alertEl.classList.add('hidden');
 
+  const busyLabel = {
+    'clear':           'Fixing…',
+    'online':          'Recovering…',
+    'degraded-online': 'Bringing Online…',
+    'degraded-replace':'Replacing…',
+  }[_fixerScene] || 'Working…';
+  btn.textContent = busyLabel;
+
   let resp, data;
+
   if (_fixerScene === 'online') {
     resp = await fetch('/api/pool/fixer/online', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({pool: selectedPoolName, devices: _fixerOnlineDisks}),
     });
+  } else if (_fixerScene === 'degraded-online') {
+    // Bring each offline-but-present disk back online one at a time.
+    let lastResp, lastData;
+    for (const dev of _fixerOnlineDisks) {
+      lastResp = await fetch('/api/pool/disk/online', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({pool: selectedPoolName, device: dev}),
+      });
+      lastData = await lastResp.json();
+      if (!lastResp.ok) { resp = lastResp; data = lastData; break; }
+      resp = lastResp; data = lastData;
+    }
+  } else if (_fixerScene === 'degraded-replace') {
+    if (!_fixerNewDevice) {
+      alertEl.textContent = 'Please select a replacement disk.';
+      alertEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = '✦ Replace Disk';
+      return;
+    }
+    resp = await fetch('/api/pool/fixer/replace', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({pool: selectedPoolName, old_device: _fixerOldDevice, new_device: _fixerNewDevice}),
+    });
+    data = await resp.json();
   } else {
+    // Scene 'clear'
     resp = await fetch('/api/pool/clear', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({pool: selectedPoolName}),
     });
+    data = await resp.json();
   }
-  data = await resp.json();
 
-  if (resp.ok) {
+  if (!data) data = {};
+
+  if (resp && resp.ok) {
     closePoolFixerWizard();
-    _updatePoolInCache(data);
-    const el = document.getElementById('pool-content');
-    if (el && data) renderPoolExists(el, data);
+    if (data && data.name) {
+      _updatePoolInCache(data);
+      const el = document.getElementById('pool-content');
+      if (el) renderPoolExists(el, data);
+    }
     await refreshPoolBar();
     updatePoolNavDot();
     return;
   }
-  alertEl.textContent = data.error || 'Operation failed.';
+  const readyLabel = {
+    'clear':           '✦ Fix Now',
+    'online':          '✦ Recover Pool',
+    'degraded-online': '✦ Bring Online',
+    'degraded-replace':'✦ Replace Disk',
+  }[_fixerScene] || '✦ Fix Now';
+  alertEl.textContent = (data && data.error) || 'Operation failed.';
   alertEl.classList.remove('hidden');
   btn.disabled = false;
-  btn.textContent = _fixerScene === 'online' ? '✦ Recover Pool' : '✦ Fix Now';
+  btn.textContent = readyLabel;
 }
 
 // ===== Destroy Pool =====
@@ -13823,6 +14116,7 @@ document.addEventListener('click', function(e) {
     'modal-add-capacity-guide':   closeAddCapacityGuide,
     'modal-disk-offline':     closeDiskOfflineModal,
     'modal-pool-fixer':       closePoolFixerWizard,
+    'modal-smb-configure':    closeSMBConfigureModal,
     'modal-destroy-pool':     closeDestroyPoolModal,
     'modal-force-import':     closeForceImportModal,
     'modal-import-pool':      closeImportPoolModal,
