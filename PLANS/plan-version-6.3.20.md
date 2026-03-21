@@ -1213,3 +1213,5 @@ POST /api/minio/bucket/edit        → update bucket settings + user policy (adm
 13. `static/index.html` — Wire `_updateS3NavDot()` into `initApp()`, `loadS3Page()`, service actions
 14. `static/style.css` — any missing icon/chip styles
 15. Build, test, deploy
+
+## Status: COMPLETE

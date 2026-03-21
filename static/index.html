@@ -4455,6 +4455,7 @@ let prereqData       = null;
 let appSettings      = { port: 8443, storage_unit: 'gb', max_smbd_processes: 100 };
 let _dashRefreshTimer = null;
 let _dashCharts      = {};
+let _hwTotalRamBytes = 0;  // populated by _loadHardwareInfo for memory GB tooltip
 let _perfActiveTab   = 'global'; // 'global' | poolname
 let _perfRange       = 'all';    // 'all'|'day'|'week'|'month'|'year'
 let _perfAgg         = 'avg';    // 'avg'|'min'|'max'
@@ -13160,9 +13161,12 @@ async function _loadHardwareInfo() {
     const cpuEl = document.getElementById('dash-hw-cpu');
     const memEl = document.getElementById('dash-hw-mem');
     if (cpuEl && hw.cpu_cores > 0) cpuEl.textContent = hw.cpu_cores + ' cores ·';
-    if (memEl && hw.total_ram_bytes > 0) {
-      const gb = (hw.total_ram_bytes / (1024 * 1024 * 1024)).toFixed(1);
-      memEl.textContent = gb + ' GB ·';
+    if (hw.total_ram_bytes > 0) {
+      _hwTotalRamBytes = hw.total_ram_bytes;
+      if (memEl) {
+        const gb = (_hwTotalRamBytes / (1024 * 1024 * 1024)).toFixed(1);
+        memEl.textContent = gb + ' GB ·';
+      }
     }
   } catch (_) {}
 }
@@ -13257,14 +13261,14 @@ function _renderGlobalPerfCharts(series, ifaces) {
         if (pt && pt.x >= xMin && pt.x <= xMax && (pt.y ?? 0) > pk) pk = pt.y;
     return pk;
   }
-  function makeChart(canvasId, datasets, yLabel, yMax, stacked) {
+  function makeChart(canvasId, datasets, yLabel, yMax, stacked, labelFn) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     if (_dashCharts[canvasId]) { _dashCharts[canvasId].destroy(); }
     _dashCharts[canvasId] = new Chart(canvas, {
       type: 'line',
       data: { datasets },
-      options: _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked),
+      options: _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked, labelFn),
     });
   }
 
@@ -13281,10 +13285,17 @@ function _renderGlobalPerfCharts(series, ifaces) {
   // Memory (stacked: App + Cache)
   const memAppPts   = makePts('mem_app');
   const memCachePts = makePts('mem_cache');
+  const _memLabelFn = ctx => {
+    const pct = ctx.parsed.y ?? 0;
+    const gb  = _hwTotalRamBytes > 0
+      ? ' (' + (pct / 100 * _hwTotalRamBytes / 1073741824).toFixed(1) + ' GB)'
+      : '';
+    return '  ' + ctx.dataset.label + ':  ' + pct.toFixed(2) + '%' + gb;
+  };
   makeChart('dash-chart-mem', [
     { label: 'App %',   data: memAppPts,   fill: true, borderColor: '#0a84ff', backgroundColor: '#0a84ff33', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
     { label: 'Cache %', data: memCachePts, fill: true, borderColor: '#bf5af2', backgroundColor: '#bf5af233', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
-  ], '%', 100, true);
+  ], '%', 100, true, _memLabelFn);
   const memPeak = peakSum([{ data: memAppPts }, { data: memCachePts }]);
   const memMaxEl = document.getElementById('dash-max-mem');
   if (memMaxEl) memMaxEl.textContent = memPeak > 0 ? 'max ' + memPeak.toFixed(1) + '%' : '';
@@ -13937,7 +13948,7 @@ function _initPerfZoom(pool) {
   });
 })();
 
-function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true) {
+function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, labelFn = null) {
   const style     = getComputedStyle(document.body);
   const isLight   = document.body.classList.contains('light');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
@@ -13969,7 +13980,7 @@ function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true) {
             return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
                  + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
           },
-          label: ctx => '  ' + ctx.dataset.label + ':  ' + (ctx.parsed.y ?? 0).toFixed(2) + ' ' + yLabel,
+          label: ctx => labelFn ? labelFn(ctx) : '  ' + ctx.dataset.label + ':  ' + (ctx.parsed.y ?? 0).toFixed(2) + ' ' + yLabel,
         },
       },
     },

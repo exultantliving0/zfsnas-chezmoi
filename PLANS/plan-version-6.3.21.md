@@ -294,3 +294,5 @@ On "Edit" open: populate the checkbox from `user.smb_home_folder`.
 ## Version bump
 
 `internal/version/version.go`: `"6.3.21"`
+
+## Status: COMPLETE
