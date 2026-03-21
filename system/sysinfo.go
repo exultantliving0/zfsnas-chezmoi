@@ -134,9 +134,11 @@ func GetDiskIOSnapshot() *DiskIOSnapshot {
 }
 
 var (
-	poolMemberCacheMu  sync.Mutex
-	poolMemberCache    []string
-	poolMemberCachedAt time.Time
+	poolMemberCacheMu      sync.Mutex
+	poolMemberCache        []string
+	poolMemberCachedAt     time.Time
+	poolPerPoolCache       map[string][]string
+	poolPerPoolCachedAt    time.Time
 )
 
 // poolMemberBaseNames returns the kernel device names (e.g. "sda", "vdb") for ALL
@@ -203,6 +205,79 @@ func poolMemberBaseNames() []string {
 	poolMemberCache = names
 	poolMemberCachedAt = time.Now()
 	return names
+}
+
+// poolMemberBaseNamesPerPool returns a map from pool name to kernel device basenames
+// (e.g. "sda") that belong to that pool. Results are cached for 5 minutes.
+func poolMemberBaseNamesPerPool() map[string][]string {
+	poolMemberCacheMu.Lock()
+	defer poolMemberCacheMu.Unlock()
+	if time.Since(poolPerPoolCachedAt) < 5*time.Minute && poolPerPoolCache != nil {
+		return poolPerPoolCache
+	}
+
+	// Get pool names.
+	listOut, err := exec.Command("sudo", "zpool", "list", "-H", "-o", "name").Output()
+	if err != nil || len(listOut) == 0 {
+		return nil
+	}
+	var pools []string
+	for _, line := range strings.Split(strings.TrimSpace(string(listOut)), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			pools = append(pools, name)
+		}
+	}
+
+	validStates := map[string]bool{
+		"ONLINE": true, "DEGRADED": true, "FAULTED": true,
+		"OFFLINE": true, "REMOVED": true, "UNAVAIL": true,
+	}
+	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-"}
+
+	result := make(map[string][]string)
+	for _, pool := range pools {
+		statusOut, err := exec.Command("sudo", "zpool", "status", "-P", pool).Output()
+		if err != nil || len(statusOut) == 0 {
+			continue
+		}
+		seen := make(map[string]bool)
+		var devices []string
+		for _, line := range strings.Split(string(statusOut), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			name, state := fields[0], fields[1]
+			if !validStates[state] || name == "NAME" || name == pool {
+				continue
+			}
+			isVdev := false
+			for _, pfx := range vdevPrefixes {
+				if strings.HasPrefix(name, pfx) {
+					isVdev = true
+					break
+				}
+			}
+			if isVdev {
+				continue
+			}
+			real := resolveDevPath(name)
+			base := diskBaseName(filepath.Base(real))
+			if base == "" || strings.Contains(base, "-") || len(base) > 20 {
+				continue
+			}
+			if !seen[base] {
+				seen[base] = true
+				devices = append(devices, base)
+			}
+		}
+		if len(devices) > 0 {
+			result[pool] = devices
+		}
+	}
+	poolPerPoolCache = result
+	poolPerPoolCachedAt = time.Now()
+	return result
 }
 
 // readDiskstats reads /proc/diskstats and returns samples for the requested devices.

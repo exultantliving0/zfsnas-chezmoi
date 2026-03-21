@@ -396,6 +396,20 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/dashboard/metrics",
 		RequireAuth(http.HandlerFunc(HandleGetDashboardMetrics))).Methods("GET")
 
+	// --- Global system performance (multi-tier RRD) ---
+	r.Handle("/api/perf/global-data",
+		RequireAuth(http.HandlerFunc(HandleGetGlobalPerfData))).Methods("GET")
+	r.Handle("/api/perf/global-oldest",
+		RequireAuth(http.HandlerFunc(HandleGetGlobalPerfOldest))).Methods("GET")
+
+	// --- Per-pool disk performance (multi-tier RRD) ---
+	r.Handle("/api/perf/pools",
+		RequireAuth(http.HandlerFunc(HandleGetPoolPerfPools))).Methods("GET")
+	r.Handle("/api/perf/pool-data",
+		RequireAuth(http.HandlerFunc(HandleGetPoolPerfData))).Methods("GET")
+	r.Handle("/api/perf/pool-oldest",
+		RequireAuth(http.HandlerFunc(HandleGetPoolPerfOldest))).Methods("GET")
+
 	// --- Capacity Trend (multi-resolution RRD) ---
 	r.Handle("/api/capacity/series",
 		RequireAuth(http.HandlerFunc(HandleCapacitySeries))).Methods("GET")

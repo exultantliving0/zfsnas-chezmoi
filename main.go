@@ -128,6 +128,12 @@ func main() {
 	// ===== Capacity collector (5-minute samples, 3-tier RRD up to 5 years) =====
 	system.StartCapacityCollector(absConfig)
 
+	// ===== Global performance collector (CPU/mem/net/disk, 3-tier RRD up to 5 years) =====
+	system.StartGlobalPerfCollector(absConfig)
+
+	// ===== Pool performance collector (per-pool disk I/O, 3-tier RRD up to 5 years) =====
+	system.StartPoolPerfCollector(absConfig)
+
 	// ===== Daily SMART refresh goroutine =====
 	handlers.StartDailySmartRefresh()
 

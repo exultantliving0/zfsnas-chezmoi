@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>ZFS NAS Portal</title>
   <link rel="icon" href="/static/favicon.jpg?v=2" type="image/jpeg">
   <link rel="apple-touch-icon" href="/static/favicon.jpg?v=2">
@@ -329,73 +329,101 @@
     <div class="pages-container">
 
       <!-- DASHBOARD -->
-      <div class="page" id="page-dashboard">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;">
-          <div class="card-sm">
-            <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Pool Status</div>
-            <div class="text-2" id="dash-pool">—</div>
-          </div>
-          <div class="card-sm">
-            <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Datasets</div>
-            <div class="text-2" id="dash-datasets">—</div>
-          </div>
-          <div class="card-sm">
-            <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">SMB Shares</div>
-            <div class="text-2" id="dash-shares">—</div>
-          </div>
-          <div class="card-sm">
-            <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Users</div>
-            <div class="text-2" id="dash-users">—</div>
+      <div class="page" id="page-dashboard" style="padding-top:0;padding-bottom:0;">
+        <!-- Tab bar flush at top (Global + one tab per pool, built dynamically) -->
+        <div id="dash-tab-bar" style="display:flex;gap:2px;margin-bottom:20px;border-bottom:1px solid var(--border);margin-left:-32px;margin-right:-32px;padding:0 32px;">
+          <button class="cap-tab active" id="perf-tab-btn-global" onclick="switchPerfTab('global')">Global</button>
+        </div>
+
+        <!-- ── Global tab content ── -->
+        <div id="perf-tab-global">
+        <div id="prereq-banner" class="hidden"></div>
+
+        <!-- Controls bar (shared state with pool tabs) -->
+        <div style="display:flex;align-items:center;margin-bottom:20px;gap:6px;flex-wrap:wrap;">
+          <button class="perf-ceil-btn has-tip" onclick="togglePerfCeil()"
+                  data-tip="↑ Ceiling — locks the Busy % y-axis maximum to 100% so the chart always shows the full scale, making low utilisation easy to see at a glance.&#10;&#10;When OFF the y-axis auto-scales to the highest value in the visible window."
+                  style="background:var(--card-bg);border:1px solid var(--accent-danger);color:var(--accent-danger);border-radius:6px;padding:4px 8px;font-size:14px;line-height:1;cursor:pointer;flex-shrink:0;opacity:0.35;">↑</button>
+          <button class="perf-floor-btn has-tip" onclick="togglePerfFloor()"
+                  data-tip="↓ Floor — when ON, the y-axis lower bound adapts to the data minimum so small variations are easier to see.&#10;&#10;When OFF (default) the y-axis always starts at 0 for an accurate sense of scale."
+                  style="background:var(--card-bg);border:1px solid var(--accent-2);color:var(--accent-2);border-radius:6px;padding:4px 8px;font-size:14px;line-height:1;cursor:pointer;flex-shrink:0;opacity:0.45;">↓</button>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <button id="perf-reset-zoom-btn-global" onclick="resetPerfZoom('global')" class="hidden"
+                    style="background:rgba(255,159,10,0.15);border:1px solid rgba(255,159,10,0.4);color:#ff9f0a;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔍 Reset Zoom</button>
+            <div style="display:flex;gap:4px;">
+              <button class="cap-range-btn perf-range-btn active" data-range="all"   onclick="setPerfRange('all')"  >Since Data</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="day"   onclick="setPerfRange('day')"  >Day</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="week"  onclick="setPerfRange('week')" >Week</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="month" onclick="setPerfRange('month')">Month</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="year"  onclick="setPerfRange('year')" >Year</button>
+            </div>
+            <select onchange="setPerfAgg(this.value)"
+                    style="padding:3px 20px 3px 4px;font-size:12px;font-weight:600;width:62px;
+                           border-radius:6px;border:1px solid rgba(191,90,242,0.4);
+                           background:rgba(191,90,242,0.12) url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23bf5af2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;) no-repeat right 4px center;
+                           color:var(--accent-1);cursor:pointer;appearance:none;-webkit-appearance:none;">
+              <option value="avg" selected>Avg</option>
+              <option value="min">Min</option>
+              <option value="max">Max</option>
+            </select>
           </div>
         </div>
-        <div id="prereq-banner" class="hidden" style="margin-top:20px;"></div>
 
-        <!-- 24h RRD Charts -->
+        <!-- Chart grid -->
         <div id="dash-collecting" class="hidden" style="margin-top:24px;padding:24px;text-align:center;color:var(--text-3);background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);">
           <div style="font-size:28px;margin-bottom:8px;">📊</div>
           <div style="font-weight:600;margin-bottom:6px;">Collecting metrics…</div>
-          <div id="dash-collect-progress" style="font-size:13px;">Charts will fill in over 24 hours.</div>
+          <div style="font-size:13px;">Charts will fill in over the next 5 minutes.</div>
         </div>
         <div id="dash-charts" class="hidden">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-top:24px;">
-            <div class="card-sm">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;">
+            <div class="card-sm" style="position:relative;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">CPU Usage (24h)</div>
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">CPU Usage</div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span id="dash-hw-cpu" style="font-size:11px;color:var(--text-3);"></span>
                   <span id="dash-max-cpu" style="font-size:11px;color:var(--text-3);"></span>
                   <i class="info-tip tip-left" data-tip="% of total CPU time used across all cores.&#10;Source: /proc/stat (user + system + nice + irq…).&#10;Two readings 500 ms apart every 5 min; iowait excluded."></i>
                 </div>
               </div>
-              <div style="position:relative;height:140px;"><canvas id="dash-chart-cpu"></canvas></div>
+              <div style="position:relative;height:140px;">
+                <canvas id="dash-chart-cpu"></canvas>
+                <div id="global-zoom-sel-dash-chart-cpu" style="position:absolute;top:0;left:0;background:rgba(100,210,255,0.15);border:1px solid rgba(100,210,255,0.5);pointer-events:none;display:none;"></div>
+              </div>
             </div>
-            <div class="card-sm">
+            <div class="card-sm" style="position:relative;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Memory Usage (24h)</div>
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Memory Usage</div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span id="dash-hw-mem" style="font-size:11px;color:var(--text-3);"></span>
                   <span id="dash-max-mem" style="font-size:11px;color:var(--text-3);"></span>
                   <i class="info-tip tip-left" data-tip="Stacked RAM usage from /proc/meminfo, sampled every 5 min.&#10;&#10;App (blue): memory held by processes&#10;  = MemTotal − MemFree − Buffers − Cached&#10;&#10;Cache (purple): Linux page cache + buffers&#10;  — re-usable; reclaimed on demand."></i>
                 </div>
               </div>
-              <div style="position:relative;height:140px;"><canvas id="dash-chart-mem"></canvas></div>
+              <div style="position:relative;height:140px;">
+                <canvas id="dash-chart-mem"></canvas>
+                <div id="global-zoom-sel-dash-chart-mem" style="position:absolute;top:0;left:0;background:rgba(100,210,255,0.15);border:1px solid rgba(100,210,255,0.5);pointer-events:none;display:none;"></div>
+              </div>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-top:16px;">
-            <div class="card-sm">
+            <div class="card-sm" style="position:relative;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Network I/O (24h)</div>
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Network I/O</div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span id="dash-max-net" style="font-size:11px;color:var(--text-3);"></span>
                   <i class="info-tip tip-left" data-tip="Per-interface throughput (external interfaces only).&#10;Source: /proc/net/dev, sampled every 5 min.&#10;&#10;RX: bits received → Mbit/s&#10;TX: bits sent → Mbit/s&#10;&#10;Loopback and virtual interfaces (docker, veth, tun…) are excluded."></i>
                 </div>
               </div>
               <div id="dash-net-legend" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:6px;"></div>
-              <div style="position:relative;height:120px;overflow:visible;"><canvas id="dash-chart-net"></canvas></div>
+              <div style="position:relative;height:120px;overflow:visible;">
+                <canvas id="dash-chart-net"></canvas>
+                <div id="global-zoom-sel-dash-chart-net" style="position:absolute;top:0;left:0;background:rgba(100,210,255,0.15);border:1px solid rgba(100,210,255,0.5);pointer-events:none;display:none;"></div>
+              </div>
             </div>
-            <div class="card-sm">
+            <div class="card-sm" style="position:relative;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk I/O (24h)</div>
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk I/O</div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span id="dash-max-disk" style="font-size:11px;color:var(--text-3);"></span>
                   <i class="info-tip tip-left" data-tip="Aggregate read/write throughput of ZFS pool member disks.&#10;Source: /proc/diskstats, sampled every 5 min.&#10;&#10;Read (cyan): sectors read × 512 B ÷ elapsed → MB/s&#10;Write (yellow): sectors written × 512 B ÷ elapsed → MB/s"></i>
@@ -405,22 +433,32 @@
                 <span style="font-size:11px;color:#64d2ff;">▬ Read</span>
                 <span style="font-size:11px;color:var(--accent-warn);">▬ Write</span>
               </div>
-              <div style="position:relative;height:120px;"><canvas id="dash-chart-disk"></canvas></div>
+              <div style="position:relative;height:120px;">
+                <canvas id="dash-chart-disk"></canvas>
+                <div id="global-zoom-sel-dash-chart-disk" style="position:absolute;top:0;left:0;background:rgba(100,210,255,0.15);border:1px solid rgba(100,210,255,0.5);pointer-events:none;display:none;"></div>
+              </div>
             </div>
           </div>
           <div style="margin-top:16px;">
-            <div class="card-sm">
+            <div class="card-sm" style="position:relative;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk Busy % (24h)</div>
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk Busy %</div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span id="dash-max-busy" style="font-size:11px;color:var(--text-3);"></span>
                   <i class="info-tip tip-left" data-tip="Average % of time pool disks had I/O in flight (utilisation).&#10;Source: /proc/diskstats io_ticks field, sampled every 5 min.&#10;&#10;100% means a disk was fully saturated for the entire 5-min interval. Averaged across all pool member disks."></i>
                 </div>
               </div>
-              <div style="position:relative;height:90px;"><canvas id="dash-chart-busy"></canvas></div>
+              <div style="position:relative;height:90px;">
+                <canvas id="dash-chart-busy"></canvas>
+                <div id="global-zoom-sel-dash-chart-busy" style="position:absolute;top:0;left:0;background:rgba(100,210,255,0.15);border:1px solid rgba(100,210,255,0.5);pointer-events:none;display:none;"></div>
+              </div>
             </div>
           </div>
         </div>
+        </div><!-- end perf-tab-global -->
+
+        <!-- Pool performance tabs (built dynamically by buildPerfPoolTabs) -->
+        <div id="perf-pool-tabs"></div>
       </div>
 
       <!-- CAPACITY TREND -->
@@ -444,13 +482,15 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <!-- Toggle usable capacity ceiling line -->
-          <button id="cap-usable-btn" onclick="toggleCapUsable()" title="Show/hide usable capacity ceiling line"
+          <button id="cap-usable-btn" class="has-tip" onclick="toggleCapUsable()"
+                  data-tip="↑ Ceiling — shows a dashed red horizontal line at the pool's usable capacity (total space minus ZFS overhead and reservation).&#10;&#10;Use it as a reference to see how close your datasets are to filling the pool. When OFF the line is hidden."
                   style="background:var(--card-bg);border:1px solid var(--accent-danger);color:var(--accent-danger);
                          border-radius:6px;padding:4px 8px;font-size:14px;line-height:1;cursor:pointer;flex-shrink:0;">
             ↑
           </button>
           <!-- Toggle dynamic y-axis floor -->
-          <button id="cap-floor-btn" onclick="toggleCapFloor()" title="Dynamic lower bound: fit graph to data instead of forcing zero"
+          <button id="cap-floor-btn" class="has-tip" onclick="toggleCapFloor()"
+                  data-tip="↓ Floor — when ON, the y-axis lower bound adapts to the data minimum instead of being forced to zero.&#10;&#10;Useful when all series are near the same large value; the chart zooms in to show relative growth that would otherwise be invisible."
                   style="background:var(--card-bg);border:1px solid var(--accent-2);color:var(--accent-2);
                          border-radius:6px;padding:4px 8px;font-size:14px;line-height:1;cursor:pointer;flex-shrink:0;opacity:0.45;">
             ↓
@@ -4357,6 +4397,17 @@ let prereqData       = null;
 let appSettings      = { port: 8443, storage_unit: 'gb', max_smbd_processes: 100 };
 let _dashRefreshTimer = null;
 let _dashCharts      = {};
+let _perfActiveTab   = 'global'; // 'global' | poolname
+let _perfRange       = 'all';    // 'all'|'day'|'week'|'month'|'year'
+let _perfAgg         = 'avg';    // 'avg'|'min'|'max'
+let _perfCharts      = {};       // poolname → { read, write, busy } Chart instances
+let _perfPools       = [];       // pool names with data
+let _perfDynFloor    = false;    // ↓ button: auto y-axis min instead of forcing 0
+let _perfCeilBusy    = false;    // ↑ button: lock busy y-axis max to 100%
+let _perfZoom        = null;     // { min: ms, max: ms } when zoomed, else null
+let _perfZoomReady   = {};       // pool → true once drag listeners are wired
+let _perfDragState   = null;     // active drag: { pool, metric, canvas, sel, startX, rect }
+let _perfOldestTs    = {};       // pool → oldest tier-0 timestamp (seconds), cached
 
 // ===== Init =====
 (async () => {
@@ -6036,6 +6087,7 @@ function _startPoolStatusRefresh() {
   _poolStatusInterval = setInterval(_fetchPoolStatus, 10000);
 }
 
+
 async function _fetchPoolStatus() {
   const pre = document.getElementById('pool-status-output');
   if (!pre) { _clearPoolStatusInterval(); return; }
@@ -6342,7 +6394,24 @@ function renderPoolExists(el, pool) {
     : '';
 
   el.innerHTML = `
-
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;">
+      <div class="card-sm">
+        <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Health</div>
+        <div style="font-size:20px;font-weight:700;color:${healthColor};">${poolStatusLabel(pool)}</div>
+      </div>
+      <div class="card-sm">
+        <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Usable Capacity</div>
+        <div style="font-size:18px;font-weight:700;">${fmtBytes(usableSize)}</div>
+      </div>
+      <div class="card-sm">
+        <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Used</div>
+        <div style="font-size:18px;font-weight:700;color:var(--accent-2);">${fmtBytes(usableUsed)}</div>
+      </div>
+      <div class="card-sm">
+        <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Available</div>
+        <div style="font-size:18px;font-weight:700;color:var(--accent-3);">${fmtBytes(usableAvail)}</div>
+      </div>
+    </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;">
       <div class="card" style="min-width:0;">
@@ -12731,10 +12800,16 @@ function startIOPoller() {
 // ===== Dashboard 24h RRD Charts =====
 async function loadDashboard() {
   if (_dashRefreshTimer) clearInterval(_dashRefreshTimer);
-  _loadDashStats();
   _loadHardwareInfo();
-  await _fetchDashboardMetrics();
-  _dashRefreshTimer = setInterval(() => { _loadDashStats(); _fetchDashboardMetrics(); }, 5 * 60 * 1000);
+  await _loadGlobalPerfData();
+  await buildPerfPoolTabs();
+  _dashRefreshTimer = setInterval(() => _reloadActivePerfTab(), 5 * 60 * 1000);
+}
+
+// Reload the currently visible performance tab.
+function _reloadActivePerfTab() {
+  if (_perfActiveTab === 'global') _loadGlobalPerfData();
+  else _loadPoolPerfData(_perfActiveTab);
 }
 
 async function _loadHardwareInfo() {
@@ -12752,36 +12827,6 @@ async function _loadHardwareInfo() {
   } catch (_) {}
 }
 
-async function _loadDashStats() {
-  try {
-    const [pr, dr, sr, ur] = await Promise.all([
-      fetch('/api/pool'), fetch('/api/datasets'),
-      fetch('/api/shares'), fetch('/api/users'),
-    ]);
-    const pool    = pr.ok ? await pr.json() : null;
-    const datasets = dr.ok ? await dr.json() : [];
-    const shares  = sr.ok ? await sr.json() : [];
-    const users   = ur.ok ? await ur.json() : [];
-
-    const poolEl = document.getElementById('dash-pool');
-    if (poolEl) {
-      if (pool && pool.name) {
-        const ok = pool.health === 'ONLINE';
-        const color = ok ? '#32d74b' : '#ff453a';
-        poolEl.innerHTML = `<span style="color:${color};font-weight:700;">${pool.health}</span>
-          <span style="font-size:12px;color:#8e8e93;margin-left:6px;">${pool.name}</span>`;
-      } else {
-        poolEl.innerHTML = '<span style="color:#8e8e93;">No pool</span>';
-      }
-    }
-    const dsEl = document.getElementById('dash-datasets');
-    if (dsEl) dsEl.textContent = Array.isArray(datasets) ? datasets.length : '—';
-    const shEl = document.getElementById('dash-shares');
-    if (shEl) shEl.textContent = Array.isArray(shares) ? shares.length : '—';
-    const usEl = document.getElementById('dash-users');
-    if (usEl) usEl.textContent = Array.isArray(users) ? users.length : '—';
-  } catch (_) {}
-}
 
 async function _fetchDashboardMetrics() {
   try {
@@ -12794,6 +12839,175 @@ async function _fetchDashboardMetrics() {
     const ifaceIPs = iResp.ok ? await iResp.json() : {};
     _renderDashboardCharts(data, ifaceIPs);
   } catch (_) {}
+}
+
+// ===== Global System Performance (multi-tier RRD) =====
+
+async function _loadGlobalPerfData() {
+  const collectEl = document.getElementById('dash-collecting');
+  const chartsEl  = document.getElementById('dash-charts');
+  if (!collectEl || !chartsEl) return;
+
+  // Fetch oldest ts once for auto-tier selection.
+  if (_perfOldestTs['global'] === undefined) {
+    try {
+      const or = await fetch('/api/perf/global-oldest');
+      _perfOldestTs['global'] = or.ok ? ((await or.json()).oldest_ts || 0) : 0;
+    } catch(_) { _perfOldestTs['global'] = 0; }
+  }
+
+  const tier  = _perfTierForRange('global');
+  const since = _perfSinceTs();
+  let url = `/api/perf/global-data?tier=${tier}`;
+  if (since > 0) url += `&since=${since}`;
+
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return;
+    const data   = await r.json();
+    const series = data.series || {};
+    const ifaces = data.ifaces || [];
+
+    const hasData = Object.values(series).some(arr => arr && arr.length > 0);
+    if (!hasData) {
+      collectEl.classList.remove('hidden');
+      chartsEl.classList.add('hidden');
+      return;
+    }
+    collectEl.classList.add('hidden');
+    chartsEl.classList.remove('hidden');
+
+    _renderGlobalPerfCharts(series, ifaces);
+  } catch (_) {}
+}
+
+function _renderGlobalPerfCharts(series, ifaces) {
+  const since  = _perfSinceTs();
+  const oldest = _perfOldestTs['global'] || 0;
+  const nowMs  = Date.now();
+
+  const xMax = _perfZoom ? _perfZoom.max : nowMs;
+  const xMin = _perfZoom ? _perfZoom.min
+             : since > 0 ? since * 1000
+             : oldest > 0 ? oldest * 1000
+             : nowMs - 7 * 86400 * 1000;
+
+  const zoomSpanDays = _perfZoom ? (_perfZoom.max - _perfZoom.min) / 864e5 : null;
+  const showTime = _perfZoom ? zoomSpanDays <= 7
+                             : (_perfRange === 'day' || _perfRange === 'week');
+  const tickFmt = showTime
+    ? v => { const d = new Date(v); return d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+    : v => new Date(v).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+
+  function makePts(key) {
+    return (series[key] || []).map(s => ({ x: s.ts * 1000, y: s[_perfAgg] ?? null }));
+  }
+  function inRange(pts) { return pts.filter(p => p.x >= xMin && p.x <= xMax); }
+  function peakSum(datasets) {
+    const m = new Map();
+    for (const ds of datasets)
+      for (const pt of ds.data)
+        if (pt.x >= xMin && pt.x <= xMax) m.set(pt.x, (m.get(pt.x) || 0) + (pt.y ?? 0));
+    let pk = 0; for (const v of m.values()) if (v > pk) pk = v; return pk;
+  }
+  function peakMax(datasets) {
+    let pk = 0;
+    for (const ds of datasets)
+      for (const pt of (Array.isArray(ds.data) ? ds.data : []))
+        if (pt && pt.x >= xMin && pt.x <= xMax && (pt.y ?? 0) > pk) pk = pt.y;
+    return pk;
+  }
+  function makeChart(canvasId, datasets, yLabel, yMax, stacked) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    if (_dashCharts[canvasId]) { _dashCharts[canvasId].destroy(); }
+    _dashCharts[canvasId] = new Chart(canvas, {
+      type: 'line',
+      data: { datasets },
+      options: _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked),
+    });
+  }
+
+  // CPU
+  makeChart('dash-chart-cpu', [{
+    label: 'CPU %', data: makePts('cpu'),
+    fill: true, borderColor: '#0a84ff', backgroundColor: '#0a84ff33',
+    borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true,
+  }], '%', 100, false);
+  const cpuMax = peakMax([{ data: inRange(makePts('cpu')) }]);
+  const cpuMaxEl = document.getElementById('dash-max-cpu');
+  if (cpuMaxEl) cpuMaxEl.textContent = cpuMax > 0 ? 'max ' + cpuMax.toFixed(1) + '%' : '';
+
+  // Memory (stacked: App + Cache)
+  const memAppPts   = makePts('mem_app');
+  const memCachePts = makePts('mem_cache');
+  makeChart('dash-chart-mem', [
+    { label: 'App %',   data: memAppPts,   fill: true, borderColor: '#0a84ff', backgroundColor: '#0a84ff33', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
+    { label: 'Cache %', data: memCachePts, fill: true, borderColor: '#bf5af2', backgroundColor: '#bf5af233', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
+  ], '%', 100, true);
+  const memPeak = peakSum([{ data: memAppPts }, { data: memCachePts }]);
+  const memMaxEl = document.getElementById('dash-max-mem');
+  if (memMaxEl) memMaxEl.textContent = memPeak > 0 ? 'max ' + memPeak.toFixed(1) + '%' : '';
+
+  // Network (multi-NIC, not stacked)
+  const _NIC_RX = ['#32d74b', '#64d2ff', '#ff453a', '#a78bfa'];
+  const _NIC_TX = ['#ff9f0a', '#bf5af2', '#ffd60a', '#34d399'];
+  let netDs = []; let legendHtml = '';
+  ifaces.forEach((iface, i) => {
+    const rxColor = _NIC_RX[i % _NIC_RX.length];
+    const txColor = _NIC_TX[i % _NIC_TX.length];
+    netDs.push({ label: iface + ' RX', data: makePts('net_' + iface + '_rx'), fill: false, borderColor: rxColor, backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true });
+    netDs.push({ label: iface + ' TX', data: makePts('net_' + iface + '_tx'), fill: false, borderColor: txColor, backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true });
+    legendHtml += `<span style="font-size:11px;color:${rxColor};">▬ ${iface} RX</span> `;
+    legendHtml += `<span style="font-size:11px;color:${txColor};">▬ ${iface} TX</span> `;
+  });
+  const netLeg = document.getElementById('dash-net-legend');
+  if (netLeg) netLeg.innerHTML = legendHtml;
+  makeChart('dash-chart-net', netDs.length ? netDs : [], 'Mbit/s', null, false);
+  const netMax = peakMax(netDs.map(ds => ({ data: inRange(ds.data) })));
+  const netMaxEl = document.getElementById('dash-max-net');
+  if (netMaxEl) netMaxEl.textContent = netMax > 0 ? 'max ' + netMax.toFixed(2) + ' Mbit/s' : '';
+
+  // Disk I/O (not stacked)
+  const dskR = makePts('disk_read'); const dskW = makePts('disk_write');
+  makeChart('dash-chart-disk', [
+    { label: 'Read MB/s',  data: dskR, fill: false, borderColor: '#64d2ff', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
+    { label: 'Write MB/s', data: dskW, fill: false, borderColor: '#ffd60a', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
+  ], 'MB/s', null, false);
+  const dskMax = Math.max(peakMax([{ data: inRange(dskR) }]), peakMax([{ data: inRange(dskW) }]));
+  const dskMaxEl = document.getElementById('dash-max-disk');
+  if (dskMaxEl) dskMaxEl.textContent = dskMax > 0 ? 'max ' + dskMax.toFixed(2) + ' MB/s' : '';
+
+  // Disk Busy (single line)
+  const busyPts = makePts('disk_busy');
+  const busyMax = (metric => _perfCeilBusy ? 100 : null)();
+  makeChart('dash-chart-busy', [{
+    label: 'Busy %', data: busyPts,
+    fill: true, borderColor: '#ff453a', backgroundColor: '#ff453a33',
+    borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true,
+  }], '%', busyMax, false);
+  const busyPeak = peakMax([{ data: inRange(busyPts) }]);
+  const busyMaxEl = document.getElementById('dash-max-busy');
+  if (busyMaxEl) busyMaxEl.textContent = busyPeak > 0 ? 'max ' + busyPeak.toFixed(1) + '%' : '';
+
+  _initGlobalPerfZoom();
+}
+
+function _initGlobalPerfZoom() {
+  if (_perfZoomReady['global']) return;
+  _perfZoomReady['global'] = true;
+  const ids = ['dash-chart-cpu', 'dash-chart-mem', 'dash-chart-net', 'dash-chart-disk', 'dash-chart-busy'];
+  for (const id of ids) {
+    const canvas = document.getElementById(id);
+    const sel    = document.getElementById('global-zoom-sel-' + id);
+    if (!canvas || !sel) continue;
+    canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      const rect = canvas.getBoundingClientRect();
+      _perfDragState = { pool: 'global', metric: id, canvas, sel, startX: e.clientX - rect.left, rect };
+    });
+  }
 }
 
 // Build a full 288-slot (24h) timeline ending now, mapping sample data into it.
@@ -13014,6 +13228,434 @@ function _renderDashboardCharts(data, ifaceIPs = {}) {
   document.getElementById('dash-max-busy').textContent = busyMax > 0 ? 'max ' + busyMax.toFixed(1) + '%' : '';
 }
 
+// ===== Per-Pool Performance Tabs =====
+
+async function buildPerfPoolTabs() {
+  try {
+    const r = await fetch('/api/pools');
+    if (!r.ok) return;
+    const pools = await r.json();
+    _perfPools = (pools || []).map(p => p.name).filter(Boolean).sort();
+  } catch (_) { return; }
+
+  const bar  = document.getElementById('dash-tab-bar');
+  const cont = document.getElementById('perf-pool-tabs');
+
+  // Remove previously generated pool tabs/buttons.
+  bar.querySelectorAll('.perf-pool-tab-btn').forEach(b => b.remove());
+  cont.innerHTML = '';
+  _perfZoom      = null;
+  // Preserve 'global' zoom-ready state (static HTML, listeners added once).
+  const _globalZR = _perfZoomReady['global'];
+  _perfZoomReady  = {};
+  if (_globalZR) _perfZoomReady['global'] = true;
+
+  for (const pool of _perfPools) {
+    // Tab button.
+    const btn = document.createElement('button');
+    btn.className = 'cap-tab perf-pool-tab-btn';
+    btn.id = 'perf-tab-btn-' + pool;
+    btn.textContent = pool + ' Pool';
+    btn.onclick = () => switchPerfTab(pool);
+    bar.appendChild(btn);
+
+    // Tab content div.
+    const div = document.createElement('div');
+    div.id = 'perf-tab-pool-' + pool;
+    div.className = 'hidden';
+    div.innerHTML = `
+      <div style="display:flex;align-items:center;margin-bottom:20px;">
+        <button class="perf-ceil-btn has-tip" onclick="togglePerfCeil()"
+                data-tip="↑ Ceiling — locks the Busy % y-axis maximum to 100% so the chart always shows the full scale, making low utilisation easy to see at a glance.&#10;&#10;When OFF the y-axis auto-scales to the highest value in the visible window."
+                style="background:var(--card-bg);border:1px solid var(--accent-danger);color:var(--accent-danger);
+                       border-radius:6px;padding:4px 8px;font-size:14px;line-height:1;cursor:pointer;flex-shrink:0;
+                       opacity:${_perfCeilBusy?'1':'0.35'};">↑</button>
+        <button class="perf-floor-btn has-tip" onclick="togglePerfFloor()"
+                data-tip="↓ Floor — when ON, the y-axis lower bound adapts to the data minimum instead of being forced to zero.&#10;&#10;Useful to reveal small variations in disk activity that would otherwise be invisible near the baseline."
+                style="background:var(--card-bg);border:1px solid var(--accent-2);color:var(--accent-2);
+                       border-radius:6px;padding:4px 8px;font-size:14px;line-height:1;cursor:pointer;flex-shrink:0;margin-left:4px;
+                       opacity:${_perfDynFloor?'1':'0.45'};">↓</button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <button id="perf-reset-zoom-btn-${pool}" onclick="resetPerfZoom('${pool}')" class="hidden"
+                  style="background:rgba(255,159,10,0.15);border:1px solid rgba(255,159,10,0.4);color:#ff9f0a;
+                         border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">
+            🔍 Reset Zoom
+          </button>
+          <button class="cap-range-btn perf-range-btn${_perfRange==='all'?' active':''}"   data-range="all"   onclick="setPerfRange('all')"  >Since Data</button>
+          <button class="cap-range-btn perf-range-btn${_perfRange==='day'?' active':''}"   data-range="day"   onclick="setPerfRange('day')"  >Day</button>
+          <button class="cap-range-btn perf-range-btn${_perfRange==='week'?' active':''}"  data-range="week"  onclick="setPerfRange('week')" >Week</button>
+          <button class="cap-range-btn perf-range-btn${_perfRange==='month'?' active':''}" data-range="month" onclick="setPerfRange('month')">Month</button>
+          <button class="cap-range-btn perf-range-btn${_perfRange==='year'?' active':''}"  data-range="year"  onclick="setPerfRange('year')" >Year</button>
+          <select onchange="setPerfAgg(this.value)"
+                  style="padding:3px 20px 3px 4px;font-size:12px;font-weight:600;width:62px;
+                         border-radius:6px;border:1px solid rgba(191,90,242,0.4);
+                         background:rgba(191,90,242,0.12) url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23bf5af2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;) no-repeat right 4px center;
+                         color:var(--accent-1);cursor:pointer;appearance:none;-webkit-appearance:none;">
+            <option value="avg"${_perfAgg==='avg'?' selected':''}>Avg</option>
+            <option value="min"${_perfAgg==='min'?' selected':''}>Min</option>
+            <option value="max"${_perfAgg==='max'?' selected':''}>Max</option>
+          </select>
+        </div>
+      </div>
+      <div id="perf-loading-${pool}" style="padding:32px;text-align:center;color:var(--text-3);">Loading…</div>
+      <div id="perf-charts-${pool}" class="hidden">
+        <div id="perf-legend-${pool}" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;"></div>
+        <div class="card-sm" style="margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk Read MB/s</div>
+            <span id="perf-max-read-${pool}" style="font-size:11px;color:var(--text-3);"></span>
+          </div>
+          <div style="position:relative;height:160px;">
+            <canvas id="perf-chart-read-${pool}"></canvas>
+            <div id="perf-zoom-sel-read-${pool}" style="position:absolute;pointer-events:none;display:none;top:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
+          </div>
+        </div>
+        <div class="card-sm" style="margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk Write MB/s</div>
+            <span id="perf-max-write-${pool}" style="font-size:11px;color:var(--text-3);"></span>
+          </div>
+          <div style="position:relative;height:160px;">
+            <canvas id="perf-chart-write-${pool}"></canvas>
+            <div id="perf-zoom-sel-write-${pool}" style="position:absolute;pointer-events:none;display:none;top:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
+          </div>
+        </div>
+        <div class="card-sm">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk Busy %</div>
+            <span id="perf-max-busy-${pool}" style="font-size:11px;color:var(--text-3);"></span>
+          </div>
+          <div style="position:relative;height:160px;">
+            <canvas id="perf-chart-busy-${pool}"></canvas>
+            <div id="perf-zoom-sel-busy-${pool}" style="position:absolute;pointer-events:none;display:none;top:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
+          </div>
+        </div>
+      </div>`;
+    cont.appendChild(div);
+  }
+
+  // Restore the previously active tab (survives left-nav round-trips).
+  // Fall back to global if the saved pool no longer exists.
+  const target = (_perfActiveTab !== 'global' && _perfPools.includes(_perfActiveTab))
+    ? _perfActiveTab : 'global';
+  switchPerfTab(target);
+}
+
+function switchPerfTab(name) {
+  _perfActiveTab = name;
+
+  // Update tab button active states.
+  document.querySelectorAll('#dash-tab-bar .cap-tab').forEach(b => b.classList.remove('active'));
+  const activeBtn = document.getElementById('perf-tab-btn-' + name);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  // Show/hide content.
+  document.getElementById('perf-tab-global').classList.toggle('hidden', name !== 'global');
+  document.getElementById('perf-pool-tabs').classList.toggle('hidden', name === 'global');
+  for (const pool of _perfPools) {
+    const el = document.getElementById('perf-tab-pool-' + pool);
+    if (el) el.classList.toggle('hidden', pool !== name);
+  }
+
+  _reloadActivePerfTab();
+}
+
+function setPerfRange(range) {
+  _perfRange = range;
+  _perfZoom  = null;
+  const zb = document.getElementById('perf-reset-zoom-btn-' + _perfActiveTab);
+  if (zb) zb.classList.add('hidden');
+  document.querySelectorAll('.perf-range-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === range);
+  });
+  _reloadActivePerfTab();
+}
+
+function setPerfAgg(agg) {
+  _perfAgg = agg;
+  _reloadActivePerfTab();
+}
+
+// Determine tier and since-timestamp from _perfRange.
+function _perfTierForRange(pool) {
+  if (_perfRange === 'day' || _perfRange === 'week') return 0;
+  if (_perfRange === 'month') return 1;
+  if (_perfRange === 'year')  return 2;
+  // 'all': pick tier based on data age (mirrors capTierForRange)
+  const oldest = _perfOldestTs[pool] || 0;
+  if (oldest === 0) return 0;
+  const ageSecs = Math.floor(Date.now() / 1000) - oldest;
+  if (ageSecs > 30 * 86400) return 2;
+  if (ageSecs > 7  * 86400) return 1;
+  return 0;
+}
+
+function _perfSinceTs() {
+  const now = Math.floor(Date.now() / 1000);
+  const map = { day: 86400, week: 604800, month: 2592000, year: 31536000 };
+  return map[_perfRange] ? now - map[_perfRange] : 0;
+}
+
+async function _loadPoolPerfData(pool) {
+  const loadEl   = document.getElementById('perf-loading-' + pool);
+  const chartsEl = document.getElementById('perf-charts-' + pool);
+  if (!loadEl || !chartsEl) return;
+
+  // Fetch oldest tier-0 timestamp once per pool (needed for 'all' auto-tier selection).
+  if (_perfOldestTs[pool] === undefined) {
+    try {
+      const or = await fetch('/api/perf/pool-oldest?pool=' + encodeURIComponent(pool));
+      _perfOldestTs[pool] = or.ok ? ((await or.json()).oldest_ts || 0) : 0;
+    } catch(_) { _perfOldestTs[pool] = 0; }
+  }
+
+  const tier  = _perfTierForRange(pool);
+  const since = _perfSinceTs();
+  let url = `/api/perf/pool-data?pool=${encodeURIComponent(pool)}&tier=${tier}`;
+  if (since > 0) url += `&since=${since}`;
+
+  try {
+    const r = await fetch(url);
+    if (!r.ok) { loadEl.textContent = 'Error loading data.'; return; }
+    const data = await r.json();
+    const devices = data.devices || [];
+    const series  = data.series  || {};
+
+    if (!devices.length) {
+      loadEl.classList.remove('hidden');
+      loadEl.textContent = 'No data yet. Collecting metrics every 5 minutes…';
+      chartsEl.classList.add('hidden');
+      return;
+    }
+
+    loadEl.classList.add('hidden');
+    chartsEl.classList.remove('hidden');
+
+    _renderPerfCharts(pool, devices, series);
+  } catch (_) {
+    if (loadEl) { loadEl.classList.remove('hidden'); loadEl.textContent = 'Error loading data.'; }
+  }
+}
+
+// Render all 3 per-device stacked charts for one pool (time-based x-axis).
+function _renderPerfCharts(pool, devices, series) {
+  if (!_perfCharts[pool]) _perfCharts[pool] = {};
+
+  const since   = _perfSinceTs();
+  const oldest  = _perfOldestTs[pool] || 0;
+  const nowMs   = Date.now();
+
+  // X-axis bounds: zoom overrides, then since, then oldest, then fallback.
+  const xMax = _perfZoom ? _perfZoom.max : nowMs;
+  const xMin = _perfZoom ? _perfZoom.min
+             : since > 0 ? since * 1000
+             : oldest > 0 ? oldest * 1000
+             : nowMs - 7 * 86400 * 1000;
+
+  // Tick format: show time for day/week or narrow zoom spans.
+  const zoomSpanDays = _perfZoom ? (_perfZoom.max - _perfZoom.min) / 864e5 : null;
+  const showTime = _perfZoom ? zoomSpanDays <= 7
+                             : (_perfRange === 'day' || _perfRange === 'week');
+  const tickFmt = showTime
+    ? v => { const d = new Date(v); return d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+    : v => new Date(v).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+
+  ['read', 'write', 'busy'].forEach(metric => {
+    const canvasId = `perf-chart-${metric}-${pool}`;
+    const canvas   = document.getElementById(canvasId);
+    if (!canvas) return;
+    if (_perfCharts[pool][metric]) { _perfCharts[pool][metric].destroy(); }
+
+    const yLabel = metric === 'busy' ? '%' : 'MB/s';
+    const yMax   = (metric === 'busy' && _perfCeilBusy) ? 100 : null;
+
+    const datasets = devices.map((dev, i) => {
+      const color   = IO_COLORS[i % IO_COLORS.length];
+      const samples = series[metric + ':' + pool + ':' + dev] || [];
+      const pts = samples.map(s => ({ x: s.ts * 1000, y: s[_perfAgg] ?? null }));
+      return {
+        label: dev,
+        data: pts,
+        fill: true,
+        borderColor: color,
+        backgroundColor: color + '55',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.3,
+        spanGaps: true,
+      };
+    });
+
+    _perfCharts[pool][metric] = new Chart(canvas, {
+      type: 'line',
+      data: { datasets },
+      options: _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt),
+    });
+
+    // Peak label: sum across devices at each timestamp within visible range.
+    const maxEl = document.getElementById(`perf-max-${metric}-${pool}`);
+    if (maxEl) {
+      const sumMap = new Map();
+      for (const ds of datasets) {
+        for (const pt of ds.data) {
+          if (pt.x >= xMin && pt.x <= xMax) {
+            sumMap.set(pt.x, (sumMap.get(pt.x) || 0) + (pt.y ?? 0));
+          }
+        }
+      }
+      let peak = 0;
+      for (const v of sumMap.values()) { if (v > peak) peak = v; }
+      maxEl.textContent = peak > 0 ? 'max ' + peak.toFixed(metric === 'busy' ? 1 : 2) + ' ' + yLabel : '';
+    }
+  });
+
+  // Build legend
+  const legEl = document.getElementById('perf-legend-' + pool);
+  if (legEl) {
+    legEl.innerHTML = devices.map((dev, i) => {
+      const color = IO_COLORS[i % IO_COLORS.length];
+      return `<span style="font-size:11px;color:${color};">▬ ${dev}</span>`;
+    }).join(' ');
+  }
+
+  _initPerfZoom(pool);
+}
+
+function togglePerfFloor() {
+  _perfDynFloor = !_perfDynFloor;
+  document.querySelectorAll('.perf-floor-btn').forEach(b => {
+    b.style.opacity = _perfDynFloor ? '1' : '0.45';
+  });
+  _reloadActivePerfTab();
+}
+
+function togglePerfCeil() {
+  _perfCeilBusy = !_perfCeilBusy;
+  document.querySelectorAll('.perf-ceil-btn').forEach(b => {
+    b.style.opacity = _perfCeilBusy ? '1' : '0.35';
+  });
+  _reloadActivePerfTab();
+}
+
+function resetPerfZoom(pool) {
+  _perfZoom = null;
+  const zb = document.getElementById('perf-reset-zoom-btn-' + pool);
+  if (zb) zb.classList.add('hidden');
+  if (pool === 'global') _loadGlobalPerfData();
+  else _loadPoolPerfData(pool);
+}
+
+function _initPerfZoom(pool) {
+  if (_perfZoomReady[pool]) return;
+  _perfZoomReady[pool] = true;
+  ['read', 'write', 'busy'].forEach(metric => {
+    const canvas = document.getElementById('perf-chart-' + metric + '-' + pool);
+    const sel    = document.getElementById('perf-zoom-sel-' + metric + '-' + pool);
+    if (!canvas || !sel) return;
+    canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      const rect = canvas.getBoundingClientRect();
+      _perfDragState = { pool, metric, canvas, sel, startX: e.clientX - rect.left, rect };
+    });
+  });
+}
+
+// Shared document-level drag handlers for perf chart zoom (set up once).
+(function() {
+  document.addEventListener('mousemove', e => {
+    const d = _perfDragState;
+    if (!d) return;
+    const curX = e.clientX - d.rect.left;
+    const dx   = Math.abs(curX - d.startX);
+    if (dx < 4) { d.sel.style.display = 'none'; return; }
+    d.sel.style.display = '';
+    d.sel.style.left    = Math.min(curX, d.startX) + 'px';
+    d.sel.style.width   = dx + 'px';
+    d.sel.style.height  = d.rect.height + 'px';
+  });
+  document.addEventListener('mouseup', e => {
+    const d = _perfDragState;
+    if (!d) return;
+    _perfDragState = null;
+    d.sel.style.display = 'none';
+    const endX = e.clientX - d.rect.left;
+    const dx   = Math.abs(endX - d.startX);
+    if (dx < 4) return;
+    const chart = _perfCharts[d.pool] && _perfCharts[d.pool][d.metric];
+    if (!chart) return;
+    const scale = chart.scales.x;
+    if (!scale) return;
+    const tsMin = scale.getValueForPixel(Math.min(d.startX, endX));
+    const tsMax = scale.getValueForPixel(Math.max(d.startX, endX));
+    if (!tsMin || !tsMax || tsMax <= tsMin) return;
+    _perfZoom = { min: tsMin, max: tsMax };
+    const zb = document.getElementById('perf-reset-zoom-btn-' + d.pool);
+    if (zb) zb.classList.remove('hidden');
+    if (d.pool === 'global') _loadGlobalPerfData();
+    else _loadPoolPerfData(d.pool);
+  });
+})();
+
+function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true) {
+  const style     = getComputedStyle(document.body);
+  const isLight   = document.body.classList.contains('light');
+  const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
+  const tipBg     = isLight ? '#ffffff' : '#1c1c1e';
+  const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+  const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
+  const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
+  const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    interaction: { mode: 'index', intersect: false },
+    layout: { padding: { top: 24, right: 16, left: 4, bottom: 4 } },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: tipBg,
+        borderColor: tipBorder,
+        borderWidth: 1,
+        titleColor: tipTitle,
+        bodyColor: tipBody,
+        padding: 10,
+        callbacks: {
+          title: items => {
+            if (!items.length) return '';
+            const d = new Date(items[0].parsed.x);
+            const pad = n => String(n).padStart(2, '0');
+            return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+                 + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+          },
+          label: ctx => '  ' + ctx.dataset.label + ':  ' + (ctx.parsed.y ?? 0).toFixed(2) + ' ' + yLabel,
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'linear',
+        min: xMin,
+        max: xMax,
+        ticks: { color: tickColor, font: { size: 10 }, maxTicksLimit: 8, maxRotation: 0, callback: tickFmt },
+        grid:  { color: gridColor },
+      },
+      y: {
+        stacked,
+        ...(_perfDynFloor ? {} : { min: 0 }),
+        ...(yMax != null ? { max: yMax } : {}),
+        ticks: {
+          color: tickColor,
+          font: { size: 10 },
+          callback: val => yMax === 100 ? val + '%' : val.toFixed(1) + ' ' + yLabel,
+        },
+        grid: { color: gridColor },
+      },
+    },
+  };
+}
+
 // ===== Binary Self-Update =====
 async function toggleLiveUpdate() {
   const enabled = document.getElementById('live-update-toggle').checked;
@@ -13170,21 +13812,6 @@ function applyBinaryUpdate() {
   }, 3000);
 }
 
-// ── iOS PWA zoom reset ────────────────────────────────────────────────────────
-// When the user switches away and returns, iOS can leave the viewport zoomed in.
-// On visibility restore, briefly lock maximum-scale=1 to snap zoom back to 1×,
-// then restore the original content so pinch-zoom still works normally.
-(function () {
-  const vpMeta = document.querySelector('meta[name=viewport]');
-  if (!vpMeta) return;
-  const original = vpMeta.getAttribute('content');
-  document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) {
-      vpMeta.setAttribute('content', original + ', maximum-scale=1');
-      setTimeout(function () { vpMeta.setAttribute('content', original); }, 300);
-    }
-  });
-})();
 
 // Close any modal by clicking its backdrop (outside the dialog box).
 document.addEventListener('click', function(e) {
@@ -13242,7 +13869,7 @@ document.addEventListener('click', function(e) {
 (function() {
   const box = document.getElementById('tip-box');
   let hideTimer = null;
-  function findTip(el) { return el.closest('.info-tip') || el.closest('.sess-tip'); }
+  function findTip(el) { return el.closest('.info-tip') || el.closest('.sess-tip') || el.closest('.has-tip'); }
   document.addEventListener('mouseover', e => {
     const tip = findTip(e.target);
     if (tip && tip.dataset.tip) {
