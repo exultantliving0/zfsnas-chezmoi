@@ -9861,8 +9861,53 @@ async function loadDisks() {
     _diskCache = disks || [];
     _applyDiskNavDot(_diskCache);
     renderDisks(el, _diskCache);
+    // Immediately kick off a background SMART refresh so Temp + SMART are fresh.
+    _refreshDisksBackground();
   } catch {
     el.innerHTML = '<div style="color:var(--accent-danger);padding:24px;">Failed to load disk info.</div>';
+  }
+}
+
+function _diskCellKey(d) {
+  return (d.name || d.device.replace(/^\/dev\//, '')).replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+async function _refreshDisksBackground() {
+  // Show spinners in Temp and SMART columns while the refresh runs.
+  (_diskCache || []).forEach(d => {
+    const key = _diskCellKey(d);
+    const tempEl  = document.getElementById('disk-temp-'  + key);
+    const smartEl = document.getElementById('disk-smart-' + key);
+    const spin = '<span class="spinner" style="width:12px;height:12px;"></span>';
+    if (tempEl)  tempEl.innerHTML  = spin;
+    if (smartEl) smartEl.innerHTML = spin;
+  });
+  try {
+    const resp  = await fetch('/api/disks/refresh', { method: 'POST' });
+    const disks = await resp.json();
+    _diskCache = disks || [];
+    _applyDiskNavDot(_diskCache);
+    // Update only the Temp and SMART cells — no full re-render.
+    _diskCache.forEach(d => {
+      const key = _diskCellKey(d);
+      const tempEl  = document.getElementById('disk-temp-'  + key);
+      const smartEl = document.getElementById('disk-smart-' + key);
+      if (tempEl)  tempEl.innerHTML  = tempBadge(d);
+      if (smartEl) smartEl.innerHTML = smartBadge(d);
+    });
+    // Refresh the timestamp line.
+    const ts = _diskCache.find(d => d.updated_at && d.updated_at !== '0001-01-01T00:00:00Z');
+    const tsEl = document.getElementById('disk-ts-line');
+    if (ts && tsEl) tsEl.textContent = 'SMART data last refreshed: ' + formatDate(ts.updated_at);
+  } catch {
+    // Silently restore dashes on failure.
+    (_diskCache || []).forEach(d => {
+      const key = _diskCellKey(d);
+      const tempEl  = document.getElementById('disk-temp-'  + key);
+      const smartEl = document.getElementById('disk-smart-' + key);
+      if (tempEl)  tempEl.innerHTML  = tempBadge(d);
+      if (smartEl) smartEl.innerHTML = smartBadge(d);
+    });
   }
 }
 
@@ -10005,7 +10050,7 @@ function renderDisks(el, disks) {
   // Show cache timestamp.
   const ts = disks.find(d => d.updated_at && d.updated_at !== '0001-01-01T00:00:00Z');
   if (ts) {
-    html += `<div class="text-3 text-sm" style="margin-top:16px;">SMART data last refreshed: ${formatDate(ts.updated_at)}</div>`;
+    html += `<div id="disk-ts-line" class="text-3 text-sm" style="margin-top:16px;">SMART data last refreshed: ${formatDate(ts.updated_at)}</div>`;
   }
 
   el.innerHTML = html;
@@ -10041,6 +10086,7 @@ function diskRow(d, dimmed, withActions) {
       <button onclick="event.stopPropagation();openAvailDiskMenu(this,'${esc(d.device)}')"
               style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;" title="Disk actions">⋮</button>
     </td>` : (withActions && isAdmin ? '<td></td>' : '');
+  const ck = _diskCellKey(d);
   return `<tr>
     <td style="font-family:monospace;font-size:13px;${tc}">${esc(d.device)}</td>
     <td style="font-weight:600;${tc}">${esc(d.vendor||'—')} ${esc(d.model||'—')}</td>
@@ -10048,13 +10094,14 @@ function diskRow(d, dimmed, withActions) {
     <td style="font-family:monospace;${tc}">${d.size_bytes ? fmtBytes(d.size_bytes) : esc(d.size)}</td>
     <td>${diskTypeBadge(d.disk_type, dimmed)}</td>
     <td>${wearoutBar(d, dimmed)}</td>
-    <td>${tempBadge(d)}</td>
-    <td>${smartBadge(d)}</td>
+    <td id="disk-temp-${ck}">${tempBadge(d)}</td>
+    <td id="disk-smart-${ck}">${smartBadge(d)}</td>
     ${actionCell}
   </tr>`;
 }
 
 function diskRowWithPool(d, poolName) {
+  const ck = _diskCellKey(d);
   return `<tr>
     <td style="font-family:monospace;font-size:13px;">${esc(d.device)}</td>
     <td style="font-weight:600;">${esc(d.vendor||'—')} ${esc(d.model||'—')}</td>
@@ -10062,8 +10109,8 @@ function diskRowWithPool(d, poolName) {
     <td style="font-family:monospace;">${d.size_bytes ? fmtBytes(d.size_bytes) : esc(d.size)}</td>
     <td>${diskTypeBadge(d.disk_type, false)}</td>
     <td>${wearoutBar(d, false)}</td>
-    <td>${tempBadge(d)}</td>
-    <td>${smartBadge(d)}</td>
+    <td id="disk-temp-${ck}">${tempBadge(d)}</td>
+    <td id="disk-smart-${ck}">${smartBadge(d)}</td>
     <td>${poolName === '⚡ Cache'
       ? `<span style="font-size:12px;font-weight:600;color:#bf5af2;">⚡ L2ARC Cache</span>`
       : `<span style="font-family:monospace;font-size:12px;font-weight:600;color:var(--accent-2);">🗄 ${esc(poolName)}</span>`
