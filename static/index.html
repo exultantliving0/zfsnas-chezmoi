@@ -3263,8 +3263,22 @@
 
       <div class="form-group">
         <label>Valid Users <span class="text-3 text-xs">(leave empty = any authenticated user)</span></label>
-        <div id="share-users-list" style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;max-height:160px;overflow-y:auto;">
-          <div style="padding:12px;color:var(--text-3);font-size:13px;">Loading users…</div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <select id="share-add-user-select" style="flex:1;min-width:0;"></select>
+          <button type="button" onclick="addShareUser()" class="btn btn-sm btn-ghost" style="white-space:nowrap;">+ Add</button>
+        </div>
+        <div id="share-users-list" style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;">
+          <div id="share-users-empty" style="padding:12px;color:var(--text-3);font-size:13px;">No restrictions — any authenticated user may connect.</div>
+          <table id="share-users-table" style="width:100%;border-collapse:collapse;display:none;">
+            <thead>
+              <tr style="background:var(--surface-2);font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;">
+                <th style="padding:7px 14px;text-align:left;">Username</th>
+                <th style="padding:7px 14px;text-align:left;">Restrict Write</th>
+                <th style="padding:7px 6px;width:32px;"></th>
+              </tr>
+            </thead>
+            <tbody id="share-users-tbody"></tbody>
+          </table>
         </div>
       </div>
 
@@ -10678,7 +10692,7 @@ function renderShares(el, shares, sessions = {}) {
       </td>
       <td class="text-2" style="font-size:13px;">
         ${s.guest_ok ? '<span style="color:var(--accent-warn);">Guest OK</span>' : ''}
-        ${(s.valid_users&&s.valid_users.length) ? esc(s.valid_users.join(', ')) : (s.guest_ok ? '' : 'All users')}
+        ${(s.valid_users&&s.valid_users.length) ? esc(s.valid_users.map(u=>u.username).join(', ')) : (s.guest_ok ? '' : 'All users')}
       </td>
       ${sessions === null
         ? `<td data-sess-key="${esc(s.name)}"><span class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle;"></span></td>`
@@ -10861,6 +10875,8 @@ async function _openEditShareObj(s) {
   document.getElementById('modal-share').classList.remove('hidden');
 }
 
+let _shareAllUsers = [];
+
 async function loadShareFormData(selectedUsers) {
   // Populate dataset path dropdown.
   const pathSel = document.getElementById('share-path-select');
@@ -10874,28 +10890,78 @@ async function loadShareFormData(selectedUsers) {
     pathSel.innerHTML = '<option value="">— failed to load datasets —</option>';
   }
 
-  // Populate users checklist.
-  const listEl = document.getElementById('share-users-list');
+  // Load all available users.
   try {
     const resp = await fetch('/api/users');
-    const users = (await resp.json() || []).filter(u => u.role !== 'smb-only' || true);
-    if (!users.length) {
-      listEl.innerHTML = '<div style="padding:12px;color:var(--text-3);font-size:13px;">No users found.</div>';
-      return;
-    }
-    listEl.innerHTML = users.map(u => `
-      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;font-size:14px;">
-        <input type="checkbox" name="share-user" value="${esc(u.username)}"
-          ${(selectedUsers||[]).includes(u.username) ? 'checked' : ''}
-          style="width:15px;height:15px;accent-color:var(--accent-2);">
-        <div>
-          <div style="font-weight:600;">${esc(u.username)}</div>
-          <div class="text-3 text-xs">${esc(u.role)}</div>
-        </div>
-      </label>`).join('');
+    _shareAllUsers = await resp.json() || [];
   } catch {
-    listEl.innerHTML = '<div style="padding:12px;color:var(--accent-danger);font-size:13px;">Failed to load users.</div>';
+    _shareAllUsers = [];
   }
+
+  // Render the selected users table.
+  const tbody = document.getElementById('share-users-tbody');
+  tbody.innerHTML = '';
+  const selected = (selectedUsers || []).map(u =>
+    typeof u === 'string' ? {username: u, read_only: false} : u
+  );
+  for (const u of selected) {
+    tbody.appendChild(_makeShareUserRow(u.username, u.read_only));
+  }
+  _refreshShareUsersUI();
+}
+
+function _makeShareUserRow(username, readOnly) {
+  const tr = document.createElement('tr');
+  tr.dataset.username = username;
+  tr.style.borderBottom = '1px solid var(--border)';
+  tr.innerHTML = `
+    <td style="padding:9px 14px;font-size:14px;font-weight:600;">${esc(username)}</td>
+    <td style="padding:9px 14px;">
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none;">
+        <input type="checkbox" class="user-readonly-toggle" ${readOnly ? 'checked' : ''}
+          style="width:14px;height:14px;accent-color:var(--accent-2);"
+          onchange="this.nextElementSibling.textContent=this.checked?'Read-Only':'Read+Write'">
+        <span style="font-size:13px;color:var(--text-2);">${readOnly ? 'Read-Only' : 'Read+Write'}</span>
+      </label>
+    </td>
+    <td style="padding:9px 6px;text-align:center;">
+      <button type="button" onclick="removeShareUser('${esc(username)}')"
+        style="background:none;border:none;color:var(--text-3);font-size:16px;cursor:pointer;line-height:1;padding:2px 6px;"
+        title="Remove">×</button>
+    </td>`;
+  return tr;
+}
+
+function _refreshShareUsersUI() {
+  const tbody = document.getElementById('share-users-tbody');
+  const table = document.getElementById('share-users-table');
+  const empty = document.getElementById('share-users-empty');
+  const addedUsernames = [...tbody.querySelectorAll('tr')].map(r => r.dataset.username);
+  const hasRows = addedUsernames.length > 0;
+  table.style.display = hasRows ? '' : 'none';
+  empty.style.display = hasRows ? 'none' : '';
+  // Rebuild add-user dropdown with remaining users.
+  const sel = document.getElementById('share-add-user-select');
+  const available = _shareAllUsers.filter(u => !addedUsernames.includes(u.username));
+  sel.innerHTML = available.length
+    ? '<option value="">— Add a user —</option>' + available.map(u => `<option value="${esc(u.username)}">${esc(u.username)} (${esc(u.role)})</option>`).join('')
+    : '<option value="">— All users added —</option>';
+}
+
+function addShareUser() {
+  const sel = document.getElementById('share-add-user-select');
+  const username = sel.value;
+  if (!username) return;
+  const tbody = document.getElementById('share-users-tbody');
+  tbody.appendChild(_makeShareUserRow(username, false));
+  _refreshShareUsersUI();
+}
+
+function removeShareUser(username) {
+  const tbody = document.getElementById('share-users-tbody');
+  const row = [...tbody.querySelectorAll('tr')].find(r => r.dataset.username === username);
+  if (row) row.remove();
+  _refreshShareUsersUI();
 }
 
 function sharePathSelect(val) {
@@ -10945,7 +11011,10 @@ async function submitShare(e) {
   const browseable = document.getElementById('share-browseable').checked;
   const readOnly   = document.getElementById('share-readonly').checked;
   const guestOK    = document.getElementById('share-guestok').checked;
-  const validUsers = [...document.querySelectorAll('input[name="share-user"]:checked')].map(cb => cb.value);
+  const validUsers = [...document.querySelectorAll('#share-users-tbody tr')].map(tr => ({
+    username: tr.dataset.username,
+    read_only: tr.querySelector('.user-readonly-toggle').checked
+  }));
   const timeMachine    = document.getElementById('share-timemachine').checked;
   const tmQuotaGB      = parseInt(document.getElementById('share-tm-quota').value, 10) || 0;
   const recycleBin     = document.getElementById('share-recycle').checked;

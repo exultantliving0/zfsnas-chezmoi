@@ -22,15 +22,21 @@ const (
 	smbGlobalEndMarker   = "# ===== ZFS NAS MANAGED GLOBAL END ====="
 )
 
+// SMBUserAccess represents a user's access level for an SMB share.
+type SMBUserAccess struct {
+	Username string `json:"username"`
+	ReadOnly bool   `json:"read_only"` // false = read-write (default)
+}
+
 // SMBShare represents a Samba file share.
 type SMBShare struct {
-	Name       string   `json:"name"`
-	Path       string   `json:"path"`
-	Comment    string   `json:"comment"`
-	Browseable bool     `json:"browseable"`
-	ReadOnly   bool     `json:"read_only"`
-	ValidUsers []string `json:"valid_users"`
-	GuestOK    bool     `json:"guest_ok"`
+	Name       string          `json:"name"`
+	Path       string          `json:"path"`
+	Comment    string          `json:"comment"`
+	Browseable bool            `json:"browseable"`
+	ReadOnly   bool            `json:"read_only"`
+	ValidUsers []SMBUserAccess `json:"valid_users"`
+	GuestOK    bool            `json:"guest_ok"`
 
 	// Time Machine
 	TimeMachine bool `json:"time_machine"`
@@ -49,6 +55,38 @@ type SMBShare struct {
 	// Host access control
 	AllowedHosts string `json:"allowed_hosts"` // space-separated IPs/hostnames/subnets
 	HostsDeny    string `json:"hosts_deny"`
+}
+
+// UnmarshalJSON for SMBShare handles migration from the old []string valid_users
+// format (where each entry was a plain username) to the new []SMBUserAccess format.
+func (s *SMBShare) UnmarshalJSON(data []byte) error {
+	type SMBShareAlias SMBShare
+	type rawShare struct {
+		SMBShareAlias
+		ValidUsers json.RawMessage `json:"valid_users"`
+	}
+	var raw rawShare
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*s = SMBShare(raw.SMBShareAlias)
+	if len(raw.ValidUsers) == 0 || string(raw.ValidUsers) == "null" {
+		return nil
+	}
+	// Try new format first.
+	var newFmt []SMBUserAccess
+	if err := json.Unmarshal(raw.ValidUsers, &newFmt); err == nil {
+		s.ValidUsers = newFmt
+		return nil
+	}
+	// Fall back to old []string format.
+	var oldFmt []string
+	if err := json.Unmarshal(raw.ValidUsers, &oldFmt); err == nil {
+		for _, name := range oldFmt {
+			s.ValidUsers = append(s.ValidUsers, SMBUserAccess{Username: name, ReadOnly: false})
+		}
+	}
+	return nil
 }
 
 func smbSharesPath(configDir string) string {
@@ -101,7 +139,22 @@ func applySMBConf(shares []SMBShare) error {
 		sb.WriteString("   read only = " + boolSMB(s.ReadOnly) + "\n")
 		sb.WriteString("   guest ok = " + boolSMB(s.GuestOK) + "\n")
 		if len(s.ValidUsers) > 0 {
-			sb.WriteString("   valid users = " + strings.Join(s.ValidUsers, ", ") + "\n")
+			var names, readList, writeList []string
+			for _, u := range s.ValidUsers {
+				names = append(names, u.Username)
+				if u.ReadOnly {
+					readList = append(readList, u.Username)
+				} else {
+					writeList = append(writeList, u.Username)
+				}
+			}
+			sb.WriteString("   valid users = " + strings.Join(names, " ") + "\n")
+			if len(readList) > 0 {
+				sb.WriteString("   read list = " + strings.Join(readList, " ") + "\n")
+			}
+			if len(writeList) > 0 {
+				sb.WriteString("   write list = " + strings.Join(writeList, " ") + "\n")
+			}
 		}
 		sb.WriteString("   create mask = 0664\n")
 		sb.WriteString("   directory mask = 0775\n")
