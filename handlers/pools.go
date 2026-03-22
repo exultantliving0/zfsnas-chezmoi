@@ -664,6 +664,64 @@ func HandlePoolFixerReplace(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, pool)
 }
 
+// HandleGetARC returns current ARC statistics and tunable parameters.
+// GET /api/pool/arc
+func HandleGetARC(w http.ResponseWriter, r *http.Request) {
+	stats, err := system.GetARCStats()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, stats)
+}
+
+// HandleSetARC applies new ARC size limits immediately and persists them.
+// PUT /api/pool/arc  { arc_max_mb, arc_min_mb }
+func HandleSetARC(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ARCMaxMB int64 `json:"arc_max_mb"`
+		ARCMinMB int64 `json:"arc_min_mb"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.ARCMaxMB == 0 && req.ARCMinMB == 0 {
+		jsonErr(w, http.StatusBadRequest, "arc_max_mb or arc_min_mb is required")
+		return
+	}
+	if req.ARCMaxMB < 0 || req.ARCMinMB < 0 {
+		jsonErr(w, http.StatusBadRequest, "values must be positive")
+		return
+	}
+	if req.ARCMaxMB > 0 && req.ARCMinMB > 0 && req.ARCMinMB >= req.ARCMaxMB {
+		jsonErr(w, http.StatusBadRequest, "arc_min_mb must be less than arc_max_mb")
+		return
+	}
+
+	arcMax := req.ARCMaxMB * 1024 * 1024
+	arcMin := req.ARCMinMB * 1024 * 1024
+
+	if err := system.SetARCParams(arcMax, arcMin); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	details := fmt.Sprintf("ARC parameters updated: max=%dMB min=%dMB", req.ARCMaxMB, req.ARCMinMB)
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionUpdatePool,
+		Target:  "arc",
+		Result:  audit.ResultOK,
+		Details: details,
+	})
+
+	stats, _ := system.GetARCStats()
+	jsonOK(w, stats)
+}
+
 func HandleDiskOffline(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Pool   string `json:"pool"`

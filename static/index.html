@@ -2033,7 +2033,7 @@
   </div>
 </div>
 
-<div class="modal-backdrop hidden" id="modal-cache-config">
+<div class="modal-backdrop hidden" id="modal-cache-config" onclick="if(event.target===this)closeCacheConfigModal()">
   <div class="modal" style="max-width:520px;">
     <div class="modal-header">
       <h3>⚡ L2ARC Cache Config</h3>
@@ -2060,6 +2060,84 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeCacheConfigModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ARC Level 1 (Memory) Modal -->
+<div class="modal-backdrop hidden" id="modal-arc" onclick="if(event.target===this)closeARCModal()">
+  <div class="modal" style="width:min(900px,94vw);max-width:94vw;max-height:90vh;display:flex;flex-direction:column;">
+    <div class="modal-header">
+      <h3>🧠 ARC Level 1 Cache (Memory)</h3>
+      <button class="modal-close" onclick="closeARCModal()">✕</button>
+    </div>
+    <div class="modal-body" style="overflow-y:auto;padding-top:14px;flex:1;">
+      <!-- Advanced warning banner -->
+      <div style="background:rgba(255,159,10,0.10);border:1.5px solid rgba(255,159,10,0.50);border-radius:var(--radius);padding:12px 16px;margin-bottom:18px;display:flex;gap:12px;align-items:flex-start;">
+        <span style="font-size:18px;flex-shrink:0;">⚠</span>
+        <div style="font-size:13px;color:var(--text-1);line-height:1.6;">
+          <strong>Advanced Setting — Modify with care.</strong><br>
+          ARC is ZFS's adaptive read cache in RAM. Incorrect tuning can reduce performance or cause out-of-memory conditions.
+          Changes take effect <strong>immediately</strong> and persist across reboots via <code>/etc/modprobe.d/zfs.conf</code>.
+          Only adjust these values if you have a specific reason to override the kernel defaults.
+        </div>
+      </div>
+
+      <div id="arc-load-error" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
+
+      <!-- Current state stat cards -->
+      <h4 style="margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Current State</h4>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;" id="arc-stat-cards">
+        <div class="arc-stat-card" id="arc-card-size"></div>
+        <div class="arc-stat-card" id="arc-card-hit"></div>
+        <div class="arc-stat-card" id="arc-card-max"></div>
+        <div class="arc-stat-card" id="arc-card-min"></div>
+      </div>
+
+      <!-- MFU/MRU/Meta breakdown bars -->
+      <h4 style="margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Cache Breakdown
+        <i class="info-tip" data-tip="ARC is split into Most Frequently Used (MFU) and Most Recently Used (MRU) segments. ZFS dynamically balances between them based on workload patterns."></i>
+      </h4>
+      <div id="arc-breakdown" style="margin-bottom:18px;"></div>
+
+      <!-- Statistics row -->
+      <h4 style="margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Statistics</h4>
+      <div id="arc-stats-row" style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:18px;font-size:13px;color:var(--text-2);"></div>
+
+      <!-- Tunable parameters -->
+      <h4 style="margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Tunable Parameters</h4>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:8px;">
+        <div>
+          <label style="font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+            ARC Maximum
+            <i class="info-tip" data-tip="Hard ceiling for ARC RAM usage. Reducing this frees RAM for applications but may increase disk I/O. ZFS default is roughly 50% of total RAM."></i>
+          </label>
+          <div style="position:relative;" id="arc-max-dropdown-wrap">
+            <button id="arc-max-trigger" type="button" onclick="toggleARCMaxDropdown(event)"
+              style="width:100%;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-1);font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;">
+              <span id="arc-max-trigger-label" style="flex:1;min-width:0;">—</span>
+              <span style="color:var(--text-3);font-size:11px;flex-shrink:0;">▾</span>
+            </button>
+            <div id="arc-max-options" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:400;box-shadow:0 8px 32px rgba(0,0,0,0.5);max-height:280px;overflow-y:auto;"></div>
+          </div>
+          <div id="arc-hint-max" style="font-size:11px;color:var(--text-3);margin-top:3px;"></div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+            ARC Minimum (MB)
+            <i class="info-tip" data-tip="ARC will not shrink below this size even under memory pressure. Setting too high can starve other processes. Setting to 0 uses the kernel default."></i>
+          </label>
+          <input type="number" id="arc-input-min" min="32" step="32"
+            style="width:100%;padding:7px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-1);font-size:14px;">
+          <div id="arc-hint-min" style="font-size:11px;color:var(--text-3);margin-top:3px;"></div>
+        </div>
+      </div>
+      <div id="arc-save-error" class="alert alert-error hidden" style="margin-top:8px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeARCModal()">Close</button>
+      <button class="btn" id="btn-arc-apply" onclick="applyARCParams()"
+        style="background:var(--accent-2);color:#fff;">Apply Changes</button>
     </div>
   </div>
 </div>
@@ -5896,6 +5974,10 @@ function showAlertToast(d) {
 }
 
 // ===== Storage unit formatter =====
+function fmtNum(n) {
+  if (n == null || n === undefined) return '0';
+  return Number(n).toLocaleString();
+}
 function fmtBytes(n) {
   if (!n || n <= 0) return '0 B';
   const useGib = appSettings.storage_unit === 'gib';
@@ -6452,7 +6534,13 @@ function renderPoolExists(el, pool) {
     ${fixerBtn}
     <span id="pool-upgrade-btn-wrap"></span>
     <button class="btn btn-primary btn-sm" onclick="openNewPool()">+ Pool</button>
-    <button class="btn btn-ghost btn-sm" onclick="openCacheConfigModal()">⚡ Cache Config</button>
+    <div style="position:relative;display:inline-block;" id="cache-config-dropdown-wrap">
+      <button class="btn btn-ghost btn-sm" onclick="toggleCacheDropdown(event)">⚡ Cache Config ▾</button>
+      <div id="cache-config-dropdown-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);min-width:260px;z-index:200;box-shadow:0 6px 24px rgba(0,0,0,0.35);">
+        <button onclick="openCacheConfigModal();closeCacheDropdown();" style="width:100%;text-align:left;padding:11px 16px;background:none;border:none;color:var(--text-1);font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px;white-space:nowrap;" onmouseover="this.style.background='var(--surface3)'" onmouseout="this.style.background='none'">⚡ Disk Cache <span style="font-size:12px;color:var(--text-3);margin-left:auto;padding-left:16px;">L2ARC / ZIL</span></button>
+        <button onclick="openARCModal();closeCacheDropdown();" style="width:100%;text-align:left;padding:11px 16px;background:none;border:none;color:var(--text-1);font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px;white-space:nowrap;" onmouseover="this.style.background='var(--surface3)'" onmouseout="this.style.background='none'">🧠 ARC Level 1 <span style="font-size:12px;color:var(--text-3);margin-left:auto;padding-left:16px;">Memory</span></button>
+      </div>
+    </div>
     <button class="btn btn-ghost btn-sm" onclick="openPoolSettingsModal()">&#9881; Configure</button>
     <div style="position:relative;display:inline-block;">
       <button class="btn btn-ghost btn-sm" onclick="togglePoolActionsMenu(event)" id="pool-actions-burger" title="More actions">⋮</button>
@@ -6519,7 +6607,7 @@ function renderPoolExists(el, pool) {
     : '';
 
   el.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;">
+    <div style="display:grid;grid-template-columns:repeat(4,minmax(min-content,1fr));gap:16px;margin-bottom:24px;">
       <div class="card-sm">
         <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Health</div>
         <div style="font-size:20px;font-weight:700;color:${healthColor};">${poolStatusLabel(pool)}</div>
@@ -7479,6 +7567,278 @@ async function submitPoolSettings() {
   if (el) renderPoolExists(el, data);
   refreshActivityBar();
   loadDatasets();
+}
+
+// ===== Cache Config Dropdown =====
+function toggleCacheDropdown(e) {
+  e && e.stopPropagation();
+  const m = document.getElementById('cache-config-dropdown-menu');
+  if (!m) return;
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  if (m.style.display === 'block') {
+    const close = () => { m.style.display = 'none'; document.removeEventListener('click', close); };
+    setTimeout(() => document.addEventListener('click', close), 0);
+  }
+}
+function closeCacheDropdown() {
+  const m = document.getElementById('cache-config-dropdown-menu');
+  if (m) m.style.display = 'none';
+}
+
+// ===== ARC Level 1 (Memory) =====
+let _arcStats = null;
+
+function openARCModal() {
+  document.getElementById('arc-load-error').classList.add('hidden');
+  document.getElementById('arc-save-error').classList.add('hidden');
+  _setARCStatCards(null);
+  document.getElementById('arc-modal-spinner') && document.getElementById('arc-modal-spinner').remove();
+  document.getElementById('modal-arc').classList.remove('hidden');
+  _loadARCStats();
+}
+
+function closeARCModal() {
+  document.getElementById('modal-arc').classList.add('hidden');
+  _arcStats = null;
+}
+
+async function _loadARCStats() {
+  const errEl = document.getElementById('arc-load-error');
+  const applyBtn = document.getElementById('btn-arc-apply');
+  errEl.classList.add('hidden');
+  applyBtn.disabled = true;
+  try {
+    const resp = await fetch('/api/pool/arc');
+    if (!resp.ok) { const d = await resp.json(); throw new Error(d.error || resp.statusText); }
+    _arcStats = await resp.json();
+    _renderARCModal(_arcStats);
+    applyBtn.disabled = false;
+  } catch(e) {
+    errEl.textContent = 'Failed to load ARC stats: ' + e.message;
+    errEl.classList.remove('hidden');
+  }
+}
+
+function _renderARCModal(s) {
+  _setARCStatCards(s);
+  _setARCBreakdown(s);
+  _setARCStatsRow(s);
+  _buildARCMaxDropdown(s);
+  document.getElementById('arc-input-min').value = s.param_arc_min ? Math.round(s.param_arc_min / 1024 / 1024) : '';
+  document.getElementById('arc-hint-min').textContent = s.arc_min ? 'Current kernel: ' + fmtBytes(s.arc_min) : '';
+}
+
+let _arcMaxSelectedPct = 0; // 0 = kernel default
+
+function _buildARCMaxDropdown(s) {
+  const totalBytes = _hwTotalRamBytes > 0 ? _hwTotalRamBytes : (s.arc_max ? s.arc_max * 2 : 0);
+
+  const recommendations = {
+    50: { label: 'ZFS kernel default',    note: 'Safe starting point for general use',             badge: 'default',     badgeColor: 'var(--text-3)' },
+    55: { label: 'Slightly more cache',   note: 'Good for mixed read/write workloads',              badge: null,          badgeColor: '' },
+    60: { label: 'More cache',            note: 'Good for read-heavy workloads',                   badge: null,          badgeColor: '' },
+    65: { label: 'Balanced',              note: 'Suitable for most NAS setups',                    badge: null,          badgeColor: '' },
+    70: { label: 'Dedicated NAS',         note: 'Recommended for ZFS-focused servers',             badge: 'recommended', badgeColor: 'var(--accent-3)' },
+    75: { label: 'High cache',            note: 'Ideal for large dataset workloads',               badge: null,          badgeColor: '' },
+    80: { label: 'Large cache',           note: 'Ensure enough RAM remains for OS & services',     badge: null,          badgeColor: '' },
+    85: { label: 'Very large cache',      note: 'Monitor memory pressure under load',              badge: 'caution',     badgeColor: 'var(--accent-warn)' },
+    90: { label: 'Near maximum',          note: 'Risk of memory pressure under peak load',         badge: 'caution',     badgeColor: 'var(--accent-warn)' },
+    95: { label: 'Maximum',              note: 'Only for dedicated ZFS storage servers',           badge: 'advanced',    badgeColor: 'var(--accent-danger)' },
+  };
+
+  // Determine the currently active percentage to pre-select.
+  _arcMaxSelectedPct = 0;
+  if (totalBytes > 0 && s.param_arc_max > 0) {
+    const snapped = Math.round(s.param_arc_max / totalBytes * 100 / 5) * 5;
+    if (snapped >= 50 && snapped <= 95) _arcMaxSelectedPct = snapped;
+  }
+
+  // Render trigger label.
+  _updateARCMaxTrigger(totalBytes);
+
+  // Build options panel.
+  const panel = document.getElementById('arc-max-options');
+  const opts = [{pct: 0, bytes: 0}];
+  for (let p = 50; p <= 95; p += 5) opts.push({pct: p, bytes: totalBytes > 0 ? Math.round(totalBytes * p / 100) : 0});
+
+  panel.innerHTML = opts.map(({pct, bytes}) => {
+    const rec = recommendations[pct];
+    const isActive = pct === _arcMaxSelectedPct;
+    if (pct === 0) {
+      return `<div class="arc-max-opt${isActive ? ' arc-max-opt-active' : ''}" data-pct="0" onclick="_selectARCMax(0)">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:15px;font-weight:700;color:var(--text-2);">—</span>
+          <span style="font-size:13px;color:var(--text-2);">Default (kernel managed)</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:2px;">ZFS decides the ARC size automatically based on available RAM</div>
+      </div>`;
+    }
+    const sizeLabel = bytes > 0 ? fmtBytes(bytes) : '?';
+    const badge = rec && rec.badge
+      ? `<span style="font-size:10px;font-weight:600;color:${rec.badgeColor};border:1px solid ${rec.badgeColor};border-radius:3px;padding:1px 5px;margin-left:6px;">${rec.badge.toUpperCase()}</span>`
+      : '';
+    return `<div class="arc-max-opt${isActive ? ' arc-max-opt-active' : ''}" data-pct="${pct}" onclick="_selectARCMax(${pct})">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:16px;font-weight:700;color:var(--text-1);min-width:36px;">${pct}%</span>
+          <span style="font-size:13px;font-weight:600;color:var(--accent-2);">${sizeLabel}</span>
+          ${badge}
+        </div>
+        <span style="font-size:12px;font-weight:600;color:var(--text-2);">${rec ? rec.label : ''}</span>
+      </div>
+      <div style="font-size:11px;color:var(--text-3);margin-top:3px;">${rec ? rec.note : ''}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('arc-hint-max').textContent = s.arc_max
+    ? 'Active: ' + fmtBytes(s.arc_max) + (totalBytes > 0 ? '  (' + (s.arc_max / totalBytes * 100).toFixed(0) + '% of RAM)' : '')
+    : '';
+}
+
+function _updateARCMaxTrigger(totalBytes) {
+  const lbl = document.getElementById('arc-max-trigger-label');
+  if (!lbl) return;
+  if (_arcMaxSelectedPct === 0) {
+    lbl.textContent = '— Default (kernel managed)';
+    lbl.style.color = 'var(--text-3)';
+  } else {
+    const bytes = totalBytes > 0 ? Math.round(totalBytes * _arcMaxSelectedPct / 100) : 0;
+    lbl.innerHTML = `<strong style="color:var(--text-1)">${_arcMaxSelectedPct}%</strong>`
+      + `<span style="color:var(--accent-2);margin-left:8px;">${bytes > 0 ? fmtBytes(bytes) : ''}</span>`;
+    lbl.style.color = '';
+  }
+}
+
+function _selectARCMax(pct) {
+  _arcMaxSelectedPct = pct;
+  const totalBytes = _hwTotalRamBytes > 0 ? _hwTotalRamBytes : 0;
+  _updateARCMaxTrigger(totalBytes);
+  // Update active highlight.
+  document.querySelectorAll('#arc-max-options .arc-max-opt').forEach(el => {
+    el.classList.toggle('arc-max-opt-active', parseInt(el.dataset.pct, 10) === pct);
+  });
+  _closeARCMaxDropdown();
+}
+
+function toggleARCMaxDropdown(e) {
+  e && e.stopPropagation();
+  const panel = document.getElementById('arc-max-options');
+  if (!panel) return;
+  const isOpen = panel.style.display !== 'none';
+  if (isOpen) {
+    _closeARCMaxDropdown();
+  } else {
+    panel.style.display = 'block';
+    // Scroll the active item into view.
+    const active = panel.querySelector('.arc-max-opt-active');
+    if (active) setTimeout(() => active.scrollIntoView({block: 'nearest'}), 0);
+    const close = (ev) => {
+      if (!document.getElementById('arc-max-dropdown-wrap')?.contains(ev.target)) {
+        _closeARCMaxDropdown();
+        document.removeEventListener('click', close);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close), 0);
+  }
+}
+function _closeARCMaxDropdown() {
+  const panel = document.getElementById('arc-max-options');
+  if (panel) panel.style.display = 'none';
+}
+
+function _setARCStatCards(s) {
+  const cards = [
+    { id: 'arc-card-size',  label: 'ARC Size', tip: 'Current amount of RAM used by the ARC cache.',      val: s ? fmtBytes(s.arc_size) : '—', color: 'var(--accent-2)' },
+    { id: 'arc-card-hit',   label: 'Hit Ratio', tip: 'Percentage of read requests served from ARC. Values above 90% indicate a well-sized cache.', val: s ? s.hit_ratio.toFixed(1) + '%' : '—', color: s && s.hit_ratio >= 90 ? 'var(--accent-3)' : s && s.hit_ratio >= 70 ? 'var(--accent-warn)' : 'var(--accent-danger)' },
+    { id: 'arc-card-max',   label: 'ARC Max',  tip: 'Hard ceiling for ARC RAM usage.',                   val: s ? fmtBytes(s.arc_max) : '—', color: 'var(--text-1)' },
+    { id: 'arc-card-min',   label: 'ARC Min',  tip: 'ARC will not shrink below this size.',              val: s ? fmtBytes(s.arc_min) : '—', color: 'var(--text-1)' },
+  ];
+  cards.forEach(c => {
+    const el = document.getElementById(c.id);
+    if (!el) return;
+    el.innerHTML = `
+      <div class="arc-card-label">${esc(c.label)} <i class="info-tip" data-tip="${esc(c.tip)}"></i></div>
+      <div class="arc-card-value" style="color:${c.color}">${c.val}</div>`;
+  });
+}
+
+function _setARCBreakdown(s) {
+  const el = document.getElementById('arc-breakdown');
+  if (!el) return;
+  const total = s.arc_size || 1;
+  const bars = [
+    { label: 'MFU (Most Frequently Used)', tip: 'Data accessed many times — prioritised for retention in the ARC.', bytes: s.mfu_size, color: 'var(--accent-2)' },
+    { label: 'MRU (Most Recently Used)',   tip: 'Data accessed once recently — evicted first under memory pressure.', bytes: s.mru_size, color: 'var(--accent-1)' },
+    { label: 'Metadata',                   tip: 'Directory entries, inode info, and other ZFS metadata held in the ARC.', bytes: s.arc_meta_used, color: '#32d74b' },
+  ];
+  el.innerHTML = bars.map(b => {
+    const pct = Math.min(100, Math.round((b.bytes || 0) / total * 100));
+    return `<div class="arc-bar-row">
+      <div class="arc-bar-label">
+        <span>${esc(b.label)} <i class="info-tip" data-tip="${esc(b.tip)}"></i></span>
+        <span>${fmtBytes(b.bytes || 0)} <span style="color:var(--text-3)">(${pct}%)</span></span>
+      </div>
+      <div class="arc-bar-track">
+        <div class="arc-bar-fill" style="width:${pct}%;background:${b.color};"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _setARCStatsRow(s) {
+  const el = document.getElementById('arc-stats-row');
+  if (!el) return;
+  const items = [
+    { label: 'Hits',              val: fmtNum(s.hits) },
+    { label: 'Misses',            val: fmtNum(s.misses) },
+    { label: 'Demand Data Hits',  val: fmtNum(s.demand_data_hits) },
+    { label: 'Demand Meta Hits',  val: fmtNum(s.demand_meta_hits) },
+    { label: 'Prefetch Hits',     val: fmtNum(s.prefetch_data_hits) },
+    { label: 'L2ARC Hits',        val: fmtNum(s.l2_hits) },
+    { label: 'L2ARC Misses',      val: fmtNum(s.l2_misses) },
+  ];
+  el.innerHTML = items.map(i =>
+    `<div><span style="color:var(--text-3)">${esc(i.label)}: </span><strong style="color:var(--text-1)">${i.val}</strong></div>`
+  ).join('');
+}
+
+async function applyARCParams() {
+  const errEl   = document.getElementById('arc-save-error');
+  const btn     = document.getElementById('btn-arc-apply');
+  const maxPct  = _arcMaxSelectedPct || 0;
+  const minMB   = parseInt(document.getElementById('arc-input-min').value, 10) || 0;
+  const totalBytes = _hwTotalRamBytes > 0 ? _hwTotalRamBytes : (_arcStats && _arcStats.arc_max ? _arcStats.arc_max * 2 : 0);
+  const maxMB   = maxPct > 0 && totalBytes > 0 ? Math.round(totalBytes * maxPct / 100 / 1024 / 1024) : 0;
+  errEl.classList.add('hidden');
+
+  if (maxMB > 0 && minMB > 0 && minMB >= maxMB) {
+    errEl.textContent = 'ARC Minimum must be less than ARC Maximum.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Applying…';
+  try {
+    const resp = await fetch('/api/pool/arc', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ arc_max_mb: maxMB, arc_min_mb: minMB }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    _arcStats = data;
+    _renderARCModal(data);
+    errEl.textContent = '✓ ARC parameters applied successfully.';
+    errEl.style.cssText = 'background:rgba(48,209,88,0.12);border-color:rgba(48,209,88,0.45);color:#30d158;';
+    errEl.classList.remove('hidden');
+    setTimeout(() => { errEl.classList.add('hidden'); errEl.style.cssText = ''; }, 3000);
+  } catch(e) {
+    errEl.textContent = 'Failed to apply: ' + e.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Apply Changes';
+  }
 }
 
 // ===== Pool Cache Config =====

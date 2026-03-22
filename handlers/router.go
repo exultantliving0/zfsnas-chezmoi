@@ -119,6 +119,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLoadPoolKey)))).Methods("POST")
 	r.Handle("/api/pool/unload-key",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUnloadPoolKey)))).Methods("POST")
+	r.Handle("/api/pool/arc",
+		RequireAuth(http.HandlerFunc(HandleGetARC))).Methods("GET")
+	r.Handle("/api/pool/arc",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetARC)))).Methods("PUT")
 
 	// --- Encryption key management (admin only) ---
 	r.Handle("/api/encryption/keys",
