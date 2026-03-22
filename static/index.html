@@ -12964,13 +12964,13 @@ const IO_COLORS = [
 
 function _ioColor(idx) { return IO_COLORS[idx % IO_COLORS.length]; }
 
-function _ioMakeDataset(label, color, buf) {
+function _ioMakeDataset(label, color, buf, idx) {
   return {
     label,
     data: Array.from(buf),
-    fill: true,
+    fill: idx === 0 ? 'origin' : '-1',
     borderColor: color,
-    backgroundColor: color + '55',
+    backgroundColor: color + 'bb',
     borderWidth: 1.5,
     pointRadius: 0,
     tension: 0.3,
@@ -13056,9 +13056,9 @@ function _ioEnsureDevice(dev, idx) {
   // Add dataset to each chart
   const color = _ioColor(idx);
   if (_ioCharts) {
-    _ioCharts.read.data.datasets.push(_ioMakeDataset(dev, color, _ioBufs[dev].read));
-    _ioCharts.write.data.datasets.push(_ioMakeDataset(dev, color, _ioBufs[dev].write));
-    _ioCharts.busy.data.datasets.push(_ioMakeDataset(dev, color, _ioBufs[dev].busy));
+    _ioCharts.read.data.datasets.push(_ioMakeDataset(dev, color, _ioBufs[dev].read, idx));
+    _ioCharts.write.data.datasets.push(_ioMakeDataset(dev, color, _ioBufs[dev].write, idx));
+    _ioCharts.busy.data.datasets.push(_ioMakeDataset(dev, color, _ioBufs[dev].busy, idx));
   }
 }
 
