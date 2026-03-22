@@ -1,6 +1,7 @@
 package system
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -552,8 +553,11 @@ func GetSMBSessions() map[string][]ShareClient {
 
 // reverseLookup returns the first PTR record for ip, stripped of its trailing
 // dot.  Returns "" when no record exists or DNS is unavailable.
+// A 1-second timeout prevents slow/broken reverse-DNS from stalling the table.
 func reverseLookup(ip string) string {
-	names, err := net.LookupAddr(ip)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
 	if err != nil || len(names) == 0 {
 		return ""
 	}
