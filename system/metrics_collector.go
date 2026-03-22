@@ -57,9 +57,10 @@ func StartMetricsCollector(configDir string) {
 			}
 
 			// --- Memory (and all other metrics after CPU is recorded) ---
-			if used, cache, app := readMemStats(); used >= 0 {
+			if used, cache, arc, app := readMemStats(); used >= 0 {
 				db.Record("mem_used_pct",  used,  now)
 				db.Record("mem_cache_pct", cache, now)
+				db.Record("mem_arc_pct",   arc,   now)
 				db.Record("mem_app_pct",   app,   now)
 			}
 
@@ -162,13 +163,34 @@ func readCPUStat() *cpuStat {
 	return nil
 }
 
-// readMemStats returns (used%, cache%, app%) from /proc/meminfo.
-// cache = page cache + buffers; app = used − cache; used = total − available.
-// Returns -1 for all three on error.
-func readMemStats() (used, cache, app float64) {
+// readARCSize returns the ZFS ARC cache size in kilobytes by reading
+// /proc/spl/kstat/zfs/arcstats. Returns 0 if unavailable.
+func readARCSize() uint64 {
+	f, err := os.Open("/proc/spl/kstat/zfs/arcstats")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		// Format: <name> <type> <value>
+		if len(fields) == 3 && fields[0] == "size" {
+			val, _ := strconv.ParseUint(fields[2], 10, 64)
+			return val / 1024 // bytes → KB (matches /proc/meminfo units)
+		}
+	}
+	return 0
+}
+
+// readMemStats returns (used%, cache%, arc%, app%) from /proc/meminfo and ZFS arcstats.
+// cache = page cache + buffers; arc = ZFS ARC; app = used − cache − arc; used = total − available.
+// Returns -1 for all four on error.
+func readMemStats() (used, cache, arc, app float64) {
 	f, err := os.Open("/proc/meminfo")
 	if err != nil {
-		return -1, -1, -1
+		return -1, -1, -1, -1
 	}
 	defer f.Close()
 
@@ -194,16 +216,24 @@ func readMemStats() (used, cache, app float64) {
 		}
 	}
 	if total == 0 {
-		return -1, -1, -1
+		return -1, -1, -1, -1
 	}
-	used  = float64(total-available) / float64(total) * 100
-	cache = float64(buffers+cached)  / float64(total) * 100
+
+	arcKB := readARCSize()
+	// Cap ARC at the app memory headroom to avoid going negative.
 	var appKB uint64
 	if total > free+buffers+cached {
 		appKB = total - free - buffers - cached
 	}
-	app = float64(appKB) / float64(total) * 100
-	return used, cache, app
+	if arcKB > appKB {
+		arcKB = appKB
+	}
+
+	used  = float64(total-available) / float64(total) * 100
+	cache = float64(buffers+cached)  / float64(total) * 100
+	arc   = float64(arcKB)           / float64(total) * 100
+	app   = float64(appKB-arcKB)     / float64(total) * 100
+	return used, cache, arc, app
 }
 
 type netStat struct {

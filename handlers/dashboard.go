@@ -11,6 +11,7 @@ var staticMetricSeries = []string{
 	"cpu_pct",
 	"mem_used_pct",
 	"mem_cache_pct",
+	"mem_arc_pct",
 	"mem_app_pct",
 	"disk_read_mbps",
 	"disk_write_mbps",

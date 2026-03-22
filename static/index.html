@@ -13282,8 +13282,9 @@ function _renderGlobalPerfCharts(series, ifaces) {
   const cpuMaxEl = document.getElementById('dash-max-cpu');
   if (cpuMaxEl) cpuMaxEl.textContent = cpuMax > 0 ? 'max ' + cpuMax.toFixed(1) + '%' : '';
 
-  // Memory (stacked: App + Cache)
+  // Memory (stacked: App + ARC Cache + Page Cache)
   const memAppPts   = makePts('mem_app');
+  const memArcPts   = makePts('mem_arc');
   const memCachePts = makePts('mem_cache');
   const _memLabelFn = ctx => {
     const pct = ctx.parsed.y ?? 0;
@@ -13293,10 +13294,11 @@ function _renderGlobalPerfCharts(series, ifaces) {
     return '  ' + ctx.dataset.label + ':  ' + pct.toFixed(2) + '%' + gb;
   };
   makeChart('dash-chart-mem', [
-    { label: 'App %',   data: memAppPts,   fill: true, borderColor: '#0a84ff', backgroundColor: '#0a84ff33', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
-    { label: 'Cache %', data: memCachePts, fill: true, borderColor: '#bf5af2', backgroundColor: '#bf5af233', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
+    { label: 'App %',       data: memAppPts,   fill: 'origin', borderColor: '#0a84ff', backgroundColor: '#0a84ff55', borderWidth: 0, pointRadius: 0, tension: 0.3, spanGaps: true },
+    { label: 'ARC Cache %', data: memArcPts,   fill: '-1',     borderColor: '#ff9f0a', backgroundColor: '#ff9f0a55', borderWidth: 0, pointRadius: 0, tension: 0.3, spanGaps: true },
+    { label: 'Cache %',     data: memCachePts, fill: '-1',     borderColor: '#bf5af2', backgroundColor: '#bf5af255', borderWidth: 0, pointRadius: 0, tension: 0.3, spanGaps: true },
   ], '%', 100, true, _memLabelFn);
-  const memPeak = peakSum([{ data: memAppPts }, { data: memCachePts }]);
+  const memPeak = peakSum([{ data: memAppPts }, { data: memArcPts }, { data: memCachePts }]);
   const memMaxEl = document.getElementById('dash-max-mem');
   if (memMaxEl) memMaxEl.textContent = memPeak > 0 ? 'max ' + memPeak.toFixed(1) + '%' : '';
 
@@ -13416,9 +13418,10 @@ function _dashChartOpts(yLabel, yMax, stacked = false) {
         titleColor: tipTitle,
         bodyColor: tipBody,
         padding: 10,
+        filter: item => item.parsed.y !== null && item.parsed.y !== undefined,
         callbacks: {
           title: items => items[0]?.label ?? '',
-          label: ctx => '  ' + ctx.dataset.label + ':  ' + ctx.parsed.y.toFixed(1) + ' ' + yLabel,
+          label: ctx => ctx.parsed.y == null ? null : '  ' + ctx.dataset.label + ':  ' + ctx.parsed.y.toFixed(1) + ' ' + yLabel,
         },
       },
     },
@@ -13446,6 +13449,15 @@ function _makeDashChartStacked(canvasId, datasets, labels, yLabel, yMax) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
   if (_dashCharts[canvasId]) { _dashCharts[canvasId].destroy(); }
+  // Fix stacking: first layer fills from origin, each subsequent layer fills only
+  // its own band (fill:'-1'). Also remove borders to prevent color bleed at boundaries.
+  datasets.forEach((ds, i) => {
+    ds.fill = i === 0 ? 'origin' : '-1';
+    ds.borderWidth = 0;
+    if (typeof ds.backgroundColor === 'string' && ds.backgroundColor.length === 9) {
+      ds.backgroundColor = ds.backgroundColor.slice(0, 7) + '55';
+    }
+  });
   const chart = new Chart(canvas, {
     type: 'line',
     data: { labels, datasets },
@@ -13491,6 +13503,7 @@ function _renderDashboardCharts(data, ifaceIPs = {}) {
   const diskW    = data.disk_write_mbps || [];
   const diskB    = data.disk_busy_pct   || [];
   const memApp   = data.mem_app_pct    || [];
+  const memArc   = data.mem_arc_pct    || [];
   const memCache = data.mem_cache_pct  || [];
 
   // Discover per-NIC series from response keys (net_{iface}_rx)
@@ -13514,14 +13527,15 @@ function _renderDashboardCharts(data, ifaceIPs = {}) {
   chartsEl.classList.remove('hidden');
 
   const cpuD  = _dashBuild24h([cpu]);
-  const memD  = _dashBuild24h([memApp, memCache]);
+  const memD  = _dashBuild24h([memApp, memArc, memCache]);
   const dskD  = _dashBuild24h([diskR, diskW]);
   const busyD = _dashBuild24h([diskB]);
 
   _makeDashChart('dash-chart-cpu', [_dashDS('CPU %', '#0a84ff', cpuD.dataArrays[0], true)], cpuD.labels, '%', 100);
   _makeDashChartStacked('dash-chart-mem', [
-    _dashDS('App %',   '#0a84ff', memD.dataArrays[0], true),
-    _dashDS('Cache %', '#bf5af2', memD.dataArrays[1], true),
+    _dashDS('App %',       '#0a84ff', memD.dataArrays[0], true),
+    _dashDS('ARC Cache %', '#ff9f0a', memD.dataArrays[1], true),
+    _dashDS('Cache %',     '#bf5af2', memD.dataArrays[2], true),
   ], memD.labels, '%', 100);
 
   // Network: one RX + one TX dataset per NIC, shared time grid
@@ -13827,10 +13841,10 @@ function _renderPerfCharts(pool, devices, series) {
       return {
         label: dev,
         data: pts,
-        fill: true,
+        fill: i === 0 ? 'origin' : '-1',
         borderColor: color,
         backgroundColor: color + '55',
-        borderWidth: 1.5,
+        borderWidth: 0,
         pointRadius: 0,
         tension: 0.3,
         spanGaps: true,
@@ -13933,7 +13947,7 @@ function _initPerfZoom(pool) {
     const endX = e.clientX - d.rect.left;
     const dx   = Math.abs(endX - d.startX);
     if (dx < 4) return;
-    const chart = _perfCharts[d.pool] && _perfCharts[d.pool][d.metric];
+    const chart = d.pool === 'global' ? _dashCharts[d.metric] : (_perfCharts[d.pool] && _perfCharts[d.pool][d.metric]);
     if (!chart) return;
     const scale = chart.scales.x;
     if (!scale) return;
@@ -13946,6 +13960,22 @@ function _initPerfZoom(pool) {
     if (d.pool === 'global') _loadGlobalPerfData();
     else _loadPoolPerfData(d.pool);
   });
+})();
+
+// Custom Chart.js interaction mode: like 'x' but keeps only one item per dataset.
+// 'x' mode can return two items per dataset when the cursor is equidistant between
+// two consecutive data points, causing alternating double rows in the tooltip.
+(function _registerXDedupMode() {
+  if (typeof Chart === 'undefined' || Chart.Interaction.modes.xDedup) return;
+  Chart.Interaction.modes.xDedup = function(chart, e, options, useFinalPosition) {
+    const items = Chart.Interaction.modes.x(chart, e, options, useFinalPosition);
+    const seen = new Set();
+    return items.filter(item => {
+      if (seen.has(item.datasetIndex)) return false;
+      seen.add(item.datasetIndex);
+      return true;
+    });
+  };
 })();
 
 function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, labelFn = null) {
@@ -13961,7 +13991,7 @@ function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, label
     responsive: true,
     maintainAspectRatio: false,
     animation: false,
-    interaction: { mode: 'index', intersect: false },
+    interaction: { mode: 'xDedup', intersect: false },
     layout: { padding: { top: 24, right: 16, left: 4, bottom: 4 } },
     plugins: {
       legend: { display: false },
@@ -13972,6 +14002,7 @@ function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, label
         titleColor: tipTitle,
         bodyColor: tipBody,
         padding: 10,
+        filter: item => item.parsed.y !== null && item.parsed.y !== undefined,
         callbacks: {
           title: items => {
             if (!items.length) return '';
@@ -13980,7 +14011,10 @@ function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, label
             return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
                  + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
           },
-          label: ctx => labelFn ? labelFn(ctx) : '  ' + ctx.dataset.label + ':  ' + (ctx.parsed.y ?? 0).toFixed(2) + ' ' + yLabel,
+          label: ctx => {
+            if (ctx.parsed.y == null) return null;
+            return labelFn ? labelFn(ctx) : '  ' + ctx.dataset.label + ':  ' + ctx.parsed.y.toFixed(2) + ' ' + yLabel;
+          },
         },
       },
     },
@@ -15590,11 +15624,11 @@ function runReplicationTask(id, name) {
         label,
         data: allTs.map((ts, j) => ({ x: ts, y: stackedY[i][j] })),
         borderColor: color,
-        backgroundColor: (isOther ? '#888888' : color) + '55',
+        backgroundColor: (isOther ? '#888888' : color) + '66',
         fill: i === 0 ? 'origin' : '-1',
         tension: 0.2,
         pointRadius: 0,
-        borderWidth: 1.5,
+        borderWidth: 0,
         order: displayEntries.length - i,
         _stacked: true,
       });
@@ -15676,7 +15710,7 @@ function runReplicationTask(id, name) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
+        interaction: { mode: 'xDedup', intersect: false },
         scales: {
           x: {
             type: 'linear',
@@ -15704,6 +15738,7 @@ function runReplicationTask(id, name) {
             labels: { color: textColor2, boxWidth: 12, padding: 16 }
           },
           tooltip: {
+            filter: item => item.parsed.y !== null && item.parsed.y !== undefined,
             callbacks: {
               title: items => {
                 if (!items.length) return '';
@@ -15716,6 +15751,7 @@ function runReplicationTask(id, name) {
                      + ' ' + pad(h12) + ':' + pad(d.getMinutes()) + ' ' + ampm;
               },
               label: ctx => {
+                if (ctx.parsed.y == null) return null;
                 // For pre-stacked series the y value is cumulative; show the raw contribution
                 // by subtracting the previous dataset's value at the same data index.
                 let val = ctx.parsed.y;

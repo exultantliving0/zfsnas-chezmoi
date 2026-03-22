@@ -53,8 +53,9 @@ func StartGlobalPerfCollector(configDir string) {
 			}
 
 			// Memory
-			if _, cache, app := readMemStats(); app >= 0 {
+			if _, cache, arc, app := readMemStats(); app >= 0 {
 				db.Record("mem_app", app, now)
+				db.Record("mem_arc", arc, now)
 				db.Record("mem_cache", cache, now)
 			}
 
