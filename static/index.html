@@ -664,7 +664,7 @@
             <span id="prereq-iscsi-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-iscsi-btn" class="btn btn-ghost btn-sm" onclick="enableISCSIFeature()" style="font-size:12px;white-space:nowrap;">Enable iSCSI Feature</button>
             <div style="position:relative;" id="prereq-iscsi-menu-wrap" class="hidden">
-              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('iscsi')" style="padding:4px 9px;font-size:15px;line-height:1;" title="Options">☰</button>
+              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('iscsi')" title="Options">⋮</button>
               <div id="prereq-iscsi-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
             </div>
           </div>
@@ -677,7 +677,7 @@
             <span id="prereq-minio-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-minio-btn" class="btn btn-ghost btn-sm" onclick="enableMinIOFeature()" style="font-size:12px;white-space:nowrap;">Enable S3 Object Server</button>
             <div style="position:relative;" id="prereq-minio-menu-wrap" class="hidden">
-              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('minio')" style="padding:4px 9px;font-size:15px;line-height:1;" title="Options">☰</button>
+              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('minio')" title="Options">⋮</button>
               <div id="prereq-minio-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
             </div>
           </div>
@@ -5908,6 +5908,18 @@ function fmtBytes(n) {
   while (val >= base && idx < suffixes.length - 1) { val /= base; idx++; }
   return (val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)) + ' ' + suffixes[idx];
 }
+function fmtBytesInt(n) {
+  if (!n || n <= 0) return '0 B';
+  const useGib = appSettings.storage_unit === 'gib';
+  const base = useGib ? 1024 : 1000;
+  if (n < base) return n + ' B';
+  const suffixes = useGib
+    ? ['KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+    : ['KB',  'MB',  'GB',  'TB',  'PB'];
+  let val = n, idx = -1;
+  while (val >= base && idx < suffixes.length - 1) { val /= base; idx++; }
+  return Math.round(val) + ' ' + suffixes[idx];
+}
 
 // Strip partition suffix from a /dev/ path so sdb1 → /dev/sdb, nvme0n1p1 → /dev/nvme0n1.
 function stripPart(p) {
@@ -6439,12 +6451,17 @@ function renderPoolExists(el, pool) {
   document.getElementById('pool-header-actions').innerHTML = currentUser.role === 'admin' ? `
     ${fixerBtn}
     <span id="pool-upgrade-btn-wrap"></span>
-    <button class="btn btn-primary btn-sm" onclick="openNewPool()">+ New Pool</button>
+    <button class="btn btn-primary btn-sm" onclick="openNewPool()">+ Pool</button>
     <button class="btn btn-ghost btn-sm" onclick="openCacheConfigModal()">⚡ Cache Config</button>
-    <button class="btn btn-ghost btn-sm" onclick="detectPools()">⬇ Import ZFS Pool</button>
-    <button class="btn btn-ghost btn-sm" style="color:var(--accent-danger);border-color:var(--accent-danger);"
-      onclick="openDestroyPoolModal()">Destroy Pool</button>
-  ` : `${fixerBtn}<button class="btn btn-ghost btn-sm" onclick="detectPools()">⬇ Import ZFS Pool</button>`;
+    <button class="btn btn-ghost btn-sm" onclick="openPoolSettingsModal()">&#9881; Configure</button>
+    <div style="position:relative;display:inline-block;">
+      <button class="btn btn-ghost btn-sm" onclick="togglePoolActionsMenu(event)" id="pool-actions-burger" title="More actions">⋮</button>
+      <div id="pool-actions-menu" style="display:none;position:absolute;right:0;top:100%;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);min-width:190px;overflow:hidden;margin-top:4px;">
+        <button onclick="closePoolActionsMenu();detectPools()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text-1);">⬇ Import ZFS Pool</button>
+        <button onclick="closePoolActionsMenu();openDestroyPoolModal()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-danger);">🗑 Destroy Pool</button>
+      </div>
+    </div>
+  ` : `${fixerBtn}`;
 
   // Member disks section (data members + cache devices).
   const _diskEntry = (rawPath, devPath, roleLabel, roleColor, diskState, poolName) => {
@@ -6542,8 +6559,6 @@ function renderPoolExists(el, pool) {
         <div class="stat-row"><span class="stat-label">Sync</span><span class="stat-value">${esc(pool.sync||'—')}</span></div>
         <div class="stat-row"><span class="stat-label">Access time</span><span class="stat-value">${esc(pool.atime||'—')}</span></div>
         <div class="stat-row"><span class="stat-label">Encryption</span><span class="stat-value">${pool.encrypted ? `${esc(pool.encryption_algorithm||'on')} ${pool.key_locked ? '<span style="color:#ff9f0a;font-size:11px;">🔓 key not loaded</span>' : '<span style="color:var(--accent-3);font-size:11px;">🔒 unlocked</span>'}` : '<span style="color:var(--text-3);">off</span>'}</span></div>
-        ${currentUser.role==='admin' ? `
-        <button class="btn btn-ghost btn-sm" style="margin-top:16px;width:100%;" onclick="openPoolSettingsModal()">⚙ Edit Pool Settings</button>` : ''}
       </div>
       <div class="card" style="min-width:0;">
         <h3 style="margin-bottom:4px;">Physical Disks (${(pool.members||[]).length + (pool.cache_devs||[]).length})</h3>
@@ -7618,9 +7633,21 @@ function closeDiskMenus(exceptId) {
     if (m.id !== exceptId) m.style.display = 'none';
   });
 }
+function togglePoolActionsMenu(e) {
+  e && e.stopPropagation();
+  const m = document.getElementById('pool-actions-menu');
+  if (!m) return;
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+}
+function closePoolActionsMenu() {
+  const m = document.getElementById('pool-actions-menu');
+  if (m) m.style.display = 'none';
+}
 document.addEventListener('click', e => {
   if (!e.target.closest('[id^="disk-menu-"]') && !e.target.closest('button[onclick*="toggleDiskMenu"]'))
     closeDiskMenus();
+  if (!e.target.closest('#pool-actions-menu') && !e.target.closest('#pool-actions-burger'))
+    closePoolActionsMenu();
 });
 
 let _diskOfflinePending = null;
@@ -10092,7 +10119,7 @@ function diskRow(d, dimmed, withActions) {
     <td style="font-family:monospace;font-size:13px;${tc}">${esc(d.device)}</td>
     <td style="font-weight:600;${tc}">${esc(d.vendor||'—')} ${esc(d.model||'—')}</td>
     <td style="font-family:monospace;font-size:12px;${tc}">${d.serial ? esc(d.serial) : '<span style="color:var(--text-3);">—</span>'}</td>
-    <td style="font-family:monospace;${tc}">${d.size_bytes ? fmtBytes(d.size_bytes) : esc(d.size)}</td>
+    <td style="font-family:monospace;${tc}">${d.size_bytes ? fmtBytesInt(d.size_bytes) : esc(d.size)}</td>
     <td>${diskTypeBadge(d.disk_type, dimmed)}</td>
     <td>${wearoutBar(d, dimmed)}</td>
     <td id="disk-temp-${ck}">${tempBadge(d)}</td>
@@ -10107,7 +10134,7 @@ function diskRowWithPool(d, poolName) {
     <td style="font-family:monospace;font-size:13px;">${esc(d.device)}</td>
     <td style="font-weight:600;">${esc(d.vendor||'—')} ${esc(d.model||'—')}</td>
     <td style="font-family:monospace;font-size:12px;">${d.serial ? esc(d.serial) : '<span style="color:var(--text-3);">—</span>'}</td>
-    <td style="font-family:monospace;">${d.size_bytes ? fmtBytes(d.size_bytes) : esc(d.size)}</td>
+    <td style="font-family:monospace;">${d.size_bytes ? fmtBytesInt(d.size_bytes) : esc(d.size)}</td>
     <td>${diskTypeBadge(d.disk_type, false)}</td>
     <td>${wearoutBar(d, false)}</td>
     <td id="disk-temp-${ck}">${tempBadge(d)}</td>
