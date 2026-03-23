@@ -18,9 +18,14 @@ import (
 // HandleGetSettings returns current application settings.
 func HandleGetSettings(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		theme := appCfg.LoginTheme
+		if theme == "" {
+			theme = "dark"
+		}
 		jsonOK(w, map[string]interface{}{
 			"port":                 appCfg.Port,
 			"storage_unit":         appCfg.StorageUnit,
+			"login_theme":          theme,
 			"live_update_enabled":  appCfg.LiveUpdateEnabled,
 			"max_smbd_processes":   appCfg.MaxSmbdProcesses,
 		})
@@ -33,6 +38,7 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 		var req struct {
 			Port              *int    `json:"port"`
 			StorageUnit       *string `json:"storage_unit"`
+			LoginTheme        *string `json:"login_theme"`
 			LiveUpdateEnabled *bool   `json:"live_update_enabled"`
 			MaxSmbdProcesses  *int    `json:"max_smbd_processes"`
 		}
@@ -56,6 +62,16 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 				return
 			}
 			appCfg.StorageUnit = *req.StorageUnit
+			changed = true
+		}
+		if req.LoginTheme != nil {
+			switch *req.LoginTheme {
+			case "dark", "light", "auto":
+			default:
+				jsonErr(w, http.StatusBadRequest, "login_theme must be 'dark', 'light', or 'auto'")
+				return
+			}
+			appCfg.LoginTheme = *req.LoginTheme
 			changed = true
 		}
 		if req.LiveUpdateEnabled != nil {

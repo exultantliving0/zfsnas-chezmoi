@@ -99,7 +99,7 @@ func HandleInstallPrereqs(w http.ResponseWriter, r *http.Request) {
 	send(fmt.Sprintf("Running: sudo apt-get install -y %s", strings.Join(missing, " ")))
 	send("─────────────────────────────────────────")
 
-	args := append([]string{"apt-get", "install", "-y", "-q"}, missing...)
+	args := append([]string{"env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q"}, missing...)
 	cmd := exec.Command("sudo", args...)
 
 	// Pipe both stdout and stderr to the client.
@@ -269,6 +269,7 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 		allowlist := map[string]bool{
 			"targetcli-fb": true,
 			"minio":        true,
+			"nut":          true,
 		}
 		if !allowlist[req.Package] {
 			jsonErr(w, http.StatusBadRequest, "package not in allowlist")
@@ -296,7 +297,66 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 
-		out, err := exec.Command("sudo", "apt-get", "install", "-y", "-q", req.Package).CombinedOutput()
+		if req.Package == "nut" {
+			// Pre-create /etc/nut/nut.conf with MODE=none before apt-get so that
+			// NUT's post-install scripts do not attempt to start the daemon (which
+			// would block the request while systemd waits for a non-existent UPS).
+			exec.Command("sudo", "mkdir", "-p", "/etc/nut").Run()
+			nutConf := "MODE=none\n"
+			preConf := exec.Command("sudo", "tee", "/etc/nut/nut.conf")
+			preConf.Stdin = strings.NewReader(nutConf)
+			preConf.Run()
+
+			out, err := exec.Command("sudo", "env", "DEBIAN_FRONTEND=noninteractive",
+				"apt-get", "install", "-y", "-q",
+				"-o", "Dpkg::Options::=--force-confold",
+				"nut", "nut-client").CombinedOutput()
+			if err != nil {
+				jsonErr(w, http.StatusInternalServerError, string(out))
+				return
+			}
+			// Reset to a clean slate — ensures no stale shutdown policy or device
+			// settings from a previous install survive a reinstall.
+			appCfg.UPS = config.UPSConfig{Enabled: true}
+
+			// Auto-detect and configure an attached UPS across all bus types.
+			detected, detErr := system.DetectAndConfigureUPS("")
+			detMsg := ""
+			// Always save the generated monitor password.
+			appCfg.UPS.MonitorPassword = detected.MonitorPassword
+			if detErr != nil {
+				detMsg = "installed (detection error: " + detErr.Error() + ")"
+			} else if detected.Name != "" {
+				appCfg.UPS.UPSName = detected.Name
+				appCfg.UPS.Driver = detected.Driver
+				appCfg.UPS.Port = detected.Port
+				appCfg.UPS.RawUPSConf = detected.ScannerOutput
+				detMsg = fmt.Sprintf("detected: %s (%s @ %s)", detected.Name, detected.Driver, detected.Port)
+			} else {
+				detMsg = "installed (no UPS detected on any bus — infrastructure configured)"
+			}
+
+			if err := config.SaveAppConfig(appCfg); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "save config: "+err.Error())
+				return
+			}
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionInstallPrereqs,
+				Result:  audit.ResultOK,
+				Details: "installed: nut, nut-client; " + detMsg,
+			})
+			resp := map[string]interface{}{
+				"message":  "nut installed",
+				"detected": detected,
+			}
+			jsonOK(w, resp)
+			return
+		}
+
+		out, err := exec.Command("sudo", "env", "DEBIAN_FRONTEND=noninteractive",
+			"apt-get", "install", "-y", "-q", req.Package).CombinedOutput()
 		if err != nil {
 			jsonErr(w, http.StatusInternalServerError, string(out))
 			return
@@ -363,6 +423,23 @@ func HandleUninstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 				Action:  audit.ActionInstallPrereqs,
 				Result:  audit.ResultOK,
 				Details: "uninstalled: targetcli-fb",
+			})
+		case "nut":
+			if err := system.UninstallNUT(); err != nil {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			appCfg.UPS = config.UPSConfig{}
+			if err := config.SaveAppConfig(appCfg); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "save config: "+err.Error())
+				return
+			}
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionInstallPrereqs,
+				Result:  audit.ResultOK,
+				Details: "uninstalled: nut, nut-client; /etc/nut removed",
 			})
 		default:
 			jsonErr(w, http.StatusBadRequest, "package not in allowlist")

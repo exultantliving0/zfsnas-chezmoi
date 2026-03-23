@@ -42,7 +42,7 @@
     /* Side panel */
     .side-panel {
       position: fixed; top: 0; right: 0;
-      width: 360px; height: 100vh;
+      width: 540px; height: 100vh;
       background: var(--surface);
       border-left: 1px solid var(--border);
       box-shadow: -8px 0 32px rgba(0,0,0,0.4);
@@ -56,7 +56,8 @@
       padding: 24px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between;
     }
-    .side-panel-body { padding: 24px; overflow-y: auto; flex: 1; }
+    .side-panel-body { padding: 24px; overflow-y: auto; flex: 1; min-height: 0; }
+    .side-panel-footer { padding: 16px 24px; border-top: 1px solid var(--border); flex-shrink: 0; background: var(--surface); }
     .stat-row {
       display: flex; justify-content: space-between; align-items: center;
       padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px;
@@ -289,6 +290,12 @@
         <span id="topbar-pool-title" class="topbar-title">Pool Capacity</span>
         <span id="pool-summary" class="text-sm text-2" style="text-align:center;"></span>
         <div style="display:flex;align-items:center;gap:2px;justify-self:end;">
+          <!-- UPS top-bar widget -->
+          <div id="ups-topbar" class="ups-topbar-widget" onclick="openUPSPanel()" title="UPS Status" style="display:none;align-items:center;gap:3px;padding:2px 5px;border-radius:var(--radius-sm);cursor:pointer;border:1px solid var(--border);margin-right:4px;">
+            <span id="ups-icon" style="font-size:15px;">🔋</span>
+            <span id="ups-pct" style="font-size:12px;font-weight:600;min-width:26px;"></span>
+            <span id="ups-state-badge" class="ups-state-badge"></span>
+          </div>
           <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark theme" style="padding:6px 8px;background:none;border:none;cursor:pointer;color:var(--text-2);display:flex;align-items:center;opacity:0.7;transition:opacity .15s;border-radius:var(--radius-sm);" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">
             <svg id="theme-icon-sun" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/></svg>
             <svg id="theme-icon-moon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -459,6 +466,49 @@
 
         <!-- Pool performance tabs (built dynamically by buildPerfPoolTabs) -->
         <div id="perf-pool-tabs"></div>
+
+        <!-- UPS battery performance tab (shown when UPS is installed) -->
+        <div id="perf-tab-ups" class="hidden">
+          <div style="display:flex;align-items:center;margin-bottom:20px;gap:6px;flex-wrap:wrap;">
+            <div style="display:flex;gap:12px;margin-right:auto;">
+              <span style="font-size:11px;color:#30d158;">▬ Battery %</span>
+              <span style="font-size:11px;color:#64d2ff;">▬ Time Remaining</span>
+              <span style="font-size:11px;color:#ff453a;">▬ Load %</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <button id="perf-reset-zoom-btn-ups" onclick="resetPerfZoom('ups')" class="hidden"
+                      style="background:rgba(255,159,10,0.15);border:1px solid rgba(255,159,10,0.4);color:#ff9f0a;
+                             border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔍 Reset Zoom</button>
+              <div style="display:flex;gap:4px;">
+                <button class="cap-range-btn perf-range-btn active" data-range="all"   onclick="setPerfRange('all')"  >Since Data</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="day"   onclick="setPerfRange('day')"  >Day</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="week"  onclick="setPerfRange('week')" >Week</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="month" onclick="setPerfRange('month')">Month</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="year"  onclick="setPerfRange('year')" >Year</button>
+              </div>
+              <select onchange="setPerfAgg(this.value)" id="ups-perf-agg-sel"
+                      style="padding:3px 20px 3px 4px;font-size:12px;font-weight:600;width:62px;
+                             border-radius:6px;border:1px solid rgba(191,90,242,0.4);
+                             background:rgba(191,90,242,0.12) url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23bf5af2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;) no-repeat right 4px center;
+                             color:var(--accent-1);cursor:pointer;appearance:none;-webkit-appearance:none;">
+                <option value="avg">Avg</option>
+                <option value="min">Min</option>
+                <option value="max">Max</option>
+              </select>
+            </div>
+          </div>
+          <div id="ups-perf-loading" style="padding:32px;text-align:center;color:var(--text-3);">
+            <div style="font-size:28px;margin-bottom:8px;">🔋</div>
+            <div style="font-weight:600;margin-bottom:6px;">Collecting UPS metrics…</div>
+            <div style="font-size:13px;">Charts will fill in after the first 5-minute sample.</div>
+          </div>
+          <div id="ups-perf-charts" class="card-sm hidden" style="position:relative;">
+            <div style="position:relative;height:400px;">
+              <canvas id="ups-perf-canvas"></canvas>
+              <div id="perf-zoom-sel-ups" style="position:absolute;pointer-events:none;display:none;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- CAPACITY TREND -->
@@ -657,9 +707,9 @@
           <p style="font-size:13px;color:var(--text-3);margin-bottom:14px;">These packages are not required for core ZFS NAS functionality but enable additional features.</p>
           <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
             <div style="flex:1;">
-              <span style="color:var(--text-2);font-size:14px;">targetcli-fb</span>
+              <span style="color:var(--text-1);font-size:14px;font-weight:500;">iSCSI block storage sharing</span>
               <i class="info-tip" data-tip="Required for iSCSI block storage sharing.&#10;Enables the iSCSI section in the Sharing menu."></i>
-              <div style="font-size:12px;color:var(--text-3);margin-top:2px;">iSCSI block storage sharing via ZVols</div>
+              <div style="font-size:12px;color:var(--text-3);margin-top:2px;">Packages: targetcli-fb</div>
             </div>
             <span id="prereq-iscsi-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-iscsi-btn" class="btn btn-ghost btn-sm" onclick="enableISCSIFeature()" style="font-size:12px;white-space:nowrap;">Enable iSCSI Feature</button>
@@ -670,15 +720,32 @@
           </div>
           <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
             <div style="flex:1;">
-              <span style="color:var(--text-2);font-size:14px;">minio + mc</span>
+              <span style="color:var(--text-1);font-size:14px;font-weight:500;">S3-compatible object storage server</span>
               <i class="info-tip" data-tip="Required for the S3 Object Server feature. Installs the MinIO server binary and the mc management client.&#10;Both binaries are downloaded directly from dl.min.io.&#10;MinIO runs as a dedicated system user (minio-user) via a systemd service."></i>
-              <div style="font-size:12px;color:var(--text-3);margin-top:2px;">S3-compatible object storage server via MinIO</div>
+              <div style="font-size:12px;color:var(--text-3);margin-top:2px;">Packages: minio, mc</div>
             </div>
             <span id="prereq-minio-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-minio-btn" class="btn btn-ghost btn-sm" onclick="enableMinIOFeature()" style="font-size:12px;white-space:nowrap;">Enable S3 Object Server</button>
             <div style="position:relative;" id="prereq-minio-menu-wrap" class="hidden">
               <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('minio')" title="Options">⋮</button>
               <div id="prereq-minio-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
+            </div>
+          </div>
+          <!-- UPS Management optional feature -->
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 0;">
+            <div style="flex:1;">
+              <span style="color:var(--text-1);font-size:14px;font-weight:500;">UPS battery monitoring &amp; protection</span>
+              <i class="info-tip" style="cursor:pointer;" onclick="document.getElementById('modal-ups-info').classList.remove('hidden')"></i>
+              <div style="font-size:12px;color:var(--text-3);margin-top:2px;">Packages: nut, nut-client</div>
+            </div>
+            <span id="prereq-ups-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
+            <button id="prereq-ups-btn" class="btn btn-ghost btn-sm" onclick="enableUPSFeature()" style="font-size:12px;white-space:nowrap;">
+              Enable UPS Feature
+              <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>
+            </button>
+            <div style="position:relative;" id="prereq-ups-menu-wrap" class="hidden">
+              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('ups')" title="Options">⋮</button>
+              <div id="prereq-ups-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
             </div>
           </div>
         </div>
@@ -712,6 +779,7 @@
             <div style="color:var(--text-3);font-size:13px;">Loading…</div>
           </div>
         </div>
+
       </div>
 
       <!-- FULL ACTIVITY LOG PAGE -->
@@ -1120,7 +1188,7 @@
         <div class="page-header">
           <h2>Settings</h2>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:20px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(525px,1fr));gap:20px;">
 
         <!-- ── 1. General (always first) ── -->
         <div class="card">
@@ -1235,6 +1303,21 @@
               <select id="treemap-minute-select" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text-1);padding:5px 8px;font-size:13px;cursor:pointer;" onchange="setTreeMapSchedule()">
               </select>
             </div>
+          </div>
+        </div>
+
+        <!-- Certificate Management (admin only) -->
+        <div class="card" id="cert-mgmt-card" style="display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <h3 style="margin:0;">Certificate Management</h3>
+            <button class="btn btn-primary btn-sm" onclick="openUploadCertModal()">+ Upload Certificate</button>
+          </div>
+          <div id="cert-pending-banner" style="display:none;background:rgba(255,200,0,0.1);border:1px solid rgba(255,200,0,0.4);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;align-items:center;gap:12px;">
+            <span style="flex:1;font-size:13px;">⚠ Certificate change pending restart — a restart is required to apply the new certificate.</span>
+            <button class="btn btn-warning btn-sm" onclick="restartForCert()">Restart Now</button>
+          </div>
+          <div id="cert-list">
+            <div style="color:var(--text-3);font-size:13px;">Loading…</div>
           </div>
         </div>
 
@@ -1970,6 +2053,126 @@
           <span id="dsd-comment" class="stat-value" style="font-style:italic;word-break:break-word;"></span>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== UPS Side Panel ===== -->
+<div id="ups-panel-backdrop" onclick="closeUPSPanel()" style="display:none;position:fixed;inset:0;z-index:79;"></div>
+<div class="side-panel" id="ups-panel">
+  <div class="side-panel-header">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <h3 style="margin:0;">UPS Status</h3>
+      <div style="position:relative;">
+        <span id="ups-svc-badge" onclick="upsServiceMenu()" style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;background:var(--surface2);color:var(--text-3);cursor:pointer;user-select:none;">—</span>
+        <div id="ups-svc-dropdown" class="hidden" style="position:absolute;left:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:200;min-width:150px;overflow:hidden;">
+          <button onclick="upsServiceAction('start')"   style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">▶ Start</button>
+          <button onclick="upsServiceAction('stop')"    style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">■ Stop</button>
+          <button onclick="upsServiceAction('restart')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">↺ Restart</button>
+          <div style="border-top:1px solid var(--border);"></div>
+          <button onclick="document.getElementById('ups-svc-dropdown').classList.add('hidden');upsDetect()" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-2);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">⟳ Re-scan for UPS</button>
+        </div>
+      </div>
+    </div>
+    <button onclick="closeUPSPanel()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2);">✕</button>
+  </div>
+  <div class="side-panel-body" id="ups-panel-body">
+    <div style="color:var(--text-3);text-align:center;padding:32px;">Loading…</div>
+  </div>
+  <div class="side-panel-footer hidden" id="ups-panel-footer">
+    <div id="ups-save-err" style="color:var(--accent-danger);font-size:12px;display:none;margin-bottom:8px;"></div>
+    <button class="btn btn-primary btn-sm" style="width:100%;" onclick="saveUPSConfig()">Save</button>
+  </div>
+</div>
+
+<!-- ===== UPS Feature Info Modal ===== -->
+<div class="modal-backdrop hidden" id="modal-ups-info" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:24px;line-height:1;">🔋</span>
+        <div>
+          <h3 style="margin:0;">UPS Management</h3>
+          <span style="font-size:11px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:2px 7px;letter-spacing:.04em;">BETA</span>
+        </div>
+      </div>
+      <button class="modal-close" onclick="document.getElementById('modal-ups-info').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body" style="padding-top:4px;">
+
+      <div style="background:rgba(48,209,88,0.08);border:1px solid rgba(48,209,88,0.25);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:18px;">
+        <div style="font-weight:600;color:#30d158;font-size:13px;margin-bottom:4px;">⚡ Auto-Detection & Auto-Configuration</div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.6;">
+          Installing this feature <strong>automatically scans all USB buses</strong> for a connected UPS and configures the NUT daemon on your behalf. No manual configuration needed in most cases.
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;margin-bottom:18px;">
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:18px;flex-shrink:0;margin-top:1px;">📦</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);margin-bottom:2px;">What gets installed</div>
+            <div style="font-size:13px;color:var(--text-2);line-height:1.5;">The <code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:12px;">nut</code> and <code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:12px;">nut-client</code> packages (NUT — Network UPS Tools). Two systemd services are started: <strong>nut-server</strong> (upsd) and <strong>nut-client</strong> (upsmon).</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:18px;flex-shrink:0;margin-top:1px;">🔍</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);margin-bottom:2px;">Auto-detection at install time</div>
+            <div style="font-size:13px;color:var(--text-2);line-height:1.5;">After install, <code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:12px;">nut-scanner</code> probes all USB buses. If a UPS is found, NUT is fully configured automatically and the battery widget appears in the top bar.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:18px;flex-shrink:0;margin-top:1px;">🔄</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);margin-bottom:2px;">Changing your UPS hardware</div>
+            <div style="font-size:13px;color:var(--text-2);line-height:1.5;">If you replace or swap your UPS device, <strong>uninstall and re-install this feature</strong> to trigger a fresh auto-detection and configuration. You can also trigger a manual re-scan from the UPS panel in the top bar.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:18px;flex-shrink:0;margin-top:1px;">🛡️</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);margin-bottom:2px;">Shutdown protection</div>
+            <div style="font-size:13px;color:var(--text-2);line-height:1.5;">Configure battery percentage and/or runtime thresholds from the UPS panel. The portal monitors the UPS directly — a graceful system shutdown is triggered only after 20+ consecutive seconds on battery power and your threshold is crossed.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:rgba(255,200,0,0.08);border:1px solid rgba(255,200,0,0.25);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;color:var(--text-2);line-height:1.5;">
+        <strong style="color:var(--accent-warn);">⚠ Note:</strong> Your UPS must be connected via USB <em>before</em> installing, so the scanner can detect it. Hot-plug detection after install requires a manual re-scan.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="document.getElementById('modal-ups-info').classList.add('hidden')">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Upload Certificate Modal ===== -->
+<div class="modal-backdrop hidden" id="modal-upload-cert" onclick="if(event.target===this)closeUploadCertModal()">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h3>Upload Certificate</h3>
+      <button class="modal-close" onclick="closeUploadCertModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="upload-cert-error" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <div class="form-group">
+        <label>Name <span style="color:var(--text-3);font-size:12px;">(alphanumeric and dashes only)</span></label>
+        <input type="text" id="upload-cert-name" placeholder="e.g. mycompany" maxlength="40" style="max-width:260px;">
+      </div>
+      <div class="form-group">
+        <label>Certificate (.crt / .pem)</label>
+        <input type="file" id="upload-cert-file" accept=".crt,.pem,.cer">
+      </div>
+      <div class="form-group">
+        <label>Private Key (.key / .pem)</label>
+        <input type="file" id="upload-key-file" accept=".key,.pem">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeUploadCertModal()">Cancel</button>
+      <button class="btn btn-primary" id="upload-cert-btn" onclick="uploadCert()">Upload &amp; Validate</button>
     </div>
   </div>
 </div>
@@ -4559,6 +4762,8 @@ let _perfZoom        = null;     // { min: ms, max: ms } when zoomed, else null
 let _perfZoomReady   = {};       // pool → true once drag listeners are wired
 let _perfDragState   = null;     // active drag: { pool, metric, canvas, sel, startX, rect }
 let _perfOldestTs    = {};       // pool → oldest tier-0 timestamp (seconds), cached
+let _upsChart        = null;    // Chart instance for the UPS battery tab
+let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS tooltip
 
 // ===== Init =====
 (async () => {
@@ -4589,6 +4794,7 @@ let _perfOldestTs    = {};       // pool → oldest tier-0 timestamp (seconds), 
     if (d.server_ip) window._serverIP = d.server_ip;
     if (d.hostname) {
       window._serverHostname = d.hostname;
+      document.title = 'ZNAS - ' + d.hostname.toUpperCase();
       const hl = document.getElementById('sidebar-hostname-label');
       if (hl) hl.textContent = d.hostname;
       const hb = document.getElementById('sidebar-hostname');
@@ -4616,6 +4822,9 @@ let _perfOldestTs    = {};       // pool → oldest tier-0 timestamp (seconds), 
   setInterval(updateDatasetNavDot, 60000);
   setInterval(updateDiskNavDot, 300000); // refresh disk dot every 5 min
   setInterval(refreshSnapshotNavDot, 60000);
+  // UPS topbar poller (every 15s)
+  pollUPSTopbar();
+  setInterval(pollUPSTopbar, 15000);
   startIOPoller();
 })();
 
@@ -4663,7 +4872,7 @@ function showPage(name) {
   if (name === 'nfs')       loadNFSShares();
   if (name === 'iscsi')     loadISCSIPage();
   if (name === 's3')        loadS3Page();
-  if (name === 'settings')  { loadSettings(); loadAlerts(); loadKeyMgmtSettings(); }
+  if (name === 'settings')  { loadSettings(); loadAlerts(); loadKeyMgmtSettings(); if (currentUser.role === 'admin') { document.getElementById('cert-mgmt-card').style.display = ''; loadCertList(); } }
   if (name === 'updates')   initUpdatesPage();
   if (name !== 'dashboard') { clearInterval(_dashRefreshTimer); _dashRefreshTimer = null; }
   if (name === 'dashboard') loadDashboard();
@@ -4990,6 +5199,7 @@ async function loadPrereqs() {
   // Update optional feature row statuses.
   _updateISCSIPrereqStatus();
   _updateMinIOPrereqStatus();
+  _updateUPSPrereqStatus();
 }
 
 async function _updateISCSIPrereqStatus() {
@@ -5509,7 +5719,7 @@ async function loadSettings() {
     const portEl = document.getElementById('settings-port');
     if (portEl) { portEl.value = appSettings.port; _savedPort = appSettings.port; }
     const themeEl = document.getElementById('settings-theme');
-    if (themeEl) themeEl.value = localStorage.getItem('login_theme') || 'dark';
+    if (themeEl) themeEl.value = appSettings.login_theme || 'dark';
     selectStorageUnit(appSettings.storage_unit || 'gb', false);
     const liveToggle = document.getElementById('live-update-toggle');
     if (liveToggle) liveToggle.checked = !!appSettings.live_update_enabled;
@@ -5626,9 +5836,8 @@ async function saveSettings() {
   alertEl.classList.add('hidden');
   okEl.classList.add('hidden');
 
-  // Login screen theme is localStorage-only — save it immediately.
   const themeEl = document.getElementById('settings-theme');
-  if (themeEl) saveLoginTheme(themeEl.value);
+  const loginTheme = themeEl ? themeEl.value : (appSettings.login_theme || 'dark');
 
   const portEl = document.getElementById('settings-port');
   const port   = portEl ? parseInt(portEl.value) : appSettings.port;
@@ -5636,13 +5845,14 @@ async function saveSettings() {
   const resp = await fetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ port, storage_unit: appSettings.storage_unit }),
+    body: JSON.stringify({ port, storage_unit: appSettings.storage_unit, login_theme: loginTheme }),
   });
   const data = await resp.json();
   if (!resp.ok) {
     alertEl.textContent = data.error || 'Failed to save settings.';
     alertEl.classList.remove('hidden');
   } else {
+    appSettings.login_theme = loginTheme;
     renderPoolBar();
     _savedPort = port;
     checkPortChanged();
@@ -12826,7 +13036,7 @@ async function _updateMinIOPrereqStatus() {
 function _renderOptFeatMenu(feature, installed, hidden) {
   const dd = document.getElementById('prereq-' + feature + '-dropdown');
   if (!dd) return;
-  const pkg = feature === 'minio' ? 'minio' : 'targetcli-fb';
+  const pkg = feature === 'minio' ? 'minio' : feature === 'ups' ? 'nut' : 'targetcli-fb';
   let html = '';
   if (installed) {
     html = `<button onclick="uninstallFeature('${pkg}')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🗑 Uninstall Feature</button>`;
@@ -12844,7 +13054,7 @@ function _optFeatMenu(feature) {
 }
 
 async function setFeatureNavVisibility(feature, hidden) {
-  ['iscsi', 'minio'].forEach(f => {
+  ['iscsi', 'minio', 'ups'].forEach(f => {
     const dd = document.getElementById('prereq-' + f + '-dropdown');
     if (dd) dd.classList.add('hidden');
   });
@@ -12856,6 +13066,7 @@ async function setFeatureNavVisibility(feature, hidden) {
     });
     await _updateISCSIPrereqStatus();
     await _updateMinIOPrereqStatus();
+    await _updateUPSPrereqStatus();
     loadISCSINavStatus();
     loadS3NavStatus();
   } catch (e) {
@@ -12867,10 +13078,11 @@ let _uninstallPkg = '';
 const _uninstallDesc = {
   'targetcli-fb': 'The iSCSI service will be stopped and targetcli-fb will be removed from the system.',
   'minio':        'The MinIO service will be stopped and the minio and mc binaries will be removed from the system.',
+  'nut':          'The NUT service will be stopped and nut / nut-client will be removed from the system.',
 };
 
 function uninstallFeature(pkg) {
-  ['iscsi', 'minio'].forEach(f => {
+  ['iscsi', 'minio', 'ups'].forEach(f => {
     const dd = document.getElementById('prereq-' + f + '-dropdown');
     if (dd) dd.classList.add('hidden');
   });
@@ -12891,13 +13103,14 @@ function _closeUninstallModal() {
 async function _executeUninstallFeature() {
   const pkg = _uninstallPkg;
   if (!pkg) return;
-  const btn = document.getElementById('btn-uninstall-feat-confirm');
-  const alertEl = document.getElementById('uninstall-feat-alert');
-  btn.disabled = true;
-  btn.textContent = 'Uninstalling…';
-  alertEl.classList.add('hidden');
+
+  // Close the modal immediately — progress is tracked in the activity bar.
+  _closeUninstallModal();
+  _uninstallPkg = '';
+
+  const label = { nut: 'Uninstalling UPS feature (nut)…', minio: 'Uninstalling S3 Object Server (minio)…', 'targetcli-fb': 'Uninstalling iSCSI feature (targetcli-fb)…' }[pkg] || ('Uninstalling ' + pkg + '…');
   const jobId = 'uninstall-' + pkg + '-' + Date.now();
-  addActiveJob(jobId, 'Uninstalling ' + pkg + '…');
+  addActiveJob(jobId, label);
   try {
     const r = await fetch('/api/prereqs/uninstall', {
       method: 'POST',
@@ -12906,23 +13119,16 @@ async function _executeUninstallFeature() {
     });
     const d = await r.json();
     if (!r.ok) {
-      alertEl.textContent = d.error || JSON.stringify(d);
-      alertEl.classList.remove('hidden');
-      btn.disabled = false;
-      btn.textContent = 'Uninstall';
+      alert('Uninstall failed: ' + (d.error || JSON.stringify(d)));
       return;
     }
-    _closeUninstallModal();
-    _uninstallPkg = '';
     await _updateISCSIPrereqStatus();
     await _updateMinIOPrereqStatus();
+    await _updateUPSPrereqStatus();
     loadISCSINavStatus();
     loadS3NavStatus();
   } catch (e) {
-    alertEl.textContent = 'Error: ' + e.message;
-    alertEl.classList.remove('hidden');
-    btn.disabled = false;
-    btn.textContent = 'Uninstall';
+    alert('Uninstall error: ' + e.message);
   } finally {
     removeActiveJob(jobId);
   }
@@ -12991,6 +13197,613 @@ async function enableISCSIFeature() {
     alert('Error: ' + e.message);
   } finally {
     removeActiveJob(jobId);
+  }
+}
+
+// ── UPS Prereq Status ──────────────────────────────────────────────────────────
+
+async function _updateUPSPrereqStatus() {
+  const statusEl = document.getElementById('prereq-ups-status');
+  const btnEl    = document.getElementById('prereq-ups-btn');
+  const menuWrap = document.getElementById('prereq-ups-menu-wrap');
+  if (!statusEl) return;
+  try {
+    const r = await fetch('/api/ups/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    if (s.installed) {
+      statusEl.textContent = '✓ Installed';
+      statusEl.style.color = '#30d158';
+      statusEl.style.fontWeight = '600';
+      if (btnEl) btnEl.style.display = 'none';
+      if (menuWrap) {
+        menuWrap.classList.remove('hidden');
+        _renderOptFeatMenu('ups', true, false);
+      }
+    } else {
+      statusEl.textContent = 'Not installed';
+      statusEl.style.color = 'var(--text-3)';
+      statusEl.style.fontWeight = '';
+      if (btnEl) btnEl.style.display = '';
+      if (menuWrap) menuWrap.classList.add('hidden');
+    }
+  } catch (_) {}
+}
+
+async function enableUPSFeature() {
+  const btn = document.getElementById('prereq-ups-btn');
+  const statusEl = document.getElementById('prereq-ups-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+  const jobId = 'ups-install-' + Date.now();
+  addActiveJob(jobId, 'Installing nut and nut-client… (scanning for UPS, please wait)');
+  try {
+    const r = await fetch('/api/prereqs/install', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ package: 'nut' }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Enable UPS Feature'; }
+      alert('Installation failed: ' + (d.error || JSON.stringify(d)));
+      return;
+    }
+    if (statusEl) {
+      statusEl.textContent = '✓ Installed';
+      statusEl.style.color = '#30d158';
+      statusEl.style.fontWeight = '600';
+    }
+    if (btn) btn.style.display = 'none';
+    const menuWrap = document.getElementById('prereq-ups-menu-wrap');
+    if (menuWrap) { menuWrap.classList.remove('hidden'); _renderOptFeatMenu('ups', true, false); }
+    // Show detection result
+    if (d.detected) {
+      const detId = 'ups-det-' + Date.now();
+      addActiveJob(detId, `UPS detected: ${d.detected.name} (${d.detected.driver} @ ${d.detected.port}) — battery widget active`);
+      setTimeout(() => removeActiveJob(detId), 6000);
+    }
+    // Refresh topbar widget — poll immediately then again after 3s to catch upsd binding
+    pollUPSTopbar();
+    setTimeout(pollUPSTopbar, 3000);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Enable UPS Feature'; }
+    alert('Error: ' + e.message);
+  } finally {
+    removeActiveJob(jobId);
+  }
+}
+
+// ── UPS Top-Bar Poller ────────────────────────────────────────────────────────
+
+async function pollUPSTopbar() {
+  const widget = document.getElementById('ups-topbar');
+  const pctEl  = document.getElementById('ups-pct');
+  const badge  = document.getElementById('ups-state-badge');
+  const icon   = document.getElementById('ups-icon');
+  try {
+    const r = await fetch('/api/ups/status');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.installed) {
+      if (widget) widget.style.display = 'none';
+      return;
+    }
+    // Show widget whenever NUT is installed, even if not yet configured
+    if (widget) widget.style.display = 'flex';
+
+    const s = d.status;
+    if (!s) {
+      // Installed but not configured yet — show placeholder
+      if (pctEl) pctEl.textContent = '--';
+      if (badge) { badge.textContent = 'CFG'; badge.className = 'ups-state-badge ups-badge-batt'; }
+      return;
+    }
+    const pct = s.charge_pct != null ? Math.round(s.charge_pct) : null;
+    if (pctEl) pctEl.textContent = pct != null ? pct + '%' : '--';
+
+    // Badge
+    let badgeText = 'AC', badgeClass = 'ups-badge-online';
+    if (s.low_battery) { badgeText = 'LOW'; badgeClass = 'ups-badge-low'; }
+    else if (s.on_battery) { badgeText = 'BATT'; badgeClass = 'ups-badge-batt'; }
+    if (badge) { badge.textContent = badgeText; badge.className = 'ups-state-badge ' + badgeClass; }
+
+    // Icon colour
+    if (icon) {
+      if (pct == null || pct >= 40) icon.style.color = '';
+      else if (pct >= 10) icon.style.color = '#ff9f0a';
+      else { icon.style.color = '#ff453a'; icon.style.animation = 'upsBlink 1s step-start infinite'; }
+    }
+  } catch (_) {
+    if (widget) widget.style.display = 'none';
+  }
+}
+
+// ── UPS Side Panel ────────────────────────────────────────────────────────────
+
+function openUPSPanel() {
+  const panel = document.getElementById('ups-panel');
+  if (!panel) return;
+  panel.classList.add('open');
+  const bd = document.getElementById('ups-panel-backdrop');
+  if (bd) bd.style.display = 'block';
+  loadUPSPanel();
+}
+
+function closeUPSPanel() {
+  const panel = document.getElementById('ups-panel');
+  if (panel) panel.classList.remove('open');
+  const bd = document.getElementById('ups-panel-backdrop');
+  if (bd) bd.style.display = 'none';
+  const footer = document.getElementById('ups-panel-footer');
+  if (footer) footer.classList.add('hidden');
+}
+
+async function loadUPSPanel() {
+  const body = document.getElementById('ups-panel-body');
+  if (!body) return;
+  try {
+    const [sr, cr] = await Promise.all([fetch('/api/ups/status'), fetch('/api/ups/config')]);
+    const s = await sr.json();
+    const cfg = await cr.json();
+    renderUPSPanel(body, s, cfg);
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--accent-danger)">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderUPSPanel(body, s, cfg) {
+  const st = s.status;
+  const charge = st && st.charge_pct != null ? Math.round(st.charge_pct) : null;
+  const runtimeMins = st && st.runtime_secs != null ? Math.round(st.runtime_secs / 60) : null;
+
+  // Battery fill colour
+  const fillPct = charge != null ? charge : 0;
+  const fillColor = fillPct >= 40 ? '#30d158' : fillPct >= 15 ? '#ff9f0a' : '#ff453a';
+
+  // Status badge
+  let statusBadge = '<span style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;background:#30d15830;color:#30d158;">AC POWER</span>';
+  if (st && st.low_battery) statusBadge = '<span style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;background:#ff453a30;color:#ff453a;">LOW BATTERY</span>';
+  else if (st && st.on_battery) statusBadge = '<span style="padding:3px 10px;border-radius:12px;font-size:12px;font-weight:700;background:#ff9f0a30;color:#ff9f0a;">ON BATTERY</span>';
+
+  // Priority metrics grid
+  const metrics = [
+    ['Input Voltage',  st?.input_voltage != null  ? st.input_voltage.toFixed(1) + ' V' : '—',  'AC voltage supplied by the wall outlet.'],
+    ['Output Voltage', st?.output_voltage != null ? st.output_voltage.toFixed(1) + ' V' : '—', 'Voltage the UPS is delivering to connected equipment.'],
+    ['Load',           (() => { if (st?.load_pct == null) return '—'; const nomW = cfg.nominal_power_w != null ? cfg.nominal_power_w : (st.all_vars?.['ups.realpower.nominal'] != null ? parseFloat(st.all_vars['ups.realpower.nominal']) : null); return st.load_pct.toFixed(0) + ' %' + (nomW != null ? ' (' + Math.round(st.load_pct / 100 * nomW) + ' W)' : ''); })(), 'Percentage of UPS power capacity currently in use.'],
+    ['Battery Voltage',st?.batt_voltage != null   ? st.batt_voltage.toFixed(2) + ' V'   : '—', 'Current battery cell voltage.'],
+    ['Temperature',    st?.temp_c != null         ? st.temp_c.toFixed(1) + ' °C'        : '—', 'Internal UPS temperature (if reported by device).'],
+    ['Model',          st?.model || '—',                                                          'UPS model as reported by the device.'],
+    ['Serial',         st?.serial || '—',                                                         'Unique device serial number.'],
+  ];
+
+  let metricsHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">';
+  for (const [label, val, tip] of metrics) {
+    if (val === '—' || val == null || val === '') continue;
+    metricsHtml += `<div style="background:var(--surface2);border-radius:var(--radius-sm);padding:10px 12px;">
+      <div style="font-size:11px;color:var(--text-3);margin-bottom:3px;">${esc(label)}</div>
+      <div style="font-weight:600;font-size:14px;">${esc(String(val))}</div>
+    </div>`;
+  }
+
+  // Nominal Power — editable override box
+  const nomW = cfg.nominal_power_w != null ? cfg.nominal_power_w : '';
+  metricsHtml += `<div style="background:var(--surface2);border-radius:var(--radius-sm);padding:10px 12px;position:relative;" id="ups-nominal-box">
+    <div style="font-size:11px;color:var(--text-3);margin-bottom:3px;">Nominal Power</div>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span id="ups-nominal-display" style="font-weight:600;font-size:14px;">${nomW ? nomW + ' W' : '<span style="color:var(--text-3);font-weight:400;font-size:13px;">Not set</span>'}</span>
+      <button onclick="upsEditNominalPower()" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;padding:0 2px;line-height:1;" title="Edit">✎</button>
+    </div>
+    <div id="ups-nominal-edit" style="display:none;margin-top:6px;display:none;">
+      <div style="display:flex;align-items:center;gap:4px;">
+        <input id="ups-nominal-input" type="number" min="0" max="99999" value="${nomW}"
+          style="width:70px;background:var(--bg);border:1px solid var(--accent);border-radius:4px;color:var(--text-1);padding:3px 6px;font-size:13px;"
+          onkeydown="if(event.key==='Enter')upsNominalSave();if(event.key==='Escape')upsNominalCancel();">
+        <span style="font-size:12px;color:var(--text-3);">W</span>
+        <button onclick="upsNominalSave()" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">✓</button>
+        <button onclick="upsNominalCancel()" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;color:var(--text-2);">✕</button>
+      </div>
+    </div>
+  </div>`;
+
+  metricsHtml += '</div><div style="margin-bottom:18px;"></div>';
+
+  // All vars collapsible
+  let allVarsHtml = '';
+  if (st?.all_vars && Object.keys(st.all_vars).length) {
+    const rows = Object.entries(st.all_vars).sort((a,b) => a[0].localeCompare(b[0]))
+      .map(([k,v]) => `<tr><td style="color:var(--text-3);padding-right:8px;white-space:nowrap;width:48%;overflow:hidden;text-overflow:ellipsis;">${esc(k)}</td><td style="word-break:break-all;">${esc(v)}</td></tr>`).join('');
+    allVarsHtml = `<details style="margin-bottom:18px;">
+      <summary style="cursor:pointer;font-size:13px;color:var(--text-2);margin-bottom:6px;">All Variables (${Object.keys(st.all_vars).length})</summary>
+      <table style="font-size:10px;font-family:monospace;border-collapse:collapse;width:100%;table-layout:fixed;">${rows}</table>
+    </details>`;
+  }
+
+  // Shutdown policy form
+  const policy = cfg.shutdown_policy || {};
+  const trigType = policy.trigger_type || 'both';
+  const pct  = policy.percent_threshold  || 20;
+  const mins = policy.runtime_threshold  ? Math.round(policy.runtime_threshold/60) : 10;
+
+  // Update service status badge in the header.
+  const badge = document.getElementById('ups-svc-badge');
+  if (badge) {
+    if (st) {
+      badge.textContent = 'Active';
+      badge.style.background = 'rgba(48,209,88,0.18)';
+      badge.style.color = '#30d158';
+    } else if (s.error) {
+      badge.textContent = 'Error';
+      badge.style.background = 'rgba(255,69,58,0.18)';
+      badge.style.color = '#ff453a';
+    } else {
+      badge.textContent = 'No device';
+      badge.style.background = 'rgba(255,159,10,0.18)';
+      badge.style.color = '#ff9f0a';
+    }
+  }
+
+  const footer = document.getElementById('ups-panel-footer');
+  if (footer) footer.classList.remove('hidden');
+
+  if (!st) {
+    body.innerHTML = `<div style="color:var(--text-3);text-align:center;padding:32px;">${s.error ? 'UPS error: ' + esc(s.error) : 'UPS not configured or not responding.'}</div>
+    ${_upsShutdownForm(cfg.enabled, policy, trigType, pct, mins, cfg)}`;
+    return;
+  }
+
+  body.innerHTML = `
+    <!-- Battery visual -->
+    <div style="text-align:center;margin-bottom:18px;">
+      <div style="position:relative;width:100%;height:44px;border:2px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface2);">
+        <div style="position:absolute;left:0;top:0;height:100%;width:${fillPct}%;background:${fillColor};transition:width 0.6s;border-radius:6px 0 0 6px;opacity:0.8;"></div>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;">${charge != null ? charge + '%' : '—'}</div>
+      </div>
+      <div style="font-size:12px;color:var(--text-3);margin-top:5px;">${runtimeMins != null ? runtimeMins + ' min remaining' : ''}</div>
+      <div style="margin-top:8px;">${statusBadge}</div>
+    </div>
+
+    <h4 style="font-size:12px;text-transform:uppercase;color:var(--text-3);margin:0 0 10px;">Metrics</h4>
+    ${metricsHtml}
+    ${allVarsHtml}
+    ${_upsShutdownForm(cfg.enabled, policy, trigType, pct, mins, cfg)}
+  `;
+}
+
+function _upsShutdownForm(upsEnabled, policy, trigType, pct, mins, cfg) {
+  return `
+    <h4 style="font-size:12px;text-transform:uppercase;color:var(--text-3);margin:0 0 12px;">Shutdown Behaviour</h4>
+    <div class="form-group" style="margin-bottom:10px;">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="ups-sd-enabled" ${policy.enabled ? 'checked' : ''}>
+        Enable automatic shutdown
+      </label>
+    </div>
+    <div class="form-group" style="margin-bottom:14px;">
+      <label style="font-size:13px;color:var(--text-2);">Trigger</label>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+          <input type="radio" name="ups-trigger" value="percent" ${trigType==='percent'?'checked':''}>
+          When battery &lt; <input type="number" id="ups-pct-thresh" value="${pct}" min="5" max="50" style="width:55px;padding:2px 6px;"> %
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+          <input type="radio" name="ups-trigger" value="time" ${trigType==='time'?'checked':''}>
+          When runtime &lt; <input type="number" id="ups-time-thresh" value="${mins}" min="1" max="60" style="width:55px;padding:2px 6px;"> minutes
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+          <input type="radio" name="ups-trigger" value="both" ${trigType==='both'?'checked':''}>
+          Either condition — whichever fires first
+        </label>
+      </div>
+    </div>
+    <details style="margin-bottom:14px;">
+      <summary style="cursor:pointer;font-size:12px;text-transform:uppercase;color:var(--text-3);user-select:none;padding:6px 0;border-top:1px solid var(--border);">Advanced</summary>
+      <div style="margin-top:12px;display:flex;flex-direction:column;gap:12px;">
+        <div class="form-group">
+          <label style="font-size:13px;">Pre-shutdown command (optional)
+            <i class="info-tip" data-tip="Shell command executed before shutdown begins. Max execution time: 30 seconds."></i>
+          </label>
+          <input type="text" id="ups-preshutdown" value="${esc(policy.pre_shutdown_cmd||'')}" placeholder="e.g. /usr/local/bin/snapshot.sh" style="width:100%;font-family:monospace;font-size:12px;">
+        </div>
+        <div class="form-group">
+          <label style="font-size:13px;">UPS Name (NUT identifier)</label>
+          <input type="text" id="ups-cfg-name" value="${esc(cfg.ups_name||'')}" placeholder="nutdev1">
+        </div>
+        <div class="form-group">
+          <label style="font-size:13px;">Driver</label>
+          <input type="text" id="ups-cfg-driver" value="${esc(cfg.driver||'')}" placeholder="usbhid-ups">
+        </div>
+        <div class="form-group">
+          <label style="font-size:13px;">Port</label>
+          <input type="text" id="ups-cfg-port" value="${esc(cfg.port||'auto')}" placeholder="auto">
+        </div>
+      </div>
+    </details>
+  `;
+}
+
+function upsServiceMenu() {
+  const dd = document.getElementById('ups-svc-dropdown');
+  if (dd) dd.classList.toggle('hidden');
+}
+
+function upsEditNominalPower() {
+  const editDiv = document.getElementById('ups-nominal-edit');
+  const input   = document.getElementById('ups-nominal-input');
+  if (!editDiv) return;
+  editDiv.style.display = 'block';
+  if (input) { input.focus(); input.select(); }
+}
+
+function upsNominalCancel() {
+  const editDiv = document.getElementById('ups-nominal-edit');
+  if (editDiv) editDiv.style.display = 'none';
+}
+
+async function upsNominalSave() {
+  const input = document.getElementById('ups-nominal-input');
+  const val   = input ? input.value.trim() : '';
+  const watts = val === '' ? null : parseInt(val, 10);
+  if (watts !== null && (isNaN(watts) || watts < 0)) {
+    input.style.borderColor = 'var(--accent-danger)';
+    return;
+  }
+  try {
+    const r = await fetch('/api/ups/nominal-power', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ watts }),
+    });
+    if (!r.ok) { const d = await r.json(); alert(d.error || 'Save failed'); return; }
+    // Re-render by reloading the panel data so cfg.nominal_power_w is fresh.
+    loadUPSPanel();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function saveUPSConfig() {
+  const enabled = document.getElementById('ups-sd-enabled')?.checked;
+  const trigType = document.querySelector('input[name="ups-trigger"]:checked')?.value || 'both';
+  const pct  = parseInt(document.getElementById('ups-pct-thresh')?.value || '20');
+  const mins = parseInt(document.getElementById('ups-time-thresh')?.value || '10');
+  const pre  = document.getElementById('ups-preshutdown')?.value || '';
+  const name = document.getElementById('ups-cfg-name')?.value.trim() || '';
+  const driver = document.getElementById('ups-cfg-driver')?.value.trim() || '';
+  const port = document.getElementById('ups-cfg-port')?.value.trim() || 'auto';
+  const errEl = document.getElementById('ups-save-err');
+
+  const payload = {
+    enabled: true,
+    ups_name: name,
+    driver,
+    port,
+    shutdown_policy: {
+      enabled,
+      trigger_type: trigType,
+      percent_threshold: pct,
+      runtime_threshold: mins * 60,
+      pre_shutdown_cmd: pre,
+    },
+  };
+
+  try {
+    const r = await fetch('/api/ups/config', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      if (errEl) { errEl.textContent = d.error || JSON.stringify(d); errEl.style.display = ''; }
+      return;
+    }
+    if (errEl) errEl.style.display = 'none';
+    const jid = 'ups-save-' + Date.now(); addActiveJob(jid, 'UPS configuration saved.'); setTimeout(() => removeActiveJob(jid), 3000);
+    pollUPSTopbar();
+  } catch (e) {
+    if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+  }
+}
+
+async function upsServiceAction(action) {
+  document.getElementById('ups-svc-dropdown')?.classList.add('hidden');
+  try {
+    const r = await fetch('/api/ups/service', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ action }),
+    });
+    const d = await r.json();
+    if (!r.ok) { alert(d.error || JSON.stringify(d)); return; }
+    const jid = 'ups-svc-' + Date.now(); addActiveJob(jid, 'nut-server ' + action + ' OK'); setTimeout(() => removeActiveJob(jid), 3000);
+    loadUPSPanel();
+  } catch (e) { alert(e.message); }
+}
+
+async function upsDetect() {
+  const jid = 'ups-detect-' + Date.now();
+  addActiveJob(jid, 'Scanning all bus types for UPS…');
+  try {
+    const r = await fetch('/api/ups/detect', { method: 'POST' });
+    const d = await r.json();
+    removeActiveJob(jid);
+    if (!r.ok) { alert(d.error || JSON.stringify(d)); return; }
+    const det = d.detected;
+    if (det && det.name) {
+      const okId = 'ups-det-' + Date.now();
+      addActiveJob(okId, `UPS detected: ${det.name} (${det.driver} @ ${det.port})`);
+      setTimeout(() => removeActiveJob(okId), 6000);
+    } else {
+      const scanOut = det && det.scanner_output ? '\n\nnut-scanner output:\n' + det.scanner_output : '\n\n(nut-scanner produced no output)';
+      alert('No UPS detected on any bus. Make sure it is connected via USB and try again.' + scanOut);
+    }
+    pollUPSTopbar();
+    loadUPSPanel();
+  } catch (e) { removeActiveJob(jid); alert(e.message); }
+}
+
+// ── Certificate Management ────────────────────────────────────────────────────
+
+async function loadCertList() {
+  const card = document.getElementById('cert-mgmt-card');
+  const list = document.getElementById('cert-list');
+  if (!list) return;
+  try {
+    const r = await fetch('/api/certs');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    // Restart banner
+    const banner = document.getElementById('cert-pending-banner');
+    if (banner) banner.style.display = d.pending_restart ? 'flex' : 'none';
+
+    if (!d.certs || d.certs.length === 0) {
+      list.innerHTML = '<div style="color:var(--text-3);font-size:13px;">No certificates found.</div>';
+      return;
+    }
+
+    const rows = d.certs.map(c => {
+      const expires = c.not_after ? new Date(c.not_after).toLocaleDateString() : '—';
+      const expiredStyle = c.is_expired ? 'color:#ff453a;' : '';
+      const validBadge = c.is_valid
+        ? '<span style="color:#30d158;font-weight:700;">✓</span>'
+        : '<span style="color:#ff453a;font-weight:700;">✗</span>';
+      const activeBorder = c.is_active ? 'border-left:3px solid #30d158;' : '';
+      const activeTag = c.is_active ? '<span style="font-size:11px;background:rgba(48,209,88,0.15);color:#30d158;border-radius:4px;padding:1px 6px;margin-left:6px;">(active)</span>' : '';
+      const isSelfSigned = c.is_self_signed ? '<span style="font-size:11px;color:var(--text-3);margin-left:4px;">built-in</span>' : '';
+
+      return `<tr style="border-bottom:1px solid var(--border);${activeBorder}">
+        <td style="padding:10px 12px 10px 14px;font-size:13px;font-weight:500;">${esc(c.name)}${activeTag}${isSelfSigned}</td>
+        <td style="padding:10px 12px;font-size:13px;color:var(--text-2);">${esc(c.common_name||'—')}</td>
+        <td style="padding:10px 12px;font-size:13px;${expiredStyle}">${expires}</td>
+        <td style="padding:10px 12px;text-align:center;">${validBadge}</td>
+        <td style="padding:10px 12px;text-align:right;position:relative;">
+          <div style="position:relative;display:inline-block;">
+            <button class="btn btn-ghost btn-sm" onclick="_certMenu('${esc(c.name)}')" title="Options">≡</button>
+            <div id="cert-menu-${esc(c.name)}" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:200;min-width:170px;overflow:hidden;">
+              <button onclick="activateCert('${esc(c.name)}')" ${(!c.is_valid||c.is_active)?'disabled style="opacity:.4;cursor:not-allowed;"':''} style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="if(!this.disabled)this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">✓ Use for ZFSNAS</button>
+              <div style="border-top:1px solid var(--border);"></div>
+              <button onclick="exportCert('${esc(c.name)}')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">⬇ Export</button>
+              <div style="border-top:1px solid var(--border);"></div>
+              <button onclick="deleteCert('${esc(c.name)}')" ${c.is_active?'disabled style="opacity:.4;cursor:not-allowed;"':''} style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="if(!this.disabled)this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">✕ Delete</button>
+            </div>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    list.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);">
+          <th style="padding:8px 12px 8px 14px;text-align:left;font-size:12px;color:var(--text-3);font-weight:500;">Name</th>
+          <th style="padding:8px 12px;text-align:left;font-size:12px;color:var(--text-3);font-weight:500;">Common Name</th>
+          <th style="padding:8px 12px;text-align:left;font-size:12px;color:var(--text-3);font-weight:500;">Expires</th>
+          <th style="padding:8px 12px;text-align:center;font-size:12px;color:var(--text-3);font-weight:500;">Valid?</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  } catch (e) {
+    if (list) list.innerHTML = '<div style="color:var(--accent-danger)">Error loading certificates.</div>';
+  }
+}
+
+function _certMenu(name) {
+  // Close all cert menus
+  document.querySelectorAll('[id^="cert-menu-"]').forEach(el => {
+    if (el.id !== 'cert-menu-' + name) el.style.display = 'none';
+  });
+  const dd = document.getElementById('cert-menu-' + name);
+  if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+}
+
+function openUploadCertModal() {
+  document.getElementById('upload-cert-name').value = '';
+  document.getElementById('upload-cert-file').value = '';
+  document.getElementById('upload-key-file').value = '';
+  document.getElementById('upload-cert-error').classList.add('hidden');
+  document.getElementById('upload-cert-btn').disabled = false;
+  document.getElementById('modal-upload-cert').classList.remove('hidden');
+}
+
+function closeUploadCertModal() {
+  document.getElementById('modal-upload-cert').classList.add('hidden');
+}
+
+async function uploadCert() {
+  const name = document.getElementById('upload-cert-name').value.trim();
+  const certFile = document.getElementById('upload-cert-file').files[0];
+  const keyFile  = document.getElementById('upload-key-file').files[0];
+  const errEl    = document.getElementById('upload-cert-error');
+  const btn      = document.getElementById('upload-cert-btn');
+  errEl.classList.add('hidden');
+
+  if (!name) { errEl.textContent = 'Name is required.'; errEl.classList.remove('hidden'); return; }
+  if (!certFile) { errEl.textContent = 'Certificate file is required.'; errEl.classList.remove('hidden'); return; }
+  if (!keyFile)  { errEl.textContent = 'Private key file is required.'; errEl.classList.remove('hidden'); return; }
+
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  const form = new FormData();
+  form.append('name', name);
+  form.append('cert_file', certFile);
+  form.append('key_file', keyFile);
+  try {
+    const r = await fetch('/api/certs/upload', { method: 'POST', body: form });
+    const d = await r.json();
+    if (!r.ok) {
+      errEl.textContent = d.error || JSON.stringify(d);
+      errEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Upload & Validate';
+      return;
+    }
+    closeUploadCertModal();
+    const jid = 'cert-imp-' + Date.now(); addActiveJob(jid, d.message || 'Certificate imported.'); setTimeout(() => removeActiveJob(jid), 3000);
+    loadCertList();
+  } catch (e) {
+    errEl.textContent = e.message; errEl.classList.remove('hidden');
+    btn.disabled = false; btn.textContent = 'Upload & Validate';
+  }
+}
+
+async function activateCert(name) {
+  document.querySelectorAll('[id^="cert-menu-"]').forEach(el => el.style.display = 'none');
+  if (!confirm('Activate "' + name + '" as the TLS certificate? A restart will be required to apply the change.')) return;
+  try {
+    const r = await fetch('/api/certs/' + encodeURIComponent(name) + '/activate', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) { alert(d.error || JSON.stringify(d)); return; }
+    const jid = 'cert-act-' + Date.now(); addActiveJob(jid, 'Certificate activated — restart required.'); setTimeout(() => removeActiveJob(jid), 4000);
+    loadCertList();
+  } catch (e) { alert(e.message); }
+}
+
+function exportCert(name) {
+  document.querySelectorAll('[id^="cert-menu-"]').forEach(el => el.style.display = 'none');
+  const a = document.createElement('a');
+  a.href = '/api/certs/' + encodeURIComponent(name) + '/export';
+  a.download = name + '.zip';
+  a.click();
+}
+
+async function deleteCert(name) {
+  document.querySelectorAll('[id^="cert-menu-"]').forEach(el => el.style.display = 'none');
+  if (!confirm('Delete certificate "' + name + '"? This cannot be undone.')) return;
+  try {
+    const r = await fetch('/api/certs/' + encodeURIComponent(name), { method: 'DELETE' });
+    const d = await r.json();
+    if (!r.ok) { alert(d.error || JSON.stringify(d)); return; }
+    const jid = 'cert-del-' + Date.now(); addActiveJob(jid, 'Certificate deleted.'); setTimeout(() => removeActiveJob(jid), 3000);
+    loadCertList();
+  } catch (e) { alert(e.message); }
+}
+
+async function restartForCert() {
+  if (!confirm('Restart the portal now to apply the new certificate? The connection will briefly drop.')) return;
+  try {
+    await fetch('/api/certs/restart', { method: 'POST' });
+    addActiveJob('cert-restart', 'Portal restarting…');
+    setTimeout(() => location.reload(), 3000);
+  } catch (_) {
+    setTimeout(() => location.reload(), 3000);
   }
 }
 
@@ -13216,12 +14029,19 @@ async function checkUpdates() {
 }
 
 function applyUpdates() {
-  const logWrap = document.getElementById('updates-log-wrap');
-  const log = document.getElementById('updates-log');
-  const btn = document.getElementById('btn-apply-updates');
+  const logWrap  = document.getElementById('updates-log-wrap');
+  const log      = document.getElementById('updates-log');
+  const btn      = document.getElementById('btn-apply-updates');
+  const status   = document.getElementById('updates-status');
+  const pkgList  = document.getElementById('updates-pkg-list');
+
+  // Collapse the card body so the output log is immediately visible.
+  if (status)  status.style.display  = 'none';
+  if (pkgList) pkgList.style.display = 'none';
   logWrap.style.display = '';
   log.textContent = '';
   btn.disabled = true;
+  logWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(proto + '//' + location.host + '/ws/updates-apply');
@@ -13235,6 +14055,9 @@ function applyUpdates() {
     if (msg.done) {
       ws.close();
       btn.disabled = false;
+      // Restore the collapsed card body elements.
+      if (status)  status.style.display  = '';
+      if (pkgList) pkgList.style.display = '';
       if (msg.success) {
         log.textContent += '\n';
         log.textContent += '══════════════════════════════════════════\n';
@@ -13629,12 +14452,14 @@ async function loadDashboard() {
   _loadHardwareInfo();
   await _loadGlobalPerfData();
   await buildPerfPoolTabs();
-  _dashRefreshTimer = setInterval(() => _reloadActivePerfTab(), 5 * 60 * 1000);
+  await buildUPSPerfTab();
+  _dashRefreshTimer = setInterval(async () => { await buildUPSPerfTab(); _reloadActivePerfTab(); }, 5 * 60 * 1000);
 }
 
 // Reload the currently visible performance tab.
 function _reloadActivePerfTab() {
   if (_perfActiveTab === 'global') _loadGlobalPerfData();
+  else if (_perfActiveTab === 'ups') _loadUPSPerfData();
   else _loadPoolPerfData(_perfActiveTab);
 }
 
@@ -13754,6 +14579,7 @@ function _renderGlobalPerfCharts(series, ifaces) {
       type: 'line',
       data: { datasets },
       options: _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked, labelFn),
+      plugins: [_perfTooltipPlugin],
     });
   }
 
@@ -13947,6 +14773,7 @@ function _makeDashChartStacked(canvasId, datasets, labels, yLabel, yMax) {
     type: 'line',
     data: { labels, datasets },
     options: _dashChartOpts(yLabel, yMax, true),
+    plugins: [_perfTooltipPlugin],
   });
   _dashCharts[canvasId] = chart;
   return chart;
@@ -13960,6 +14787,7 @@ function _makeDashChart(canvasId, datasets, labels, yLabel, yMax) {
     type: 'line',
     data: { labels, datasets },
     options: _dashChartOpts(yLabel, yMax),
+    plugins: [_perfTooltipPlugin],
   });
   _dashCharts[canvasId] = chart;
   return chart;
@@ -14091,8 +14919,10 @@ async function buildPerfPoolTabs() {
   const bar  = document.getElementById('dash-tab-bar');
   const cont = document.getElementById('perf-pool-tabs');
 
-  // Remove previously generated pool tabs/buttons.
+  // Remove previously generated pool tabs/buttons (including UPS tab — rebuilt by buildUPSPerfTab).
   bar.querySelectorAll('.perf-pool-tab-btn').forEach(b => b.remove());
+  const _upsBtn = document.getElementById('perf-tab-btn-ups');
+  if (_upsBtn) _upsBtn.remove();
   cont.innerHTML = '';
   _perfZoom      = null;
   // Preserve 'global' zoom-ready state (static HTML, listeners added once).
@@ -14191,6 +15021,241 @@ async function buildPerfPoolTabs() {
   switchPerfTab(target);
 }
 
+// Add/remove the UPS tab button depending on whether UPS is installed.
+async function buildUPSPerfTab() {
+  const bar = document.getElementById('dash-tab-bar');
+  if (!bar) return;
+  // Remove any previously added UPS tab button.
+  const existing = document.getElementById('perf-tab-btn-ups');
+  if (existing) existing.remove();
+
+  try {
+    const r = await fetch('/api/ups/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    if (!s.installed) return;
+  } catch (_) { return; }
+
+  const btn = document.createElement('button');
+  btn.className = 'cap-tab';
+  btn.id = 'perf-tab-btn-ups';
+  btn.textContent = 'UPS';
+  btn.onclick = () => switchPerfTab('ups');
+  bar.appendChild(btn);
+}
+
+async function _loadUPSPerfData() {
+  const loadEl  = document.getElementById('ups-perf-loading');
+  const chartEl = document.getElementById('ups-perf-charts');
+  if (!loadEl || !chartEl) return;
+
+  // Fetch oldest timestamp for 'all' auto-tier selection.
+  if (_perfOldestTs['ups'] === undefined) {
+    try {
+      const or = await fetch('/api/ups/perf/oldest');
+      _perfOldestTs['ups'] = or.ok ? ((await or.json()).oldest_ts || 0) : 0;
+    } catch(_) { _perfOldestTs['ups'] = 0; }
+  }
+
+  // Fetch UPS config for nominal power.
+  try {
+    const cr = await fetch('/api/ups/config');
+    if (cr.ok) {
+      const cfg = await cr.json();
+      _upsPerfNominalW = cfg.nominal_power_w != null ? cfg.nominal_power_w
+                       : (cfg.ups_vars?.['ups.realpower.nominal'] != null
+                          ? parseFloat(cfg.ups_vars['ups.realpower.nominal']) : null);
+    }
+  } catch(_) {}
+
+  const tier  = _perfTierForRange('ups');
+  const since = _perfSinceTs();
+  let url = `/api/ups/perf/data?tier=${tier}`;
+  if (since > 0) url += `&since=${since}`;
+
+  try {
+    const r = await fetch(url);
+    if (!r.ok) { loadEl.textContent = 'Error loading UPS data.'; return; }
+    const data = await r.json();
+    const series = data.series || {};
+
+    const chargeSamples = series['ups:charge_pct'] || [];
+    if (!chargeSamples.length) {
+      loadEl.classList.remove('hidden');
+      chartEl.classList.add('hidden');
+      return;
+    }
+    loadEl.classList.add('hidden');
+    chartEl.classList.remove('hidden');
+    _renderUPSPerfChart(series);
+  } catch(_) {
+    loadEl.classList.remove('hidden');
+    loadEl.textContent = 'Error loading UPS data.';
+  }
+}
+
+function _renderUPSPerfChart(series) {
+  const canvas = document.getElementById('ups-perf-canvas');
+  if (!canvas) return;
+
+  if (_upsChart) { _upsChart.destroy(); _upsChart = null; }
+
+  const oldest = _perfOldestTs['ups'] || 0;
+  const since  = _perfSinceTs();
+  const nowMs  = Date.now();
+  const xMax   = _perfZoom ? _perfZoom.max : nowMs;
+  const xMin   = _perfZoom ? _perfZoom.min
+               : since > 0 ? since * 1000
+               : oldest > 0 ? oldest * 1000
+               : nowMs - 7 * 86400 * 1000;
+
+  const zoomSpanDays = _perfZoom ? (_perfZoom.max - _perfZoom.min) / 864e5 : null;
+  const showTime = _perfZoom ? zoomSpanDays <= 7 : (_perfRange === 'day' || _perfRange === 'week');
+  const tickFmt  = showTime
+    ? v => { const d = new Date(v); return d.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
+    : v => new Date(v).toLocaleDateString([], {month:'short', day:'numeric', year:'numeric'});
+
+  const chargePts  = (series['ups:charge_pct']   || []).map(s => ({ x: s.ts * 1000, y: s[_perfAgg] ?? null }));
+  const runtimePts = (series['ups:runtime_secs'] || []).map(s => ({ x: s.ts * 1000, y: s[_perfAgg] != null ? Math.round(s[_perfAgg] / 60) : null }));
+  const loadPts    = (series['ups:load_pct']      || []).map(s => ({ x: s.ts * 1000, y: s[_perfAgg] ?? null }));
+
+  const style     = getComputedStyle(document.body);
+  const isLight   = document.body.classList.contains('light');
+  const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
+  const tipBg     = isLight ? '#ffffff' : '#1c1c1e';
+  const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+  const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
+  const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
+  const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+
+  _upsChart = new Chart(canvas, {
+    type: 'line',
+    plugins: [_perfTooltipPlugin],
+    data: {
+      datasets: [
+        {
+          label: 'Battery %',
+          data: chargePts,
+          yAxisID: 'yLeft',
+          borderColor: '#30d158',
+          backgroundColor: 'rgba(48,209,88,0.15)',
+          borderWidth: 2,
+          fill: true,
+          pointRadius: 0,
+          tension: 0.3,
+          spanGaps: true,
+        },
+        {
+          label: 'Time Remaining',
+          data: runtimePts,
+          yAxisID: 'yRight',
+          borderColor: '#64d2ff',
+          backgroundColor: 'rgba(100,210,255,0.08)',
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 0,
+          tension: 0.3,
+          spanGaps: true,
+        },
+        {
+          label: 'Load %',
+          data: loadPts,
+          yAxisID: 'yLeft',
+          borderColor: '#ff453a',
+          backgroundColor: 'rgba(255,69,58,0.08)',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+          spanGaps: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'xDedup', intersect: false },
+      layout: { padding: { top: 24, right: 16, left: 4, bottom: 4 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: tipBg,
+          borderColor: tipBorder,
+          borderWidth: 1,
+          titleColor: tipTitle,
+          bodyColor: tipBody,
+          padding: 10,
+          filter: item => item.parsed.y !== null && item.parsed.y !== undefined,
+          callbacks: {
+            title: items => {
+              if (!items.length) return '';
+              const d = new Date(items[0].parsed.x);
+              const pad = n => String(n).padStart(2, '0');
+              return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+                   + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+            },
+            label: ctx => {
+              if (ctx.parsed.y == null) return null;
+              if (ctx.dataset.label === 'Battery %')
+                return '  Battery:  ' + ctx.parsed.y.toFixed(1) + ' %';
+              if (ctx.dataset.label === 'Time Remaining')
+                return '  Remaining:  ' + ctx.parsed.y.toFixed(0) + ' min';
+              if (ctx.dataset.label === 'Load %') {
+                const lines = ['  Load:  ' + ctx.parsed.y.toFixed(0) + ' %'];
+                if (_upsPerfNominalW != null) {
+                  const watts = Math.round(ctx.parsed.y / 100 * _upsPerfNominalW);
+                  lines.push('  Power:  ~' + watts + ' W');
+                }
+                return lines;
+              }
+              return null;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          min: xMin,
+          max: xMax,
+          ticks: { color: tickColor, font: { size: 10 }, maxTicksLimit: 8, maxRotation: 0, callback: tickFmt },
+          grid: { color: gridColor },
+        },
+        yLeft: {
+          position: 'left',
+          min: 0,
+          max: 100,
+          ticks: { color: tickColor, font: { size: 10 }, callback: v => v + ' %' },
+          grid: { color: gridColor },
+        },
+        yRight: {
+          position: 'right',
+          min: 0,
+          ticks: { color: tickColor, font: { size: 10 }, callback: v => v + ' min' },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
+  });
+
+  _initUPSPerfZoom();
+}
+
+function _initUPSPerfZoom() {
+  if (_perfZoomReady['ups']) return;
+  _perfZoomReady['ups'] = true;
+  const canvas = document.getElementById('ups-perf-canvas');
+  const sel    = document.getElementById('perf-zoom-sel-ups');
+  if (!canvas || !sel) return;
+  canvas.style.cursor = 'crosshair';
+  canvas.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const rect = canvas.getBoundingClientRect();
+    _perfDragState = { pool: 'ups', metric: 'battery', canvas, sel, startX: e.clientX - rect.left, rect };
+  });
+}
+
 function switchPerfTab(name) {
   _perfActiveTab = name;
 
@@ -14201,7 +15266,9 @@ function switchPerfTab(name) {
 
   // Show/hide content.
   document.getElementById('perf-tab-global').classList.toggle('hidden', name !== 'global');
-  document.getElementById('perf-pool-tabs').classList.toggle('hidden', name === 'global');
+  document.getElementById('perf-pool-tabs').classList.toggle('hidden', name === 'global' || name === 'ups');
+  const upsTab = document.getElementById('perf-tab-ups');
+  if (upsTab) upsTab.classList.toggle('hidden', name !== 'ups');
   for (const pool of _perfPools) {
     const el = document.getElementById('perf-tab-pool-' + pool);
     if (el) el.classList.toggle('hidden', pool !== name);
@@ -14340,6 +15407,7 @@ function _renderPerfCharts(pool, devices, series) {
       type: 'line',
       data: { datasets },
       options: _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt),
+      plugins: [_perfTooltipPlugin],
     });
 
     // Peak label: sum across devices at each timestamp within visible range.
@@ -14392,6 +15460,7 @@ function resetPerfZoom(pool) {
   const zb = document.getElementById('perf-reset-zoom-btn-' + pool);
   if (zb) zb.classList.add('hidden');
   if (pool === 'global') _loadGlobalPerfData();
+  else if (pool === 'ups') _loadUPSPerfData();
   else _loadPoolPerfData(pool);
 }
 
@@ -14432,7 +15501,9 @@ function _initPerfZoom(pool) {
     const endX = e.clientX - d.rect.left;
     const dx   = Math.abs(endX - d.startX);
     if (dx < 4) return;
-    const chart = d.pool === 'global' ? _dashCharts[d.metric] : (_perfCharts[d.pool] && _perfCharts[d.pool][d.metric]);
+    const chart = d.pool === 'global' ? _dashCharts[d.metric]
+                : d.pool === 'ups'    ? _upsChart
+                : (_perfCharts[d.pool] && _perfCharts[d.pool][d.metric]);
     if (!chart) return;
     const scale = chart.scales.x;
     if (!scale) return;
@@ -14462,6 +15533,40 @@ function _initPerfZoom(pool) {
     });
   };
 })();
+
+// Plugin: force-show the tooltip whenever the mouse is anywhere over the chart area.
+// Chart.js normally hides the tooltip when the cursor is not close enough to a point;
+// this plugin bypasses that by finding the nearest x-axis point for each dataset and
+// calling setActiveElements() directly, so the overlay is always visible on hover.
+const _perfTooltipPlugin = {
+  id: 'perfTooltipAlways',
+  afterEvent(chart, args) {
+    const evt = args.event;
+    if (evt.type === 'mouseout') {
+      chart.tooltip.setActiveElements([], {});
+      args.changed = true;
+      return;
+    }
+    if (evt.type !== 'mousemove') return;
+    const xScale = chart.scales.x;
+    if (!xScale) return;
+    const xVal = xScale.getValueForPixel(evt.x);
+    if (xVal == null) return;
+    const active = [];
+    chart.data.datasets.forEach((ds, di) => {
+      if (!ds.data || !ds.data.length) return;
+      let best = 0, bestDist = Infinity;
+      ds.data.forEach((pt, pi) => {
+        const ptX = pt !== null && typeof pt === 'object' ? pt.x : pi;
+        const d = Math.abs(ptX - xVal);
+        if (d < bestDist) { bestDist = d; best = pi; }
+      });
+      active.push({ datasetIndex: di, index: best });
+    });
+    chart.tooltip.setActiveElements(active, { x: evt.x, y: evt.y });
+    args.changed = true;
+  },
+};
 
 function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, labelFn = null) {
   const style     = getComputedStyle(document.body);
@@ -14811,9 +15916,7 @@ function applyTheme(theme) {
     document.getElementById('theme-icon-moon').style.display = 'none';
   }
 }
-function saveLoginTheme(theme) {
-  localStorage.setItem('login_theme', theme);
-}
+
 function setTheme(theme) {
   localStorage.setItem('theme', theme);
   applyTheme(theme);
@@ -16191,6 +17294,7 @@ function runReplicationTask(id, name) {
 
     capChartInst = new Chart(ctx, {
       type: 'line',
+      plugins: [_perfTooltipPlugin],
       data: { datasets: chartDatasets },
       options: {
         responsive: true,

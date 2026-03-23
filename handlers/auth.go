@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"zfsnas/internal/alerts"
@@ -38,7 +40,7 @@ func HandleSetupPage(staticContent func(name string) ([]byte, error)) http.Handl
 }
 
 // HandleLoginPage serves the login HTML page.
-func HandleLoginPage(staticContent func(name string) ([]byte, error)) http.HandlerFunc {
+func HandleLoginPage(staticContent func(name string) ([]byte, error), appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// If already logged in, redirect to app.
 		if _, ok := SessionFromRequest(r); ok {
@@ -50,6 +52,17 @@ func HandleLoginPage(staticContent func(name string) ([]byte, error)) http.Handl
 			http.Error(w, "login page not found", http.StatusInternalServerError)
 			return
 		}
+		hostname, _ := os.Hostname()
+		if hostname == "" {
+			hostname = "localhost"
+		}
+		title := "ZNAS - " + strings.ToUpper(hostname)
+		data = bytes.Replace(data, []byte("<title>ZFS NAS — Sign In</title>"), []byte("<title>"+title+"</title>"), 1)
+		theme := appCfg.LoginTheme
+		if theme == "" {
+			theme = "dark"
+		}
+		data = bytes.Replace(data, []byte("localStorage.getItem('login_theme') || 'dark'"), []byte("'"+theme+"'"), 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(data)
 	}

@@ -101,6 +101,9 @@ const (
 	ActionEditReplication   = "edit_replication"
 	ActionDeleteReplication = "delete_replication"
 	ActionRunReplication    = "run_replication"
+	// UPS events.
+	ActionUPSOnBattery = "ups_on_battery"
+	ActionUPSShutdown  = "ups_shutdown"
 )
 
 var (

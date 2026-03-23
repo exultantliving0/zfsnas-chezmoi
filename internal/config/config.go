@@ -102,11 +102,33 @@ type ISCSIConfig struct {
 	Credentials []ISCSICredential `json:"credentials,omitempty"`
 }
 
+// UPSShutdownPolicy defines when to automatically shut down the system.
+type UPSShutdownPolicy struct {
+	Enabled           bool   `json:"enabled"`
+	TriggerType       string `json:"trigger_type"`        // "time" | "percent" | "both"
+	RuntimeThreshold  int    `json:"runtime_threshold"`   // shut down when runtime < N seconds (0 = disabled)
+	PercentThreshold  int    `json:"percent_threshold"`   // shut down when charge < N% (0 = disabled)
+	PreShutdownCmd    string `json:"pre_shutdown_cmd,omitempty"`
+}
+
+// UPSConfig holds all persistent UPS / NUT settings.
+type UPSConfig struct {
+	Enabled         bool              `json:"enabled"`
+	UPSName         string            `json:"ups_name"`
+	Driver          string            `json:"driver"`
+	Port            string            `json:"port"`
+	MonitorPassword string            `json:"monitor_password,omitempty"`
+	RawUPSConf      string            `json:"raw_ups_conf,omitempty"` // original nut-scanner output, base for ups.conf
+	ShutdownPolicy  UPSShutdownPolicy `json:"shutdown_policy"`
+	NominalPowerW   *int              `json:"nominal_power_w,omitempty"` // user-overridable nominal VA/W rating
+}
+
 // AppConfig holds top-level application settings.
 type AppConfig struct {
 	ConfigDir         string    `json:"-"` // runtime-only, not persisted
 	Port              int       `json:"port"`
 	StorageUnit       string    `json:"storage_unit,omitempty"`        // "gb" (1000-based) or "gib" (1024-based)
+	LoginTheme        string    `json:"login_theme,omitempty"`         // "dark" | "light" | "auto"
 	SMARTLastRefresh  time.Time `json:"smart_last_refresh,omitempty"`
 	WeeklyScrub       bool      `json:"weekly_scrub"`                  // deprecated: migrated to ScrubSchedule
 	ScrubSchedule     string    `json:"scrub_schedule,omitempty"`      // weekly | biweekly | monthly | 2months | 4months | "" (off)
@@ -119,6 +141,9 @@ type AppConfig struct {
 	TreeMapMinute      int         `json:"treemap_minute"`                 // minute of hour to run treemap scan (0-59)
 	ISCSI              ISCSIConfig      `json:"iscsi,omitempty"`
 	MinIO              MinIOConfig      `json:"minio,omitempty"`
+	UPS                UPSConfig        `json:"ups,omitempty"`
+	ActiveCertName     string           `json:"active_cert_name,omitempty"`
+	PendingCertRestart bool             `json:"pending_cert_restart,omitempty"`
 	Replication        []ReplicationTask `json:"replication,omitempty"`
 }
 

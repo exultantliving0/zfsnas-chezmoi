@@ -27,7 +27,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 
 	// --- Pre-auth pages ---
 	r.HandleFunc("/setup", HandleSetupPage(readFile)).Methods("GET")
-	r.HandleFunc("/login", HandleLoginPage(readFile)).Methods("GET")
+	r.HandleFunc("/login", HandleLoginPage(readFile, appCfg)).Methods("GET")
 
 	// --- Root: serve SPA (requires auth, redirects to /login otherwise) ---
 	r.Handle("/", RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -451,6 +451,40 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCheckBinaryUpdate(appCfg))))).Methods("GET")
 	r.Handle("/ws/binary-update-apply",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleBinaryUpdateApply(appCfg))))).Methods("GET")
+
+	// --- UPS Management ---
+	r.Handle("/api/ups/status",
+		RequireAuth(http.HandlerFunc(HandleGetUPSStatus(appCfg)))).Methods("GET")
+	r.Handle("/api/ups/config",
+		RequireAuth(http.HandlerFunc(HandleGetUPSConfig(appCfg)))).Methods("GET")
+	r.Handle("/api/ups/config",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateUPSConfig(appCfg))))).Methods("PUT")
+	r.Handle("/api/ups/install",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallUPS(appCfg))))).Methods("POST")
+	r.Handle("/api/ups/service",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUPSService)))).Methods("POST")
+	r.Handle("/api/ups/detect",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDetectUPS(appCfg))))).Methods("POST")
+	r.Handle("/api/ups/nominal-power",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetNominalPower(appCfg))))).Methods("PUT")
+	r.Handle("/api/ups/perf/data",
+		RequireAuth(http.HandlerFunc(HandleUPSPerfData))).Methods("GET")
+	r.Handle("/api/ups/perf/oldest",
+		RequireAuth(http.HandlerFunc(HandleUPSPerfOldest))).Methods("GET")
+
+	// --- Certificate Management ---
+	r.Handle("/api/certs",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleListCerts(appCfg))))).Methods("GET")
+	r.Handle("/api/certs/upload",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUploadCert(appCfg))))).Methods("POST")
+	r.Handle("/api/certs/restart",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCertRestart(appCfg))))).Methods("POST")
+	r.Handle("/api/certs/{name}/export",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleExportCert(appCfg))))).Methods("GET")
+	r.Handle("/api/certs/{name}/activate",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleActivateCert(appCfg))))).Methods("POST")
+	r.Handle("/api/certs/{name}",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteCert(appCfg))))).Methods("DELETE")
 
 	// --- Homepage widget API keys (admin only) ---
 	r.Handle("/api/settings/api-keys",

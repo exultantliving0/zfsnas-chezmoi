@@ -198,8 +198,7 @@ func HandleApplyUpdates(w http.ResponseWriter, r *http.Request) {
 	send("Running: sudo apt-get upgrade -y")
 	send("─────────────────────────────────────────")
 
-	cmd := exec.Command("sudo", "apt-get", "upgrade", "-y")
-	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+	cmd := exec.Command("sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "upgrade", "-y")
 
 	pr, pw, err := os.Pipe()
 	if err != nil {

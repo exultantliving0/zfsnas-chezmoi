@@ -893,3 +893,15 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 /* iSCSI SVG icon — invert for dark theme (SVG has dark strokes) */
 .iscsi-icon { width: 16px; height: 16px; display: inline-block; vertical-align: middle; filter: invert(1) brightness(1.2); }
 body.light .iscsi-icon { filter: none; }
+
+/* UPS top-bar widget */
+.ups-topbar-widget { transition: background .15s; border-radius: var(--radius-sm); }
+.ups-topbar-widget:hover { background: var(--surface2); }
+.ups-state-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 4px;
+  border-radius: 3px; white-space: nowrap;
+}
+.ups-badge-online  { background: rgba(48,209,88,0.18);  color: #30d158; }
+.ups-badge-batt    { background: rgba(255,159,10,0.18);  color: #ff9f0a; }
+.ups-badge-low     { background: rgba(255,69,58,0.18);   color: #ff453a; }
+@keyframes upsBlink { 0%,100% { opacity:1; } 50% { opacity:0; } }

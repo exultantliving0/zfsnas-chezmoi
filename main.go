@@ -108,15 +108,37 @@ func main() {
 	if err := os.MkdirAll(certsDir, 0750); err != nil {
 		log.Fatalf("failed to create certs directory: %v", err)
 	}
-	certFile := filepath.Join(certsDir, "server.crt")
-	keyFile  := filepath.Join(certsDir, "server.key")
 
-	if !certgen.Exists(certFile, keyFile) {
+	// Migrate legacy server.crt/server.key → self-signed.crt/self-signed.key
+	legacyCert := filepath.Join(certsDir, "server.crt")
+	legacyKey  := filepath.Join(certsDir, "server.key")
+	selfCert   := filepath.Join(certsDir, "self-signed.crt")
+	selfKey    := filepath.Join(certsDir, "self-signed.key")
+	if certgen.Exists(legacyCert, legacyKey) && !certgen.Exists(selfCert, selfKey) {
+		log.Println("Migrating server.crt/server.key → self-signed.crt/self-signed.key")
+		os.Rename(legacyCert, selfCert)
+		os.Rename(legacyKey, selfKey)
+	}
+
+	if !certgen.Exists(selfCert, selfKey) {
 		log.Println("Generating self-signed TLS certificate…")
-		if err := certgen.Generate(certFile, keyFile); err != nil {
+		if err := certgen.Generate(selfCert, selfKey); err != nil {
 			log.Fatalf("failed to generate TLS cert: %v", err)
 		}
 		log.Printf("TLS certificate written to %s", certsDir)
+	}
+
+	// Determine active cert
+	activeName := appCfg.ActiveCertName
+	if activeName == "" {
+		activeName = "self-signed"
+	}
+	certFile := filepath.Join(certsDir, activeName+".crt")
+	keyFile  := filepath.Join(certsDir, activeName+".key")
+	if !certgen.Exists(certFile, keyFile) {
+		log.Printf("WARNING: active cert %q not found, falling back to self-signed", activeName)
+		certFile = selfCert
+		keyFile  = selfKey
 	}
 
 	// ===== Disk I/O poller (5-second samples for live charts) =====
@@ -154,6 +176,12 @@ func main() {
 
 	// ===== Recycle bin nightly cleaner =====
 	system.StartRecycleCleaner(absConfig)
+
+	// ===== UPS RRD collector (5-min battery/runtime/load samples) =====
+	system.StartUPSRRDCollector(absConfig, appCfg)
+
+	// ===== UPS shutdown watcher =====
+	go system.StartUPSShutdownWatcher(appCfg)
 
 	// ===== Session cleanup goroutine =====
 	go func() {
