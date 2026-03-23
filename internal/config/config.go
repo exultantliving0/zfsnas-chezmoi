@@ -197,19 +197,24 @@ var (
 	configDir string
 	mu        sync.RWMutex
 	totpKey   []byte // AES-256 key for TOTP secret encryption
+	chapKey   []byte // AES-256 key for iSCSI CHAP credential encryption
 )
 
-// Init creates the config directory, stores its path, and loads the TOTP encryption key.
+// Init creates the config directory, stores its path, and loads encryption keys.
 func Init(dir string) error {
 	configDir = dir
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return err
 	}
-	key, err := secret.LoadOrCreateKey(filepath.Join(dir, "totp.key"))
-	if err != nil {
+	if key, err := secret.LoadOrCreateKey(filepath.Join(dir, "totp.key")); err != nil {
 		log.Printf("[config] warning: could not load/create TOTP key: %v — secrets stored unencrypted", err)
 	} else {
 		totpKey = key
+	}
+	if key, err := secret.LoadOrCreateKey(filepath.Join(dir, "chap.key")); err != nil {
+		log.Printf("[config] warning: could not load/create CHAP key: %v — CHAP credentials stored unencrypted", err)
+	} else {
+		chapKey = key
 	}
 	return nil
 }
@@ -311,6 +316,22 @@ func LoadAppConfig() (*AppConfig, error) {
 		}
 		// If WeeklyScrub was false, ScrubSchedule stays "" (off)
 	}
+	// Decrypt iSCSI CHAP credentials. Plaintext values (legacy) pass through unchanged.
+	if chapKey != nil {
+		for i := range cfg.ISCSI.Credentials {
+			c := &cfg.ISCSI.Credentials[i]
+			if secret.IsEncrypted(c.InPassword) {
+				if plain, err := secret.Decrypt(chapKey, c.InPassword); err == nil {
+					c.InPassword = plain
+				}
+			}
+			if secret.IsEncrypted(c.OutPassword) {
+				if plain, err := secret.Decrypt(chapKey, c.OutPassword); err == nil {
+					c.OutPassword = plain
+				}
+			}
+		}
+	}
 	return cfg, nil
 }
 
@@ -339,9 +360,32 @@ func SaveAPIKeys(keys []APIKeyEntry) error {
 	return saveJSON("api_keys.json", keys)
 }
 
-// SaveAppConfig persists application config.
+// SaveAppConfig persists application config, encrypting CHAP credentials if a key is available.
 func SaveAppConfig(cfg *AppConfig) error {
-	return saveJSON("config.json", cfg)
+	if chapKey == nil || len(cfg.ISCSI.Credentials) == 0 {
+		return saveJSON("config.json", cfg)
+	}
+	// Encrypt on a deep copy so we don't modify the caller's config.
+	cfgCopy := *cfg
+	credsCopy := make([]ISCSICredential, len(cfg.ISCSI.Credentials))
+	copy(credsCopy, cfg.ISCSI.Credentials)
+	for i := range credsCopy {
+		c := &credsCopy[i]
+		if c.InPassword != "" && !secret.IsEncrypted(c.InPassword) {
+			if enc, err := secret.Encrypt(chapKey, c.InPassword); err == nil {
+				c.InPassword = enc
+			}
+		}
+		if c.OutPassword != "" && !secret.IsEncrypted(c.OutPassword) {
+			if enc, err := secret.Encrypt(chapKey, c.OutPassword); err == nil {
+				c.OutPassword = enc
+			}
+		}
+	}
+	isciCopy := cfg.ISCSI
+	isciCopy.Credentials = credsCopy
+	cfgCopy.ISCSI = isciCopy
+	return saveJSON("config.json", &cfgCopy)
 }
 
 // LoadUsers loads all users from disk, decrypting TOTP secrets if encrypted.

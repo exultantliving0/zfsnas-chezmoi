@@ -1,6 +1,7 @@
 package system
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -62,52 +63,79 @@ func RunReplication(task *config.ReplicationTask, send func(string), existingSna
 	}
 	sendArgs = append(sendArgs, fullSnapName)
 
-	// Build the ssh zfs receive command.
+	// Build the SSH zfs receive command.
 	remoteUser := task.RemoteUser
 	if remoteUser == "" {
 		remoteUser = "root"
 	}
 	receiveCmd := fmt.Sprintf("zfs receive -F %s", task.RemoteDataset)
 	sshTarget := fmt.Sprintf("%s@%s", remoteUser, task.RemoteHost)
-	shellCmd := fmt.Sprintf("sudo zfs %s | ssh -o BatchMode=yes -o StrictHostKeyChecking=no %s '%s'",
-		strings.Join(sendArgs, " "), sshTarget, receiveCmd)
 
-	send(fmt.Sprintf("Running: %s", shellCmd))
+	send(fmt.Sprintf("sudo zfs send → ssh %s '%s'", sshTarget, receiveCmd))
 	send("─────────────────────────────────────────")
 
-	cmd := exec.Command("sh", "-c", shellCmd)
+	// Use two separate commands piped together via os.Pipe — no sh -c.
+	// StrictHostKeyChecking is intentionally omitted so SSH validates the host key.
+	zfsSendCmd := exec.Command("sudo", append([]string{"zfs"}, sendArgs...)...)
+	sshCmd := exec.Command("ssh", "-o", "BatchMode=yes", sshTarget, receiveCmd)
 
-	pr, pw, pipeErr := os.Pipe()
+	// Wire zfs-send stdout → ssh stdin via an OS pipe.
+	dataR, dataW, pipeErr := os.Pipe()
 	if pipeErr != nil {
 		return "", fmt.Errorf("pipe: %w", pipeErr)
 	}
-	cmd.Stdout = pw
-	cmd.Stderr = pw
+	zfsSendCmd.Stdout = dataW
+	sshCmd.Stdin = dataR
 
-	if startErr := cmd.Start(); startErr != nil {
-		pw.Close()
-		pr.Close()
-		return "", fmt.Errorf("start: %w", startErr)
+	// Capture stderr from each command separately.
+	var sendStderr, sshStderr bytes.Buffer
+	zfsSendCmd.Stderr = &sendStderr
+	sshCmd.Stderr = &sshStderr
+
+	// Start ssh first so it is ready to receive before the stream begins.
+	if startErr := sshCmd.Start(); startErr != nil {
+		dataR.Close()
+		dataW.Close()
+		return "", fmt.Errorf("start ssh: %w", startErr)
 	}
-	pw.Close()
-
-	buf := make([]byte, 4096)
-	for {
-		n, readErr := pr.Read(buf)
-		if n > 0 {
-			for _, l := range strings.Split(string(buf[:n]), "\n") {
-				if strings.TrimSpace(l) != "" {
-					send(l)
-				}
-			}
-		}
-		if readErr != nil {
-			break
-		}
+	if startErr := zfsSendCmd.Start(); startErr != nil {
+		dataW.Close()
+		dataR.Close()
+		sshCmd.Process.Kill()
+		sshCmd.Wait()
+		return "", fmt.Errorf("start zfs send: %w", startErr)
 	}
 
-	if waitErr := cmd.Wait(); waitErr != nil {
-		return "", fmt.Errorf("replication failed: %w", waitErr)
+	// Close parent copies — each child process has its own fd.
+	dataW.Close()
+	dataR.Close()
+
+	// Wait for zfs send first; its exit closes the pipe which signals ssh EOF.
+	sendWaitErr := zfsSendCmd.Wait()
+	sshWaitErr := sshCmd.Wait()
+
+	// Relay any captured stderr output.
+	for _, l := range strings.Split(strings.TrimSpace(sendStderr.String()), "\n") {
+		if strings.TrimSpace(l) != "" {
+			send(l)
+		}
+	}
+	for _, l := range strings.Split(strings.TrimSpace(sshStderr.String()), "\n") {
+		if strings.TrimSpace(l) != "" {
+			send(l)
+		}
+	}
+
+	if sendWaitErr != nil {
+		return "", fmt.Errorf("zfs send failed: %w: %s", sendWaitErr, strings.TrimSpace(sendStderr.String()))
+	}
+	if sshWaitErr != nil {
+		sshErrMsg := strings.TrimSpace(sshStderr.String())
+		if strings.Contains(sshErrMsg, "Host key verification failed") ||
+			strings.Contains(sshErrMsg, "REMOTE HOST IDENTIFICATION HAS CHANGED") {
+			return "", fmt.Errorf("SSH host key not trusted for %s. Accept it first: ssh-keyscan %s >> ~/.ssh/known_hosts", task.RemoteHost, task.RemoteHost)
+		}
+		return "", fmt.Errorf("replication failed: %w: %s", sshWaitErr, sshErrMsg)
 	}
 
 	return snapSuffix, nil

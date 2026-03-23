@@ -14,6 +14,7 @@ import (
 // appCfg is a pointer to the loaded application config (for settings handlers).
 func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *config.AppConfig) *mux.Router {
 	r := mux.NewRouter()
+	r.Use(SecurityHeaders)
 	r.Use(EnforceOrigin)
 
 	// --- Static assets ---
