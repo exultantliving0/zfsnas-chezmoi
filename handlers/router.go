@@ -96,6 +96,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleGetZFSVersion))).Methods("GET")
 	r.Handle("/api/pool/grow",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleGrowPool)))).Methods("POST")
+	r.Handle("/api/pool/export",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleExportPool)))).Methods("POST")
 	r.Handle("/api/pool/destroy",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDestroyPool)))).Methods("POST")
 	r.Handle("/api/pool/upgrade",

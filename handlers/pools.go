@@ -347,6 +347,43 @@ func HandleGrowPool(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, updated)
 }
 
+func HandleExportPool(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		jsonErr(w, http.StatusBadRequest, "pool name is required")
+		return
+	}
+
+	pool, err := system.GetPoolByName(req.Name)
+	if err != nil || pool == nil {
+		jsonErr(w, http.StatusBadRequest, "pool not found")
+		return
+	}
+
+	if err := system.ExportPool(pool.Name); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:   sess.Username,
+		Role:   sess.Role,
+		Action: audit.ActionExportPool,
+		Target: pool.Name,
+		Result: audit.ResultOK,
+	})
+
+	jsonOK(w, map[string]string{"message": "pool exported"})
+}
+
 func HandleDestroyPool(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`

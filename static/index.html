@@ -1728,6 +1728,56 @@
   </div>
 </div>
 
+<!-- Disconnect (Export) Pool Modal -->
+<div class="modal-backdrop hidden" id="modal-export-pool">
+  <div class="modal" style="max-width:500px;border:1px solid #f59e0b;">
+    <div class="modal-header" style="background:rgba(245,158,11,0.10);border-bottom:1px solid #f59e0b;">
+      <h3 style="color:#f59e0b;display:flex;align-items:center;gap:10px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Disconnect ZFS Pool
+      </h3>
+      <button class="modal-close" onclick="closeExportPoolModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-error hidden" id="export-pool-alert"></div>
+      <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">
+        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:rgba(245,158,11,0.15);display:flex;align-items:center;justify-content:center;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div>
+          <p style="font-size:14px;margin:0 0 8px;color:var(--text-1);font-weight:600;">What this does</p>
+          <p style="font-size:13px;margin:0 0 6px;color:var(--text-2);">
+            Exporting a pool <strong>gracefully disconnects</strong> it from this system. All active I/O is flushed, datasets are unmounted, and the pool is cleanly taken offline.
+          </p>
+          <p style="font-size:13px;margin:0;color:var(--text-2);">
+            The pool and all its data remain <strong>intact on disk</strong> — it can be re-imported later on this system or moved to another machine.
+          </p>
+        </div>
+      </div>
+      <div style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:12px 14px;margin-bottom:20px;">
+        <p style="font-size:13px;margin:0 0 4px;color:#f59e0b;font-weight:600;">⚠ Impact</p>
+        <ul style="font-size:13px;color:var(--text-2);margin:0;padding-left:18px;line-height:1.7;">
+          <li>All datasets on this pool will be <strong>unmounted</strong> immediately</li>
+          <li>Active SMB / NFS shares on this pool will become <strong>unavailable</strong></li>
+          <li>Running applications reading from this pool will <strong>lose access</strong></li>
+          <li>The pool will disappear from this portal until re-imported</li>
+        </ul>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label style="font-size:13px;">Type the pool name <strong id="export-pool-name-hint" style="color:#f59e0b;"></strong> to confirm:</label>
+        <input type="text" id="export-pool-confirm-input" placeholder="" autocomplete="off"
+          style="border-color:#f59e0b;" oninput="checkExportConfirm()">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeExportPoolModal()">Cancel</button>
+      <button class="btn" id="btn-export-pool-confirm"
+        style="background:#f59e0b;color:#000;font-weight:600;opacity:.4;cursor:not-allowed;"
+        disabled onclick="submitExportPool()">⏏ Disconnect</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="modal-destroy-pool">
   <div class="modal" style="max-width:480px;border:1px solid var(--accent-danger);">
     <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
@@ -6770,6 +6820,7 @@ function renderPoolExists(el, pool) {
       <button class="btn btn-ghost btn-sm" onclick="togglePoolActionsMenu(event)" id="pool-actions-burger" title="More actions">⋮</button>
       <div id="pool-actions-menu" style="display:none;position:absolute;right:0;top:100%;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);min-width:190px;overflow:hidden;margin-top:4px;">
         <button onclick="closePoolActionsMenu();detectPools()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text-1);">⬇ Import ZFS Pool</button>
+        <button onclick="closePoolActionsMenu();openExportPoolModal()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:#f59e0b;">⏏ Disconnect ZFS Pool</button>
         <button onclick="closePoolActionsMenu();openDestroyPoolModal()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-danger);">🗑 Destroy Pool</button>
       </div>
     </div>
@@ -8588,6 +8639,55 @@ async function submitPoolFixer() {
   alertEl.classList.remove('hidden');
   btn.disabled = false;
   btn.textContent = readyLabel;
+}
+
+// ===== Export (Disconnect) Pool =====
+function openExportPoolModal() {
+  document.getElementById('export-pool-alert').classList.add('hidden');
+  document.getElementById('export-pool-confirm-input').value = '';
+  document.getElementById('export-pool-confirm-input').placeholder = selectedPoolName || '';
+  document.getElementById('export-pool-name-hint').textContent = `"${selectedPoolName}"`;
+  checkExportConfirm();
+  document.getElementById('modal-export-pool').classList.remove('hidden');
+  setTimeout(() => document.getElementById('export-pool-confirm-input').focus(), 50);
+}
+
+function closeExportPoolModal() {
+  document.getElementById('modal-export-pool').classList.add('hidden');
+}
+
+function checkExportConfirm() {
+  const val = document.getElementById('export-pool-confirm-input').value;
+  const match = selectedPoolName && val === selectedPoolName;
+  const btn = document.getElementById('btn-export-pool-confirm');
+  btn.disabled = !match;
+  btn.style.opacity = match ? '1' : '.4';
+  btn.style.cursor  = match ? 'pointer' : 'not-allowed';
+}
+
+async function submitExportPool() {
+  const btn = document.getElementById('btn-export-pool-confirm');
+  const alertEl = document.getElementById('export-pool-alert');
+  if (!selectedPoolName) return;
+  btn.disabled = true; btn.textContent = 'Disconnecting…';
+  alertEl.classList.add('hidden');
+
+  const resp = await fetch('/api/pool/export', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name: selectedPoolName }),
+  });
+  const data = await resp.json();
+
+  if (!resp.ok) {
+    btn.disabled = false; btn.textContent = '⏏ Disconnect';
+    checkExportConfirm();
+    alertEl.textContent = data.error || 'Failed to export pool.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  closeExportPoolModal();
+  await refreshPoolBar();
+  loadPool();
 }
 
 // ===== Destroy Pool =====
@@ -15799,6 +15899,7 @@ document.addEventListener('click', function(e) {
     'modal-disk-offline':     closeDiskOfflineModal,
     'modal-pool-fixer':       closePoolFixerWizard,
     'modal-smb-configure':    closeSMBConfigureModal,
+    'modal-export-pool':      closeExportPoolModal,
     'modal-destroy-pool':     closeDestroyPoolModal,
     'modal-force-import':     closeForceImportModal,
     'modal-import-pool':      closeImportPoolModal,

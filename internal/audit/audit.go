@@ -51,6 +51,7 @@ const (
 	ActionInstallService = "install_service"
 	ActionApplyUpdates  = "apply_updates"
 	ActionGrowPool      = "grow_pool"
+	ActionExportPool    = "export_pool"
 	ActionDestroyPool   = "destroy_pool"
 	ActionUpgradePool   = "upgrade_pool"
 	ActionUpdatePool    = "update_pool"

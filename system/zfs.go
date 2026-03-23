@@ -1291,6 +1291,15 @@ func GrowPoolWithVdev(name, vdev string, devices []string) error {
 	return nil
 }
 
+// ExportPool exports (disconnects) a pool so it can be moved to another system.
+func ExportPool(name string) error {
+	out, err := exec.Command("sudo", "zpool", "export", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // DestroyPool permanently destroys a pool.
 func DestroyPool(name string) error {
 	out, err := exec.Command("sudo", "zpool", "destroy", name).CombinedOutput()
