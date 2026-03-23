@@ -63,14 +63,14 @@
   <!-- TEXT -->
   <g font-family="Segoe UI, Roboto, Arial, sans-serif">
 
-    <text x="420" y="230"
-          font-size="120"
+    <text x="420" y="290"
+          font-size="240"
           font-weight="700"
           fill="url(#neonGradient)">
-      ZFS NAS
+      ZNAS
     </text>
 
-    <text x="420" y="330"
+    <text x="420" y="420"
           font-size="70"
           font-weight="500"
           fill="#bbbbbb"
