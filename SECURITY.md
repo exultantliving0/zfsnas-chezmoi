@@ -40,6 +40,7 @@ Run `sudo visudo -f /etc/sudoers.d/zfsnas` and paste the block below.
 # since v2.0.0 — zpool scrub / scrub -s (Scrub Management page)
 # since v4.0.0 — zpool offline/online/clear (Pool Fixer Wizard)
 # since v5.0.0 — zfs load-key / unload-key (native encryption)
+# since v6.3.21 — zpool replace -f (Pool Fixer Wizard: disk replacement for DEGRADED pools)
 Cmnd_Alias ZFSNAS_ZFS = \
     /usr/sbin/zpool list *, \
     /usr/sbin/zpool status, \
@@ -60,6 +61,7 @@ Cmnd_Alias ZFSNAS_ZFS = \
     /usr/sbin/zpool offline *, \
     /usr/sbin/zpool online *, \
     /usr/sbin/zpool clear *, \
+    /usr/sbin/zpool replace -f *, \
     /usr/sbin/zfs list *, \
     /usr/sbin/zfs get *, \
     /usr/sbin/zfs set *, \
@@ -137,6 +139,75 @@ Cmnd_Alias ZFSNAS_ISCSI = \
     /usr/bin/systemctl stop tgt, \
     /usr/bin/systemctl restart tgt
 
+# ── S3 Object Server (MinIO) ──────────────────────────────────────────────────
+# since v6.3.20 — optional MinIO S3 server; binary download, system account
+#   setup, service unit, env file, data directory, TLS certs, and service control
+Cmnd_Alias ZFSNAS_MINIO = \
+    /usr/bin/wget -q -O /usr/local/bin/minio *, \
+    /usr/bin/wget -q -O /usr/local/bin/mc *, \
+    /usr/bin/chmod +x /usr/local/bin/minio, \
+    /usr/bin/chmod +x /usr/local/bin/mc, \
+    /usr/sbin/useradd --system --home-dir /var/lib/minio --shell /usr/sbin/nologin minio-user, \
+    /usr/bin/mkdir -p /var/lib/minio, \
+    /usr/bin/mkdir -p /var/lib/minio/.minio/certs, \
+    /usr/bin/mkdir -p *, \
+    /usr/bin/chown minio-user\:minio-user /var/lib/minio, \
+    /usr/bin/chown -R minio-user\:minio-user /var/lib/minio/.minio/certs, \
+    /usr/bin/chown -R minio-user\:minio-user *, \
+    /usr/bin/chown root\:minio-user /etc/default/minio, \
+    /usr/bin/chmod 640 /etc/default/minio, \
+    /usr/bin/chmod 640 /var/lib/minio/.minio/certs/private.key, \
+    /usr/bin/cp * /var/lib/minio/.minio/certs/public.crt, \
+    /usr/bin/cp * /var/lib/minio/.minio/certs/private.key, \
+    /usr/bin/rm -f /var/lib/minio/.minio/certs/public.crt, \
+    /usr/bin/rm -f /var/lib/minio/.minio/certs/private.key, \
+    /usr/bin/tee /etc/systemd/system/minio.service, \
+    /usr/bin/tee /etc/default/minio, \
+    /usr/bin/systemctl enable minio, \
+    /usr/bin/systemctl disable minio, \
+    /usr/bin/systemctl start minio, \
+    /usr/bin/systemctl stop minio, \
+    /usr/bin/systemctl restart minio
+
+# ── UPS Management (NUT) ──────────────────────────────────────────────────────
+# since v6.3.22 — optional NUT daemon; install, auto-detect UPS, write /etc/nut/
+#   config files, service control; uninstall purges packages and removes /etc/nut
+Cmnd_Alias ZFSNAS_UPS = \
+    /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get purge -y nut nut-client nut-server, \
+    /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get remove -y nut nut-client, \
+    /usr/bin/systemctl enable nut-server, \
+    /usr/bin/systemctl disable nut-server, \
+    /usr/bin/systemctl start nut-server, \
+    /usr/bin/systemctl stop nut-server, \
+    /usr/bin/systemctl restart nut-server, \
+    /usr/bin/systemctl enable nut-client, \
+    /usr/bin/systemctl disable nut-client, \
+    /usr/bin/systemctl start nut-client, \
+    /usr/bin/systemctl stop nut-client, \
+    /usr/bin/systemctl reset-failed, \
+    /usr/sbin/nut-scanner *, \
+    /usr/bin/chown root\:nut /etc/nut, \
+    /usr/bin/chmod 750 /etc/nut, \
+    /usr/bin/chown root\:nut /etc/nut/nut.conf, \
+    /usr/bin/chown root\:nut /etc/nut/ups.conf, \
+    /usr/bin/chown root\:nut /etc/nut/upsd.conf, \
+    /usr/bin/chown root\:nut /etc/nut/upsd.users, \
+    /usr/bin/chown root\:nut /etc/nut/upsmon.conf, \
+    /usr/bin/chmod 640 /etc/nut/nut.conf, \
+    /usr/bin/chmod 640 /etc/nut/ups.conf, \
+    /usr/bin/chmod 640 /etc/nut/upsd.conf, \
+    /usr/bin/chmod 640 /etc/nut/upsd.users, \
+    /usr/bin/chmod 640 /etc/nut/upsmon.conf, \
+    /usr/bin/tee /etc/nut/nut.conf, \
+    /usr/bin/tee /etc/nut/upsd.conf, \
+    /usr/bin/tee /etc/nut/upsd.users, \
+    /usr/bin/tee /etc/nut/upsmon.conf, \
+    /usr/bin/tee /etc/nut/ups.conf, \
+    /usr/bin/rm -rf /etc/nut, \
+    /usr/bin/rm -rf /etc/systemd/system/nut-driver.target.wants, \
+    /usr/bin/rm -rf /etc/systemd/system/nut-driver@.service.d, \
+    /usr/bin/rm -rf /etc/systemd/system/nut-driver@*
+
 # ── Folder usage scanning ─────────────────────────────────────────────────────
 # since v6.0.0 — Folder TreeMap feature; scans dataset mount points for per-folder sizes
 Cmnd_Alias ZFSNAS_SCAN = \
@@ -145,12 +216,16 @@ Cmnd_Alias ZFSNAS_SCAN = \
 # ── System management ─────────────────────────────────────────────────────────
 # since v1.0.0 — timezone setting, shutdown/reboot from power menu, ZFS kernel module load
 # since v3.0.0 — systemctl restart zfsnas ("Restart Portal" in the power menu)
+# since v6.3.22 — tee entries for ARC Level 1 tuning (modprobe.d + sysfs parameters)
 Cmnd_Alias ZFSNAS_SYSTEM = \
     /usr/bin/timedatectl set-timezone *, \
     /usr/sbin/shutdown -r now, \
     /usr/sbin/shutdown -h now, \
     /usr/sbin/modprobe zfs, \
-    /usr/bin/systemctl restart zfsnas
+    /usr/bin/systemctl restart zfsnas, \
+    /usr/bin/tee /etc/modprobe.d/zfs.conf, \
+    /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_max, \
+    /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_min
 
 # ── OS updates & service installation ────────────────────────────────────────
 # since v1.0.0 — prerequisite package install (apt-get install) and
@@ -166,7 +241,7 @@ Cmnd_Alias ZFSNAS_APT = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_SYSTEM, ZFSNAS_APT
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_SYSTEM, ZFSNAS_APT
 ```
 
 ### 3 — Run the portal as the service account
@@ -192,6 +267,12 @@ ExecStart=/opt/zfsnas/zfsnas
 - **`find *`** — used to delete files and empty directories in `.recycle/` folders (v6.0.0+). The wildcard allows any path to be passed; scope is limited in practice to share mount points. If you want to tighten this, restrict to your shares root (e.g. `/usr/bin/find /data/*`).
 - **`targetcli`** — used by the iSCSI sharing feature (v6.1.0+) to configure LIO targets, backstores, ACLs, and CHAP credentials via a piped script. The portal generates the full targetcli command sequence internally; no user-supplied input is passed directly to the shell. If you do not use iSCSI, you can omit `ZFSNAS_ISCSI` from the grant line and remove the `targetcli-fb` package.
 - **iSCSI service names** — three possible service names are listed (`rtslib-fb-targetctl`, `targetclid`, `tgt`) to cover different `targetcli-fb` package versions and distributions. Only the service actually installed on your system will be used; the unused entries are harmless.
+- **`wget` for MinIO binaries** — the portal downloads `minio` and `mc` directly from `dl.min.io` via `sudo wget`. The destination paths are fixed (`/usr/local/bin/minio` and `/usr/local/bin/mc`); only the source URL is a wildcard. If you prefer not to allow `wget` with sudo, pre-install the binaries manually and omit the `wget` lines from the sudoers entry.
+- **`mkdir -p *` and `chown -R minio-user:minio-user *`** — the MinIO data directory is user-configured and can be any path, so these entries use wildcards. Scope is limited in practice to the path you set in the MinIO configuration. If your data directory is always under a fixed parent (e.g. `/data`), you can tighten these to `/usr/bin/mkdir -p /data/*` and `/usr/bin/chown -R minio-user\:minio-user /data/*`.
+- **`nut-scanner *`** — the NUT USB/HID scanner runs under sudo because it requires raw USB device access. The portal always invokes it with either `-C -N` (fast USB-only scan) or `-a -t 2` (full scan with 2 s timeout). If you do not use the UPS feature you can omit `ZFSNAS_UPS` from the grant line entirely.
+- **`/sbin/shutdown -h +0` (UPS watcher)** — the UPS shutdown watcher calls `/sbin/shutdown -h +0` directly (no `sudo` wrapper) to halt the system when battery thresholds are breached. This command does not appear in the sudoers whitelist; it relies on the process having shutdown permission via polkit (standard on Ubuntu 22.04+) or on the portal running as root. If you observe shutdown failures, add a polkit rule granting the `zfsnas` user shutdown permission, or add `/sbin/shutdown -h +0` to `ZFSNAS_SYSTEM` and update the code to use `sudo`.
+- **`env DEBIAN_FRONTEND=noninteractive apt-get purge/remove`** — NUT uninstall wraps `apt-get` with the `env` command to suppress interactive prompts. The sudoers entry therefore targets `/usr/bin/env` (not `/usr/bin/apt-get` directly) and must match the exact argument sequence shown in `ZFSNAS_UPS`. The NUT *install* path (`apt-get install -y nut nut-client`) is already covered by the wildcard entry in `ZFSNAS_APT`.
+- **`tee /etc/modprobe.d/zfs.conf` and sysfs tee entries** — used by the ARC Level 1 tuning feature (v6.3.22+) to persist ZFS ARC size limits across reboots and to apply them immediately via kernel sysfs. These are write-only paths; the portal only ever pipes well-formed `options zfs ...` lines or numeric byte values through `tee`.
 - **Command paths** — paths shown are for Ubuntu 22.04/24.04. Some tools (`sgdisk`, `wipefs`, `nvme`) may live under `/usr/sbin/` instead of `/usr/bin/` on older releases; verify with `which <command>`.
 
 ---
