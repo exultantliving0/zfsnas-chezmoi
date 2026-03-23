@@ -501,7 +501,8 @@ th {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-3);
-  text-align: left;
+  text-align: center;
+  vertical-align: middle;
 }
 
 td {

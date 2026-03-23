@@ -38,6 +38,17 @@ type Policy struct {
 	ReplicationDataset    string `json:"replication_dataset,omitempty"`
 	ReplicationRecursive  bool   `json:"replication_recursive,omitempty"`
 	ReplicationCompressed bool   `json:"replication_compressed,omitempty"`
+
+	// Optional local replication — zfs send | zfs receive within this host.
+	LocalReplEnabled    bool   `json:"local_repl_enabled,omitempty"`
+	LocalReplDataset    string `json:"local_repl_dataset,omitempty"` // destination dataset path
+	LocalReplRecursive  bool   `json:"local_repl_recursive,omitempty"`
+	LocalReplCompressed bool   `json:"local_repl_compressed,omitempty"`
+
+	// Local replication run state.
+	LastLocalReplStatus string `json:"last_local_repl_status,omitempty"` // "ok" | "error" | ""
+	LastLocalReplError  string `json:"last_local_repl_error,omitempty"`
+	LastLocalReplSnap   string `json:"last_local_repl_snap,omitempty"`
 }
 
 var (

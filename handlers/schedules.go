@@ -116,6 +116,9 @@ func HandleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 			p.LastRepError  = existing.LastRepError
 			p.LastRepLog    = existing.LastRepLog
 			p.LastRepSnap   = existing.LastRepSnap
+			p.LastLocalReplStatus = existing.LastLocalReplStatus
+			p.LastLocalReplError  = existing.LastLocalReplError
+			p.LastLocalReplSnap   = existing.LastLocalReplSnap
 			policies[i] = p
 			found = true
 			break
@@ -274,6 +277,46 @@ func execScheduledSnapshot(p *scheduler.Policy) error {
 	})
 	if p.Retention > 0 {
 		pruneSnapshots(p.Dataset, label, p.Retention)
+	}
+
+	// Run local replication if configured for this policy.
+	if p.LocalReplEnabled && p.LocalReplDataset != "" {
+		var localLogBuf strings.Builder
+		var afterSep bool
+		collectLocal := func(line string) {
+			log.Printf("[local-replication] %s: %s", p.ID, line)
+			if strings.Contains(line, "─────") {
+				afterSep = true
+				return
+			}
+			if afterSep {
+				localLogBuf.WriteString(line)
+				localLogBuf.WriteByte('\n')
+			}
+		}
+		if localSnap, localErr := system.RunLocalReplication(p.Dataset, name, p.LocalReplDataset, p.LastLocalReplSnap, p.LocalReplRecursive, p.LocalReplCompressed, collectLocal); localErr != nil {
+			log.Printf("[local-replication] policy %s failed: %v", p.ID, localErr)
+			p.LastDetails          = "Snapshot ok · Local replication failed: " + localErr.Error()
+			p.LastLocalReplStatus  = "error"
+			p.LastLocalReplError   = localErr.Error()
+			audit.Log(audit.Entry{
+				Action:  audit.ActionRunReplication,
+				Target:  p.Dataset,
+				Result:  audit.ResultError,
+				Details: fmt.Sprintf("local replication policy %s: %v", p.ID, localErr),
+			})
+		} else {
+			p.LastDetails         = "Snapshot: " + name + " · Local replication: ok"
+			p.LastLocalReplStatus = "ok"
+			p.LastLocalReplError  = ""
+			p.LastLocalReplSnap   = localSnap
+			audit.Log(audit.Entry{
+				Action:  audit.ActionRunReplication,
+				Target:  p.Dataset,
+				Result:  audit.ResultOK,
+				Details: fmt.Sprintf("local replication policy %s → %s", p.ID, p.LocalReplDataset),
+			})
+		}
 	}
 
 	// Run remote replication if configured for this policy.

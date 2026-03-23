@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="static/logo.svg" alt="ZFS NAS Logo" width="700"/>
+  <img src="static/logo.svg" alt="ZNAS Logo" width="700"/>
 </p>
 <p align="center">
   <strong>A ZFS NAS management portal that gets out of your way.</strong><br/>
@@ -12,8 +12,8 @@
   <img src="https://img.shields.io/badge/Version-4.0.0-00eaff?style=flat-square" alt="Version 4.0.0"/>
 </p>
 
-## Why ZFS NAS Chezmoi?
-Most NAS management software are slow to install, slow to load, and buried under layers of configuration. ZFS NAS Chezmoi is different:
+## Why ZNAS Chezmoi?
+Most NAS management software are slow to install, slow to load, and buried under layers of configuration. ZNAS Chezmoi is different:
 
 - **One binary, zero dependencies** — compile once, copy anywhere, run. No Docker. No Node. No Python runtime.
 - **Instant startup** — the portal is live in under a second. All static assets are embedded directly in the binary.
@@ -183,7 +183,7 @@ config/
 
 ## Architecture
 
-ZFS NAS Chezmoi is built to stay fast and simple as it grows:
+ZNAS Chezmoi is built to stay fast and simple as it grows:
 
 - **Go 1.22+** — single statically-linked binary, cold start in milliseconds
 - **Embedded frontend** — HTML, CSS, and JS compiled into the binary via `go:embed`; zero CDN calls in production
