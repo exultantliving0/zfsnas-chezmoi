@@ -15,7 +15,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// semverGreater returns true only if a is strictly newer than b (major.minor.patch).
+// semverGreater returns true only if a is strictly newer than b.
+// Supports major.minor.patch and major.minor.patch-build (e.g. 6.3.24-1).
 func semverGreater(a, b string) bool {
 	pa := parseSemver(a)
 	pb := parseSemver(b)
@@ -27,13 +28,23 @@ func semverGreater(a, b string) bool {
 	return false
 }
 
-func parseSemver(v string) [3]int {
+// parseSemver parses a version string into [major, minor, patch, build].
+// The build component comes from an optional "-N" suffix on the patch segment
+// (e.g. "6.3.24-1" → [6, 3, 24, 1]). Missing components default to 0.
+func parseSemver(v string) [4]int {
 	v = strings.TrimPrefix(v, "v")
 	parts := strings.SplitN(v, ".", 3)
-	var out [3]int
+	var out [4]int
 	for i, p := range parts {
 		if i >= 3 {
 			break
+		}
+		if i == 2 {
+			// patch may carry a "-build" suffix
+			if idx := strings.IndexByte(p, '-'); idx >= 0 {
+				out[3], _ = strconv.Atoi(p[idx+1:])
+				p = p[:idx]
+			}
 		}
 		out[i], _ = strconv.Atoi(p)
 	}
