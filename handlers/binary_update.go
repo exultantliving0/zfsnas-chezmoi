@@ -90,11 +90,6 @@ func HandleCheckBinaryUpdate(appCfg *config.AppConfig) http.HandlerFunc {
 // WS /ws/binary-update-apply
 func HandleBinaryUpdateApply(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !appCfg.LiveUpdateEnabled {
-			jsonErr(w, http.StatusForbidden, "live binary update is disabled")
-			return
-		}
-
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -173,7 +168,13 @@ func HandleBinaryUpdateApply(appCfg *config.AppConfig) http.HandlerFunc {
 		}))
 		conn.Close()
 
-		// Replace process image; under systemd this keeps the service alive.
-		_ = updater.Restart(exePath)
+		// Preferred path: replace process image in-place (same PID, no systemd restart event).
+		if err := updater.Restart(exePath); err != nil {
+			// syscall.Exec can fail on some systems (thread state, security policies, etc.).
+			// Fall back to a clean exit so systemd (Restart=on-failure or Restart=always)
+			// relaunches the service and picks up the new binary already on disk.
+			log.Printf("[updater] syscall.Exec failed (%v) — exiting so systemd restarts with new binary", err)
+			os.Exit(1)
+		}
 	}
 }

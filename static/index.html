@@ -1136,8 +1136,11 @@
 
           <!-- Instant Update button -->
           <div id="btn-apply-binary-wrap" class="hidden">
-            <button id="btn-apply-binary-active" class="btn btn-sm" onclick="applyBinaryUpdate()"
-              style="background:var(--accent-warn);color:#000;font-weight:700;border:none;">⚡ Instant Update Now</button>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <button id="btn-apply-binary-active" class="btn btn-sm" onclick="applyBinaryUpdate()"
+                style="background:var(--accent-warn);color:#000;font-weight:700;border:none;">⚡ Instant Update Now</button>
+              <span style="font-size:12px;color:var(--text-3);">Only works when ZFSNAS is running as a systemd service.</span>
+            </div>
             <div id="btn-apply-binary-nosvc" style="display:none;">
               <button class="btn btn-sm" disabled
                 style="opacity:0.45;cursor:not-allowed;background:var(--accent-warn);color:#000;font-weight:700;border:none;">⚡ Instant Update Now</button>
@@ -2347,16 +2350,6 @@
         <div class="arc-stat-card" id="arc-card-min"></div>
       </div>
 
-      <!-- MFU/MRU/Meta breakdown bars -->
-      <h4 style="margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Cache Breakdown
-        <i class="info-tip" data-tip="ARC is split into Most Frequently Used (MFU) and Most Recently Used (MRU) segments. ZFS dynamically balances between them based on workload patterns."></i>
-      </h4>
-      <div id="arc-breakdown" style="margin-bottom:18px;"></div>
-
-      <!-- Statistics row -->
-      <h4 style="margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Statistics</h4>
-      <div id="arc-stats-row" style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:18px;font-size:13px;color:var(--text-2);"></div>
-
       <!-- Tunable parameters -->
       <h4 style="margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Tunable Parameters</h4>
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:8px;">
@@ -2386,6 +2379,16 @@
         </div>
       </div>
       <div id="arc-save-error" class="alert alert-error hidden" style="margin-top:8px;"></div>
+
+      <!-- Data/Metadata breakdown bars + MFU/MRU ratio -->
+      <h4 style="margin:18px 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Cache Breakdown
+        <i class="info-tip" data-tip="Data and Metadata together account for 100% of arc_size. The MFU/MRU ratio below shows how ZFS balances frequently-used vs recently-used entries (these counters include ghost entries and cannot be expressed as % of arc_size)."></i>
+      </h4>
+      <div id="arc-breakdown" style="margin-bottom:18px;"></div>
+
+      <!-- Statistics row -->
+      <h4 style="margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);">Statistics</h4>
+      <div id="arc-stats-row" style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:18px;font-size:13px;color:var(--text-2);"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeARCModal()">Close</button>
@@ -8004,29 +8007,37 @@ function _renderARCModal(s) {
   document.getElementById('arc-hint-min').textContent = s.arc_min ? 'Current kernel: ' + fmtBytes(s.arc_min) : '';
 }
 
-let _arcMaxSelectedPct = 0; // 0 = kernel default
+let _arcMaxSelectedPct = 0; // 0 = kernel default, -1 = custom MB
+let _arcMaxCustomMB    = 0; // used when _arcMaxSelectedPct === -1
 
 function _buildARCMaxDropdown(s) {
   const totalBytes = _hwTotalRamBytes > 0 ? _hwTotalRamBytes : (s.arc_max ? s.arc_max * 2 : 0);
 
   const recommendations = {
-    50: { label: 'ZFS kernel default',    note: 'Safe starting point for general use',             badge: 'default',     badgeColor: 'var(--text-3)' },
-    55: { label: 'Slightly more cache',   note: 'Good for mixed read/write workloads',              badge: null,          badgeColor: '' },
-    60: { label: 'More cache',            note: 'Good for read-heavy workloads',                   badge: null,          badgeColor: '' },
-    65: { label: 'Balanced',              note: 'Suitable for most NAS setups',                    badge: null,          badgeColor: '' },
-    70: { label: 'Dedicated NAS',         note: 'Recommended for ZFS-focused servers',             badge: 'recommended', badgeColor: 'var(--accent-3)' },
-    75: { label: 'High cache',            note: 'Ideal for large dataset workloads',               badge: null,          badgeColor: '' },
-    80: { label: 'Large cache',           note: 'Ensure enough RAM remains for OS & services',     badge: null,          badgeColor: '' },
-    85: { label: 'Very large cache',      note: 'Monitor memory pressure under load',              badge: 'caution',     badgeColor: 'var(--accent-warn)' },
-    90: { label: 'Near maximum',          note: 'Risk of memory pressure under peak load',         badge: 'caution',     badgeColor: 'var(--accent-warn)' },
-    95: { label: 'Maximum',              note: 'Only for dedicated ZFS storage servers',           badge: 'advanced',    badgeColor: 'var(--accent-danger)' },
+    10: { label: 'Minimal cache',         note: 'Frees maximum RAM for applications; high disk I/O likely',  badge: null,          badgeColor: '' },
+    20: { label: 'Low cache',             note: 'Suitable for RAM-constrained systems',                      badge: null,          badgeColor: '' },
+    30: { label: 'Conservative',          note: 'Good balance when running many services alongside ZFS',     badge: null,          badgeColor: '' },
+    40: { label: 'Moderate',             note: 'Safe starting point for mixed-use servers',                  badge: null,          badgeColor: '' },
+    50: { label: 'ZFS kernel default',    note: 'Safe starting point for general use',                       badge: 'default',     badgeColor: 'var(--text-3)' },
+    60: { label: 'More cache',            note: 'Good for read-heavy workloads',                             badge: null,          badgeColor: '' },
+    70: { label: 'Dedicated NAS',         note: 'Recommended for ZFS-focused servers',                       badge: 'recommended', badgeColor: 'var(--accent-3)' },
+    80: { label: 'Large cache',           note: 'Ensure enough RAM remains for OS & services',               badge: 'caution',     badgeColor: 'var(--accent-warn)' },
+    90: { label: 'Near maximum',          note: 'Only for dedicated ZFS storage servers; risk of memory pressure', badge: 'advanced', badgeColor: 'var(--accent-danger)' },
   };
 
   // Determine the currently active percentage to pre-select.
   _arcMaxSelectedPct = 0;
   if (totalBytes > 0 && s.param_arc_max > 0) {
-    const snapped = Math.round(s.param_arc_max / totalBytes * 100 / 5) * 5;
-    if (snapped >= 50 && snapped <= 95) _arcMaxSelectedPct = snapped;
+    const actualPct = s.param_arc_max / totalBytes * 100;
+    const snapped   = Math.round(actualPct / 10) * 10;
+    // Only treat as a preset if it lands within 0.5% of a 10% step.
+    if (snapped >= 10 && snapped <= 90 && Math.abs(actualPct - snapped) <= 0.5) {
+      _arcMaxSelectedPct = snapped;
+    } else {
+      // Value doesn't align with a preset — treat as custom.
+      _arcMaxSelectedPct = -1;
+      _arcMaxCustomMB    = Math.round(s.param_arc_max / 1024 / 1024);
+    }
   }
 
   // Render trigger label.
@@ -8035,8 +8046,9 @@ function _buildARCMaxDropdown(s) {
   // Build options panel.
   const panel = document.getElementById('arc-max-options');
   const opts = [{pct: 0, bytes: 0}];
-  for (let p = 50; p <= 95; p += 5) opts.push({pct: p, bytes: totalBytes > 0 ? Math.round(totalBytes * p / 100) : 0});
+  for (let p = 10; p <= 90; p += 10) opts.push({pct: p, bytes: totalBytes > 0 ? Math.round(totalBytes * p / 100) : 0});
 
+  const isCustomActive = _arcMaxSelectedPct === -1;
   panel.innerHTML = opts.map(({pct, bytes}) => {
     const rec = recommendations[pct];
     const isActive = pct === _arcMaxSelectedPct;
@@ -8064,7 +8076,16 @@ function _buildARCMaxDropdown(s) {
       </div>
       <div style="font-size:11px;color:var(--text-3);margin-top:3px;">${rec ? rec.note : ''}</div>
     </div>`;
-  }).join('');
+  }).join('')
+  + `<div class="arc-max-opt${isCustomActive ? ' arc-max-opt-active' : ''}" data-pct="-1" id="arc-max-custom-row" onclick="_showARCMaxCustomInput(event)">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:13px;color:var(--text-2);font-weight:600;">Custom…</span>
+        ${isCustomActive ? `<span style="font-size:13px;font-weight:600;color:var(--accent-2);">${_arcMaxCustomMB} MB</span>` : ''}
+      </div>
+      <span style="font-size:12px;color:var(--text-3);">Enter a specific MB value</span>
+    </div>
+  </div>`;
 
   document.getElementById('arc-hint-max').textContent = s.arc_max
     ? 'Active: ' + fmtBytes(s.arc_max) + (totalBytes > 0 ? '  (' + (s.arc_max / totalBytes * 100).toFixed(0) + '% of RAM)' : '')
@@ -8077,6 +8098,10 @@ function _updateARCMaxTrigger(totalBytes) {
   if (_arcMaxSelectedPct === 0) {
     lbl.textContent = '— Default (kernel managed)';
     lbl.style.color = 'var(--text-3)';
+  } else if (_arcMaxSelectedPct === -1) {
+    lbl.innerHTML = `<strong style="color:var(--text-1)">Custom</strong>`
+      + `<span style="color:var(--accent-2);margin-left:8px;">${_arcMaxCustomMB > 0 ? fmtBytes(_arcMaxCustomMB * 1024 * 1024) : ''}</span>`;
+    lbl.style.color = '';
   } else {
     const bytes = totalBytes > 0 ? Math.round(totalBytes * _arcMaxSelectedPct / 100) : 0;
     lbl.innerHTML = `<strong style="color:var(--text-1)">${_arcMaxSelectedPct}%</strong>`
@@ -8093,6 +8118,62 @@ function _selectARCMax(pct) {
   document.querySelectorAll('#arc-max-options .arc-max-opt').forEach(el => {
     el.classList.toggle('arc-max-opt-active', parseInt(el.dataset.pct, 10) === pct);
   });
+  _closeARCMaxDropdown();
+}
+
+function _showARCMaxCustomInput(e) {
+  e && e.stopPropagation();
+  const row = document.getElementById('arc-max-custom-row');
+  if (!row) return;
+  const initVal = _arcMaxCustomMB > 0 ? _arcMaxCustomMB : '';
+  row.onclick = null; // prevent re-trigger while input is open
+  row.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;" onclick="event.stopPropagation()">
+      <input id="arc-max-custom-input" type="number" min="128" step="128"
+        value="${initVal}" placeholder="MB"
+        style="flex:1;padding:5px 8px;background:var(--surface);border:1px solid var(--accent-2);border-radius:var(--radius-sm);color:var(--text-1);font-size:13px;"
+        onkeydown="if(event.key==='Enter'){_confirmARCMaxCustom();}if(event.key==='Escape'){_buildARCMaxDropdown(_arcStats);}">
+      <button onclick="_confirmARCMaxCustom()"
+        style="padding:5px 12px;background:var(--accent-2);border:none;border-radius:var(--radius-sm);color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Set</button>
+      <button onclick="_buildARCMaxDropdown(_arcStats)"
+        style="padding:5px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-2);font-size:12px;cursor:pointer;">✕</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Enter size in MB (e.g. 4096 = 4 GB)</div>`;
+  setTimeout(() => {
+    const inp = document.getElementById('arc-max-custom-input');
+    if (inp) { inp.focus(); inp.select(); }
+  }, 0);
+}
+
+function _confirmARCMaxCustom() {
+  const inp = document.getElementById('arc-max-custom-input');
+  const mb = parseInt(inp ? inp.value : '', 10);
+  if (!mb || mb < 128) {
+    if (inp) inp.style.borderColor = 'var(--accent-danger)';
+    return;
+  }
+  _arcMaxCustomMB    = mb;
+  _arcMaxSelectedPct = -1;
+  // Update trigger label.
+  const totalBytes = _hwTotalRamBytes > 0 ? _hwTotalRamBytes : 0;
+  _updateARCMaxTrigger(totalBytes);
+  // Update active highlights without re-reading server state.
+  document.querySelectorAll('#arc-max-options .arc-max-opt').forEach(el => {
+    el.classList.toggle('arc-max-opt-active', parseInt(el.dataset.pct, 10) === -1);
+  });
+  // Restore the custom row to its static display (with the new value shown).
+  const row = document.getElementById('arc-max-custom-row');
+  if (row) {
+    row.onclick = e => _showARCMaxCustomInput(e);
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:13px;color:var(--text-2);font-weight:600;">Custom…</span>
+          <span style="font-size:13px;font-weight:600;color:var(--accent-2);">${mb} MB</span>
+        </div>
+        <span style="font-size:12px;color:var(--text-3);">Enter a specific MB value</span>
+      </div>`;
+  }
   _closeARCMaxDropdown();
 }
 
@@ -8142,13 +8223,32 @@ function _setARCBreakdown(s) {
   const el = document.getElementById('arc-breakdown');
   if (!el) return;
   const total = s.arc_size || 1;
+  // arc_meta_used and (arc_size - arc_meta_used) cleanly partition arc_size.
+  // mfu_size / mru_size include ghost (evicted) entries and are NOT a partition
+  // of arc_size — showing them as % of arc_size would exceed 100%.
+  const metaBytes = Math.min(s.arc_meta_used || 0, total);
+  const dataBytes = total - metaBytes;
   const bars = [
-    { label: 'MFU (Most Frequently Used)', tip: 'Data accessed many times — prioritised for retention in the ARC.', bytes: s.mfu_size, color: 'var(--accent-2)' },
-    { label: 'MRU (Most Recently Used)',   tip: 'Data accessed once recently — evicted first under memory pressure.', bytes: s.mru_size, color: 'var(--accent-1)' },
-    { label: 'Metadata',                   tip: 'Directory entries, inode info, and other ZFS metadata held in the ARC.', bytes: s.arc_meta_used, color: '#32d74b' },
+    { label: 'Cached Data',  tip: 'File and block data currently held in the ARC (arc_size − arc_meta_used).', bytes: dataBytes, color: 'var(--accent-2)' },
+    { label: 'Metadata',     tip: 'Directory entries, inode info, and other ZFS metadata held in the ARC (arc_meta_used).', bytes: metaBytes, color: '#32d74b' },
   ];
+  // MFU / MRU are shown as a ratio of each other (they include ghost entries
+  // so they cannot be expressed as a valid % of arc_size).
+  const mfu = s.mfu_size || 0;
+  const mru = s.mru_size || 0;
+  const mfuPct = (mfu + mru) > 0 ? Math.round(mfu / (mfu + mru) * 100) : 50;
+  const mruPct = 100 - mfuPct;
+  const mfuMruRow = `<div class="arc-bar-row" style="margin-top:10px;">
+    <div class="arc-bar-label">
+      <span>MFU / MRU split <i class="info-tip" data-tip="Ratio of Most-Frequently-Used to Most-Recently-Used entries tracked by the ARC. MFU entries are retained longer under memory pressure. (Ghost entries are included in these counters and may exceed arc_size — only the ratio is meaningful.)"></i></span>
+      <span style="color:var(--text-3)">MFU ${mfuPct}% · MRU ${mruPct}%</span>
+    </div>
+    <div class="arc-bar-track">
+      <div class="arc-bar-fill" style="width:100%;background:linear-gradient(to right, var(--accent-2) ${mfuPct}%, var(--accent-1) ${mfuPct}%);"></div>
+    </div>
+  </div>`;
   el.innerHTML = bars.map(b => {
-    const pct = Math.min(100, Math.round((b.bytes || 0) / total * 100));
+    const pct = Math.round((b.bytes || 0) / total * 100);
     return `<div class="arc-bar-row">
       <div class="arc-bar-label">
         <span>${esc(b.label)} <i class="info-tip" data-tip="${esc(b.tip)}"></i></span>
@@ -8158,7 +8258,7 @@ function _setARCBreakdown(s) {
         <div class="arc-bar-fill" style="width:${pct}%;background:${b.color};"></div>
       </div>
     </div>`;
-  }).join('');
+  }).join('') + mfuMruRow;
 }
 
 function _setARCStatsRow(s) {
@@ -8184,7 +8284,9 @@ async function applyARCParams() {
   const maxPct  = _arcMaxSelectedPct || 0;
   const minMB   = parseInt(document.getElementById('arc-input-min').value, 10) || 0;
   const totalBytes = _hwTotalRamBytes > 0 ? _hwTotalRamBytes : (_arcStats && _arcStats.arc_max ? _arcStats.arc_max * 2 : 0);
-  const maxMB   = maxPct > 0 && totalBytes > 0 ? Math.round(totalBytes * maxPct / 100 / 1024 / 1024) : 0;
+  const maxMB   = maxPct === -1
+    ? (_arcMaxCustomMB || 0)
+    : (maxPct > 0 && totalBytes > 0 ? Math.round(totalBytes * maxPct / 100 / 1024 / 1024) : 0);
   errEl.classList.add('hidden');
 
   if (maxMB > 0 && minMB > 0 && minMB >= maxMB) {
@@ -16107,40 +16209,72 @@ function applyBinaryUpdate() {
   statusEl.textContent = '⟳ Updating… waiting for portal to restart';
   if (card) card.appendChild(statusEl);
 
-  // Trigger the update via WebSocket.
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  try {
-    const ws = new WebSocket(proto + '//' + location.host + '/ws/binary-update-apply');
-    ws.onerror = () => {}; // expected once service restarts
-  } catch {}
-
-  // Poll /api/version (bypassing the 401 interceptor) until the portal responds,
-  // then go straight to the login page.
-  // Wait at least 3 s before the first poll to give the service time to stop.
-  const _rawFetch = window.fetch; // capture current (intercepted) fetch; we bypass it below
+  // Animate the status message while the update runs.
   let dots = 0;
   const dotTimer = setInterval(() => {
     dots = (dots + 1) % 4;
-    if (statusEl) statusEl.textContent = '⟳ Updating… waiting for portal to restart' + '.'.repeat(dots + 1);
+    if (statusEl && !statusEl._done)
+      statusEl.textContent = '⟳ Updating… waiting for portal to restart' + '.'.repeat(dots + 1);
   }, 600);
 
-  setTimeout(async function poll() {
-    try {
-      // Use XMLHttpRequest to bypass our fetch interceptor entirely.
-      await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', '/api/version');
-        xhr.onload = resolve;   // any HTTP response means the portal is up
-        xhr.onerror = reject;   // network error = still down
-        xhr.send();
-      });
+  // Poll /api/version until the portal responds, then redirect to the login page.
+  // Only starts after the WebSocket closes (= server done or restarting).
+  let pollStarted = false;
+  function startPoll() {
+    if (pollStarted) return;
+    pollStarted = true;
+    setTimeout(async function poll() {
+      try {
+        // Use XMLHttpRequest to bypass our fetch interceptor entirely.
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', '/api/version');
+          xhr.onload = resolve;   // any HTTP response means the portal is up
+          xhr.onerror = reject;   // network error = still down
+          xhr.send();
+        });
+        clearInterval(dotTimer);
+        // Forget the cached version so the next session does a fresh check
+        // and doesn't show a stale "update available" after a successful upgrade.
+        try { localStorage.removeItem(_VER_CACHE_KEY); } catch {}
+        window.location.href = '/login';
+      } catch { setTimeout(poll, 1500); }
+    }, 2000);
+  }
+
+  // Trigger the update via WebSocket.
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  try {
+    let wsUpdateSucceeded = false;
+    const ws = new WebSocket(proto + '//' + location.host + '/ws/binary-update-apply');
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.line && statusEl) { statusEl.textContent = '⟳ ' + msg.line; }
+        if (msg.done) {
+          if (msg.success) {
+            wsUpdateSucceeded = true;
+            if (statusEl) statusEl.textContent = '✔ Update complete — waiting for portal to restart…';
+          } else {
+            clearInterval(dotTimer);
+            if (statusEl) { statusEl.style.color = 'var(--accent-danger)'; statusEl.textContent = '✖ Update failed: ' + (msg.message || 'unknown error'); }
+            if (checkBtn) checkBtn.disabled = false;
+          }
+        }
+      } catch {}
+    };
+    // Start polling once the WS closes (server is about to restart or already restarting).
+    ws.onclose = () => { startPoll(); };
+    // WS error: only show a failure message if the update hadn't already succeeded.
+    // When syscall.Exec or os.Exit kills the process, the TCP connection is abruptly
+    // terminated which fires onerror even after a successful update.
+    ws.onerror = () => {
+      if (wsUpdateSucceeded) return;
       clearInterval(dotTimer);
-      // Forget the cached version so the next session does a fresh check
-      // and doesn't show a stale "update available" after a successful upgrade.
-      try { localStorage.removeItem(_VER_CACHE_KEY); } catch {}
-      window.location.href = '/login';
-    } catch { setTimeout(poll, 1500); }
-  }, 3000);
+      if (statusEl) { statusEl.style.color = 'var(--accent-danger)'; statusEl.textContent = '✖ Update failed: could not connect to update service'; }
+      if (checkBtn) checkBtn.disabled = false;
+    };
+  } catch { startPoll(); }
 }
 
 
