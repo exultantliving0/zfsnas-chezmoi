@@ -232,21 +232,23 @@
              padding:13px 0;cursor:pointer;color:var(--text-3);font-size:22px;line-height:1;
              justify-content:center;align-items:center;">›</button>
     <div class="sidebar-header">
-      <a href="https://github.com/macgaver/zfsnas-chezmoi" target="_blank" rel="noopener" style="display:inline-block;line-height:0;">
-        <img src="/static/logo.svg" alt="ZFS NAS" style="height:64px;width:204px;object-fit:contain;">
-      </a>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
-        <a id="app-version" href="https://github.com/macgaver/zfsnas-chezmoi/releases" target="_blank" rel="noopener"
-           style="display:inline-block;font-size:11px;font-family:'SF Mono',monospace;color:var(--text-3);border:1px solid var(--border);padding:2px 8px;border-radius:10px;text-decoration:none;letter-spacing:.02em;">v…</a>
-        <div id="sidebar-update-badge" onclick="showPage('updates')" class="hidden"
-             style="font-size:11px;font-weight:600;color:var(--accent-warn);cursor:pointer;padding:1px 6px;border-radius:8px;border:1px solid rgba(255,214,10,0.35);background:rgba(255,214,10,0.08);letter-spacing:.02em;display:inline-block;">
-          ⬆ v…
+      <div style="display:flex;flex-direction:column;align-items:flex-start;gap:0;line-height:1;">
+        <a href="https://github.com/macgaver/zfsnas-chezmoi" target="_blank" rel="noopener" style="display:inline-block;line-height:0;">
+          <img src="/static/logo.svg" alt="ZFS NAS" style="height:64px;width:204px;object-fit:contain;">
+        </a>
+        <div style="display:flex;align-items:center;gap:6px;padding-left:4px;margin-top:0;">
+          <span id="app-version" style="font-size:11px;font-family:'SF Mono',monospace;color:var(--text-2);letter-spacing:.02em;">v…</span>
+          <span id="app-version-latest" style="font-size:11px;font-family:'SF Mono',monospace;color:var(--accent-warn);letter-spacing:.02em;display:none;">→ v…</span>
         </div>
       </div>
-      <button id="sidebar-hostname" style="margin-top:6px;display:flex;align-items:center;gap:6px;width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:default;font-size:12px;font-weight:600;color:var(--text-2);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="System hostname">
-        <img src="/static/favicon.svg" style="width:16px;height:16px;flex-shrink:0;object-fit:contain;" alt="">
-        <span id="sidebar-hostname-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;">…</span>
-      </button>
+
+      <div id="hostname-dropdown-wrapper" style="margin-top:8px;">
+        <button id="sidebar-hostname" onclick="toggleHostnameDropdown(event)" style="display:flex;align-items:center;gap:6px;width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text-2);text-align:left;white-space:nowrap;" title="System hostname">
+          <img src="/static/favicon.svg" style="width:16px;height:16px;flex-shrink:0;object-fit:contain;" alt="">
+          <span id="sidebar-hostname-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;">…</span>
+          <span style="font-size:13px;opacity:0.7;flex-shrink:0;line-height:1;">▾</span>
+        </button>
+      </div>
     </div>
 
     <!-- Collapse button row — uses the existing gap above Overview, adds no net vertical space -->
@@ -2746,6 +2748,14 @@
         </select>
         <div class="text-3 text-sm" style="margin-top:4px;">User home directories will be created inside this dataset when the user has 'Home User Folder' enabled.</div>
       </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
+          <input type="checkbox" id="smb-cfg-clean-defaults" style="width:15px;height:15px;accent-color:var(--accent-2);flex-shrink:0;">
+          Remove distro default sections from smb.conf
+          <i class="info-tip tip-down" data-tip="When enabled, the [printers], [print$], and [homes] sections written by the Samba package installer are commented out in smb.conf.&#10;&#10;This prevents those sections from conflicting with your settings. The [homes] section is replaced by the one ZFS NAS manages when a Home Folder Dataset is configured.&#10;&#10;Recommended for most NAS setups where printing is not needed."></i>
+        </label>
+        <div class="text-3 text-sm" style="margin-top:4px;">Removes [printers], [print$], and any distro-default [homes] outside the ZFS NAS managed block. This action is permanent and cannot be undone.</div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeSMBConfigureModal()">Cancel</button>
@@ -3047,7 +3057,7 @@
       <div style="overflow-y:auto;flex:1;padding:20px 24px 0;">
         <div id="sched-alert" class="alert alert-error hidden"></div>
         <div class="form-group">
-          <label>Dataset</label>
+          <label>Dataset or ZVol <i class="info-tip tip-down" data-tip="Select the dataset or zvol to snapshot. Both filesystem datasets and block-device zvols are listed."></i></label>
           <select id="sched-dataset"></select>
         </div>
         <div class="form-group">
@@ -3111,16 +3121,41 @@
             </label>
             <div id="sched-repl-fields" style="display:none;">
               <div class="form-group">
-                <label>Remote Host</label>
-                <input type="text" id="sched-repl-host" placeholder="192.168.1.100">
+                <label>Replication Target <i class="info-tip tip-down" data-tip="Choose a linked InterLink server for automatic SSH-key-based push, or 'Custom SSH Target' to manually specify a remote host (requires SSH key auth already configured)."></i></label>
+                <select id="sched-repl-target" onchange="_replTargetChange('sched-repl')">
+                  <option value="">— Select target —</option>
+                  <option value="__custom__">Custom SSH Target</option>
+                </select>
               </div>
-              <div class="form-group">
-                <label>Remote User <span id="sched-repl-user-hint" class="text-3 text-xs">must accept SSH from the zfsnas service account</span></label>
-                <input type="text" id="sched-repl-user" placeholder="root">
+              <!-- InterLink server group -->
+              <div id="sched-repl-il-grp" style="display:none;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-bottom:12px;">
+                  <div class="form-group" style="margin:0;">
+                    <label>Destination Pool <i class="info-tip tip-down" data-tip="Pool on the remote InterLink server that will receive the replicated data."></i></label>
+                    <select id="sched-repl-il-pool" onchange="_replILPoolChange('sched-repl')">
+                      <option value="">Select pool…</option>
+                    </select>
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>Path / Name <i class="info-tip tip-down" data-tip="Full destination path on the remote pool, e.g. backup/tank/mydata. For a zvol, use pool/zvolname. The dataset or zvol will be created if it does not exist."></i></label>
+                    <input type="text" id="sched-repl-il-dest" placeholder="pool/dataset">
+                  </div>
+                </div>
               </div>
-              <div class="form-group">
-                <label>Destination Dataset</label>
-                <input type="text" id="sched-repl-dataset" placeholder="backup/pool/dataset">
+              <!-- Custom SSH group -->
+              <div id="sched-repl-custom-grp" style="display:none;">
+                <div class="form-group">
+                  <label>Remote Host <i class="info-tip tip-down" data-tip="Hostname or IP address of the remote server. SSH key-based auth must be set up in advance for the service account."></i></label>
+                  <input type="text" id="sched-repl-host" placeholder="192.168.1.100">
+                </div>
+                <div class="form-group">
+                  <label>Remote User <i class="info-tip tip-down" data-tip="SSH user on the remote host. Defaults to root if left blank. This user must have ZFS receive permission on the destination pool."></i></label>
+                  <input type="text" id="sched-repl-user" placeholder="root">
+                </div>
+                <div class="form-group">
+                  <label>Path / Name <i class="info-tip tip-down" data-tip="Full destination dataset or zvol path on the remote host, e.g. backup/tank/mydata. The dataset will be created if it does not exist."></i></label>
+                  <input type="text" id="sched-repl-dataset" placeholder="backup/pool/dataset">
+                </div>
               </div>
               <div style="display:flex;gap:20px;margin-bottom:12px;">
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
@@ -3150,9 +3185,9 @@
                 <select id="sched-local-repl-pool" onchange="loadSchedLocalReplDatasets()"></select>
               </div>
               <div class="form-group">
-                <label>Destination Dataset</label>
+                <label id="sched-local-repl-ds-label">Destination Dataset</label>
                 <select id="sched-local-repl-ds-select" onchange="onSchedLocalReplDsChange()"></select>
-                <input type="text" id="sched-local-repl-ds-custom" placeholder="new/dataset/path" style="display:none;margin-top:8px;">
+                <input type="text" id="sched-local-repl-ds-custom" placeholder="name" style="display:none;margin-top:8px;">
               </div>
               <div style="display:flex;gap:20px;margin-bottom:12px;">
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
@@ -4204,19 +4239,44 @@
         <label>Source Dataset <span style="font-weight:400;color:var(--text-3);font-size:12px;">(pool/dataset)</span></label>
         <input id="rep-source" type="text" placeholder="e.g. tank/data" />
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
-        <div class="form-group" style="margin:0;">
-          <label>Remote Host</label>
-          <input id="rep-host" type="text" placeholder="hostname or IP" />
-        </div>
-        <div class="form-group" style="margin:0;">
-          <label>Remote User <span style="font-weight:400;color:var(--text-3);font-size:12px;">(default: root)</span></label>
-          <input id="rep-user" type="text" placeholder="root" />
+      <div class="form-group">
+        <label>Replication Target</label>
+        <select id="rep-target" onchange="_replTargetChange('rep')">
+          <option value="">— Select target —</option>
+          <option value="__custom__">Custom SSH Target</option>
+        </select>
+      </div>
+      <!-- InterLink server group -->
+      <div id="rep-il-grp" style="display:none;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-bottom:12px;">
+          <div class="form-group" style="margin:0;">
+            <label>Destination Pool <i class="info-tip tip-down" data-tip="Pool on the remote InterLink server that will receive the replicated data."></i></label>
+            <select id="rep-il-pool" onchange="_replILPoolChange('rep')">
+              <option value="">Select pool…</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label>Path / Name <i class="info-tip tip-down" data-tip="Full destination path on the remote pool, e.g. backup/tank/mydata. For a zvol, use pool/zvolname. The dataset or zvol will be created if it does not exist."></i></label>
+            <input type="text" id="rep-il-dest" placeholder="pool/dataset" />
+          </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>Destination Dataset <span style="font-weight:400;color:var(--text-3);font-size:12px;">(remote pool/dataset)</span></label>
-        <input id="rep-dest" type="text" placeholder="e.g. backup/tank-data" />
+      <!-- Custom SSH group -->
+      <div id="rep-custom-grp" style="display:none;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
+          <div class="form-group" style="margin:0;">
+            <label>Remote Host <i class="info-tip tip-down" data-tip="Hostname or IP address of the remote server. SSH key-based auth must be set up in advance for the service account."></i></label>
+            <input id="rep-host" type="text" placeholder="hostname or IP" />
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label>Remote User <i class="info-tip tip-down" data-tip="SSH user on the remote host. Defaults to root if left blank. This user must have ZFS receive permission on the destination pool."></i></label>
+            <input id="rep-user" type="text" placeholder="root" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Path / Name <i class="info-tip tip-down" data-tip="Full destination dataset or zvol path on the remote host, e.g. backup/tank/mydata. The dataset will be created if it does not exist."></i></label>
+          <input id="rep-dest" type="text" placeholder="e.g. backup/tank-data" />
+        </div>
       </div>
       <div style="display:flex;gap:24px;margin-top:4px;">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
@@ -4229,7 +4289,7 @@
         </label>
       </div>
       <p style="font-size:12px;color:var(--text-3);margin-top:12px;margin-bottom:0;">
-        SSH key-based authentication must be configured from this host to the remote.<br>
+        SSH key-based authentication must be configured for Custom SSH Target.<br>
         Incremental sends are used automatically after the first run.
       </p>
     </div>
@@ -4258,19 +4318,44 @@
         <label>Source Dataset <span style="font-weight:400;color:var(--text-3);font-size:12px;">(pool/dataset)</span></label>
         <input id="edit-rep-source" type="text" placeholder="e.g. tank/data" />
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
-        <div class="form-group" style="margin:0;">
-          <label>Remote Host</label>
-          <input id="edit-rep-host" type="text" placeholder="hostname or IP" />
-        </div>
-        <div class="form-group" style="margin:0;">
-          <label>Remote User <span style="font-weight:400;color:var(--text-3);font-size:12px;">(default: root)</span></label>
-          <input id="edit-rep-user" type="text" placeholder="root" />
+      <div class="form-group">
+        <label>Replication Target</label>
+        <select id="edit-rep-target" onchange="_replTargetChange('edit-rep')">
+          <option value="">— Select target —</option>
+          <option value="__custom__">Custom SSH Target</option>
+        </select>
+      </div>
+      <!-- InterLink server group -->
+      <div id="edit-rep-il-grp" style="display:none;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-bottom:12px;">
+          <div class="form-group" style="margin:0;">
+            <label>Destination Pool <i class="info-tip tip-down" data-tip="Pool on the remote InterLink server that will receive the replicated data."></i></label>
+            <select id="edit-rep-il-pool" onchange="_replILPoolChange('edit-rep')">
+              <option value="">Select pool…</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label>Path / Name <i class="info-tip tip-down" data-tip="Full destination path on the remote pool, e.g. backup/tank/mydata. For a zvol, use pool/zvolname. The dataset or zvol will be created if it does not exist."></i></label>
+            <input type="text" id="edit-rep-il-dest" placeholder="pool/dataset" />
+          </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>Destination Dataset <span style="font-weight:400;color:var(--text-3);font-size:12px;">(remote pool/dataset)</span></label>
-        <input id="edit-rep-dest" type="text" placeholder="e.g. backup/tank-data" />
+      <!-- Custom SSH group -->
+      <div id="edit-rep-custom-grp" style="display:none;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;">
+          <div class="form-group" style="margin:0;">
+            <label>Remote Host <i class="info-tip tip-down" data-tip="Hostname or IP address of the remote server. SSH key-based auth must be set up in advance for the service account."></i></label>
+            <input id="edit-rep-host" type="text" placeholder="hostname or IP" />
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label>Remote User <i class="info-tip tip-down" data-tip="SSH user on the remote host. Defaults to root if left blank. This user must have ZFS receive permission on the destination pool."></i></label>
+            <input id="edit-rep-user" type="text" placeholder="root" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Path / Name <i class="info-tip tip-down" data-tip="Full destination dataset or zvol path on the remote host, e.g. backup/tank/mydata. The dataset will be created if it does not exist."></i></label>
+          <input id="edit-rep-dest" type="text" placeholder="e.g. backup/tank-data" />
+        </div>
       </div>
       <div style="display:flex;gap:24px;margin-top:4px;">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
@@ -4369,7 +4454,7 @@
 
 <!-- About Modal -->
 <div class="modal-backdrop hidden" id="modal-about">
-  <div class="modal" style="max-width:440px;text-align:center;">
+  <div class="modal" style="max-width:440px;text-align:center;position:relative;">
     <button class="modal-close" onclick="closeAbout()" style="position:absolute;top:16px;right:16px;">✕</button>
 
     <!-- Logo -->
@@ -4731,6 +4816,197 @@
   </div>
 </div>
 
+<!-- ===== InterLink: Manage Connected Servers modal ===== -->
+<div class="modal-backdrop hidden" id="modal-interlink" onclick="if(event.target===this)closeInterlinkModal()">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-header">
+      <h3>InterLink — Connected Servers</h3>
+      <button class="modal-close" onclick="closeInterlinkModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+        <button class="btn btn-primary" onclick="openAddServerModal()">+ Add Server</button>
+      </div>
+      <div id="interlink-table-wrap">
+        <div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>
+      </div>
+      <div style="margin-top:10px;font-size:12px;color:var(--text-3);">
+        <span style="color:#22c55e;">●</span> online &nbsp; <span style="color:#6b7280;">○</span> offline
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== InterLink: Add Server sub-popup ===== -->
+<div class="modal-backdrop hidden" id="modal-interlink-add" onclick="if(event.target===this)closeAddServerModal()">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <h3>Add InterLink Server</h3>
+      <button class="modal-close" onclick="closeAddServerModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="interlink-add-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <div class="form-group">
+        <label>Server URL</label>
+        <input type="text" id="interlink-add-url" placeholder="https://192.168.2.5:8443" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="form-group">
+        <label>Admin Username</label>
+        <input type="text" id="interlink-add-user" placeholder="admin" autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Admin Password</label>
+        <input type="password" id="interlink-add-pass" autocomplete="new-password">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeAddServerModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-interlink-connect" onclick="connectInterLink()">Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== InterLink: Remote 2FA prompt (appears during linking if remote admin has TOTP) ===== -->
+<div class="modal-backdrop hidden" id="modal-interlink-totp" onclick="if(event.target===this)closeInterlinkTOTPModal()">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <h3>Remote 2FA Required</h3>
+      <button class="modal-close" onclick="closeInterlinkTOTPModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--text-2);font-size:13px;margin-bottom:14px;">
+        The admin account on the remote server has two-factor authentication enabled.
+        Enter the 2FA code to complete linking.
+      </p>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>6-digit code</label>
+        <input type="text" id="interlink-totp-code" placeholder="000000" maxlength="6"
+               autocomplete="one-time-code" inputmode="numeric" pattern="\d{6}">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeInterlinkTOTPModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-interlink-verify" onclick="_interlinkVerifyAndLink()">Verify &amp; Link</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Push InterLink: send dataset/zvol to linked server ===== -->
+<div class="modal-backdrop hidden" id="modal-push-ds-il" onclick="if(event.target===this)closePushDsILModal()">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header">
+      <h3>Push to Remote Server via InterLink</h3>
+      <button class="modal-close" onclick="closePushDsILModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="push-ds-il-alert" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
+
+      <!-- Source info -->
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:20px;display:flex;align-items:center;gap:12px;">
+        <span id="push-ds-il-icon" style="font-size:22px;flex-shrink:0;">📁</span>
+        <div style="min-width:0;">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--text-3);margin-bottom:3px;">Source</div>
+          <div id="push-ds-il-name" style="font-family:'SF Mono',monospace;font-size:13px;color:var(--text-1);word-break:break-all;"></div>
+        </div>
+      </div>
+
+      <!-- Step 1: server -->
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <span style="background:var(--accent);color:#fff;border-radius:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">1</span>
+          Destination Server
+        </label>
+        <select id="push-ds-il-server" onchange="onPushDsILServerChange()"></select>
+      </div>
+
+      <!-- Step 2: pool (shown once server selected) -->
+      <div class="form-group" id="push-ds-il-pool-grp" style="display:none;">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <span style="background:var(--accent);color:#fff;border-radius:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">2</span>
+          Destination Pool
+        </label>
+        <select id="push-ds-il-pool" onchange="onPushDsILPoolChange()">
+          <option value="">— select pool —</option>
+        </select>
+      </div>
+
+      <!-- Step 3: destination name (shown once pool selected) -->
+      <div class="form-group" id="push-ds-il-dest-grp" style="display:none;margin-bottom:0;">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <span style="background:var(--accent);color:#fff;border-radius:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">3</span>
+          Destination Path
+        </label>
+        <input type="text" id="push-ds-il-dest" placeholder="pool/name" spellcheck="false" autocomplete="off"
+               oninput="_pushDsILOnDestInput(this.value)">
+        <p style="font-size:12px;color:var(--text-3);margin-top:7px;margin-bottom:0;line-height:1.5;">
+          A temporary snapshot will be created locally, sent to the remote server via <code style="font-size:11px;">zfs send</code>, then deleted automatically. Progress is shown in the activity bar.
+        </p>
+      </div>
+
+      <!-- Capacity summary (shown once pool is selected) -->
+      <div id="push-ds-il-cap" style="display:none;margin-top:14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;">
+        <div style="display:flex;align-items:center;gap:20px;font-size:12px;">
+          <div>
+            <div style="color:var(--text-3);margin-bottom:2px;">Source size</div>
+            <div id="push-ds-il-cap-src" style="font-weight:600;font-family:monospace;color:var(--text-1);"></div>
+          </div>
+          <div style="color:var(--text-3);font-size:16px;padding-top:14px;">→</div>
+          <div>
+            <div style="color:var(--text-3);margin-bottom:2px;">Pool available</div>
+            <div id="push-ds-il-cap-avail" style="font-weight:600;font-family:monospace;"></div>
+          </div>
+        </div>
+        <div id="push-ds-il-cap-warn" style="display:none;margin-top:8px;font-size:12px;font-weight:600;color:var(--accent-danger);"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closePushDsILModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-push-ds-il" onclick="startPushDsIL()" disabled>Push</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Push Interlink: send snapshot to linked server over SSH ===== -->
+<div class="modal-backdrop hidden" id="modal-push-interlink" onclick="if(event.target===this)closePushInterlinkModal()">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h3>Push Snapshot via InterLink</h3>
+      <button class="modal-close" onclick="closePushInterlinkModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="push-il-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <div class="form-group">
+        <label>Snapshot</label>
+        <div id="push-il-snap" style="font-family:monospace;font-size:13px;padding:8px 10px;background:var(--surface2);border-radius:var(--radius-sm);color:var(--text-1);word-break:break-all;"></div>
+      </div>
+      <div class="form-group">
+        <label>Destination Server</label>
+        <select id="push-il-server" onchange="onPushILServerChange()">
+          <option value="">— select server —</option>
+        </select>
+      </div>
+      <div class="form-group" id="push-il-pool-grp" style="display:none;">
+        <label>Destination Pool</label>
+        <select id="push-il-pool">
+          <option value="">— select pool —</option>
+        </select>
+      </div>
+      <div class="form-group" id="push-il-dest-grp" style="display:none;margin-bottom:0;">
+        <label>Destination Dataset</label>
+        <input type="text" id="push-il-dest" placeholder="pool/dataset" spellcheck="false" autocomplete="off"
+               oninput="document.getElementById('btn-push-il-start').disabled=!this.value.trim()">
+        <p style="font-size:12px;color:var(--text-3);margin-top:6px;margin-bottom:0;">
+          The first push does a full ZFS send. Subsequent pushes of the same snapshot base will be incremental.
+        </p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closePushInterlinkModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-push-il-start" onclick="startPushInterlink()" disabled>Push</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ===== Session-expired popup =====
 function _showSessionExpiredPopup() {
@@ -4883,7 +5159,7 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
   fetch('/api/version').then(r => r.ok ? r.json() : null).then(d => {
     if (!d) return;
     const el = document.getElementById('app-version');
-    if (el) { el.textContent = 'v' + d.version; el.href = d.releases_url; }
+    if (el) { el.textContent = 'v' + d.version; }
     if (d.server_ip) window._serverIP = d.server_ip;
     if (d.hostname) {
       window._serverHostname = d.hostname;
@@ -4902,6 +5178,7 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
   showPage('dashboard');
   startActivityBarRefresh();
   _pollServerOpStatus();
+  _startPushJobsPolling();
   checkPrereqsBanner();
   loadISCSINavStatus();
   loadS3NavStatus();
@@ -5074,15 +5351,27 @@ function renderActivityBar(entries) {
       ? (pendingCount > 0 ? `${runningCount} active, ${pendingCount} queued` : `${runningCount} active`)
       : `${pendingCount} queued`;
     badge.classList.remove('hidden');
-    jobsEl.innerHTML = jobList.map(j => `
-      <div class="ab-job-row">
-        ${j.pending
-          ? `<span style="font-size:13px;line-height:1;flex-shrink:0;">⏳</span>`
-          : `<span class="spinner" style="width:12px;height:12px;border-width:2px;flex-shrink:0;"></span>`}
-        <span>${esc(j.label)}</span>
-        <span class="text-3" style="margin-left:auto;">${timeSince(j.startedAt)}</span>
-      </div>
-    `).join('');
+    jobsEl.innerHTML = jobList.map(j => {
+      const pct       = j.progress != null ? Math.min(100, Math.max(0, j.progress * 100)) : null;
+      const timeStr   = j.eta != null && j.eta > 0 ? ('⏱ ' + _fmtETA(j.eta)) : timeSince(j.startedAt);
+      const cancelBtn = j.cancelJobId
+        ? `<button onclick="cancelPushInterlinkJob('${esc(j.cancelJobId)}')" title="Cancel" style="flex-shrink:0;padding:1px 6px;background:none;border:1px solid var(--border);border-radius:3px;cursor:pointer;color:var(--text-3);font-size:11px;line-height:1.5;">✕</button>`
+        : '';
+      const progressBar = pct != null
+        ? `<div style="width:100%;height:3px;background:var(--border);border-radius:2px;margin-top:4px;"><div style="height:100%;border-radius:2px;background:var(--accent-2);transition:width .5s ease;width:${pct.toFixed(1)}%"></div></div>`
+        : '';
+      return `<div class="ab-job-row">
+        <div style="display:flex;align-items:center;gap:8px;width:100%;">
+          ${j.pending
+            ? `<span style="font-size:13px;line-height:1;flex-shrink:0;">⏳</span>`
+            : `<span class="spinner" style="width:12px;height:12px;border-width:2px;flex-shrink:0;"></span>`}
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(j.label)}</span>
+          <span class="text-3" style="flex-shrink:0;font-size:11px;">${timeStr}</span>
+          ${cancelBtn}
+        </div>
+        ${progressBar}
+      </div>`;
+    }).join('');
   } else {
     badge.classList.add('hidden');
     jobsEl.innerHTML = '';
@@ -6042,6 +6331,13 @@ async function openSMBConfigureModal() {
       const cfg = await resp.json();
       document.getElementById('smb-cfg-max-processes').value = cfg.max_smbd_processes || 100;
       sel.value = cfg.home_dataset || '';
+      const cdEl = document.getElementById('smb-cfg-clean-defaults');
+      cdEl.checked = !!cfg.clean_defaults;
+      if (cfg.clean_defaults) {
+        cdEl.disabled = true;
+        cdEl.closest('label').style.opacity = '0.5';
+        cdEl.closest('label').style.cursor = 'not-allowed';
+      }
     }
   } catch (_) {}
 
@@ -6065,13 +6361,14 @@ async function saveSMBGlobalConfig() {
     alertEl.classList.remove('hidden');
     return;
   }
-  const homeDataset = document.getElementById('smb-cfg-home-dataset').value;
+  const homeDataset   = document.getElementById('smb-cfg-home-dataset').value;
+  const cleanDefaults = document.getElementById('smb-cfg-clean-defaults').checked;
 
   btn.disabled = true; btn.textContent = 'Saving…';
   const resp = await fetch('/api/smb/global-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_smbd_processes: maxVal, home_dataset: homeDataset }),
+    body: JSON.stringify({ max_smbd_processes: maxVal, home_dataset: homeDataset, clean_defaults: cleanDefaults }),
   });
   const data = await resp.json();
   btn.disabled = false; btn.textContent = 'Save';
@@ -9653,6 +9950,11 @@ function toggleZVolMenu(evt) {
   snapBtn.addEventListener('click', () => { closeShareMenus(); openCreateSnapshot(zvolName); });
   dd.appendChild(snapBtn);
 
+  const pushILBtn = document.createElement('button');
+  pushILBtn.textContent = '⇅ Push InterLink…';
+  pushILBtn.addEventListener('click', () => { closeShareMenus(); openPushDsILModal(zvolName, true); });
+  dd.appendChild(pushILBtn);
+
   const sep = document.createElement('hr');
   sep.className = 'menu-sep';
   dd.appendChild(sep);
@@ -10229,18 +10531,24 @@ function toggleSchedReplSection() {
 function toggleSchedReplFields() {
   const enabled = document.getElementById('sched-repl-enabled').checked;
   document.getElementById('sched-repl-fields').style.display = enabled ? '' : 'none';
+  if (enabled) _replLoadILServers('sched-repl');
 }
 
 function resetSchedReplSection() {
-  document.getElementById('sched-repl-body').style.display   = 'none';
-  document.getElementById('sched-repl-arrow').textContent    = '▶';
-  document.getElementById('sched-repl-enabled').checked      = false;
-  document.getElementById('sched-repl-fields').style.display = 'none';
-  document.getElementById('sched-repl-host').value           = '';
-  document.getElementById('sched-repl-user').value           = '';
-  document.getElementById('sched-repl-dataset').value        = '';
-  document.getElementById('sched-repl-recursive').checked    = false;
-  document.getElementById('sched-repl-compressed').checked   = false;
+  document.getElementById('sched-repl-body').style.display      = 'none';
+  document.getElementById('sched-repl-arrow').textContent       = '▶';
+  document.getElementById('sched-repl-enabled').checked         = false;
+  document.getElementById('sched-repl-fields').style.display    = 'none';
+  document.getElementById('sched-repl-target').value            = '';
+  document.getElementById('sched-repl-il-grp').style.display    = 'none';
+  document.getElementById('sched-repl-il-pool').innerHTML       = '<option value="">Select pool…</option>';
+  document.getElementById('sched-repl-il-dest').value           = '';
+  document.getElementById('sched-repl-custom-grp').style.display = 'none';
+  document.getElementById('sched-repl-host').value              = '';
+  document.getElementById('sched-repl-user').value              = '';
+  document.getElementById('sched-repl-dataset').value           = '';
+  document.getElementById('sched-repl-recursive').checked       = false;
+  document.getElementById('sched-repl-compressed').checked      = false;
   // Reset local replication section too.
   document.getElementById('sched-local-repl-body').style.display   = 'none';
   document.getElementById('sched-local-repl-arrow').textContent    = '▶';
@@ -10271,7 +10579,17 @@ function toggleSchedLocalReplFields() {
 function onSchedLocalReplDsChange() {
   const sel    = document.getElementById('sched-local-repl-ds-select');
   const custom = document.getElementById('sched-local-repl-ds-custom');
-  custom.style.display = sel.value === '__new__' ? '' : 'none';
+  if (sel.value !== '__new__') { custom.style.display = 'none'; return; }
+  custom.style.display = '';
+  // For zvols, pre-fill with source leaf name if the input is still empty.
+  if (!custom.value.trim()) {
+    const srcDataset = document.getElementById('sched-dataset').value;
+    const srcIsZvol  = (zvolCache || []).some(z => z.name === srcDataset);
+    if (srcIsZvol) {
+      const parts = srcDataset.split('/');
+      custom.value = parts[parts.length - 1];
+    }
+  }
 }
 
 async function loadSchedLocalReplPools(selectedPool) {
@@ -10292,11 +10610,15 @@ async function loadSchedLocalReplDatasets(selectedPath) {
   const pool      = document.getElementById('sched-local-repl-pool').value;
   const sel       = document.getElementById('sched-local-repl-ds-select');
   const customEl  = document.getElementById('sched-local-repl-ds-custom');
+  const labelEl   = document.getElementById('sched-local-repl-ds-label');
   if (!pool) { sel.innerHTML = ''; return; }
 
-  // Determine if source is a zvol so we list zvols on the destination pool.
+  // Determine if source is a zvol so we handle destination differently.
   const srcDataset = document.getElementById('sched-dataset').value;
   const srcIsZvol  = (zvolCache || []).some(z => z.name === srcDataset);
+  const srcLeaf    = srcDataset.split('/').pop();
+
+  if (labelEl) labelEl.textContent = srcIsZvol ? 'Destination ZVol Name' : 'Destination Dataset';
 
   try {
     let options = [];
@@ -10313,15 +10635,19 @@ async function loadSchedLocalReplDatasets(selectedPath) {
     let html = options.map(n =>
       `<option value="${esc(n)}"${n === selectedPath ? ' selected' : ''}>${esc(n)}</option>`
     ).join('');
-    html += `<option value="__new__">— enter new name —</option>`;
+    html += `<option value="__new__">${srcIsZvol ? '— new zvol name… —' : '— enter new name —'}</option>`;
     sel.innerHTML = html;
 
-    // If selectedPath was given but not found among options, fall back to custom input.
     if (selectedPath && !options.includes(selectedPath)) {
+      // Restore saved path into custom input.
       sel.value = '__new__';
       customEl.style.display = '';
-      // Custom input holds the path relative to the pool prefix.
       customEl.value = selectedPath.startsWith(pool + '/') ? selectedPath.slice(pool.length + 1) : selectedPath;
+    } else if (srcIsZvol && !selectedPath) {
+      // For zvols with no existing destination: auto-select new and pre-fill with source leaf name.
+      sel.value = '__new__';
+      customEl.style.display = '';
+      customEl.value = srcLeaf;
     } else {
       customEl.style.display = 'none';
     }
@@ -10380,15 +10706,14 @@ async function openEditSchedule(i) {
   // Populate replication sections
   resetSchedReplSection();
   if (p.replication_enabled) {
-    document.getElementById('sched-repl-body').style.display   = '';
-    document.getElementById('sched-repl-arrow').textContent    = '▼';
-    document.getElementById('sched-repl-enabled').checked      = true;
-    document.getElementById('sched-repl-fields').style.display = '';
-    document.getElementById('sched-repl-host').value           = p.replication_host || '';
-    document.getElementById('sched-repl-user').value           = p.replication_user || '';
-    document.getElementById('sched-repl-dataset').value        = p.replication_dataset || '';
-    document.getElementById('sched-repl-recursive').checked    = !!p.replication_recursive;
-    document.getElementById('sched-repl-compressed').checked   = !!p.replication_compressed;
+    document.getElementById('sched-repl-body').style.display      = '';
+    document.getElementById('sched-repl-arrow').textContent       = '▼';
+    document.getElementById('sched-repl-enabled').checked         = true;
+    document.getElementById('sched-repl-fields').style.display    = '';
+    await _replLoadILServers('sched-repl');
+    await _replRestoreTarget('sched-repl', p.replication_host || '', p.replication_user || '', p.replication_dataset || '');
+    document.getElementById('sched-repl-recursive').checked  = !!p.replication_recursive;
+    document.getElementById('sched-repl-compressed').checked = !!p.replication_compressed;
   }
   // Restore local replication section.
   if (p.local_repl_enabled && p.local_repl_dataset) {
@@ -10470,9 +10795,9 @@ async function submitSchedule(e) {
     retention:    parseInt(document.getElementById('sched-retention').value) || 7,
     enabled:      document.getElementById('sched-enabled').checked,
     replication_enabled:    replEnabled,
-    replication_host:       replEnabled ? document.getElementById('sched-repl-host').value.trim() : '',
-    replication_user:       replEnabled ? document.getElementById('sched-repl-user').value.trim() : '',
-    replication_dataset:    replEnabled ? document.getElementById('sched-repl-dataset').value.trim() : '',
+    replication_host:       replEnabled ? _replGetHostUser('sched-repl').host : '',
+    replication_user:       replEnabled ? _replGetHostUser('sched-repl').user : '',
+    replication_dataset:    replEnabled ? _replGetDest('sched-repl') : '',
     replication_recursive:  replEnabled ? document.getElementById('sched-repl-recursive').checked : false,
     replication_compressed: replEnabled ? document.getElementById('sched-repl-compressed').checked : false,
     local_repl_enabled:     localReplEnabled,
@@ -10481,7 +10806,7 @@ async function submitSchedule(e) {
     local_repl_compressed:  localReplEnabled ? document.getElementById('sched-local-repl-compressed').checked : false,
   };
   if (replEnabled && (!body.replication_host || !body.replication_dataset)) {
-    alertEl.textContent = 'Remote Replication requires a Remote Host and Destination Dataset.';
+    alertEl.textContent = 'Remote Replication requires a target, and destination dataset.';
     alertEl.classList.remove('hidden');
     return;
   }
@@ -10616,10 +10941,11 @@ function renderSnapshots(el, snaps) {
               <div class="text-3 text-xs">${formatDate(s.creation)} · Used: ${fmtBytes(s.used)} · Refer: ${fmtBytes(s.refer)}</div>
             </div>
             ${currentUser.role==='admin' ? `
-              <div style="display:flex;gap:6px;flex-shrink:0;">
+              <div style="display:flex;gap:6px;flex-shrink:0;align-items:center;">
                 <button class="btn btn-ghost btn-sm" onclick="restoreSnapshot('${esc(s.name)}','${esc(s.dataset)}')">Restore</button>
                 <button class="btn btn-ghost btn-sm" onclick="cloneSnapshot('${esc(s.name)}')">Clone</button>
                 <button class="btn btn-ghost btn-sm" style="color:var(--accent-danger);" onclick="deleteSnapshot('${esc(s.name)}')">Delete</button>
+                <button class="row-menu-btn" onclick="openSnapRowMenu(event,'${esc(s.name)}','${esc(s.dataset)}')" title="More actions">⋮</button>
               </div>` : ''}
           </div>`).join('')}
         </div>
@@ -10717,6 +11043,30 @@ function toggleSnapDsMenu(e, dataset) {
   dd.style.top  = (rect.bottom + 4) + 'px';
   dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
 
+  _openShareMenu = { btn, dropdown: dd };
+}
+
+// ── Snapshot row burger menu ──────────────────────────────────────────────────
+function openSnapRowMenu(e, snapName, dataset) {
+  e.stopPropagation();
+  const btn = e.currentTarget;
+  if (_openShareMenu && _openShareMenu.btn === btn) { closeShareMenus(); return; }
+  closeShareMenus();
+
+  const dd = document.createElement('div');
+  dd.className = 'row-menu-dropdown';
+  dd.addEventListener('click', ev => ev.stopPropagation());
+
+  const pushBtn = document.createElement('button');
+  pushBtn.textContent = '⇅ Push InterLink…';
+  pushBtn.addEventListener('click', () => { closeShareMenus(); openPushInterlinkModal(snapName); });
+  dd.appendChild(pushBtn);
+
+  document.body.appendChild(dd);
+  const rect = btn.getBoundingClientRect();
+  dd.style.position = 'fixed';
+  dd.style.top  = (rect.bottom + 4) + 'px';
+  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
   _openShareMenu = { btn, dropdown: dd };
 }
 
@@ -12022,6 +12372,11 @@ function toggleDsMenu(evt) {
   snapBtn.textContent = '📸 Take Snapshot';
   snapBtn.addEventListener('click', () => { closeShareMenus(); openCreateSnapshot(dsName); });
   dd.appendChild(snapBtn);
+
+  const pushILBtn = document.createElement('button');
+  pushILBtn.textContent = '⇅ Push InterLink…';
+  pushILBtn.addEventListener('click', () => { closeShareMenus(); openPushDsILModal(dsName, false); });
+  dd.appendChild(pushILBtn);
 
   const sep = document.createElement('hr');
   sep.className = 'menu-sep';
@@ -14382,9 +14737,8 @@ function _saveVerCache(data) {
   try { localStorage.setItem(_VER_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch {}
 }
 
-// Called once after login — checks at most once per day, updates sidebar badge.
+// Called once after login — checks at most once per day, updates sidebar version.
 async function _sidebarVersionCheck() {
-  const badge = document.getElementById('sidebar-update-badge');
   const cached = _loadVerCache();
   const ONE_DAY = 86400 * 1000;
   let data = null;
@@ -14402,9 +14756,10 @@ async function _sidebarVersionCheck() {
   }
 
   if (data && data.update_available) {
-    if (badge) { badge.textContent = '⬆ v' + data.latest; badge.classList.remove('hidden'); }
     const dot = document.getElementById('nav-updates-dot');
     if (dot) dot.style.display = 'inline-block';
+    const latSpan = document.getElementById('app-version-latest');
+    if (latSpan) { latSpan.textContent = '→ v' + data.latest; latSpan.style.display = 'inline'; }
   }
 }
 
@@ -14429,15 +14784,15 @@ async function _autoBinaryVersionCheck() {
       latestEl.style.color = 'var(--accent-warn)';
       if (data.sig_valid === true) _showApplyBinaryWrap(data.service_installed === true);
       uptodateEl.classList.add('hidden');
-      const badge = document.getElementById('sidebar-update-badge');
-      if (badge) { badge.textContent = '⬆ v' + data.latest; badge.classList.remove('hidden'); }
       if (dot) dot.style.display = 'inline-block';
+      const latSpan = document.getElementById('app-version-latest');
+      if (latSpan) { latSpan.textContent = '→ v' + data.latest; latSpan.style.display = 'inline'; }
     } else {
       latestEl.style.color = '';
       uptodateEl.classList.remove('hidden');
-      const badge = document.getElementById('sidebar-update-badge');
-      if (badge) badge.classList.add('hidden');
       if (dot) dot.style.display = 'none';
+      const latSpan = document.getElementById('app-version-latest');
+      if (latSpan) latSpan.style.display = 'none';
     }
   }
 
@@ -16914,11 +17269,159 @@ async function loadReplicationPage() {
   }).join('');
 }
 
+// ── InterLink-aware replication helpers ──────────────────────────────────
+let _replILServers = [];
+const _replILProcessUsers = {};  // serverId → processUser string
+const _replILPoolsCache   = {};  // serverId → [{name, available}]
+
+// Populate the target <select> for the given prefix (sched-repl / rep / edit-rep).
+async function _replLoadILServers(prefix) {
+  const sel = document.getElementById(prefix + '-target');
+  if (!sel) return;
+  try {
+    const r = await fetch('/api/interlink/servers/fast');
+    _replILServers = r.ok ? (await r.json() || []) : [];
+  } catch { _replILServers = []; }
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— Select target —</option>' +
+    '<option value="__custom__">Custom SSH Target</option>' +
+    _replILServers.map(s =>
+      `<option value="${esc(s.id)}">${esc(s.hostname || s.id)}</option>`
+    ).join('');
+  if (cur) sel.value = cur;
+}
+
+// Show/hide IL group vs custom SSH group based on dropdown selection.
+function _replTargetChange(prefix) {
+  const val     = document.getElementById(prefix + '-target').value;
+  const ilGrp   = document.getElementById(prefix + '-il-grp');
+  const custGrp = document.getElementById(prefix + '-custom-grp');
+  if (!val) {
+    ilGrp.style.display   = 'none';
+    custGrp.style.display = 'none';
+    return;
+  }
+  if (val === '__custom__') {
+    ilGrp.style.display   = 'none';
+    custGrp.style.display = '';
+  } else {
+    ilGrp.style.display   = '';
+    custGrp.style.display = 'none';
+    _replLoadILPools(prefix, val);
+  }
+}
+
+// Fetch pools from the chosen InterLink server and populate the pool dropdown.
+async function _replLoadILPools(prefix, serverId) {
+  const sel = document.getElementById(prefix + '-il-pool');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  sel.disabled  = true;
+  try {
+    const r = await fetch('/api/interlink/remote-pools/' + encodeURIComponent(serverId));
+    if (r.ok) {
+      const data  = await r.json();
+      const pools = data.pools || [];
+      _replILPoolsCache[serverId] = pools;
+      if (data.process_user) _replILProcessUsers[serverId] = data.process_user;
+      sel.innerHTML = '<option value="">Select pool…</option>' +
+        pools.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    } else {
+      sel.innerHTML = '<option value="">Failed to load pools</option>';
+    }
+  } catch {
+    sel.innerHTML = '<option value="">Error loading pools</option>';
+  }
+  sel.disabled = false;
+}
+
+// Pre-fill destination when a pool is selected (uses source leaf name as hint).
+function _replILPoolChange(prefix) {
+  const pool   = document.getElementById(prefix + '-il-pool').value;
+  const destEl = document.getElementById(prefix + '-il-dest');
+  if (pool && !destEl.value) {
+    const leaf = _replSourceLeaf(prefix);
+    if (leaf) destEl.value = pool + '/' + leaf;
+  }
+}
+
+// Return the last path component of the relevant source dataset field.
+function _replSourceLeaf(prefix) {
+  let srcId;
+  if (prefix === 'sched-repl')  srcId = 'sched-dataset';
+  else if (prefix === 'rep')     srcId = 'rep-source';
+  else if (prefix === 'edit-rep') srcId = 'edit-rep-source';
+  const el = document.getElementById(srcId);
+  if (!el) return '';
+  const parts = (el.value || '').split('/');
+  return parts[parts.length - 1] || '';
+}
+
+// Resolve remote host + user from the current target selection.
+function _replGetHostUser(prefix) {
+  const target = document.getElementById(prefix + '-target').value;
+  if (!target || target === '__custom__') {
+    return {
+      host: (document.getElementById(prefix + '-host') || {}).value?.trim() || '',
+      user: (document.getElementById(prefix + '-user') || {}).value?.trim() || '',
+    };
+  }
+  const srv  = _replILServers.find(s => s.id === target);
+  let   host = '';
+  try { host = new URL(srv ? srv.url : '').hostname; } catch {}
+  const user = _replILProcessUsers[target] || '';
+  return { host, user };
+}
+
+// Restore target dropdown + groups from saved host/user/dest.
+// Tries to match savedHost against known IL server hostnames; falls back to custom SSH.
+async function _replRestoreTarget(prefix, savedHost, savedUser, savedDest) {
+  const matchedServer = _replILServers.find(s => {
+    try { return new URL(s.url).hostname === savedHost; } catch { return false; }
+  });
+  if (matchedServer) {
+    document.getElementById(prefix + '-target').value           = matchedServer.id;
+    document.getElementById(prefix + '-il-grp').style.display   = '';
+    document.getElementById(prefix + '-custom-grp').style.display = 'none';
+    await _replLoadILPools(prefix, matchedServer.id);
+    const pools = _replILPoolsCache[matchedServer.id] || [];
+    const matchPool = pools.find(p => savedDest === p.name || savedDest.startsWith(p.name + '/'));
+    if (matchPool) document.getElementById(prefix + '-il-pool').value = matchPool.name;
+    document.getElementById(prefix + '-il-dest').value = savedDest || '';
+  } else {
+    document.getElementById(prefix + '-target').value             = '__custom__';
+    document.getElementById(prefix + '-il-grp').style.display     = 'none';
+    document.getElementById(prefix + '-custom-grp').style.display = '';
+    const hostEl = document.getElementById(prefix + '-host');
+    const userEl = document.getElementById(prefix + '-user');
+    const destEl = document.getElementById(prefix + '-dataset') || document.getElementById(prefix + '-dest');
+    if (hostEl) hostEl.value = savedHost || '';
+    if (userEl) userEl.value = savedUser || '';
+    if (destEl) destEl.value = savedDest || '';
+  }
+}
+
+// Resolve the destination dataset path from the current target selection.
+function _replGetDest(prefix) {
+  const target = document.getElementById(prefix + '-target').value;
+  if (!target || target === '__custom__') {
+    // Schedule modal uses -dataset; replication modals use -dest
+    const el = document.getElementById(prefix + '-dataset') || document.getElementById(prefix + '-dest');
+    return el ? el.value.trim() : '';
+  }
+  return (document.getElementById(prefix + '-il-dest') || {}).value?.trim() || '';
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function openNewReplicationModal() {
-  ['rep-name','rep-source','rep-host','rep-user','rep-dest'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['rep-name','rep-source','rep-host','rep-user','rep-dest','rep-il-dest'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  document.getElementById('rep-target').value = '';
+  document.getElementById('rep-il-grp').style.display = 'none';
+  document.getElementById('rep-il-pool').innerHTML = '<option value="">Select pool…</option>';
+  document.getElementById('rep-custom-grp').style.display = 'none';
   document.getElementById('rep-recursive').checked = false;
   document.getElementById('rep-compressed').checked = true;
   const al = document.getElementById('new-rep-alert'); al.classList.add('hidden'); al.textContent = '';
+  _replLoadILServers('rep');
   document.getElementById('modal-new-replication').classList.remove('hidden');
 }
 function closeNewReplicationModal() { document.getElementById('modal-new-replication').classList.add('hidden'); }
@@ -16937,12 +17440,11 @@ async function openEditReplicationModal(id) {
   document.getElementById('edit-rep-id').value       = t.id;
   document.getElementById('edit-rep-name').value     = t.name;
   document.getElementById('edit-rep-source').value   = t.source_dataset;
-  document.getElementById('edit-rep-host').value     = t.remote_host;
-  document.getElementById('edit-rep-user').value     = t.remote_user || '';
-  document.getElementById('edit-rep-dest').value     = t.remote_dataset;
   document.getElementById('edit-rep-recursive').checked  = !!t.recursive;
   document.getElementById('edit-rep-compressed').checked = !!t.compressed;
   const al = document.getElementById('edit-rep-alert'); al.classList.add('hidden'); al.textContent = '';
+  await _replLoadILServers('edit-rep');
+  await _replRestoreTarget('edit-rep', t.remote_host, t.remote_user || '', t.remote_dataset);
   document.getElementById('modal-edit-replication').classList.remove('hidden');
 }
 function closeEditReplicationModal() { document.getElementById('modal-edit-replication').classList.add('hidden'); }
@@ -16953,11 +17455,10 @@ async function submitEditReplicationTask() {
   const id     = document.getElementById('edit-rep-id').value;
   const name   = document.getElementById('edit-rep-name').value.trim();
   const source = document.getElementById('edit-rep-source').value.trim();
-  const host   = document.getElementById('edit-rep-host').value.trim();
-  const user   = document.getElementById('edit-rep-user').value.trim();
-  const dest   = document.getElementById('edit-rep-dest').value.trim();
+  const {host, user} = _replGetHostUser('edit-rep');
+  const dest   = _replGetDest('edit-rep');
   if (!name || !source || !host || !dest) {
-    al.textContent = 'Name, Source Dataset, Remote Host and Destination are required.';
+    al.textContent = 'Name, Source Dataset, target and Destination are required.';
     al.classList.remove('hidden'); return;
   }
   const btn = document.getElementById('btn-edit-rep-submit');
@@ -17011,11 +17512,10 @@ async function submitNewReplicationTask() {
   al.classList.add('hidden');
   const name   = document.getElementById('rep-name').value.trim();
   const source = document.getElementById('rep-source').value.trim();
-  const host   = document.getElementById('rep-host').value.trim();
-  const user   = document.getElementById('rep-user').value.trim();
-  const dest   = document.getElementById('rep-dest').value.trim();
+  const {host, user} = _replGetHostUser('rep');
+  const dest   = _replGetDest('rep');
   if (!name || !source || !host || !dest) {
-    al.textContent = 'Name, Source Dataset, Remote Host and Destination are required.';
+    al.textContent = 'Name, Source Dataset, target and Destination are required.';
     al.classList.remove('hidden'); return;
   }
   const btn = document.getElementById('btn-new-rep-submit');
@@ -18233,6 +18733,667 @@ function runReplicationTask(id, name) {
   }
 
 })(); // end Capacity Trend IIFE
+
+// ===== InterLink =====
+(function() {
+  let _pendingLinkPayload = null; // stored while waiting for TOTP code
+
+  // ── hostname dropdown ────────────────────────────────────────────────────
+
+  function _esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function _apiFetch(url, opts) {
+    return fetch(url, Object.assign({ credentials: 'same-origin' }, opts || {}))
+      .then(function(r) {
+        if (!r.ok) return r.json().catch(function(){ return {}; }).then(function(d) {
+          throw new Error(d.error || r.statusText || ('HTTP ' + r.status));
+        });
+        return r.json();
+      });
+  }
+
+  function _showToast(msg, type) {
+    var t = document.createElement('div');
+    t.textContent = msg;
+    t.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:99999;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.4);transition:opacity .4s;' +
+      (type === 'error' ? 'background:#ff453a;' : 'background:#22c55e;');
+    document.body.appendChild(t);
+    setTimeout(function() { t.style.opacity = '0'; setTimeout(function() { t.remove(); }, 400); }, 2600);
+  }
+
+  // Follows the same pattern as openShareMenu / row-menu-dropdown which is known to work:
+  // create fresh → append to body → set position:fixed after append → remove on close.
+  let _hddEl = null;
+
+  function closeHostnameDropdown() {
+    if (_hddEl) { _hddEl.remove(); _hddEl = null; }
+  }
+
+  function toggleHostnameDropdown(e) {
+    e.stopPropagation();
+    if (_hddEl) { closeHostnameDropdown(); return; }
+
+    const btn = document.getElementById('sidebar-hostname');
+    if (!btn) return;
+
+    _hddEl = document.createElement('div');
+    _hddEl.className = 'row-menu-dropdown'; // reuses proven overlay styles
+    _hddEl.style.minWidth = '220px';
+    _hddEl.addEventListener('click', ev => ev.stopPropagation());
+    document.body.appendChild(_hddEl);
+    const r = btn.getBoundingClientRect();
+    _hddEl.style.position = 'fixed';
+    _hddEl.style.top  = (r.bottom + 4) + 'px';
+    _hddEl.style.left = r.left + 'px';
+
+    loadHostnameDropdown();
+  }
+
+  // Close on click outside
+  document.addEventListener('mousedown', function(e) {
+    const btn = document.getElementById('sidebar-hostname');
+    if (_hddEl && !_hddEl.contains(e.target) && btn && !btn.contains(e.target)) {
+      closeHostnameDropdown();
+    }
+  });
+
+  function _dropdownBase(servers, pending) {
+    if (!_hddEl) return;
+    const localHostname = (document.getElementById('sidebar-hostname-label') || {}).textContent || 'this server';
+    let html = `<div class="hdd-current">` +
+      `<span class="status-dot online"></span>` +
+      `<span class="hdd-hostname">${_esc(localHostname)}</span>` +
+      `<span class="hdd-badge">current</span>` +
+      `</div>`;
+    for (const s of (servers || [])) {
+      const dotClass = pending ? 'pending' : (s.online ? 'online' : 'offline');
+      const urlText  = pending ? '' : (() => { try { return new URL(s.url).host; } catch { return ''; } })();
+      html += `<div class="hdd-server" data-sid="${_esc(s.id)}" onclick="window._interlinkSwitch('${_esc(s.id)}')">` +
+        `<span class="status-dot ${dotClass}"></span>` +
+        `<span class="hdd-hostname">${_esc(s.hostname)}</span>` +
+        `<span class="hdd-url">${_esc(urlText)}</span>` +
+        `</div>`;
+    }
+    html += `<div class="hdd-divider"></div>` +
+      `<div class="hdd-manage" onclick="openInterlinkModal()">Manage InterLink</div>`;
+    _hddEl.innerHTML = html;
+  }
+
+  function _updateDropdownStatus(servers) {
+    if (!_hddEl) return;
+    for (const s of (servers || [])) {
+      const row = _hddEl.querySelector('[data-sid="' + s.id + '"]');
+      if (!row) continue;
+      const dot = row.querySelector('.status-dot');
+      if (dot) dot.className = 'status-dot ' + (s.online ? 'online' : 'offline');
+      const urlSpan = row.querySelector('.hdd-url');
+      if (urlSpan) { try { urlSpan.textContent = new URL(s.url).host; } catch {} }
+    }
+  }
+
+  function loadHostnameDropdown() {
+    // Phase 1: fetch config instantly (no remote pinging) → show hostnames with pending dots.
+    _apiFetch('/api/interlink/servers/fast')
+      .then(function(servers) {
+        _dropdownBase(servers, true);
+        // Phase 2: fetch live status → update dots + DNS entries.
+        return _apiFetch('/api/interlink/servers');
+      })
+      .then(function(servers) { _updateDropdownStatus(servers); })
+      .catch(function() { _dropdownBase([], false); }); // silently ignore fetch errors
+  }
+
+  window.toggleHostnameDropdown = toggleHostnameDropdown;
+  window.closeHostnameDropdown  = closeHostnameDropdown;
+
+  // ── switch to remote server ──────────────────────────────────────────────
+
+  window._interlinkSwitch = async function(serverId) {
+    closeHostnameDropdown();
+    try {
+      const res = await _apiFetch('/api/interlink/switch', {
+        method: 'POST',
+        body: JSON.stringify({ server_id: serverId })
+      });
+      window.location.href = res.redirect_url;
+    } catch(e) {
+      _showToast('Switch failed: ' + e.message, 'error');
+    }
+  };
+
+  // ── manage interlink modal ────────────────────────────────────────────────
+
+  window.openInterlinkModal = function() {
+    closeHostnameDropdown();
+    document.getElementById('modal-interlink').classList.remove('hidden');
+    loadInterlinkList();
+  };
+
+  window.closeInterlinkModal = function() {
+    document.getElementById('modal-interlink').classList.add('hidden');
+  };
+
+  async function loadInterlinkList() {
+    const wrap = document.getElementById('interlink-table-wrap');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>';
+    let servers = [];
+    try { servers = await _apiFetch('/api/interlink/servers'); } catch(e) {
+      wrap.innerHTML = `<div class="alert alert-error">${_esc(e.message)}</div>`;
+      return;
+    }
+    if (!servers.length) {
+      wrap.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:24px;">No linked servers yet. Click "+ Add Server" to connect a remote ZNAS instance.</div>';
+      return;
+    }
+    let rows = '';
+    for (const s of servers) {
+      const dot = s.online
+        ? '<span style="color:#22c55e;font-size:16px;">●</span>'
+        : '<span style="color:#6b7280;font-size:16px;">○</span>';
+      const zfsDot = s.zfs_access
+        ? '<span style="color:#22c55e;font-size:13px;">●</span> <span style="font-size:12px;color:#22c55e;">Granted</span>'
+        : '<span style="color:#6b7280;font-size:13px;">○</span> <span style="font-size:12px;color:var(--text-3);">Not set</span>';
+      const ago = _relTime(s.linked_at);
+      rows += `<tr>` +
+        `<td class="col-status">${dot}</td>` +
+        `<td style="font-weight:600;">${_esc(s.hostname)}</td>` +
+        `<td style="color:var(--text-3);font-size:12px;">${_esc(new URL(s.url).host)}</td>` +
+        `<td style="color:var(--text-3);font-size:12px;">${_esc(ago)}</td>` +
+        `<td>${zfsDot}</td>` +
+        `<td class="col-actions"><button class="btn btn-ghost btn-sm" style="color:#ff453a;border-color:#ff453a;" ` +
+          `onclick="unlinkServer('${_esc(s.id)}','${_esc(s.hostname)}')">Unlink</button></td>` +
+        `</tr>`;
+    }
+    wrap.innerHTML = `<table class="interlink-table">` +
+      `<thead><tr><th class="col-status"></th><th>Hostname</th><th>URL</th><th>Added</th><th>ZFS Access</th><th class="col-actions"></th></tr></thead>` +
+      `<tbody>${rows}</tbody>` +
+      `</table>`;
+  }
+
+  window.loadInterlinkList = loadInterlinkList;
+
+  window.unlinkServer = async function(id, hostname) {
+    if (!confirm(`Unlink ${hostname}? This only removes the connection locally.`)) return;
+    try {
+      await _apiFetch(`/api/interlink/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      _showToast(`Unlinked ${hostname}`, 'success');
+      loadInterlinkList();
+      loadHostnameDropdown();
+    } catch(e) {
+      _showToast('Unlink failed: ' + e.message, 'error');
+    }
+  };
+
+  // ── add server sub-popup ──────────────────────────────────────────────────
+
+  window.openAddServerModal = function() {
+    document.getElementById('interlink-add-url').value  = '';
+    document.getElementById('interlink-add-user').value = '';
+    document.getElementById('interlink-add-pass').value = '';
+    document.getElementById('interlink-add-alert').classList.add('hidden');
+    document.getElementById('modal-interlink-add').classList.remove('hidden');
+    setTimeout(() => document.getElementById('interlink-add-url').focus(), 50);
+  };
+
+  window.closeAddServerModal = function() {
+    document.getElementById('modal-interlink-add').classList.add('hidden');
+  };
+
+  window.connectInterLink = async function() {
+    const url  = (document.getElementById('interlink-add-url').value  || '').trim();
+    const user = (document.getElementById('interlink-add-user').value || '').trim();
+    const pass = (document.getElementById('interlink-add-pass').value || '');
+    const alertEl = document.getElementById('interlink-add-alert');
+    alertEl.classList.add('hidden');
+    if (!url || !user || !pass) {
+      alertEl.textContent = 'All fields are required.';
+      alertEl.classList.remove('hidden');
+      return;
+    }
+    const btn = document.getElementById('btn-interlink-connect');
+    btn.disabled = true;
+    btn.textContent = 'Connecting…';
+    try {
+      const res = await _apiFetch('/api/interlink/link', {
+        method: 'POST',
+        body: JSON.stringify({ url, username: user, password: pass, totp: '' })
+      });
+      if (res.totp_needed) {
+        _pendingLinkPayload = { url, username: user, password: pass };
+        closeAddServerModal();
+        openInterlinkTOTPModal();
+        return;
+      }
+      if (res.ok) {
+        _showToast(`Linked to ${res.linked_server.hostname}`, 'success');
+        closeAddServerModal();
+        loadInterlinkList();
+        loadHostnameDropdown();
+      }
+    } catch(e) {
+      alertEl.textContent = e.message;
+      alertEl.classList.remove('hidden');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Connect';
+    }
+  };
+
+  // ── TOTP prompt during linking ────────────────────────────────────────────
+
+  function openInterlinkTOTPModal() {
+    document.getElementById('interlink-totp-code').value = '';
+    document.getElementById('modal-interlink-totp').classList.remove('hidden');
+    setTimeout(() => document.getElementById('interlink-totp-code').focus(), 50);
+  }
+
+  window.closeInterlinkTOTPModal = function() {
+    document.getElementById('modal-interlink-totp').classList.add('hidden');
+    _pendingLinkPayload = null;
+  };
+
+  window._interlinkVerifyAndLink = async function() {
+    if (!_pendingLinkPayload) return;
+    const totp = (document.getElementById('interlink-totp-code').value || '').trim();
+    if (!totp) return;
+    const btn = document.getElementById('btn-interlink-verify');
+    btn.disabled = true;
+    btn.textContent = 'Verifying…';
+    try {
+      const { url, username, password } = _pendingLinkPayload;
+      const res = await _apiFetch('/api/interlink/link', {
+        method: 'POST',
+        body: JSON.stringify({ url, username, password, totp })
+      });
+      if (res.ok) {
+        _showToast(`Linked to ${res.linked_server.hostname}`, 'success');
+        document.getElementById('modal-interlink-totp').classList.add('hidden');
+        _pendingLinkPayload = null;
+        loadInterlinkList();
+        loadHostnameDropdown();
+      } else {
+        _showToast('Invalid 2FA code', 'error');
+      }
+    } catch(e) {
+      _showToast(e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Verify & Link';
+    }
+  };
+
+  // ── utility ───────────────────────────────────────────────────────────────
+
+  function _relTime(iso) {
+    if (!iso) return '';
+    const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    if (diff < 86400 * 30) return Math.floor(diff / 86400) + 'd ago';
+    if (diff < 86400 * 365) return Math.floor(diff / (86400 * 30)) + 'mo ago';
+    return Math.floor(diff / (86400 * 365)) + 'y ago';
+  }
+
+
+})(); // end InterLink IIFE
+
+// ===== Push InterLink =====
+let _pushJobsPollIv  = null;
+let _pushJobRates    = {}; // jobId → { lastSent, lastTime }
+let _pushSnapName    = null;
+let _pushDsILDataset    = null; // dataset/zvol name being pushed via modal-push-ds-il
+let _pushDsILSourceSize = 0;   // estimated bytes of the source (used for capacity check)
+let _pushDsILPoolAvail  = {};  // pool name → available bytes on the remote
+
+async function openPushDsILModal(dsName, isZvol) {
+  _pushDsILDataset   = dsName;
+  _pushDsILPoolAvail = {};
+  // Capture source size from local cache.
+  if (isZvol) {
+    const z = (zvolCache || []).find(x => x.name === dsName);
+    _pushDsILSourceSize = z ? (z.volsize || z.used || 0) : 0;
+  } else {
+    const d = (datasetCache || []).find(x => x.name === dsName);
+    _pushDsILSourceSize = d ? (d.used || 0) : 0;
+  }
+
+  document.getElementById('push-ds-il-icon').textContent = isZvol ? '💾' : '📁';
+  document.getElementById('push-ds-il-name').textContent = dsName;
+  document.getElementById('push-ds-il-alert').classList.add('hidden');
+  document.getElementById('push-ds-il-pool-grp').style.display  = 'none';
+  document.getElementById('push-ds-il-dest-grp').style.display  = 'none';
+  document.getElementById('push-ds-il-cap').style.display       = 'none';
+  const _pushDsBtn = document.getElementById('btn-push-ds-il');
+  _pushDsBtn.disabled = true;
+  _pushDsBtn.textContent = 'Push';
+
+  const serverSel = document.getElementById('push-ds-il-server');
+  serverSel.innerHTML = '<option value="">Loading servers…</option>';
+  document.getElementById('modal-push-ds-il').classList.remove('hidden');
+
+  try {
+    const servers = await fetch('/api/interlink/servers', {credentials:'same-origin'}).then(r => r.json());
+    const online  = (servers || []).filter(s => s.online);
+    if (!online.length) {
+      serverSel.innerHTML = '<option value="">No online InterLink servers</option>';
+    } else {
+      serverSel.innerHTML = '<option value="">— select server —</option>' +
+        online.map(s => `<option value="${esc(s.id)}">${esc(s.hostname)}</option>`).join('');
+    }
+  } catch {
+    serverSel.innerHTML = '<option value="">Failed to load servers</option>';
+  }
+}
+
+function closePushDsILModal() {
+  document.getElementById('modal-push-ds-il').classList.add('hidden');
+  _pushDsILDataset = null;
+}
+
+async function onPushDsILServerChange() {
+  const serverId = document.getElementById('push-ds-il-server').value;
+  const poolGrp  = document.getElementById('push-ds-il-pool-grp');
+  const destGrp  = document.getElementById('push-ds-il-dest-grp');
+  const poolSel  = document.getElementById('push-ds-il-pool');
+  document.getElementById('btn-push-ds-il').disabled = true;
+
+  if (!serverId) { poolGrp.style.display = 'none'; destGrp.style.display = 'none'; return; }
+
+  poolSel.innerHTML = '<option value="">Loading pools…</option>';
+  poolGrp.style.display = '';
+  destGrp.style.display = 'none';
+
+  try {
+    const resp = await fetch(`/api/interlink/remote-pools/${encodeURIComponent(serverId)}`, {credentials:'same-origin'});
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to load pools');
+    const pools = data.pools || [];
+    if (!pools.length) {
+      poolSel.innerHTML = '<option value="">No pools on remote server</option>';
+      return;
+    }
+    _pushDsILPoolAvail = {};
+    for (const p of pools) { _pushDsILPoolAvail[p.name] = p.available || 0; }
+    poolSel.innerHTML = '<option value="">— select pool —</option>' +
+      pools.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    destGrp.style.display = '';
+    onPushDsILPoolChange(); // reset dest input
+  } catch(e) {
+    poolSel.innerHTML = `<option value="">Error: ${esc(e.message)}</option>`;
+  }
+}
+
+function onPushDsILPoolChange() {
+  const pool    = document.getElementById('push-ds-il-pool').value;
+  const destInp = document.getElementById('push-ds-il-dest');
+  const capDiv  = document.getElementById('push-ds-il-cap');
+  const btn     = document.getElementById('btn-push-ds-il');
+  btn.disabled  = true;
+
+  if (!pool) {
+    destInp.value = '';
+    capDiv.style.display = 'none';
+    return;
+  }
+
+  // Suggest: remote_pool / source_dataset_path_without_its_pool
+  const leafPath = (_pushDsILDataset || '').split('/').slice(1).join('/');
+  destInp.value = leafPath ? pool + '/' + leafPath : pool;
+
+  // Show capacity info row.
+  const avail  = _pushDsILPoolAvail[pool] || 0;
+  const enough = avail === 0 || _pushDsILSourceSize === 0 || _pushDsILSourceSize <= avail;
+  document.getElementById('push-ds-il-cap-src').textContent   = fmtBytes(_pushDsILSourceSize);
+  document.getElementById('push-ds-il-cap-avail').textContent = avail > 0 ? fmtBytes(avail) : '—';
+  document.getElementById('push-ds-il-cap-avail').style.color = enough ? 'var(--accent-3)' : 'var(--accent-danger)';
+  const warnEl = document.getElementById('push-ds-il-cap-warn');
+  if (!enough) {
+    warnEl.textContent = '⚠ Not enough space on the target pool';
+    warnEl.style.display = '';
+  } else {
+    warnEl.style.display = 'none';
+  }
+  capDiv.style.display = '';
+
+  btn.disabled = !enough;
+}
+
+function _pushDsILOnDestInput(val) {
+  const pool   = document.getElementById('push-ds-il-pool').value;
+  const avail  = _pushDsILPoolAvail[pool] || 0;
+  const enough = avail === 0 || _pushDsILSourceSize === 0 || _pushDsILSourceSize <= avail;
+  document.getElementById('btn-push-ds-il').disabled = !val.trim() || !enough;
+}
+
+async function startPushDsIL() {
+  const serverId   = document.getElementById('push-ds-il-server').value;
+  const destDataset = document.getElementById('push-ds-il-dest').value.trim();
+  const alertEl    = document.getElementById('push-ds-il-alert');
+  alertEl.classList.add('hidden');
+
+  if (!serverId || !destDataset || !_pushDsILDataset) {
+    alertEl.textContent = 'Please select a server, pool, and confirm the destination path.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('btn-push-ds-il');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  try {
+    const resp = await fetch('/api/push-interlink/start-dataset', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ local_dataset: _pushDsILDataset, server_id: serverId, dest_dataset: destDataset }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alertEl.textContent = data.error || 'Failed to start push';
+      alertEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = 'Push';
+      return;
+    }
+    closePushDsILModal();
+    _startPushJobsPolling();
+  } catch(e) {
+    alertEl.textContent = e.message;
+    alertEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Push';
+  }
+}
+
+function _fmtETA(seconds) {
+  if (!seconds || seconds <= 0) return '';
+  const s = Math.round(seconds);
+  if (s < 60)   return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+}
+
+async function openPushInterlinkModal(snapName) {
+  _pushSnapName = snapName;
+  document.getElementById('push-il-snap').textContent = snapName;
+  document.getElementById('push-il-alert').classList.add('hidden');
+  document.getElementById('push-il-pool-grp').style.display = 'none';
+  document.getElementById('push-il-dest-grp').style.display = 'none';
+  document.getElementById('btn-push-il-start').disabled = true;
+
+  const serverSel = document.getElementById('push-il-server');
+  serverSel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const servers = await fetch('/api/interlink/servers', {credentials:'same-origin'}).then(r => r.json());
+    const online  = (servers || []).filter(s => s.online);
+    if (!online.length) {
+      serverSel.innerHTML = '<option value="">No online InterLink servers</option>';
+    } else {
+      serverSel.innerHTML = '<option value="">— select server —</option>' +
+        online.map(s => `<option value="${esc(s.id)}">${esc(s.hostname)}</option>`).join('');
+    }
+  } catch {
+    serverSel.innerHTML = '<option value="">Failed to load servers</option>';
+  }
+  document.getElementById('modal-push-interlink').classList.remove('hidden');
+}
+
+function closePushInterlinkModal() {
+  document.getElementById('modal-push-interlink').classList.add('hidden');
+  _pushSnapName = null;
+}
+
+async function onPushILServerChange() {
+  const serverId = document.getElementById('push-il-server').value;
+  const poolGrp  = document.getElementById('push-il-pool-grp');
+  const destGrp  = document.getElementById('push-il-dest-grp');
+  const poolSel  = document.getElementById('push-il-pool');
+  document.getElementById('btn-push-il-start').disabled = true;
+
+  if (!serverId) { poolGrp.style.display = 'none'; destGrp.style.display = 'none'; return; }
+
+  poolSel.innerHTML = '<option value="">Loading pools…</option>';
+  poolGrp.style.display = '';
+  destGrp.style.display = 'none';
+
+  try {
+    const resp  = await fetch(`/api/interlink/remote-pools/${encodeURIComponent(serverId)}`, {credentials:'same-origin'});
+    const data  = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to load pools');
+    const pools = data.pools || [];
+    if (!pools.length) {
+      poolSel.innerHTML = '<option value="">No pools on remote server</option>';
+      return;
+    }
+    poolSel.innerHTML = '<option value="">— select pool —</option>' +
+      pools.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    destGrp.style.display = '';
+
+    // Pre-fill destination: remote_pool/source_dataset_path_without_pool
+    poolSel.onchange = function() {
+      const pool = poolSel.value;
+      if (!pool) { document.getElementById('btn-push-il-start').disabled = true; return; }
+      const dsPath = (_pushSnapName || '').split('@')[0].split('/').slice(1).join('/');
+      document.getElementById('push-il-dest').value = dsPath ? pool + '/' + dsPath : pool;
+      document.getElementById('btn-push-il-start').disabled = false;
+    };
+  } catch(e) {
+    poolSel.innerHTML = `<option value="">Error: ${esc(e.message)}</option>`;
+  }
+}
+
+async function startPushInterlink() {
+  const serverId   = document.getElementById('push-il-server').value;
+  const destDataset = document.getElementById('push-il-dest').value.trim();
+  const alertEl    = document.getElementById('push-il-alert');
+  alertEl.classList.add('hidden');
+
+  if (!serverId || !destDataset || !_pushSnapName) {
+    alertEl.textContent = 'Please select a server, pool, and confirm the destination dataset.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('btn-push-il-start');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  try {
+    const r = await fetch('/api/push-interlink/start', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ snapshot_name: _pushSnapName, server_id: serverId, dest_dataset: destDataset }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      alertEl.textContent = d.error || 'Failed to start push.';
+      alertEl.classList.remove('hidden');
+      return;
+    }
+    closePushInterlinkModal();
+    _startPushJobsPolling();
+  } catch(e) {
+    alertEl.textContent = e.message;
+    alertEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Push';
+  }
+}
+
+async function cancelPushInterlinkJob(jobId) {
+  try {
+    await fetch(`/api/push-interlink/cancel/${encodeURIComponent(jobId)}`, {
+      method: 'POST', credentials: 'same-origin'
+    });
+  } catch {}
+}
+
+async function _pollPushJobs() {
+  try {
+    const jobs = await fetch('/api/push-interlink/jobs', {credentials:'same-origin'}).then(r => r.json());
+    if (!Array.isArray(jobs)) return;
+
+    const active = jobs.filter(j => j.state === 'pending' || j.state === 'running');
+
+    // Remove stale push entries from activeJobs.
+    for (const id of Object.keys(activeJobs)) {
+      if (id.startsWith('push-') && !active.find(j => j.id === id)) {
+        delete activeJobs[id];
+        delete _pushJobRates[id];
+      }
+    }
+
+    const now = Date.now();
+    for (const j of active) {
+      const sent  = j.bytes_sent  || 0;
+      const total = j.total_bytes || 0;
+      const prev  = _pushJobRates[j.id] || { lastSent: 0, lastTime: now };
+      const dt    = (now - prev.lastTime) / 1000;
+      const rate  = dt > 0.5 ? (sent - prev.lastSent) / dt : 0;
+      _pushJobRates[j.id] = { lastSent: sent, lastTime: now };
+
+      const progress = total > 0 ? sent / total : null;
+      const eta      = (rate > 0 && total > sent) ? Math.round((total - sent) / rate) : null;
+      const pctStr   = progress != null ? ` (${(progress * 100).toFixed(0)}%)` : '';
+
+      activeJobs[j.id] = {
+        label:       'Push: ' + j.snapshot_name + ' → ' + j.remote_server + ':' + j.dest_dataset + pctStr,
+        startedAt:   new Date(j.started_at),
+        progress:    progress,
+        eta:         eta,
+        cancelJobId: j.id,
+      };
+    }
+
+    renderActivityBar(null);
+
+    if (active.length === 0) {
+      if (_pushJobsPollIv) { clearInterval(_pushJobsPollIv); _pushJobsPollIv = null; }
+      refreshActivityBar();
+      // Show error toasts for recently failed jobs.
+      const errored = jobs.filter(j => j.state === 'error' && j.ended_at &&
+        (now - new Date(j.ended_at).getTime()) < 12000);
+      for (const j of errored) {
+        const t = document.createElement('div');
+        t.textContent = 'Push failed: ' + j.error_msg;
+        t.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:99999;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;background:#ff453a;box-shadow:0 4px 16px rgba(0,0,0,.4);transition:opacity .4s;';
+        document.body.appendChild(t);
+        setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 5000);
+      }
+    }
+  } catch {}
+}
+
+function _startPushJobsPolling() {
+  if (_pushJobsPollIv) return;
+  _pollPushJobs();
+  _pushJobsPollIv = setInterval(_pollPushJobs, 2500);
+}
 
 </script>
 </body>

@@ -40,7 +40,9 @@ Run `sudo visudo -f /etc/sudoers.d/zfsnas` and paste the block below.
 # since v2.0.0 — zpool scrub / scrub -s (Scrub Management page)
 # since v4.0.0 — zpool offline/online/clear (Pool Fixer Wizard)
 # since v5.0.0 — zfs load-key / unload-key (native encryption)
+# since v6.1.0 — zfs send / zfs recv (remote & local dataset replication)
 # since v6.3.21 — zpool replace -f (Pool Fixer Wizard: disk replacement for DEGRADED pools)
+# since v6.3.26 — zfs allow (InterLink push & schedule replication: ZFS delegation to service user)
 Cmnd_Alias ZFSNAS_ZFS = \
     /usr/sbin/zpool list *, \
     /usr/sbin/zpool status, \
@@ -70,6 +72,10 @@ Cmnd_Alias ZFSNAS_ZFS = \
     /usr/sbin/zfs destroy *, \
     /usr/sbin/zfs destroy -r *, \
     /usr/sbin/zfs snapshot *, \
+    /usr/sbin/zfs send *, \
+    /usr/sbin/zfs recv *, \
+    /usr/sbin/zfs receive *, \
+    /usr/sbin/zfs allow *, \
     /usr/sbin/zfs rollback -r *, \
     /usr/sbin/zfs clone *, \
     /usr/sbin/zfs mount *, \
@@ -273,6 +279,8 @@ ExecStart=/opt/zfsnas/zfsnas
 - **`/sbin/shutdown -h +0` (UPS watcher)** — the UPS shutdown watcher calls `/sbin/shutdown -h +0` directly (no `sudo` wrapper) to halt the system when battery thresholds are breached. This command does not appear in the sudoers whitelist; it relies on the process having shutdown permission via polkit (standard on Ubuntu 22.04+) or on the portal running as root. If you observe shutdown failures, add a polkit rule granting the `zfsnas` user shutdown permission, or add `/sbin/shutdown -h +0` to `ZFSNAS_SYSTEM` and update the code to use `sudo`.
 - **`env DEBIAN_FRONTEND=noninteractive apt-get purge/remove`** — NUT uninstall wraps `apt-get` with the `env` command to suppress interactive prompts. The sudoers entry therefore targets `/usr/bin/env` (not `/usr/bin/apt-get` directly) and must match the exact argument sequence shown in `ZFSNAS_UPS`. The NUT *install* path (`apt-get install -y nut nut-client`) is already covered by the wildcard entry in `ZFSNAS_APT`.
 - **`tee /etc/modprobe.d/zfs.conf` and sysfs tee entries** — used by the ARC Level 1 tuning feature (v6.3.22+) to persist ZFS ARC size limits across reboots and to apply them immediately via kernel sysfs. These are write-only paths; the portal only ever pipes well-formed `options zfs ...` lines or numeric byte values through `tee`.
+- **`zfs send *` / `zfs recv *` / `zfs receive *`** — used by the remote replication feature (snapshot policies and standalone replication tasks) and the local dataset-to-dataset replication feature. `zfs send` streams a snapshot to stdout; `zfs recv`/`zfs receive` reads a stream from stdin. Both are required locally for local replication (`zfs send | zfs recv` piped on the same host). For remote replication and InterLink push, only `zfs send` is run locally — the remote side runs `zfs recv` via SSH under its own service account (no local sudo required for that side). Including both forms (`recv` and `receive`) is necessary because OpenZFS accepts either spelling.
+- **`zfs allow *`** — used by the InterLink push feature and scheduled replication via InterLink servers to delegate ZFS permissions (`snapshot,send,receive,create,mount`) to the service account on every pool. This is required so that `zfs send` / `zfs recv` can be invoked without sudo when the remote side accepts the SSH connection as the non-root service user. The portal always restricts delegation to the service account's own username and to the specific permission set shown above.
 - **Command paths** — paths shown are for Ubuntu 22.04/24.04. Some tools (`sgdisk`, `wipefs`, `nvme`) may live under `/usr/sbin/` instead of `/usr/bin/` on older releases; verify with `which <command>`.
 
 ---

@@ -19,6 +19,7 @@ func HandleGetSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 		jsonOK(w, map[string]interface{}{
 			"max_smbd_processes": appCfg.MaxSmbdProcesses,
 			"home_dataset":       appCfg.SMBHomeDataset,
+			"clean_defaults":     appCfg.SMBCleanDefaults,
 		})
 	}
 }
@@ -29,6 +30,7 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 		var req struct {
 			MaxSmbdProcesses *int    `json:"max_smbd_processes"`
 			HomeDataset      *string `json:"home_dataset"`
+			CleanDefaults    *bool   `json:"clean_defaults"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -53,6 +55,10 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			appCfg.SMBHomeDataset = ds
 			changed = true
 		}
+		if req.CleanDefaults != nil {
+			appCfg.SMBCleanDefaults = *req.CleanDefaults
+			changed = true
+		}
 
 		if !changed {
 			jsonOK(w, map[string]string{"message": "no changes"})
@@ -63,7 +69,7 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 		if system.IsSambaInstalled() {
-			if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames()); err != nil {
+			if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames(), appCfg.SMBCleanDefaults); err != nil {
 				log.Printf("smb global config: ApplySmbGlobal: %v", err)
 			} else if err := system.ReloadSamba(); err != nil {
 				log.Printf("smb global config: ReloadSamba: %v", err)

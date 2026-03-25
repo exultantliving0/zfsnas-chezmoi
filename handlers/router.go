@@ -271,7 +271,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/snapshot-schedules/{id}",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteSchedule)))).Methods("DELETE")
 	r.Handle("/api/snapshot-schedules/{id}/run-now",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleRunScheduleNow)))).Methods("POST")
+		RequireAuth(RequireAdmin(HandleRunScheduleNow(appCfg)))).Methods("POST")
 
 	// --- iSCSI sharing ---
 	r.Handle("/api/iscsi/status",
@@ -490,6 +490,40 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleActivateCert(appCfg))))).Methods("POST")
 	r.Handle("/api/certs/{name}",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteCert(appCfg))))).Methods("DELETE")
+
+	// --- InterLink (server federation + SSO switching) ---
+	// Public endpoints — called by remote ZNAS servers or browser redirects (no session auth).
+	r.HandleFunc("/api/interlink/ping",          HandleInterlinkPing).Methods("GET")
+	r.HandleFunc("/api/interlink/accept-link",   HandleInterlinkAcceptLink(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/check-user",    HandleInterlinkCheckUser(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/remote-unlink",    HandleInterlinkRemoteUnlink(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/remote-pools",     HandleInterlinkRemotePools(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/push-ssh-key",     HandleInterlinkPushSSHKey(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/check-zfs-access", HandleInterlinkCheckZFSAccess(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/grant-zfs-access", HandleInterlinkGrantZFSAccess(appCfg)).Methods("POST")
+	r.HandleFunc("/interlink-login",             HandleInterlinkLogin(appCfg)).Methods("GET")
+	// Authenticated endpoints — called by the local portal UI.
+	r.Handle("/api/interlink/servers/fast",
+		RequireAuth(http.HandlerFunc(HandleInterlinkListFast(appCfg)))).Methods("GET")
+	r.Handle("/api/interlink/servers",
+		RequireAuth(http.HandlerFunc(HandleInterlinkList(appCfg)))).Methods("GET")
+	r.Handle("/api/interlink/link",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInterlinkLink(appCfg))))).Methods("POST")
+	r.Handle("/api/interlink/switch",
+		RequireAuth(http.HandlerFunc(HandleInterlinkSwitch(appCfg)))).Methods("POST")
+	r.Handle("/api/interlink/{id}",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInterlinkUnlink(appCfg))))).Methods("DELETE")
+	r.Handle("/api/interlink/remote-pools/{server_id}",
+		RequireAuth(http.HandlerFunc(HandlePushInterlinkGetRemotePools(appCfg)))).Methods("GET")
+	// Push InterLink job endpoints.
+	r.Handle("/api/push-interlink/start",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePushInterlinkStart(appCfg)))))
+	r.Handle("/api/push-interlink/start-dataset",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePushInterlinkStartDataset(appCfg))))).Methods("POST").Methods("POST")
+	r.Handle("/api/push-interlink/jobs",
+		RequireAuth(http.HandlerFunc(HandlePushInterlinkJobs))).Methods("GET")
+	r.Handle("/api/push-interlink/cancel/{id}",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePushInterlinkCancel)))).Methods("POST")
 
 	// --- Homepage widget API keys (admin only) ---
 	r.Handle("/api/settings/api-keys",

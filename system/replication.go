@@ -10,6 +10,12 @@ import (
 	"zfsnas/internal/config"
 )
 
+// snapshotExists returns true if the named snapshot exists on this host.
+func snapshotExists(fullSnapName string) bool {
+	err := exec.Command("sudo", "zfs", "list", "-t", "snapshot", "-H", fullSnapName).Run()
+	return err == nil
+}
+
 // RunReplication executes a ZFS send/receive replication job. It:
 //  1. Creates a new snapshot (or reuses existingSnap if provided)
 //  2. Sends it to the remote host using zfs send | ssh zfs receive
@@ -59,7 +65,14 @@ func RunReplication(task *config.ReplicationTask, send func(string), existingSna
 		sendArgs = append(sendArgs, "-c")
 	}
 	if task.LastSnap != "" {
-		sendArgs = append(sendArgs, "-I", task.SourceDataset+"@"+task.LastSnap)
+		baseSnap := task.SourceDataset + "@" + task.LastSnap
+		if snapshotExists(baseSnap) {
+			sendArgs = append(sendArgs, "-I", baseSnap)
+		} else {
+			// Base snapshot was pruned by retention; fall back to a full send.
+			// The caller will update LastSnap on success so next run is incremental again.
+			fmt.Printf("[replication] incremental base %s missing, falling back to full send\n", baseSnap)
+		}
 	}
 	sendArgs = append(sendArgs, fullSnapName)
 

@@ -123,6 +123,17 @@ type UPSConfig struct {
 	NominalPowerW   *int              `json:"nominal_power_w,omitempty"` // user-overridable nominal VA/W rating
 }
 
+// LinkedServer represents a remote ZNAS instance trusted for single-click SSO switching.
+type LinkedServer struct {
+	ID           string    `json:"id"`            // our local UUID for this link
+	URL          string    `json:"url"`            // e.g. "https://192.168.2.5:8443"
+	Hostname     string    `json:"hostname"`       // remote hostname, fetched at link time
+	SharedSecret string    `json:"shared_secret"`  // 32-byte hex; HMAC signing key for SSO tokens
+	RemoteID     string    `json:"remote_id"`      // the ID the remote server uses for this link (sent in redirect)
+	LinkedBy     string    `json:"linked_by"`      // admin username who created the link
+	LinkedAt     time.Time `json:"linked_at"`
+}
+
 // AppConfig holds top-level application settings.
 type AppConfig struct {
 	ConfigDir         string    `json:"-"` // runtime-only, not persisted
@@ -136,6 +147,7 @@ type AppConfig struct {
 	LiveUpdateEnabled  bool   `json:"live_update_enabled,omitempty"`  // enable in-place binary self-update
 	MaxSmbdProcesses   int    `json:"max_smbd_processes,omitempty"`   // Samba max smbd processes (0 = use default 100)
 	SMBHomeDataset     string `json:"smb_home_dataset,omitempty"`     // ZFS dataset path for SMB user home folders; "" = disabled
+	SMBCleanDefaults   bool   `json:"smb_clean_defaults,omitempty"`   // remove distro default [printers], [print$], [homes] sections
 	TreeMapSchedule    string      `json:"treemap_schedule,omitempty"`     // daily | weekly | biweekly | monthly | "" (off)
 	TreeMapHour        int         `json:"treemap_hour"`                   // hour of day to run treemap scan (0-23)
 	TreeMapMinute      int         `json:"treemap_minute"`                 // minute of hour to run treemap scan (0-59)
@@ -145,6 +157,7 @@ type AppConfig struct {
 	ActiveCertName     string           `json:"active_cert_name,omitempty"`
 	PendingCertRestart bool             `json:"pending_cert_restart,omitempty"`
 	Replication        []ReplicationTask `json:"replication,omitempty"`
+	InterLink          []LinkedServer    `json:"inter_link,omitempty"`
 }
 
 // UserPreferences holds per-user UI preferences persisted across sessions.
@@ -287,6 +300,9 @@ func LoadAppConfig() (*AppConfig, error) {
 	}
 	if cfg.Replication == nil {
 		cfg.Replication = []ReplicationTask{}
+	}
+	if cfg.InterLink == nil {
+		cfg.InterLink = []LinkedServer{}
 	}
 	if cfg.MinIO.Port == 0 {
 		cfg.MinIO.Port = 9000

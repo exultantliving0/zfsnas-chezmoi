@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -182,7 +183,8 @@ func HandleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleRunScheduleNow manually triggers a snapshot policy immediately.
-func HandleRunScheduleNow(w http.ResponseWriter, r *http.Request) {
+func HandleRunScheduleNow(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	policies, err := scheduler.LoadPolicies()
 	if err != nil {
@@ -200,27 +202,28 @@ func HandleRunScheduleNow(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusNotFound, "schedule not found")
 		return
 	}
-	if err := execScheduledSnapshot(&policies[idx]); err != nil {
+	if err := execScheduledSnapshot(&policies[idx], appCfg); err != nil {
 		_ = scheduler.SavePolicies(policies)
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	_ = scheduler.SavePolicies(policies)
 	jsonOK(w, map[string]string{"message": "snapshot created"})
+	}
 }
 
 // StartScheduler launches a background goroutine that fires due policies every minute.
-func StartScheduler() {
+func StartScheduler(appCfg *config.AppConfig) {
 	go func() {
 		tick := time.NewTicker(time.Minute)
 		defer tick.Stop()
 		for now := range tick.C {
-			tickPolicies(now)
+			tickPolicies(now, appCfg)
 		}
 	}()
 }
 
-func tickPolicies(now time.Time) {
+func tickPolicies(now time.Time, appCfg *config.AppConfig) {
 	policies, err := scheduler.LoadPolicies()
 	if err != nil {
 		log.Printf("[scheduler] load error: %v", err)
@@ -232,7 +235,7 @@ func tickPolicies(now time.Time) {
 		if !p.Enabled || !scheduler.IsDue(*p, now) {
 			continue
 		}
-		if err := execScheduledSnapshot(p); err != nil {
+		if err := execScheduledSnapshot(p, appCfg); err != nil {
 			log.Printf("[scheduler] policy %s (%s) failed: %v", p.ID, p.Dataset, err)
 		}
 		changed = true
@@ -242,7 +245,7 @@ func tickPolicies(now time.Time) {
 	}
 }
 
-func execScheduledSnapshot(p *scheduler.Policy) error {
+func execScheduledSnapshot(p *scheduler.Policy, appCfg *config.AppConfig) error {
 	label := p.Label
 	if label == "" {
 		label = "auto"
@@ -321,6 +324,21 @@ func execScheduledSnapshot(p *scheduler.Policy) error {
 
 	// Run remote replication if configured for this policy.
 	if p.ReplicationEnabled && p.ReplicationHost != "" && p.ReplicationDataset != "" {
+		// If the remote host belongs to a linked InterLink server, set up SSH keys and
+		// ZFS permissions just like Push InterLink does before every transfer.
+		if ls := findLinkedServerByHost(appCfg, p.ReplicationHost); ls != nil {
+			if pubKey, keyErr := system.EnsureSSHKey(); keyErr == nil {
+				if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey); err != nil {
+					log.Printf("[replication] policy %s: push SSH key to IL server: %v", p.ID, err)
+				}
+			}
+			if err := system.GrantLocalZFSAccess(); err != nil {
+				log.Printf("[replication] policy %s: local zfs allow: %v", p.ID, err)
+			}
+			if err := system.EnsureRemoteZFSAccess(ls.URL, ls.SharedSecret); err != nil {
+				log.Printf("[replication] policy %s: remote zfs allow: %v", p.ID, err)
+			}
+		}
 		task := &config.ReplicationTask{
 			ID:            p.ID + "-rep",
 			Name:          p.Dataset + " → " + p.ReplicationHost,
@@ -351,6 +369,7 @@ func execScheduledSnapshot(p *scheduler.Policy) error {
 			p.LastRepStatus = "error"
 			p.LastRepError  = repErr.Error()
 			p.LastRepLog    = repLogBuf.String()
+			p.LastRepSnap   = "" // reset so next run does a full send instead of retrying a stale base
 			audit.Log(audit.Entry{
 				Action:  audit.ActionRunReplication,
 				Target:  p.Dataset,
@@ -398,4 +417,19 @@ func pruneSnapshots(dataset, labelPrefix string, keep int) {
 			log.Printf("[scheduler] prune %s: %v", s.Name, err)
 		}
 	}
+}
+
+// findLinkedServerByHost returns the LinkedServer whose URL hostname matches host,
+// or nil if none match. Used to detect IL-backed replication targets at runtime.
+func findLinkedServerByHost(appCfg *config.AppConfig, host string) *config.LinkedServer {
+	if appCfg == nil || host == "" {
+		return nil
+	}
+	for i := range appCfg.InterLink {
+		ls := &appCfg.InterLink[i]
+		if parsed, err := url.Parse(ls.URL); err == nil && parsed.Hostname() == host {
+			return ls
+		}
+	}
+	return nil
 }

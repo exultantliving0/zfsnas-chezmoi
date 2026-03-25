@@ -252,7 +252,9 @@ func applySMBConf(shares []SMBShare) error {
 // homeUsers is non-empty, a [homes] section restricted to those users.
 // Samba merges multiple [global] sections (later values win), so this block
 // is safe alongside the distro-written [global].
-func ApplySmbGlobal(maxSmbdProcesses int, homeDataset string, homeUsers []string) error {
+// When cleanDefaults is true the distro-default [homes], [printers], and
+// [print$] sections outside the managed block are commented out.
+func ApplySmbGlobal(maxSmbdProcesses int, homeDataset string, homeUsers []string, cleanDefaults bool) error {
 	var sb strings.Builder
 	sb.WriteString(smbGlobalBeginMarker + "\n")
 	sb.WriteString(fmt.Sprintf("[global]\n   max smbd processes = %d\n", maxSmbdProcesses))
@@ -289,29 +291,45 @@ func ApplySmbGlobal(maxSmbdProcesses int, homeDataset string, homeUsers []string
 		newConf = strings.TrimRight(conf, "\n") + "\n\n" + managed
 	}
 
-	// When our managed [homes] is active, comment out any pre-existing [homes]
-	// sections outside the managed block so Samba doesn't merge them.
-	if homeDataset != "" {
-		newConf = commentOutHomesOutsideManaged(newConf, smbGlobalBeginMarker, smbGlobalEndMarker)
+	// Remove or comment out distro-default sections that conflict with our configuration.
+	if cleanDefaults {
+		// When cleanDefaults is on, physically remove [printers] and [print$]; comment out [homes].
+		newConf = removeSectionsOutsideManaged(newConf, smbGlobalBeginMarker, smbGlobalEndMarker,
+			[]string{"printers", "print$"}, []string{"homes"})
+	} else if homeDataset != "" {
+		// Even without cleanDefaults, suppress a distro [homes] when we manage our own.
+		newConf = removeSectionsOutsideManaged(newConf, smbGlobalBeginMarker, smbGlobalEndMarker,
+			nil, []string{"homes"})
 	}
 
 	return writeFileSudo(smbConfPath, newConf)
 }
 
-// commentOutHomesOutsideManaged scans conf line-by-line and prefixes with "; "
-// any [homes] section (header + body) that lies outside the managed markers.
-// Lines already commented with # or ; are left untouched.
-func commentOutHomesOutsideManaged(conf, managedBegin, managedEnd string) string {
+// removeSectionsOutsideManaged scans conf line-by-line and deletes any section
+// in removeSections that lies outside the managed markers. The section header
+// and all its content lines are omitted from the output.
+// Sections in commentSections are commented out with "; " instead of deleted.
+func removeSectionsOutsideManaged(conf, managedBegin, managedEnd string, removeSections, commentSections []string) string {
+	remove  := make(map[string]bool, len(removeSections))
+	comment := make(map[string]bool, len(commentSections))
+	for _, s := range removeSections {
+		remove[strings.ToLower(s)] = true
+	}
+	for _, s := range commentSections {
+		comment[strings.ToLower(s)] = true
+	}
+
 	lines := strings.Split(conf, "\n")
 	var out strings.Builder
-	inManaged := false
-	inHomes   := false
+	inManaged  := false
+	inRemove   := false
+	inComment  := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		// Track managed block boundaries.
 		if strings.Contains(line, managedBegin) {
 			inManaged = true
-			inHomes   = false
+			inRemove  = false
+			inComment = false
 			out.WriteString(line + "\n")
 			continue
 		}
@@ -324,20 +342,27 @@ func commentOutHomesOutsideManaged(conf, managedBegin, managedEnd string) string
 			out.WriteString(line + "\n")
 			continue
 		}
-		// Outside managed block: detect section headers.
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			section := strings.ToLower(strings.TrimSpace(trimmed[1 : len(trimmed)-1]))
-			inHomes = (section == "homes")
+		// Outside managed block: detect section headers (active or commented-out, e.g. #[printers]).
+		sectionLine := trimmed
+		if strings.HasPrefix(sectionLine, "#") || strings.HasPrefix(sectionLine, ";") {
+			sectionLine = strings.TrimLeft(sectionLine, "#; \t")
 		}
-		// Comment out any active line that belongs to a [homes] section.
-		if inHomes && trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";") {
+		if strings.HasPrefix(sectionLine, "[") && strings.HasSuffix(sectionLine, "]") {
+			section := strings.ToLower(strings.TrimSpace(sectionLine[1 : len(sectionLine)-1]))
+			inRemove  = remove[section]
+			inComment = !inRemove && comment[section]
+		}
+		if inRemove {
+			continue // delete this line entirely
+		}
+		if inComment && trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";") {
 			out.WriteString("; " + line + "\n")
 		} else {
 			out.WriteString(line + "\n")
 		}
 	}
-	result := out.String()
-	// Remove the trailing newline added by the last iteration.
+	// Collapse runs of 3+ blank lines that removal may leave behind.
+	result := strings.ReplaceAll(out.String(), "\n\n\n", "\n\n")
 	return strings.TrimSuffix(result, "\n")
 }
 

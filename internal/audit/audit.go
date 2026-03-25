@@ -90,6 +90,10 @@ const (
 	ActionDeleteISCSIShare      = "delete_iscsi_share"
 	ActionCreateISCSICredential = "create_iscsi_credential"
 	ActionDeleteISCSICredential = "delete_iscsi_credential"
+	// InterLink events.
+	ActionInterlinkAccepted = "interlink_accepted"
+	ActionInterlinkLinked   = "interlink_linked"
+	ActionInterlinkUnlinked = "interlink_unlinked"
 	// MinIO / S3 Object Server events.
 	ActionEditMinIOConfig = "edit_minio_config"
 	ActionCreateS3User    = "create_s3_user"
@@ -105,6 +109,8 @@ const (
 	// UPS events.
 	ActionUPSOnBattery = "ups_on_battery"
 	ActionUPSShutdown  = "ups_shutdown"
+	// Push InterLink events.
+	ActionPushInterlink = "push_interlink"
 )
 
 var (

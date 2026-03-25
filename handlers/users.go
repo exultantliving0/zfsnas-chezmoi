@@ -166,7 +166,7 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if system.IsSambaInstalled() {
-			if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames()); err != nil {
+			if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames(), appCfg.SMBCleanDefaults); err != nil {
 				log.Printf("users: ApplySmbGlobal: %v", err)
 			} else {
 				_ = system.ReloadSamba()
@@ -264,7 +264,7 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if system.IsSambaInstalled() {
-				if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames()); err != nil {
+				if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames(), appCfg.SMBCleanDefaults); err != nil {
 					log.Printf("users: ApplySmbGlobal: %v", err)
 				} else {
 					_ = system.ReloadSamba()

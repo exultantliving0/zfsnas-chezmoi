@@ -655,6 +655,7 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .ab-target { color: var(--text-3); }
 .ab-job-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 6px 0;
@@ -906,3 +907,57 @@ body.light .iscsi-icon { filter: none; }
 .ups-badge-batt    { background: rgba(255,159,10,0.18);  color: #ff9f0a; }
 .ups-badge-low     { background: rgba(255,69,58,0.18);   color: #ff453a; }
 @keyframes upsBlink { 0%,100% { opacity:1; } 50% { opacity:0; } }
+
+/* ===== InterLink ===== */
+#hostname-dropdown-wrapper { position: relative; display: block; }
+
+
+.hdd-current {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; background: var(--surface2);
+  font-weight: 600; font-size: 0.875rem;
+}
+.hdd-badge {
+  margin-left: auto; font-size: 0.7rem; font-weight: 400;
+  color: var(--text-3); background: var(--border);
+  border-radius: 4px; padding: 1px 6px;
+}
+
+.hdd-server {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px; cursor: pointer; font-size: 0.875rem;
+}
+.hdd-server:hover { background: var(--surface2); }
+
+.hdd-hostname { flex: 1; }
+.hdd-url { font-size: 0.75rem; color: var(--text-3); }
+
+.hdd-divider { border-top: 1px solid var(--border); margin: 4px 0; }
+
+.hdd-manage {
+  padding: 9px 14px; cursor: pointer;
+  font-size: 0.85rem; color: var(--accent-2);
+  font-weight: 500;
+}
+.hdd-manage:hover { background: var(--surface2); }
+
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0; display: inline-block;
+}
+.status-dot.online   { background: #22c55e; }
+.status-dot.offline  { background: #6b7280; }
+.status-dot.pending  { background: var(--border); }
+
+.interlink-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+.interlink-table th {
+  text-align: left; padding: 8px 10px; font-size: 0.8rem;
+  color: var(--text-3); border-bottom: 1px solid var(--border);
+}
+.interlink-table td {
+  padding: 10px 10px; font-size: 0.875rem;
+  border-bottom: 1px solid var(--border); vertical-align: middle;
+}
+.interlink-table tr:last-child td { border-bottom: none; }
+.interlink-table .col-status { width: 32px; }
+.interlink-table .col-actions { width: 80px; text-align: right; }

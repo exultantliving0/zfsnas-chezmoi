@@ -166,7 +166,7 @@ func main() {
 	autoLoadEncryptionKeys(absConfig)
 
 	// ===== Snapshot scheduler =====
-	handlers.StartScheduler()
+	handlers.StartScheduler(appCfg)
 
 	// ===== Scrub scheduler =====
 	handlers.StartScrubScheduler(appCfg)
