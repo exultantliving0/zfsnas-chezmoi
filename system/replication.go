@@ -64,10 +64,12 @@ func RunReplication(task *config.ReplicationTask, send func(string), existingSna
 	if task.Compressed {
 		sendArgs = append(sendArgs, "-c")
 	}
+	fullSend := true // will stay true if no valid incremental base is found
 	if task.LastSnap != "" {
 		baseSnap := task.SourceDataset + "@" + task.LastSnap
 		if snapshotExists(baseSnap) {
 			sendArgs = append(sendArgs, "-I", baseSnap)
+			fullSend = false
 		} else {
 			// Base snapshot was pruned by retention; fall back to a full send.
 			// The caller will update LastSnap on success so next run is incremental again.
@@ -81,8 +83,24 @@ func RunReplication(task *config.ReplicationTask, send func(string), existingSna
 	if remoteUser == "" {
 		remoteUser = "root"
 	}
-	receiveCmd := fmt.Sprintf("zfs receive -F %s", task.RemoteDataset)
+	receiveCmd := fmt.Sprintf("sudo zfs receive -F %s", task.RemoteDataset)
 	sshTarget := fmt.Sprintf("%s@%s", remoteUser, task.RemoteHost)
+
+	// For a full send, destroy any snapshots left on the remote by a previously
+	// failed replication. Without this, zfs receive refuses to write a full stream
+	// onto a dataset that already has snapshots and the task can never recover.
+	if fullSend {
+		send("Full send: cleaning up remote snapshots before transfer…")
+		cleanCmd := fmt.Sprintf(
+			`sudo zfs list -H -t snapshot -r -o name %s 2>/dev/null | xargs -r sudo zfs destroy`,
+			task.RemoteDataset,
+		)
+		if out, cleanErr := exec.Command("ssh", "-o", "BatchMode=yes", sshTarget, cleanCmd).CombinedOutput(); cleanErr != nil {
+			if msg := strings.TrimSpace(string(out)); msg != "" {
+				send("Warning: remote cleanup: " + msg)
+			}
+		}
+	}
 
 	send(fmt.Sprintf("sudo zfs send → ssh %s '%s'", sshTarget, receiveCmd))
 	send("─────────────────────────────────────────")
@@ -140,7 +158,10 @@ func RunReplication(task *config.ReplicationTask, send func(string), existingSna
 	}
 
 	if sendWaitErr != nil {
-		return "", fmt.Errorf("zfs send failed: %w: %s", sendWaitErr, strings.TrimSpace(sendStderr.String()))
+		if msg := strings.TrimSpace(sendStderr.String()); msg != "" {
+			return "", fmt.Errorf("zfs send failed: %w: %s", sendWaitErr, msg)
+		}
+		return "", fmt.Errorf("zfs send failed: %w", sendWaitErr)
 	}
 	if sshWaitErr != nil {
 		sshErrMsg := strings.TrimSpace(sshStderr.String())

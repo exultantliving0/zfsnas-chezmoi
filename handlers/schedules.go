@@ -306,7 +306,7 @@ func execScheduledSnapshot(p *scheduler.Policy, appCfg *config.AppConfig) error 
 				Action:  audit.ActionRunReplication,
 				Target:  p.Dataset,
 				Result:  audit.ResultError,
-				Details: fmt.Sprintf("local replication policy %s: %v", p.ID, localErr),
+				Details: fmt.Sprintf("→ %s (local): %s", p.LocalReplDataset, localErr.Error()),
 			})
 		} else {
 			p.LastDetails         = "Snapshot: " + name + " · Local replication: ok"
@@ -317,7 +317,7 @@ func execScheduledSnapshot(p *scheduler.Policy, appCfg *config.AppConfig) error 
 				Action:  audit.ActionRunReplication,
 				Target:  p.Dataset,
 				Result:  audit.ResultOK,
-				Details: fmt.Sprintf("local replication policy %s → %s", p.ID, p.LocalReplDataset),
+				Details: fmt.Sprintf("→ %s (local)", p.LocalReplDataset),
 			})
 		}
 	}
@@ -374,7 +374,7 @@ func execScheduledSnapshot(p *scheduler.Policy, appCfg *config.AppConfig) error 
 				Action:  audit.ActionRunReplication,
 				Target:  p.Dataset,
 				Result:  audit.ResultError,
-				Details: fmt.Sprintf("scheduled policy %s: %v", p.ID, repErr),
+				Details: fmt.Sprintf("→ %s: %s", p.ReplicationHost, repErr.Error()),
 			})
 		} else {
 			p.LastDetails   = "Snapshot: " + name + " · Replication: ok"
@@ -386,7 +386,7 @@ func execScheduledSnapshot(p *scheduler.Policy, appCfg *config.AppConfig) error 
 				Action:  audit.ActionRunReplication,
 				Target:  p.Dataset,
 				Result:  audit.ResultOK,
-				Details: fmt.Sprintf("scheduled policy %s", p.ID),
+				Details: fmt.Sprintf("→ %s", p.ReplicationHost),
 			})
 		}
 	}
