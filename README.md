@@ -28,7 +28,7 @@ Most NAS management software are slow to install, slow to load, and buried under
 Version 5.0.0 Full End-To-End DEMO on Youtube: [Version 5.0.0 DEMO](https://youtu.be/usFcZ15AyOs?si=U-neyJLCjkAfNHMc)
 Version 6.3.26 DEMO of Interlink and other new features! [Version 6.3.26 DEMO](https://youtu.be/4KL67uql3t4?si=IJda-GivVvVqEZFS)
 
-![Demo](assets/zfsnas-v310-demo.gif)
+![Demo](assets/zfsnas-v6-3-26-demo.gif)
 
 ---
 
