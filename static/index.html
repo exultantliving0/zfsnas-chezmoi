@@ -5162,6 +5162,8 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
     if (currentUser.role !== 'admin') {
       document.getElementById('nav-terminal').style.display = 'none';
       document.getElementById('btn-create-user').style.display = 'none';
+      document.getElementById('btn-scan-disks').style.display = 'none';
+      document.getElementById('btn-refresh-disks').style.display = 'none';
     }
     // Restore activity bar collapsed state from user preferences.
     if (currentUser.preferences && currentUser.preferences.activity_bar_collapsed) {
@@ -11320,7 +11322,8 @@ async function loadDisks() {
     _applyDiskNavDot(_diskCache);
     renderDisks(el, _diskCache);
     // Immediately kick off a background SMART refresh so Temp + SMART are fresh.
-    _refreshDisksBackground();
+    // Only admins can call the refresh endpoint; skip for read-only / smb-only users.
+    if (currentUser && currentUser.role === 'admin') _refreshDisksBackground();
   } catch {
     el.innerHTML = '<div style="color:var(--accent-danger);padding:24px;">Failed to load disk info.</div>';
   }
