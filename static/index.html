@@ -3990,7 +3990,7 @@
 
 <!-- S3 Configure Modal -->
 <div class="modal-backdrop hidden" id="modal-s3-configure">
-  <div class="modal" style="max-width:600px;">
+  <div class="modal" style="max-width:780px;">
     <div class="modal-header">
       <h3>Configure S3 Object Server</h3>
       <button class="modal-close" onclick="document.getElementById('modal-s3-configure').classList.add('hidden')">✕</button>
@@ -4011,10 +4011,14 @@
           <input type="number" id="s3cfg-console-port" value="9001" min="1" max="65535">
         </div>
         <div class="form-group" style="margin-bottom:0;">
-          <label>SSL/TLS <i class="info-tip" data-tip="Enable TLS on both the API and console ports. ZFSNAS generates a self-signed certificate covering all local IPs and installs it automatically.&#10;&#10;To use your own certificate instead, place your files here after saving:&#10;  /var/lib/minio/.minio/certs/public.crt&#10;  /var/lib/minio/.minio/certs/private.key&#10;&#10;Then restart the MinIO service from this page."></i></label>
+          <label>SSL/TLS <i class="info-tip" data-tip="Enable TLS on both the API and console ports. Select an existing certificate from your Certificate Management store, or choose &quot;Generate new&quot; to have ZFSNAS create a self-signed cert covering all local IPs automatically."></i></label>
           <label style="display:flex;align-items:center;gap:8px;padding:8px 0;font-size:14px;font-weight:normal;cursor:pointer;">
-            <input type="checkbox" id="s3cfg-tls"> Enable SSL/TLS
+            <input type="checkbox" id="s3cfg-tls" onchange="s3cfgToggleTLS()"> Enable SSL/TLS
           </label>
+          <div id="s3cfg-cert-row" class="hidden" style="margin-top:2px;">
+            <label style="font-size:12px;color:var(--text-3);margin-bottom:4px;display:block;">Certificate</label>
+            <select id="s3cfg-cert-name" style="width:100%;"></select>
+          </div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -13498,13 +13502,15 @@ async function openS3ConfigureModal() {
   const errEl = document.getElementById('s3cfg-error');
   if (errEl) errEl.classList.add('hidden');
 
-  // Fetch current config and all datasets in parallel.
-  const [cfgR, dsR] = await Promise.all([
+  // Fetch current config, all datasets, and cert list in parallel.
+  const [cfgR, dsR, certsR] = await Promise.all([
     fetch('/api/minio/config'),
     fetch('/api/datasets'),
+    fetch('/api/certs'),
   ]);
   const cfg = cfgR.ok ? await cfgR.json() : {};
   const datasets = dsR.ok ? (await dsR.json() || []) : [];
+  const certs = certsR.ok ? ((await certsR.json()).certs || []) : [];
 
   const dsSel = document.getElementById('s3cfg-dataset');
   dsSel.innerHTML = '<option value="">Select a dataset…</option>' +
@@ -13513,9 +13519,20 @@ async function openS3ConfigureModal() {
       .map(d => `<option value="${esc(d.name)}" ${d.name === cfg.dataset_path ? 'selected' : ''}>${esc(d.name)} (${esc(d.mountpoint)})</option>`)
       .join('');
 
+  // Populate cert picker.
+  const savedCert = cfg.tls_cert_name || 'auto';
+  const certSel = document.getElementById('s3cfg-cert-name');
+  certSel.innerHTML = '<option value="auto">Generate new certificate automatically</option>' +
+    certs
+      .filter(c => c.has_key_file)
+      .map(c => `<option value="${esc(c.name)}" ${c.name === savedCert ? 'selected' : ''}>${esc(c.name)}${c.is_self_signed ? ' (self-signed)' : ''}${c.is_expired ? ' ⚠ expired' : ''}</option>`)
+      .join('');
+  if (savedCert === 'auto' || savedCert === '') certSel.value = 'auto';
+
   document.getElementById('s3cfg-port').value         = cfg.port         || 9000;
   document.getElementById('s3cfg-console-port').value = cfg.console_port || 9001;
   document.getElementById('s3cfg-tls').checked        = !!cfg.tls;
+  document.getElementById('s3cfg-cert-row').classList.toggle('hidden', !cfg.tls);
   document.getElementById('s3cfg-root-user').value    = cfg.root_user    || 'minioadmin';
   document.getElementById('s3cfg-root-password').value = '';
   document.getElementById('s3cfg-region').value       = cfg.region       || 'us-east-1';
@@ -13528,17 +13545,24 @@ async function openS3ConfigureModal() {
   document.getElementById('modal-s3-configure').classList.remove('hidden');
 }
 
+function s3cfgToggleTLS() {
+  const enabled = document.getElementById('s3cfg-tls').checked;
+  document.getElementById('s3cfg-cert-row').classList.toggle('hidden', !enabled);
+}
+
 async function submitS3Configure() {
   const errEl = document.getElementById('s3cfg-error');
   errEl.classList.add('hidden');
   const btn = document.getElementById('s3cfg-submit-btn');
   btn.disabled = true; btn.textContent = 'Applying…';
 
+  const tlsEnabled = document.getElementById('s3cfg-tls').checked;
   const body = {
     dataset_path:  document.getElementById('s3cfg-dataset').value,
     port:          parseInt(document.getElementById('s3cfg-port').value),
     console_port:  parseInt(document.getElementById('s3cfg-console-port').value),
-    tls:           document.getElementById('s3cfg-tls').checked,
+    tls:           tlsEnabled,
+    tls_cert_name: tlsEnabled ? (document.getElementById('s3cfg-cert-name').value || 'auto') : '',
     root_user:     document.getElementById('s3cfg-root-user').value.trim(),
     root_password: document.getElementById('s3cfg-root-password').value,
     region:        document.getElementById('s3cfg-region').value.trim() || 'us-east-1',

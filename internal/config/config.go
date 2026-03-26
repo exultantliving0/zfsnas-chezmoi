@@ -53,6 +53,7 @@ type MinIOConfig struct {
 	Port         int        `json:"port"`           // API port, default 9000
 	ConsolePort  int        `json:"console_port"`   // web console port, default 9001
 	TLS          bool       `json:"tls"`            // enable TLS on both ports
+	TLSCertName  string     `json:"tls_cert_name,omitempty"` // "" or "auto" = generate new self-signed
 	RootUser     string     `json:"root_user"`
 	RootPassword string     `json:"root_password"`
 	Region       string     `json:"region"`

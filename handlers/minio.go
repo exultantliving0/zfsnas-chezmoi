@@ -68,16 +68,17 @@ func HandleMinIOServiceAction(appCfg *config.AppConfig) http.HandlerFunc {
 func HandleGetMinIOConfig(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]interface{}{
-			"enabled":      appCfg.MinIO.Enabled,
-			"dataset_path": appCfg.MinIO.DatasetPath,
-			"data_dir":     appCfg.MinIO.DataDir,
-			"port":         appCfg.MinIO.Port,
-			"console_port": appCfg.MinIO.ConsolePort,
-			"tls":          appCfg.MinIO.TLS,
-			"root_user":    appCfg.MinIO.RootUser,
-			"region":       appCfg.MinIO.Region,
-			"site_name":    appCfg.MinIO.SiteName,
-			"server_url":   appCfg.MinIO.ServerURL,
+			"enabled":       appCfg.MinIO.Enabled,
+			"dataset_path":  appCfg.MinIO.DatasetPath,
+			"data_dir":      appCfg.MinIO.DataDir,
+			"port":          appCfg.MinIO.Port,
+			"console_port":  appCfg.MinIO.ConsolePort,
+			"tls":           appCfg.MinIO.TLS,
+			"tls_cert_name": appCfg.MinIO.TLSCertName,
+			"root_user":     appCfg.MinIO.RootUser,
+			"region":        appCfg.MinIO.Region,
+			"site_name":     appCfg.MinIO.SiteName,
+			"server_url":    appCfg.MinIO.ServerURL,
 		})
 	}
 }
@@ -91,6 +92,7 @@ func HandleSaveMinIOConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			Port         int    `json:"port"`
 			ConsolePort  int    `json:"console_port"`
 			TLS          bool   `json:"tls"`
+			TLSCertName  string `json:"tls_cert_name"`
 			RootUser     string `json:"root_user"`
 			RootPassword string `json:"root_password"`
 			Region       string `json:"region"`
@@ -167,6 +169,7 @@ func HandleSaveMinIOConfig(appCfg *config.AppConfig) http.HandlerFunc {
 		appCfg.MinIO.Port = req.Port
 		appCfg.MinIO.ConsolePort = req.ConsolePort
 		appCfg.MinIO.TLS = req.TLS
+		appCfg.MinIO.TLSCertName = strings.TrimSpace(req.TLSCertName)
 		appCfg.MinIO.RootUser = req.RootUser
 		appCfg.MinIO.RootPassword = password
 		appCfg.MinIO.Region = req.Region
@@ -179,7 +182,7 @@ func HandleSaveMinIOConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 
-		if err := system.ApplyMinIOConfig(&appCfg.MinIO); err != nil {
+		if err := system.ApplyMinIOConfig(&appCfg.MinIO, appCfg.ConfigDir); err != nil {
 			jsonErr(w, http.StatusInternalServerError, "apply config: "+err.Error())
 			return
 		}

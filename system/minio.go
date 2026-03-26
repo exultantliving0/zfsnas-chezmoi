@@ -191,12 +191,20 @@ func WriteMinIOEnvFile(cfg *config.MinIOConfig) error {
 }
 
 // ApplyMinIOConfig writes the env file, installs/removes TLS certs, restarts the service,
-// and refreshes the mc alias.
-func ApplyMinIOConfig(cfg *config.MinIOConfig) error {
+// and refreshes the mc alias. configDir is the portal's config directory (contains certs/).
+func ApplyMinIOConfig(cfg *config.MinIOConfig, configDir string) error {
 	// Install or remove TLS certs before writing the env file.
 	if cfg.TLS {
-		if err := EnableMinIOTLS(); err != nil {
-			return fmt.Errorf("enable TLS: %w", err)
+		if cfg.TLSCertName == "" || cfg.TLSCertName == "auto" {
+			if err := EnableMinIOTLS(); err != nil {
+				return fmt.Errorf("enable TLS: %w", err)
+			}
+		} else {
+			certFile := filepath.Join(configDir, "certs", cfg.TLSCertName+".crt")
+			keyFile := filepath.Join(configDir, "certs", cfg.TLSCertName+".key")
+			if err := installMinIOTLSFromFiles(certFile, keyFile); err != nil {
+				return fmt.Errorf("install cert %q: %w", cfg.TLSCertName, err)
+			}
 		}
 	} else {
 		_ = DisableMinIOTLS()
@@ -243,6 +251,28 @@ func EnableMinIOTLS() error {
 	}
 
 	// Ensure the certs directory exists and is owned by minio-user.
+	if out, err := exec.Command("sudo", "mkdir", "-p", minIOCertsDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mkdir certs: %s", strings.TrimSpace(string(out)))
+	}
+	for _, pair := range [][2]string{
+		{certFile, filepath.Join(minIOCertsDir, "public.crt")},
+		{keyFile, filepath.Join(minIOCertsDir, "private.key")},
+	} {
+		if out, err := exec.Command("sudo", "cp", pair[0], pair[1]).CombinedOutput(); err != nil {
+			return fmt.Errorf("copy %s: %s", filepath.Base(pair[1]), strings.TrimSpace(string(out)))
+		}
+	}
+	if out, err := exec.Command("sudo", "chown", "-R", "minio-user:minio-user", minIOCertsDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("chown: %s", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("sudo", "chmod", "640", filepath.Join(minIOCertsDir, "private.key")).CombinedOutput(); err != nil {
+		return fmt.Errorf("chmod key: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// installMinIOTLSFromFiles copies an existing cert/key pair into the MinIO certs directory.
+func installMinIOTLSFromFiles(certFile, keyFile string) error {
 	if out, err := exec.Command("sudo", "mkdir", "-p", minIOCertsDir).CombinedOutput(); err != nil {
 		return fmt.Errorf("mkdir certs: %s", strings.TrimSpace(string(out)))
 	}
