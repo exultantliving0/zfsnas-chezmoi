@@ -380,13 +380,25 @@ func datasetMountpoint(dataset string) string {
 }
 
 // EnsureSMBHomeDir creates <mountpoint>/<username>/ under the given ZFS dataset
-// if it does not already exist, and sets ownership to the Linux user.
-// The Linux user must already exist (created via EnsureSambaUser or useradd).
+// if it does not already exist, sets 0700 permissions, and chowns it to the user.
+// It ensures the Linux system account exists first so that chown always succeeds.
 func EnsureSMBHomeDir(dataset, username string) error {
 	mountpoint := datasetMountpoint(dataset)
 	if mountpoint == "" {
 		return fmt.Errorf("cannot determine mountpoint for dataset %q", dataset)
 	}
+
+	// Ensure the Linux system account exists so chown works.
+	if err := exec.Command("id", username).Run(); err != nil {
+		out, err2 := exec.Command("sudo", "useradd",
+			"-M",                      // no home directory managed by useradd
+			"-s", "/usr/sbin/nologin", // no shell login
+			username).CombinedOutput()
+		if err2 != nil {
+			return fmt.Errorf("useradd %s: %s", username, strings.TrimSpace(string(out)))
+		}
+	}
+
 	dir := mountpoint + "/" + username
 	if out, err := exec.Command("sudo", "mkdir", "-p", dir).CombinedOutput(); err != nil {
 		return fmt.Errorf("mkdir %s: %s", dir, strings.TrimSpace(string(out)))
@@ -395,7 +407,22 @@ func EnsureSMBHomeDir(dataset, username string) error {
 		return fmt.Errorf("chmod %s: %s", dir, strings.TrimSpace(string(out)))
 	}
 	if out, err := exec.Command("sudo", "chown", username+":"+username, dir).CombinedOutput(); err != nil {
-		// Non-fatal: Linux user may not exist yet (SMB-only users created lazily).
+		return fmt.Errorf("chown %s: %s", dir, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RemoveSMBHomeDirIfEmpty removes <mountpoint>/<username>/ under the given ZFS
+// dataset using rmdir, which silently succeeds only when the directory is empty.
+func RemoveSMBHomeDirIfEmpty(dataset, username string) error {
+	mountpoint := datasetMountpoint(dataset)
+	if mountpoint == "" {
+		return fmt.Errorf("cannot determine mountpoint for dataset %q", dataset)
+	}
+	dir := mountpoint + "/" + username
+	out, err := exec.Command("sudo", "rmdir", dir).CombinedOutput()
+	if err != nil {
+		// rmdir exits non-zero when the dir is non-empty or doesn't exist — both are fine.
 		_ = out
 	}
 	return nil
@@ -410,6 +437,16 @@ func ReloadSamba() error {
 		if err2 != nil {
 			return fmt.Errorf("%s / %s", strings.TrimSpace(string(out)), strings.TrimSpace(string(out2)))
 		}
+	}
+	return nil
+}
+
+// RestartSamba performs a full restart of smbd. Required when changes affect
+// virtual shares such as [homes] that are not picked up by a mere reload.
+func RestartSamba() error {
+	out, err := exec.Command("sudo", "systemctl", "restart", "smbd").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }

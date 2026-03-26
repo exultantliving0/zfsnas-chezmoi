@@ -96,6 +96,7 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Username      string `json:"username"`
 		Email         string `json:"email"`
 		Password      string `json:"password"`
+		SMBPassword   string `json:"smb_password"`
 		Role          string `json:"role"`
 		SMBHomeFolder bool   `json:"smb_home_folder"`
 	}
@@ -114,6 +115,10 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Role != config.RoleAdmin && req.Role != config.RoleReadOnly && req.Role != config.RoleSMBOnly {
 		jsonErr(w, http.StatusBadRequest, "role must be admin, read-only, or smb-only")
+		return
+	}
+	if req.Role == config.RoleSMBOnly && len(req.SMBPassword) < 8 {
+		jsonErr(w, http.StatusBadRequest, "SMB password must be at least 8 characters")
 		return
 	}
 	if req.Role != config.RoleSMBOnly && len(req.Password) < 8 {
@@ -156,6 +161,17 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if err := config.SaveUsers(users); err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to save user")
 		return
+	}
+
+	// Set SMB (Samba) password for the new user if one was provided.
+	smbPw := req.SMBPassword
+	if smbPw == "" && req.Role != config.RoleSMBOnly {
+		smbPw = req.Password
+	}
+	if smbPw != "" && system.IsSambaInstalled() {
+		if err := system.EnsureSambaUser(req.Username, smbPw); err != nil {
+			log.Printf("users: EnsureSambaUser for %s: %v", req.Username, err)
+		}
 	}
 
 	// Create SMB home directory and update smb.conf valid users if applicable.
@@ -244,10 +260,12 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	enabledHome := false
+	disabledHome := false
 	if req.SMBHomeFolder != nil {
 		wasEnabled := user.SMBHomeFolder
 		user.SMBHomeFolder = *req.SMBHomeFolder
 		enabledHome = *req.SMBHomeFolder && !wasEnabled
+		disabledHome = !*req.SMBHomeFolder && wasEnabled
 	}
 
 	if err := config.SaveUsers(users); err != nil {
@@ -255,12 +273,16 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create SMB home directory when the flag is newly enabled.
+	// Create or remove SMB home directory when the flag changes.
 	if req.SMBHomeFolder != nil {
 		if appCfg, err := config.LoadAppConfig(); err == nil && appCfg.SMBHomeDataset != "" {
 			if enabledHome {
 				if err := system.EnsureSMBHomeDir(appCfg.SMBHomeDataset, user.Username); err != nil {
 					log.Printf("users: EnsureSMBHomeDir for %s: %v", user.Username, err)
+				}
+			} else if disabledHome {
+				if err := system.RemoveSMBHomeDirIfEmpty(appCfg.SMBHomeDataset, user.Username); err != nil {
+					log.Printf("users: RemoveSMBHomeDirIfEmpty for %s: %v", user.Username, err)
 				}
 			}
 			if system.IsSambaInstalled() {
@@ -323,6 +345,7 @@ func HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := user.Username
+	hadHomeFolder := user.SMBHomeFolder
 	filtered := make([]config.User, 0, len(users)-1)
 	for _, u := range users {
 		if u.ID != id {
@@ -333,6 +356,15 @@ func HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if err := config.SaveUsers(filtered); err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to save users")
 		return
+	}
+
+	// If the user had an SMB home folder, remove the directory if it is empty.
+	if hadHomeFolder {
+		if appCfg, err := config.LoadAppConfig(); err == nil && appCfg.SMBHomeDataset != "" {
+			if err := system.RemoveSMBHomeDirIfEmpty(appCfg.SMBHomeDataset, username); err != nil {
+				log.Printf("users: RemoveSMBHomeDirIfEmpty for %s: %v", username, err)
+			}
+		}
 	}
 
 	audit.Log(audit.Entry{

@@ -2537,7 +2537,7 @@
       <div class="form-group"><label>Username</label><input type="text" id="new-username" required autocomplete="off"></div>
       <div class="form-group"><label>Email</label><input type="email" id="new-email" autocomplete="off"></div>
       <div class="form-group">
-        <label>Role <i class="info-tip tip-down" data-tip="Admin: full access to all portal features including settings and user management.&#10;&#10;Read-Only: can view all pages but cannot make changes.&#10;&#10;SMB-Only: no portal login — this account is used only for SMB file share authentication (Samba). Set an SMB password separately after creation."></i></label>
+        <label>Role <i class="info-tip tip-down" data-tip="Admin: full access to all portal features including settings and user management.&#10;&#10;Read-Only: can view all pages but cannot make changes.&#10;&#10;SMB-Only: no portal login — this account is used only for SMB file share authentication (Samba)."></i></label>
         <select id="new-role" onchange="onNewRoleChange()">
           <option value="admin">Admin — full access</option>
           <option value="read-only">Read-Only — browse only</option>
@@ -2545,11 +2545,8 @@
         </select>
       </div>
       <div id="new-password-wrap" class="form-group">
-        <label>Password</label>
+        <label id="new-password-label">Password</label>
         <input type="password" id="new-password" placeholder="Min 8 characters" autocomplete="new-password">
-      </div>
-      <div id="new-smb-hint" class="hidden" style="font-size:13px;color:var(--text-3);margin-bottom:16px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border);">
-        SMB-Only users do not have a portal password. After creation, set their Samba password from the user list.
       </div>
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;margin-bottom:16px;">
         <input type="checkbox" id="new-smb-home" style="width:15px;height:15px;accent-color:var(--accent-2);">
@@ -2789,6 +2786,27 @@
         <button type="submit" class="btn btn-primary" style="flex:1;" id="smb-pw-submit">Set Password</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Delete User Confirm Modal -->
+<div class="modal-backdrop hidden" id="modal-delete-user">
+  <div class="modal" style="max-width:420px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">Delete User</h3>
+      <button class="modal-close" onclick="closeDeleteUser()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="delete-user-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">
+        You are about to permanently delete the user <strong id="delete-user-name" style="font-family:monospace;color:var(--accent-danger);"></strong>.
+      </p>
+      <p style="font-size:13px;color:var(--text-2);">This will remove their portal account. SMB credentials and home folder data are not automatically deleted.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeDeleteUser()">Cancel</button>
+      <button class="btn" style="background:var(--accent-danger);color:#fff;" onclick="executeDeleteUser()">Delete User</button>
+    </div>
   </div>
 </div>
 
@@ -5805,11 +5823,23 @@ async function loadUsers() {
   }
 }
 
-async function deleteUser(id, username) {
-  if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
-  const resp = await fetch('/api/users/' + id, { method: 'DELETE' });
+let _deleteUserId = '';
+function deleteUser(id, username) {
+  _deleteUserId = id;
+  document.getElementById('delete-user-name').textContent = username;
+  document.getElementById('delete-user-alert').classList.add('hidden');
+  document.getElementById('modal-delete-user').classList.remove('hidden');
+}
+function closeDeleteUser() {
+  document.getElementById('modal-delete-user').classList.add('hidden');
+}
+async function executeDeleteUser() {
+  const alertEl = document.getElementById('delete-user-alert');
+  alertEl.classList.add('hidden');
+  const resp = await fetch('/api/users/' + _deleteUserId, { method: 'DELETE' });
   const data = await resp.json();
-  if (resp.ok) loadUsers(); else alert(data.error || 'Failed to delete user.');
+  if (resp.ok) { closeDeleteUser(); loadUsers(); }
+  else { alertEl.textContent = data.error || 'Failed to delete user.'; alertEl.classList.remove('hidden'); }
 }
 
 let _editUserId = '';
@@ -5937,6 +5967,7 @@ function openCreateUser() {
   document.getElementById('new-email').value    = '';
   document.getElementById('new-password').value = '';
   document.getElementById('new-role').value     = 'admin';
+  document.getElementById('new-password-label').textContent = 'Password';
   document.getElementById('new-smb-home').checked = false;
   document.getElementById('modal-user-alert').classList.add('hidden');
   onNewRoleChange();
@@ -5948,11 +5979,10 @@ function closeCreateUser() { document.getElementById('modal-create-user').classL
 
 function onNewRoleChange() {
   const isSMB = document.getElementById('new-role').value === 'smb-only';
-  document.getElementById('new-password-wrap').classList.toggle('hidden', isSMB);
-  document.getElementById('new-smb-hint').classList.toggle('hidden', !isSMB);
+  document.getElementById('new-password-label').textContent = isSMB ? 'SMB Password' : 'Password';
   const pwInput = document.getElementById('new-password');
-  pwInput.required = !isSMB;
-  if (isSMB) pwInput.value = '';
+  pwInput.placeholder = 'Min 8 characters';
+  pwInput.required = true;
 }
 
 async function submitCreateUser(e) {
@@ -5966,7 +5996,9 @@ async function submitCreateUser(e) {
     role,
     smb_home_folder: document.getElementById('new-smb-home').checked,
   };
-  if (role !== 'smb-only') body.password = document.getElementById('new-password').value;
+  const pw = document.getElementById('new-password').value;
+  if (role === 'smb-only') body.smb_password = pw;
+  else body.password = pw;
   const resp = await fetch('/api/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -6425,6 +6457,7 @@ function _buildEventSubsHTML(p) {
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-updates"><span>OS security updates available</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-scrub"><span>Scrub completed with errors</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-snapshot"><span>Snapshot auto-policy failure</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-replication"><span>Replication policy failure</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-users"><span>User created / deleted</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-shares"><span>Share created / deleted</span></label>`;
 }
@@ -6444,8 +6477,9 @@ function _loadEventSubs(p, ev) {
   setNum(`al-${p}-login-count`, ev.failed_login_threshold, 5);
   setChk(`al-${p}-ev-updates`,  ev.security_updates);
   setChk(`al-${p}-ev-scrub`,    ev.scrub_errors);
-  setChk(`al-${p}-ev-snapshot`, ev.snapshot_failure);
-  setChk(`al-${p}-ev-users`,    ev.user_created_deleted);
+  setChk(`al-${p}-ev-snapshot`,    ev.snapshot_failure);
+  setChk(`al-${p}-ev-replication`, ev.replication_failure);
+  setChk(`al-${p}-ev-users`,       ev.user_created_deleted);
   setChk(`al-${p}-ev-shares`,   ev.share_created_deleted);
 }
 
@@ -6462,6 +6496,7 @@ function _collectEventSubs(p) {
     security_updates:       chk(`al-${p}-ev-updates`),
     scrub_errors:           chk(`al-${p}-ev-scrub`),
     snapshot_failure:       chk(`al-${p}-ev-snapshot`),
+    replication_failure:    chk(`al-${p}-ev-replication`),
     user_created_deleted:   chk(`al-${p}-ev-users`),
     share_created_deleted:  chk(`al-${p}-ev-shares`),
   };
@@ -16668,6 +16703,7 @@ document.addEventListener('click', function(e) {
     'modal-create-user':      closeCreateUser,
     'modal-edit-user':        closeEditUser,
     'modal-smb-password':     closeSMBPasswordModal,
+    'modal-delete-user':      closeDeleteUser,
     'modal-create-dataset':   closeCreateDataset,
     'modal-edit-dataset':     closeEditDataset,
     'modal-zvol-detail':      closeZVolDetail,

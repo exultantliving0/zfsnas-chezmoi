@@ -308,6 +308,12 @@ func execScheduledSnapshot(p *scheduler.Policy, appCfg *config.AppConfig) error 
 				Result:  audit.ResultError,
 				Details: fmt.Sprintf("→ %s (local): %s", p.LocalReplDataset, localErr.Error()),
 			})
+			go alerts.Send(
+				alerts.EventReplicationFailure,
+				"Replication failed: "+p.Dataset,
+				"Scheduled Local Replication Failed",
+				fmt.Sprintf("Local replication for dataset '%s' → '%s' (policy %s) failed: %v", p.Dataset, p.LocalReplDataset, p.ID, localErr),
+			)
 		} else {
 			p.LastDetails         = "Snapshot: " + name + " · Local replication: ok"
 			p.LastLocalReplStatus = "ok"
@@ -376,6 +382,12 @@ func execScheduledSnapshot(p *scheduler.Policy, appCfg *config.AppConfig) error 
 				Result:  audit.ResultError,
 				Details: fmt.Sprintf("→ %s: %s", p.ReplicationHost, repErr.Error()),
 			})
+			go alerts.Send(
+				alerts.EventReplicationFailure,
+				"Replication failed: "+p.Dataset,
+				"Scheduled Remote Replication Failed",
+				fmt.Sprintf("Remote replication for dataset '%s' → %s:%s (policy %s) failed: %v", p.Dataset, p.ReplicationHost, p.ReplicationDataset, p.ID, repErr),
+			)
 		} else {
 			p.LastDetails   = "Snapshot: " + name + " · Replication: ok"
 			p.LastRepStatus = "ok"

@@ -38,6 +38,8 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 
 		changed := false
+		homeDatasetChanged := false
+		prevHomeDataset := appCfg.SMBHomeDataset
 		if req.MaxSmbdProcesses != nil {
 			if *req.MaxSmbdProcesses < 1 || *req.MaxSmbdProcesses > 10000 {
 				jsonErr(w, http.StatusBadRequest, "max_smbd_processes must be between 1 and 10000")
@@ -52,7 +54,10 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 				jsonErr(w, http.StatusBadRequest, "dataset not found: "+ds)
 				return
 			}
-			appCfg.SMBHomeDataset = ds
+			if ds != appCfg.SMBHomeDataset {
+				appCfg.SMBHomeDataset = ds
+				homeDatasetChanged = true
+			}
 			changed = true
 		}
 		if req.CleanDefaults != nil {
@@ -68,9 +73,34 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "failed to save settings")
 			return
 		}
+		// When the home dataset changes, create home dirs in the new dataset and
+		// remove empty home dirs from the previous dataset.
+		if homeDatasetChanged {
+			users, _ := config.LoadUsers()
+			for _, u := range users {
+				if !u.SMBHomeFolder {
+					continue
+				}
+				if appCfg.SMBHomeDataset != "" {
+					if err := system.EnsureSMBHomeDir(appCfg.SMBHomeDataset, u.Username); err != nil {
+						log.Printf("smb global config: EnsureSMBHomeDir %s: %v", u.Username, err)
+					}
+				}
+				if prevHomeDataset != "" {
+					if err := system.RemoveSMBHomeDirIfEmpty(prevHomeDataset, u.Username); err != nil {
+						log.Printf("smb global config: RemoveSMBHomeDirIfEmpty %s: %v", u.Username, err)
+					}
+				}
+			}
+		}
 		if system.IsSambaInstalled() {
 			if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames(), appCfg.SMBCleanDefaults); err != nil {
 				log.Printf("smb global config: ApplySmbGlobal: %v", err)
+			} else if homeDatasetChanged {
+				// [homes] section changes require a full restart to take effect.
+				if err := system.RestartSamba(); err != nil {
+					log.Printf("smb global config: RestartSamba: %v", err)
+				}
 			} else if err := system.ReloadSamba(); err != nil {
 				log.Printf("smb global config: ReloadSamba: %v", err)
 			}

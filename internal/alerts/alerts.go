@@ -31,8 +31,9 @@ const (
 	EventFailedLogin     EventKey = "failed_login_alert"
 	EventSecurityUpdates EventKey = "security_updates"
 	EventScrubErrors     EventKey = "scrub_errors"
-	EventSnapshotFailure EventKey = "snapshot_failure"
-	EventUserCreated     EventKey = "user_created_deleted"
+	EventSnapshotFailure    EventKey = "snapshot_failure"
+	EventReplicationFailure EventKey = "replication_failure"
+	EventUserCreated        EventKey = "user_created_deleted"
 	EventShareCreated    EventKey = "share_created_deleted"
 	EventTest            EventKey = "test" // always passes filter
 )
@@ -49,8 +50,9 @@ func matchesEvent(key EventKey, ev EventConfig) bool {
 	case EventFailedLogin:     return ev.FailedLoginAlert
 	case EventSecurityUpdates: return ev.SecurityUpdates
 	case EventScrubErrors:     return ev.ScrubErrors
-	case EventSnapshotFailure: return ev.SnapshotFailure
-	case EventUserCreated:     return ev.UserCreatedDeleted
+	case EventSnapshotFailure:    return ev.SnapshotFailure
+	case EventReplicationFailure: return ev.ReplicationFailure
+	case EventUserCreated:        return ev.UserCreatedDeleted
 	case EventShareCreated:    return ev.ShareCreatedDeleted
 	}
 	return false
@@ -79,6 +81,7 @@ type EventConfig struct {
 	SecurityUpdates      bool `json:"security_updates"`
 	ScrubErrors          bool `json:"scrub_errors"`
 	SnapshotFailure      bool `json:"snapshot_failure"`
+	ReplicationFailure   bool `json:"replication_failure"`
 	UserCreatedDeleted   bool `json:"user_created_deleted"`
 	ShareCreatedDeleted  bool `json:"share_created_deleted"`
 }
@@ -179,6 +182,7 @@ func defaultEventConfig() EventConfig {
 		FailedLoginThreshold: 5,
 		ScrubErrors:          true,
 		SnapshotFailure:      true,
+		ReplicationFailure:   true,
 	}
 }
 
