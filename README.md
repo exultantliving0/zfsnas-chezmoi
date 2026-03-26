@@ -18,7 +18,11 @@ Most NAS management software are slow to install, slow to load, and buried under
 - **One binary, zero dependencies** — compile once, copy anywhere, run. No Docker. No Node. No Python runtime.
 - **Instant startup** — the portal is live in under a second. All static assets are embedded directly in the binary.
 - **No database** — configuration lives in plain JSON files next to the binary. Back up with `cp`. Inspect with any text editor.
-- **HTTPS on first launch** — a self-signed certificate is generated automatically. No manual certificate setup required.
+- **Advanced Features**
+  — Interlink mode to instantly switch between multiple ZNAS instance, one click to push zvol or dataset to remote znas instance
+  - UPS Management with one click. Auto install and auto configure local UPS and let you decide actions on battery status
+  - SMB Share but also, iSCSI and S3 Storage made simple !
+  - Advanced capacity monitoring builtin with zero maintenance. See folder tree structure, capacity trend by pool or dataset over time, ...
 - **Guided setup wizard** — first-run installs missing system packages, registers a systemd service, detects existing ZFS pools, and creates your admin account. Start to finish in under five minutes.
 
 Version 5.0.0 Full End-To-End DEMO on Youtube: [Version 5.0.0 DEMO](https://youtu.be/usFcZ15AyOs?si=U-neyJLCjkAfNHMc)
