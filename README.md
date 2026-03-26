@@ -19,7 +19,7 @@ Most NAS management software are slow to install, slow to load, and buried under
 - **Instant startup** — the portal is live in under a second. All static assets are embedded directly in the binary.
 - **No database** — configuration lives in plain JSON files next to the binary. Back up with `cp`. Inspect with any text editor.
 - **Advanced Features**
-  — Interlink mode to instantly switch between multiple ZNAS instance, one click to push zvol or dataset to remote znas instance
+  — Interlink mode to instantly switch between multiple ZNAS instance, simple push/pull between them
   - UPS Management with one click. Auto install and auto configure local UPS and let you decide actions on battery status
   - SMB Share but also, iSCSI and S3 Storage made simple !
   - Advanced capacity monitoring builtin with zero maintenance. See folder tree structure, capacity trend by pool or dataset over time, ...
