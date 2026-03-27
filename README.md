@@ -129,7 +129,7 @@ go build -o zfsnas .
 ```bash
 # Download the latest release for Linux amd64
 curl -Lo zfsnas https://github.com/macgaver/zfsnas-chezmoi/releases/latest/download/zfsnas-chezmoi
-chmod +x zfsnas-chezmoi
+chmod +x zfsnas
 ./zfsnas
 ```
 
