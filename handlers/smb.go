@@ -218,6 +218,8 @@ func HandleCreateShare(w http.ResponseWriter, r *http.Request) {
 	}
 	// Make the share path world-accessible so SMB clients can read and write.
 	_ = system.ChmodSharePath(req.Path)
+	// Apply (or skip) Windows ACL ZFS dataset properties.
+	_ = system.SetWindowsACLDatasetProps(req.Path, req.WindowsACL)
 
 	sess := MustSession(r)
 	audit.Log(audit.Entry{
@@ -276,6 +278,8 @@ func HandleUpdateShare(w http.ResponseWriter, r *http.Request) {
 	if err := system.ReloadSamba(); err != nil {
 		_ = err
 	}
+	// Apply (or revert) Windows ACL ZFS dataset properties.
+	_ = system.SetWindowsACLDatasetProps(req.Path, req.WindowsACL)
 
 	sess := MustSession(r)
 	audit.Log(audit.Entry{

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
 	"zfsnas/internal/updater"
 	"zfsnas/internal/version"
@@ -170,6 +171,15 @@ func HandleBinaryUpdateApply(appCfg *config.AppConfig) http.HandlerFunc {
 			done(false, "replace failed: "+err.Error())
 			return
 		}
+
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionSoftwareUpdate,
+			Result:  audit.ResultOK,
+			Details: "updated from v" + version.Version + " to v" + latest,
+		})
 
 		send("Restarting process…")
 		conn.WriteMessage(websocket.TextMessage, mustJSON(map[string]interface{}{

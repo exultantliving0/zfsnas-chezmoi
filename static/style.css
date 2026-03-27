@@ -543,19 +543,21 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 32px;
   width: 100%;
   max-width: 480px;
   box-shadow: var(--shadow-lg);
   max-height: calc(100vh - 48px);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
+  padding: 28px 32px 20px;
+  flex-shrink: 0;
 }
 
 .modal-close {
@@ -566,11 +568,33 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   cursor: pointer;
   padding: 4px;
   line-height: 1;
+  flex-shrink: 0;
 }
 .modal-close:hover { color: var(--text); }
 
 .modal-body {
-  padding-bottom: 4px;
+  padding: 4px 32px 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  scrollbar-gutter: stable;
+}
+
+/* Simple modals: <form> or direct <div> children after the header */
+.modal > form,
+.modal > div:not(.modal-header):not(.modal-body):not(.modal-footer) {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 32px;
+}
+.modal > form:last-child,
+.modal > div:not(.modal-header):not(.modal-body):not(.modal-footer):last-child {
+  padding-bottom: 28px;
+}
+/* Forms may need to scroll on small screens */
+.modal > form {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .modal-footer {
@@ -578,9 +602,9 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 28px;
-  padding-top: 16px;
+  padding: 16px 32px 24px;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 /* ===== Terminal Panel ===== */
@@ -946,8 +970,17 @@ body.light .iscsi-icon { filter: none; }
   flex-shrink: 0; display: inline-block;
 }
 .status-dot.online   { background: #22c55e; }
-.status-dot.offline  { background: #6b7280; }
+.status-dot.offline  { background: #ff453a; }
 .status-dot.pending  { background: var(--border); }
+
+.hdd-server.offline {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.hdd-server.offline .hdd-hostname,
+.hdd-server.offline .hdd-url {
+  opacity: 0.45;
+}
 
 .interlink-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
 .interlink-table th {

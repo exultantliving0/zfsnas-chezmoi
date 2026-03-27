@@ -52,6 +52,9 @@ type SMBShare struct {
 	// Apple-style character encoding (vfs catia)
 	AppleEncoding bool `json:"apple_encoding"`
 
+	// Windows ACL compatibility (NFSv4 ACLs on ZFS + acl_xattr VFS module)
+	WindowsACL bool `json:"windows_acl"`
+
 	// Host access control
 	AllowedHosts string `json:"allowed_hosts"` // space-separated IPs/hostnames/subnets
 	HostsDeny    string `json:"hosts_deny"`
@@ -184,8 +187,34 @@ func applySMBConf(shares []SMBShare) error {
 		if s.TimeMachine {
 			vfsObjs = append(vfsObjs, "fruit", "streams_xattr")
 		}
+		if s.WindowsACL {
+			vfsObjs = append(vfsObjs, "acl_xattr")
+		}
 		if len(vfsObjs) > 0 {
 			sb.WriteString("   vfs objects = " + strings.Join(vfsObjs, " ") + "\n")
+		}
+
+		// Windows ACL compatibility
+		if s.WindowsACL {
+			// Allow all POSIX permission bits through — Windows ACLs (not POSIX
+			// mode bits) control access, and executables need the execute bit.
+			// These override the create mask = 0664 / directory mask = 0775
+			// written above (Samba uses the last occurrence in a section).
+			sb.WriteString("   create mask = 0777\n")
+			sb.WriteString("   directory mask = 0777\n")
+			sb.WriteString("   force create mode = 0000\n")
+			sb.WriteString("   force directory mode = 0000\n")
+			// store dos attributes supersedes the legacy POSIX-bit → DOS attribute
+			// mapping.  Leaving those map_* options at their defaults (yes) causes
+			// Samba to flip the execute bit as a proxy for the archive flag, which
+			// corrupts the attribute picture Windows sees.
+			sb.WriteString("   map archive = no\n")
+			sb.WriteString("   map system = no\n")
+			sb.WriteString("   map hidden = no\n")
+			sb.WriteString("   map readonly = no\n")
+			sb.WriteString("   store dos attributes = yes\n")
+			sb.WriteString("   inherit acls = yes\n")
+			sb.WriteString("   map acl inherit = yes\n")
 		}
 
 		// Apple-style character encoding (catia)
@@ -677,6 +706,50 @@ func reverseLookup(ip string) string {
 		return ""
 	}
 	return strings.TrimRight(names[0], ".")
+}
+
+// FindDatasetByMountpoint returns the ZFS dataset name whose mountpoint exactly
+// matches path. Returns ("", false) if no dataset is found.
+func FindDatasetByMountpoint(path string) (string, bool) {
+	out, err := exec.Command("sudo", "zfs", "list", "-H", "-o", "name,mountpoint", "-t", "filesystem").Output()
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[1]) == path {
+			return strings.TrimSpace(parts[0]), true
+		}
+	}
+	return "", false
+}
+
+// SetWindowsACLDatasetProps enables or disables Windows ACL-compatible ZFS
+// properties on the dataset whose mountpoint matches path.
+// On enable: sets acltype=nfsv4, aclinherit=passthrough, aclmode=passthrough, xattr=sa.
+// On disable: resets those properties to their inherited pool defaults.
+// If no ZFS dataset matches path (custom path scenario) the function returns nil.
+func SetWindowsACLDatasetProps(path string, enable bool) error {
+	ds, ok := FindDatasetByMountpoint(path)
+	if !ok {
+		return nil // custom path — no dataset to configure
+	}
+	if enable {
+		return SetDatasetProps(ds, map[string]string{
+			"acltype":    "nfsv4",
+			"aclinherit": "passthrough",
+			"aclmode":    "passthrough",
+			"xattr":      "sa",
+		})
+	}
+	// Reset to inherited pool defaults.
+	for _, p := range []string{"acltype", "aclinherit", "aclmode", "xattr"} {
+		out, err := exec.Command("sudo", "zfs", "inherit", p, ds).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("zfs inherit %s %s: %s", p, ds, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
 }
 
 // writeFileSudo writes content to a path using sudo tee.

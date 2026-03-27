@@ -111,6 +111,8 @@ const (
 	ActionUPSShutdown  = "ups_shutdown"
 	// Push InterLink events.
 	ActionPushInterlink = "push_interlink"
+	// Software self-update.
+	ActionSoftwareUpdate = "software_update"
 )
 
 var (

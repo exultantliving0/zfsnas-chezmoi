@@ -715,10 +715,7 @@
             </div>
             <span id="prereq-iscsi-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-iscsi-btn" class="btn btn-ghost btn-sm" onclick="enableISCSIFeature()" style="font-size:12px;white-space:nowrap;">Enable iSCSI Feature</button>
-            <div style="position:relative;" id="prereq-iscsi-menu-wrap" class="hidden">
-              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('iscsi')" title="Options">⋮</button>
-              <div id="prereq-iscsi-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
-            </div>
+            <span id="prereq-iscsi-menu-wrap" class="hidden" onclick="_optFeatMenu(event,'iscsi')" title="Options" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;line-height:1;user-select:none;">⋮</span>
           </div>
           <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
             <div style="flex:1;">
@@ -728,10 +725,7 @@
             </div>
             <span id="prereq-minio-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-minio-btn" class="btn btn-ghost btn-sm" onclick="enableMinIOFeature()" style="font-size:12px;white-space:nowrap;">Enable S3 Object Server</button>
-            <div style="position:relative;" id="prereq-minio-menu-wrap" class="hidden">
-              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('minio')" title="Options">⋮</button>
-              <div id="prereq-minio-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
-            </div>
+            <span id="prereq-minio-menu-wrap" class="hidden" onclick="_optFeatMenu(event,'minio')" title="Options" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;line-height:1;user-select:none;">⋮</span>
           </div>
           <!-- UPS Management optional feature -->
           <div style="display:flex;align-items:center;gap:12px;padding:12px 0;">
@@ -745,10 +739,7 @@
               Enable UPS Feature
               <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>
             </button>
-            <div style="position:relative;" id="prereq-ups-menu-wrap" class="hidden">
-              <button class="btn btn-ghost btn-sm" onclick="_optFeatMenu('ups')" title="Options">⋮</button>
-              <div id="prereq-ups-dropdown" class="hidden" style="position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:60;min-width:170px;overflow:hidden;"></div>
-            </div>
+            <span id="prereq-ups-menu-wrap" class="hidden" onclick="_optFeatMenu(event,'ups')" title="Options" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;line-height:1;user-select:none;">⋮</span>
           </div>
         </div>
       </div>
@@ -2641,6 +2632,30 @@
   </div>
 </div>
 
+<!-- Delete API Key Confirm Modal -->
+<div class="modal-backdrop hidden" id="modal-delete-apikey" onclick="if(event.target===this)closeDeleteAPIKeyModal()">
+  <div class="modal" style="max-width:440px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">⚠ Delete API Key</h3>
+      <button class="modal-close" onclick="closeDeleteAPIKeyModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="delete-apikey-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">
+        You are about to permanently delete the API key <strong id="delete-apikey-name" style="font-family:monospace;color:var(--accent-danger);"></strong>.
+      </p>
+      <p style="font-size:13px;color:var(--text-2);margin-bottom:6px;">
+        Any integration using this key — such as a homepage widget — will <strong>immediately stop working</strong>.
+      </p>
+      <p style="font-size:12px;color:var(--text-3);">This action cannot be undone. You can generate a new key at any time.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeDeleteAPIKeyModal()">Cancel</button>
+      <button id="btn-delete-apikey-confirm" class="btn" style="background:var(--accent-danger);color:#fff;" onclick="_executeDeleteAPIKey()">Delete Key</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit User Modal -->
 <div class="modal-backdrop hidden" id="modal-edit-user">
   <div class="modal" style="max-width:440px;max-height:90vh;display:flex;flex-direction:column;">
@@ -2651,7 +2666,7 @@
       </div>
       <button class="modal-close" onclick="closeEditUser()">✕</button>
     </div>
-    <div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column;">
+    <div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column;padding:0;">
     <div class="modal-body" id="eu-modal-body" style="overflow-y:auto;flex:1;" onscroll="_euCheckScroll()">
       <div id="edit-user-alert" class="alert alert-error hidden"></div>
       <div id="edit-user-ok"    class="alert alert-success hidden" style="margin-bottom:12px;"></div>
@@ -3071,8 +3086,8 @@
       </div>
       <button class="modal-close" onclick="closeScheduleModal()">✕</button>
     </div>
-    <form onsubmit="submitSchedule(event)" style="display:flex;flex-direction:column;flex:1;min-height:0;">
-      <div style="overflow-y:auto;flex:1;padding:20px 24px 0;">
+    <form onsubmit="submitSchedule(event)" style="display:flex;flex-direction:column;flex:1;min-height:0;padding:0;">
+      <div style="overflow-y:auto;flex:1;padding:20px 32px 0;scrollbar-gutter:stable;">
         <div id="sched-alert" class="alert alert-error hidden"></div>
         <div class="form-group">
           <label>Dataset or ZVol <i class="info-tip tip-down" data-tip="Select the dataset or zvol to snapshot. Both filesystem datasets and block-device zvols are listed."></i></label>
@@ -3237,7 +3252,7 @@
       </div>
       <button class="modal-close" onclick="closeSchedInfoModal()">✕</button>
     </div>
-    <div style="overflow-y:auto;flex:1;padding:20px 24px;display:flex;flex-direction:column;gap:16px;">
+    <div style="overflow-y:auto;flex:1;padding:20px 32px;display:flex;flex-direction:column;gap:16px;scrollbar-gutter:stable;">
       <p style="margin:0;color:var(--text-2);line-height:1.6;">ZFS replication sends your snapshots to a remote server using <code>zfs send | ssh zfs receive</code>. The first run does a full transfer; subsequent runs send only the delta (incremental), keeping bandwidth low.</p>
 
       <div style="background:var(--surface-2);border-radius:8px;padding:16px;border-left:3px solid rgba(48,209,88,0.5);">
@@ -3599,6 +3614,10 @@
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
           <input type="checkbox" id="share-guestok" style="width:15px;height:15px;accent-color:var(--accent-2);">
           <span>Guest OK <i class="info-tip tip-down" data-tip="Allows unauthenticated access to the share. Anyone on the network can connect without a username or password. Use with caution on untrusted networks."></i></span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
+          <input type="checkbox" id="share-windows-acl" style="width:15px;height:15px;accent-color:var(--accent-2);">
+          <span>Windows ACL <i class="info-tip tip-down" data-tip="Enables full Windows ACL (NTFS-style permission) support for this share.&#10;&#10;SMB: activates the acl_xattr VFS module so Windows clients can read and write per-file ACLs. Also enables DOS attribute storage and ACL inheritance.&#10;&#10;ZFS dataset: sets acltype=nfsv4, aclinherit=passthrough, aclmode=passthrough, xattr=sa so the kernel honours NFSv4 ACLs — required for executable file attributes and fine-grained Windows permissions to work correctly for new files written through the share."></i></span>
         </label>
       </div>
 
@@ -4548,7 +4567,7 @@
       <button class="modal-close" onclick="closeAddCapacityGuide()">✕</button>
     </div>
 
-    <div style="padding:20px 24px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:14px;">
+    <div style="padding:20px 32px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:14px;scrollbar-gutter:stable;">
 
       <!-- RAIDZ Expansion -->
       <div style="background:var(--surface2);border:1px solid rgba(48,209,88,0.3);border-radius:var(--radius-sm);padding:16px;">
@@ -4653,7 +4672,7 @@
     </div>
 
     <!-- Layout cards -->
-    <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1;">
+    <div style="padding:20px 32px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1;scrollbar-gutter:stable;">
 
       <!-- Stripe -->
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;">
@@ -4758,6 +4777,30 @@
     <!-- Footer -->
     <div style="padding:14px 24px;border-top:1px solid var(--border);text-align:right;">
       <button class="btn btn-primary btn-sm" onclick="closePoolLayoutGuide()">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Encryption Key Confirm Modal -->
+<div class="modal-backdrop hidden" id="modal-delete-enc-key" onclick="if(event.target===this)closeDeleteEncKeyModal()">
+  <div class="modal" style="max-width:440px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">⚠ Delete Encryption Key</h3>
+      <button class="modal-close" onclick="closeDeleteEncKeyModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="delete-enc-key-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">
+        You are about to permanently delete the key <strong id="delete-enc-key-name" style="font-family:monospace;color:var(--accent-danger);"></strong>.
+      </p>
+      <p style="font-size:13px;color:var(--text-2);margin-bottom:6px;">
+        The key file will be <strong>removed from the server</strong>. Any pool or dataset encrypted with this key will become <strong>inaccessible</strong> unless you have an exported backup of the key.
+      </p>
+      <p style="font-size:12px;color:var(--text-3);">This action cannot be undone.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeDeleteEncKeyModal()">Cancel</button>
+      <button id="btn-delete-enc-key-confirm" class="btn" style="background:var(--accent-danger);color:#fff;" onclick="_executeDeleteEncKey()">Delete Key</button>
     </div>
   </div>
 </div>
@@ -6059,10 +6102,35 @@ async function loadAPIKeys() {
   }
 }
 
-async function deleteAPIKey(id, name) {
-  if (!confirm(`Delete API key "${name}"? Any integration using it will stop working.`)) return;
+let _deleteAPIKeyId = null;
+function deleteAPIKey(id, name) {
+  _deleteAPIKeyId = id;
+  document.getElementById('delete-apikey-name').textContent = name;
+  document.getElementById('delete-apikey-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-delete-apikey-confirm');
+  btn.disabled = false; btn.textContent = 'Delete Key';
+  document.getElementById('modal-delete-apikey').classList.remove('hidden');
+}
+function closeDeleteAPIKeyModal() {
+  document.getElementById('modal-delete-apikey').classList.add('hidden');
+  _deleteAPIKeyId = null;
+}
+async function _executeDeleteAPIKey() {
+  const id = _deleteAPIKeyId;
+  if (!id) return;
+  const btn = document.getElementById('btn-delete-apikey-confirm');
+  const alertEl = document.getElementById('delete-apikey-alert');
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  alertEl.classList.add('hidden');
   const resp = await fetch('/api/settings/api-keys/' + id, { method: 'DELETE' });
-  if (resp.ok) loadAPIKeys(); else alert('Failed to delete key.');
+  if (resp.ok) {
+    closeDeleteAPIKeyModal();
+    loadAPIKeys();
+  } else {
+    alertEl.textContent = 'Failed to delete key.';
+    alertEl.classList.remove('hidden');
+    btn.disabled = false; btn.textContent = 'Delete Key';
+  }
 }
 
 function openCreateAPIKey() {
@@ -7889,16 +7957,23 @@ async function _fetchScrubStatus() {
 async function startScrub() {
   const resp = await fetch('/api/pool/scrub/start', { method: 'POST' });
   const data = await resp.json();
-  if (!resp.ok) { alert(data.error || 'Failed to start scrub.'); return; }
+  if (!resp.ok) { showToast(data.error || 'Failed to start scrub.', 'error'); return; }
   _fetchScrubStatus();
 }
 
 async function stopScrub() {
-  if (!confirm('Stop the running scrub?')) return;
-  const resp = await fetch('/api/pool/scrub/stop', { method: 'POST' });
-  const data = await resp.json();
-  if (!resp.ok) { alert(data.error || 'Failed to stop scrub.'); return; }
-  _fetchScrubStatus();
+  showConfirm({
+    title: 'Stop Scrub',
+    body: 'Stop the currently running scrub? You can restart it at any time.',
+    confirmText: 'Stop Scrub',
+    danger: false,
+    onConfirm: async () => {
+      const resp = await fetch('/api/pool/scrub/stop', { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok) { showToast(data.error || 'Failed to stop scrub.', 'error'); return; }
+      _fetchScrubStatus();
+    }
+  });
 }
 
 async function setScrubSchedule() {
@@ -8887,7 +8962,7 @@ async function submitDiskOnline(poolName, device) {
     if (el && data) renderPoolExists(el, data);
     updatePoolNavDot();
   } else {
-    alert(data.error || 'Failed to bring disk online.');
+    showToast(data.error || 'Failed to bring disk online.', 'error');
   }
 }
 
@@ -9790,10 +9865,10 @@ async function submitCreateZVol(e) {
     });
     const data = await resp.json();
     if (!resp.ok) {
-      alert('Failed to create ZVol: ' + (data.error || 'unknown error'));
+      showToast('Failed to create ZVol: ' + (data.error || 'unknown error'), 'error');
     }
   } catch(err) {
-    alert('Failed to create ZVol: ' + err);
+    showToast('Failed to create ZVol: ' + err, 'error');
   } finally {
     removeActiveJob(jobId);
     loadDatasets();
@@ -9919,10 +9994,10 @@ async function submitEditZVol(e) {
     });
     const data = await resp.json();
     if (!resp.ok) {
-      alert('Failed to update ZVol: ' + (data.error || 'unknown error'));
+      showToast('Failed to update ZVol: ' + (data.error || 'unknown error'), 'error');
     }
   } catch(err) {
-    alert('Failed to update ZVol: ' + err);
+    showToast('Failed to update ZVol: ' + err, 'error');
   } finally {
     removeActiveJob(jobId);
     loadDatasets();
@@ -10388,7 +10463,7 @@ async function submitEditDataset(e) {
   const data = await resp.json();
   removeActiveJob(jobId);
   if (!resp.ok) {
-    alert('Failed to update dataset: ' + (data.error || 'unknown error'));
+    showToast('Failed to update dataset: ' + (data.error || 'unknown error'), 'error');
     return;
   }
   await refreshPoolBar();
@@ -10887,16 +10962,23 @@ async function submitSchedule(e) {
 async function runScheduleNow(id) {
   const resp = await fetch(`/api/snapshot-schedules/${id}/run-now`, { method: 'POST' });
   const data = await resp.json();
-  if (!resp.ok) { alert(data.error || 'Run failed.'); return; }
+  if (!resp.ok) { showToast(data.error || 'Run failed.', 'error'); return; }
   loadSchedules();
   loadSnapshots();
 }
 
 async function deleteSchedule(id) {
-  if (!confirm('Delete this snapshot policy?')) return;
-  const resp = await fetch(`/api/snapshot-schedules/${id}`, { method: 'DELETE' });
-  if (!resp.ok) { const d = await resp.json(); alert(d.error || 'Delete failed.'); return; }
-  loadSchedules();
+  showConfirm({
+    title: '⚠ Delete Snapshot Policy',
+    body: 'This snapshot policy will be <strong>permanently deleted</strong>. Existing snapshots created by it will not be affected.',
+    confirmText: 'Delete Policy',
+    danger: true,
+    onConfirm: async () => {
+      const resp = await fetch(`/api/snapshot-schedules/${id}`, { method: 'DELETE' });
+      if (!resp.ok) { const d = await resp.json(); showToast(d.error || 'Delete failed.', 'error'); return; }
+      loadSchedules();
+    }
+  });
 }
 
 // ===== Snapshots =====
@@ -11039,18 +11121,28 @@ async function submitCreateSnapshot(e) {
   });
   const data = await resp.json();
   closeSnapshotModal();
-  if (!resp.ok) { alert(data.error || 'Snapshot failed.'); return; }
+  if (!resp.ok) { showToast(data.error || 'Snapshot failed.', 'error'); return; }
   loadSnapshots();
 }
 
 async function restoreSnapshot(name, dataset) {
-  if (!confirm(`Restore "${dataset}" to snapshot:\n${name}\n\n⚠ All changes since this snapshot will be lost.`)) return;
-  const resp = await fetch('/api/snapshots/restore', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({name}),
+  showConfirm({
+    title: '⚠ Restore Snapshot',
+    body: `Restore <strong style="font-family:monospace;">${esc(dataset)}</strong> to snapshot:<br>
+           <span style="font-family:monospace;font-size:13px;color:var(--accent-danger);">${esc(name)}</span><br><br>
+           <strong>All changes made since this snapshot was taken will be permanently lost.</strong><br>
+           <span style="font-size:13px;color:var(--text-3);">This action cannot be undone.</span>`,
+    confirmText: 'Restore',
+    danger: true,
+    onConfirm: async () => {
+      const resp = await fetch('/api/snapshots/restore', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name}),
+      });
+      const data = await resp.json();
+      if (resp.ok) loadSnapshots(); else showToast(data.error || 'Restore failed.', 'error');
+    }
   });
-  const data = await resp.json();
-  if (resp.ok) loadSnapshots(); else alert(data.error || 'Restore failed.');
 }
 
 async function cloneSnapshot(name) {
@@ -11062,7 +11154,7 @@ async function cloneSnapshot(name) {
   });
   const data = await resp.json();
   if (resp.ok) { loadSnapshots(); loadDatasets(); }
-  else alert(data.error || 'Clone failed.');
+  else showToast(data.error || 'Clone failed.', 'error');
 }
 
 // ── Snapshot dataset burger menu ─────────────────────────────────────────────
@@ -11405,7 +11497,7 @@ async function refreshDisks() {
     _applyDiskNavDot(_diskCache);
     renderDisks(document.getElementById('disks-content'), _diskCache);
   } catch {
-    alert('SMART refresh failed.');
+    showToast('SMART refresh failed.', 'error');
   }
   removeActiveJob('smart-refresh');
   btn.disabled = false;
@@ -11424,7 +11516,7 @@ async function scanDisks() {
     _applyDiskNavDot(_diskCache);
     renderDisks(document.getElementById('disks-content'), _diskCache);
   } catch {
-    alert('Disk scan failed.');
+    showToast('Disk scan failed.', 'error');
   }
   removeActiveJob('disk-scan');
   btn.disabled = false;
@@ -11857,7 +11949,7 @@ async function cleanShareRecycleBin(name) {
   try {
     const resp = await fetch('/api/shares/' + encodeURIComponent(name) + '/clean-recycle', { method: 'POST' });
     const data = await resp.json();
-    if (!resp.ok) alert('Clean failed: ' + (data.error || 'unknown error'));
+    if (!resp.ok) showToast('Clean failed: ' + (data.error || 'unknown error'), 'error');
   } finally {
     removeActiveJob(jobId);
   }
@@ -11876,6 +11968,7 @@ async function openCreateShare() {
   document.getElementById('share-browseable').checked = true;
   document.getElementById('share-readonly').checked = false;
   document.getElementById('share-guestok').checked = false;
+  document.getElementById('share-windows-acl').checked = false;
   document.getElementById('share-timemachine').checked = false;
   document.getElementById('share-tm-quota').value = '0';
   document.getElementById('share-tm-quota-wrap').classList.add('hidden');
@@ -11923,6 +12016,7 @@ async function _openEditShareObj(s) {
   document.getElementById('share-browseable').checked = !!s.browseable;
   document.getElementById('share-readonly').checked = !!s.read_only;
   document.getElementById('share-guestok').checked = !!s.guest_ok;
+  document.getElementById('share-windows-acl').checked = !!s.windows_acl;
   document.getElementById('share-timemachine').checked = !!s.time_machine;
   document.getElementById('share-tm-quota').value = s.tm_quota_gb || 0;
   document.getElementById('share-tm-quota-wrap').classList.toggle('hidden', !s.time_machine);
@@ -12071,9 +12165,10 @@ async function submitShare(e) {
   const name     = document.getElementById('share-name').value.trim();
   const path     = document.getElementById('share-path').value.trim();
   const comment  = document.getElementById('share-comment').value.trim();
-  const browseable = document.getElementById('share-browseable').checked;
-  const readOnly   = document.getElementById('share-readonly').checked;
-  const guestOK    = document.getElementById('share-guestok').checked;
+  const browseable  = document.getElementById('share-browseable').checked;
+  const readOnly    = document.getElementById('share-readonly').checked;
+  const guestOK     = document.getElementById('share-guestok').checked;
+  const windowsACL  = document.getElementById('share-windows-acl').checked;
   const validUsers = [...document.querySelectorAll('#share-users-tbody tr')].map(tr => ({
     username: tr.dataset.username,
     read_only: tr.querySelector('.user-readonly-toggle').checked
@@ -12093,6 +12188,7 @@ async function submitShare(e) {
     recycle_bin: recycleBin, recycle_retain_days: recycleRetainDays,
     durable_handles: durableHandles, apple_encoding: appleEncoding,
     allowed_hosts: allowedHosts, hosts_deny: hostsDeny,
+    windows_acl: windowsACL,
   };
   const url    = isEdit ? '/api/shares/' + encodeURIComponent(shareEditName) : '/api/shares';
   const method = isEdit ? 'PUT' : 'POST';
@@ -12746,9 +12842,9 @@ async function iscsiServiceAction(action) {
     });
     if (!r.ok) {
       const d = await r.json();
-      alert(d.error || 'Service action failed');
+      showToast(d.error || 'Service action failed', 'error');
     }
-  } catch (e) { alert('Error: ' + e.message); }
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
   finally {
     removeActiveJob(jobId);
     await loadISCSIPage();
@@ -12915,29 +13011,36 @@ async function _saveNewISCSIHost() {
   const name    = document.getElementById('nh-name')?.value.trim();
   const iqn     = document.getElementById('nh-iqn')?.value.trim();
   const comment = document.getElementById('nh-comment')?.value.trim();
-  if (!iqn) { alert('IQN is required'); return; }
+  if (!iqn) { showToast('IQN is required', 'error'); return; }
   try {
     const r = await fetch('/api/iscsi/host', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ name, iqn, comment }),
     });
-    if (!r.ok) { const d = await r.json(); alert(d.error || 'Failed to save host'); return; }
-  } catch (e) { alert(e.message); return; }
+    if (!r.ok) { const d = await r.json(); showToast(d.error || 'Failed to save host', 'error'); return; }
+  } catch (e) { showToast(e.message, 'error'); return; }
   await _loadISCSIHostsTable();
 }
 
 async function _deleteISCSIHost(id) {
-  if (!confirm('Delete this host?')) return;
-  try {
-    const r = await fetch('/api/iscsi/host/delete', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ id }),
-    });
-    if (!r.ok) { const d = await r.json(); alert(d.error || 'Failed to delete host'); return; }
-    await _loadISCSIHostsTable();
-  } catch (e) { alert(e.message); }
+  showConfirm({
+    title: '⚠ Delete iSCSI Host',
+    body: 'This host entry will be permanently deleted. Any iSCSI shares using this host will lose access.',
+    confirmText: 'Delete Host',
+    danger: true,
+    onConfirm: async () => {
+      try {
+        const r = await fetch('/api/iscsi/host/delete', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ id }),
+        });
+        if (!r.ok) { const d = await r.json(); showToast(d.error || 'Failed to delete host', 'error'); return; }
+        await _loadISCSIHostsTable();
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+  });
 }
 
 // ---- iSCSI CHAP Credential functions ----
@@ -13142,9 +13245,9 @@ async function submitNewISCSIShare() {
     });
     if (!r.ok) {
       const d = await r.json();
-      alert('Failed: ' + (d.error || 'unknown error'));
+      showToast('Failed: ' + (d.error || 'unknown error'), 'error');
     }
-  } catch (e) { alert('Error: ' + e.message); }
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
   finally {
     removeActiveJob(jobId);
     loadISCSIPage();
@@ -13304,8 +13407,8 @@ async function confirmDeleteISCSIShare() {
       body: JSON.stringify(body),
     });
     const d = await r.json();
-    if (!r.ok) { alert(d.error || 'Delete failed'); }
-  } catch (e) { alert(e.message); }
+    if (!r.ok) { showToast(d.error || 'Delete failed', 'error'); }
+  } catch (e) { showToast(e.message, 'error'); }
   finally {
     removeActiveJob(jobId);
     loadISCSIPage();
@@ -13664,22 +13767,30 @@ async function toggleS3UserStatus(accessKey, enable) {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ access_key: accessKey, enabled: enable }),
     });
-    if (!r.ok) { const d = await r.json(); alert('Error: ' + (d.error || JSON.stringify(d))); return; }
+    if (!r.ok) { const d = await r.json(); showToast(d.error || JSON.stringify(d), 'error'); return; }
     await _loadS3UsersTable();
-  } catch (e) { alert('Error: ' + e.message); }
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 
 async function confirmDeleteS3User(accessKey) {
-  if (!confirm(`Delete S3 user "${accessKey}"? This cannot be undone.`)) return;
-  try {
-    const r = await fetch('/api/minio/user/delete', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ access_key: accessKey }),
-    });
-    if (!r.ok) { const d = await r.json(); alert('Error: ' + (d.error || JSON.stringify(d))); return; }
-    await _loadS3UsersTable();
-  } catch (e) { alert('Error: ' + e.message); }
+  showConfirm({
+    title: '⚠ Delete S3 User',
+    body: `Delete S3 user <strong style="font-family:monospace;color:var(--accent-danger);">${esc(accessKey)}</strong>?<br><br>
+           All access keys and permissions for this user will be <strong>permanently removed</strong>. This cannot be undone.`,
+    confirmText: 'Delete User',
+    danger: true,
+    onConfirm: async () => {
+      try {
+        const r = await fetch('/api/minio/user/delete', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ access_key: accessKey }),
+        });
+        if (!r.ok) { const d = await r.json(); showToast(d.error || JSON.stringify(d), 'error'); return; }
+        await _loadS3UsersTable();
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+  });
 }
 
 function openS3ChangePasswordModal(accessKey) {
@@ -13911,31 +14022,49 @@ async function _updateMinIOPrereqStatus() {
   } catch (_) {}
 }
 
+// state for optional-feature burger menus (body-append pattern)
+const _optFeatMenuState = { feature: null, installed: false, hidden: false };
+let _openOptFeatMenu = null;
+function _closeOptFeatMenus() {
+  if (_openOptFeatMenu) { _openOptFeatMenu.remove(); _openOptFeatMenu = null; }
+}
+document.addEventListener('click', _closeOptFeatMenus);
+window.addEventListener('scroll', _closeOptFeatMenus, true);
+
 function _renderOptFeatMenu(feature, installed, hidden) {
-  const dd = document.getElementById('prereq-' + feature + '-dropdown');
-  if (!dd) return;
-  const pkg = feature === 'minio' ? 'minio' : feature === 'ups' ? 'nut' : 'targetcli-fb';
-  let html = '';
-  if (installed) {
-    html = `<button onclick="uninstallFeature('${pkg}')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🗑 Uninstall Feature</button>`;
-  } else if (hidden) {
-    html = `<button onclick="setFeatureNavVisibility('${feature}', false)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">👁 Unhide from menu</button>`;
-  } else {
-    html = `<button onclick="setFeatureNavVisibility('${feature}', true)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🙈 Hide from menu</button>`;
-  }
-  dd.innerHTML = html;
+  // Just store state; the actual dropdown is built on demand in _optFeatMenu
+  if (feature === 'iscsi') { _optFeatMenuState._iscsi = { installed, hidden }; }
+  else if (feature === 'minio') { _optFeatMenuState._minio = { installed, hidden }; }
+  else if (feature === 'ups') { _optFeatMenuState._ups = { installed, hidden }; }
 }
 
-function _optFeatMenu(feature) {
-  const dd = document.getElementById('prereq-' + feature + '-dropdown');
-  if (dd) dd.classList.toggle('hidden');
+function _optFeatMenu(e, feature) {
+  e.stopPropagation();
+  const btn = e.currentTarget;
+  if (_openOptFeatMenu) { _closeOptFeatMenus(); return; }
+  const state = _optFeatMenuState['_' + feature] || { installed: false, hidden: false };
+  const pkg = feature === 'minio' ? 'minio' : feature === 'ups' ? 'nut' : 'targetcli-fb';
+  const dd = document.createElement('div');
+  dd.addEventListener('click', ev => ev.stopPropagation());
+  dd.style.cssText = 'position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);min-width:170px;overflow:hidden;';
+  let itemHtml = '';
+  if (state.installed) {
+    itemHtml = `<button onclick="_closeOptFeatMenus();uninstallFeature('${pkg}')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🗑 Uninstall Feature</button>`;
+  } else if (state.hidden) {
+    itemHtml = `<button onclick="_closeOptFeatMenus();setFeatureNavVisibility('${feature}', false)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">👁 Unhide from menu</button>`;
+  } else {
+    itemHtml = `<button onclick="_closeOptFeatMenus();setFeatureNavVisibility('${feature}', true)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🙈 Hide from menu</button>`;
+  }
+  dd.innerHTML = itemHtml;
+  document.body.appendChild(dd);
+  const rect = btn.getBoundingClientRect();
+  dd.style.top = (rect.bottom + 4) + 'px';
+  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
+  _openOptFeatMenu = dd;
 }
 
 async function setFeatureNavVisibility(feature, hidden) {
-  ['iscsi', 'minio', 'ups'].forEach(f => {
-    const dd = document.getElementById('prereq-' + f + '-dropdown');
-    if (dd) dd.classList.add('hidden');
-  });
+  _closeOptFeatMenus();
   try {
     await fetch('/api/prereqs/feature-nav', {
       method: 'POST',
@@ -13948,7 +14077,7 @@ async function setFeatureNavVisibility(feature, hidden) {
     loadISCSINavStatus();
     loadS3NavStatus();
   } catch (e) {
-    alert('Error: ' + e.message);
+    showToast('Error: ' + e.message, 'error');
   }
 }
 
@@ -13960,10 +14089,7 @@ const _uninstallDesc = {
 };
 
 function uninstallFeature(pkg) {
-  ['iscsi', 'minio', 'ups'].forEach(f => {
-    const dd = document.getElementById('prereq-' + f + '-dropdown');
-    if (dd) dd.classList.add('hidden');
-  });
+  _closeOptFeatMenus();
   _uninstallPkg = pkg;
   document.getElementById('uninstall-feat-name').textContent = pkg;
   document.getElementById('uninstall-feat-desc').textContent = _uninstallDesc[pkg] || '';
@@ -13997,7 +14123,7 @@ async function _executeUninstallFeature() {
     });
     const d = await r.json();
     if (!r.ok) {
-      alert('Uninstall failed: ' + (d.error || JSON.stringify(d)));
+      showToast('Uninstall failed: ' + (d.error || JSON.stringify(d)), 'error');
       return;
     }
     await _updateISCSIPrereqStatus();
@@ -14006,7 +14132,7 @@ async function _executeUninstallFeature() {
     loadISCSINavStatus();
     loadS3NavStatus();
   } catch (e) {
-    alert('Uninstall error: ' + e.message);
+    showToast('Uninstall error: ' + e.message, 'error');
   } finally {
     removeActiveJob(jobId);
   }
@@ -14028,7 +14154,7 @@ async function enableMinIOFeature() {
       const d = await r.json();
       if (!r.ok) {
         if (btn) { btn.disabled = false; btn.textContent = 'Enable S3 Object Server'; }
-        alert('Installation failed: ' + (d.error || JSON.stringify(d)));
+        showToast('Installation failed: ' + (d.error || JSON.stringify(d)), 'error');
         return;
       }
       if (statusEl) {
@@ -14040,7 +14166,7 @@ async function enableMinIOFeature() {
       loadS3NavStatus();
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = 'Enable S3 Object Server'; }
-      alert('Error: ' + e.message);
+      showToast('Error: ' + e.message, 'error');
     }
   });
 }
@@ -14060,7 +14186,7 @@ async function enableISCSIFeature() {
       const d = await r.json();
       if (!r.ok) {
         if (btn) { btn.disabled = false; btn.textContent = 'Enable iSCSI Feature'; }
-        alert('Installation failed: ' + (d.error || JSON.stringify(d)));
+        showToast('Installation failed: ' + (d.error || JSON.stringify(d)), 'error');
         return;
       }
       const statusEl = document.getElementById('prereq-iscsi-status');
@@ -14073,7 +14199,7 @@ async function enableISCSIFeature() {
       loadISCSINavStatus();
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = 'Enable iSCSI Feature'; }
-      alert('Error: ' + e.message);
+      showToast('Error: ' + e.message, 'error');
     }
   });
 }
@@ -14127,7 +14253,7 @@ async function enableUPSFeature() {
         const d = await r.json();
         if (!r.ok) {
           if (btn) { btn.disabled = false; btn.textContent = 'Enable UPS Feature'; }
-          alert('Installation failed: ' + (d.error || JSON.stringify(d)));
+          showToast('Installation failed: ' + (d.error || JSON.stringify(d)), 'error');
           return;
         }
         const statusEl = document.getElementById('prereq-ups-status');
@@ -14150,7 +14276,7 @@ async function enableUPSFeature() {
         setTimeout(pollUPSTopbar, 3000);
       } catch (e) {
         if (btn) { btn.disabled = false; btn.textContent = 'Enable UPS Feature'; }
-        alert('Error: ' + e.message);
+        showToast('Error: ' + e.message, 'error');
       }
     }
   );
@@ -14436,10 +14562,10 @@ async function upsNominalSave() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ watts }),
     });
-    if (!r.ok) { const d = await r.json(); alert(d.error || 'Save failed'); return; }
+    if (!r.ok) { const d = await r.json(); showToast(d.error || 'Save failed', 'error'); return; }
     // Re-render by reloading the panel data so cfg.nominal_power_w is fresh.
     loadUPSPanel();
-  } catch (e) { alert('Error: ' + e.message); }
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 
 async function saveUPSConfig() {
@@ -14495,10 +14621,10 @@ async function upsServiceAction(action) {
       body: JSON.stringify({ action }),
     });
     const d = await r.json();
-    if (!r.ok) { alert(d.error || JSON.stringify(d)); return; }
+    if (!r.ok) { showToast(d.error || JSON.stringify(d), 'error'); return; }
     const jid = 'ups-svc-' + Date.now(); addActiveJob(jid, 'nut-server ' + action + ' OK'); setTimeout(() => removeActiveJob(jid), 3000);
     loadUPSPanel();
-  } catch (e) { alert(e.message); }
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function upsDetect() {
@@ -14508,19 +14634,18 @@ async function upsDetect() {
     const r = await fetch('/api/ups/detect', { method: 'POST' });
     const d = await r.json();
     removeActiveJob(jid);
-    if (!r.ok) { alert(d.error || JSON.stringify(d)); return; }
+    if (!r.ok) { showToast(d.error || JSON.stringify(d), 'error'); return; }
     const det = d.detected;
     if (det && det.name) {
       const okId = 'ups-det-' + Date.now();
       addActiveJob(okId, `UPS detected: ${det.name} (${det.driver} @ ${det.port})`);
       setTimeout(() => removeActiveJob(okId), 6000);
     } else {
-      const scanOut = det && det.scanner_output ? '\n\nnut-scanner output:\n' + det.scanner_output : '\n\n(nut-scanner produced no output)';
-      alert('No UPS detected on any bus. Make sure it is connected via USB and try again.' + scanOut);
+      showToast('No UPS detected on any bus. Make sure it is connected via USB and try again.', 'error');
     }
     pollUPSTopbar();
     loadUPSPanel();
-  } catch (e) { removeActiveJob(jid); alert(e.message); }
+  } catch (e) { removeActiveJob(jid); showToast(e.message, 'error'); }
 }
 
 // ── Certificate Management ────────────────────────────────────────────────────
@@ -14558,17 +14683,10 @@ async function loadCertList() {
         <td style="padding:10px 12px;font-size:13px;color:var(--text-2);">${esc(c.common_name||'—')}</td>
         <td style="padding:10px 12px;font-size:13px;${expiredStyle}">${expires}</td>
         <td style="padding:10px 12px;text-align:center;">${validBadge}</td>
-        <td style="padding:10px 12px;text-align:right;position:relative;">
-          <div style="position:relative;display:inline-block;">
-            <button class="btn btn-ghost btn-sm" onclick="_certMenu('${esc(c.name)}')" title="Options">≡</button>
-            <div id="cert-menu-${esc(c.name)}" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);z-index:200;min-width:170px;overflow:hidden;">
-              <button onclick="activateCert('${esc(c.name)}')" ${(!c.is_valid||c.is_active)?'disabled style="opacity:.4;cursor:not-allowed;"':''} style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="if(!this.disabled)this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">✓ Use for ZFSNAS</button>
-              <div style="border-top:1px solid var(--border);"></div>
-              <button onclick="exportCert('${esc(c.name)}')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">⬇ Export</button>
-              <div style="border-top:1px solid var(--border);"></div>
-              <button onclick="deleteCert('${esc(c.name)}')" ${c.is_active?'disabled style="opacity:.4;cursor:not-allowed;"':''} style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="if(!this.disabled)this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">✕ Delete</button>
-            </div>
-          </div>
+        <td style="padding:10px 12px;text-align:right;">
+          <button onclick="_certMenu(event,'${esc(c.name)}',${c.is_valid&&!c.is_active},${!c.is_active})"
+                  style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;"
+                  title="Options">⋮</button>
         </td>
       </tr>`;
     }).join('');
@@ -14590,14 +14708,56 @@ async function loadCertList() {
   }
 }
 
-function _certMenu(name) {
-  // Close all cert menus
-  document.querySelectorAll('[id^="cert-menu-"]').forEach(el => {
-    if (el.id !== 'cert-menu-' + name) el.style.display = 'none';
-  });
-  const dd = document.getElementById('cert-menu-' + name);
-  if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+let _openCertMenu = null; // { btn, el }
+function _closeCertMenus() {
+  if (_openCertMenu) { _openCertMenu.el.remove(); _openCertMenu = null; }
 }
+function _certMenu(e, name, canActivate, canDelete) {
+  e.stopPropagation();
+  const btn = e.currentTarget;
+  if (_openCertMenu && _openCertMenu.btn === btn) { _closeCertMenus(); return; }
+  _closeCertMenus();
+
+  const dd = document.createElement('div');
+  dd.addEventListener('click', ev => ev.stopPropagation());
+  dd.style.cssText = 'position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);min-width:170px;overflow:hidden;';
+
+  const mkBtn = (label, color, disabled, onClick) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.disabled = disabled;
+    b.style.cssText = `display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;
+      color:${disabled ? 'var(--text-3)' : color};cursor:${disabled ? 'not-allowed' : 'pointer'};
+      font-size:13px;opacity:${disabled ? '.45' : '1'};`;
+    if (!disabled) {
+      b.onmouseover = () => { b.style.background = 'var(--surface2)'; };
+      b.onmouseout  = () => { b.style.background = 'none'; };
+      b.addEventListener('click', () => { _closeCertMenus(); onClick(); });
+    }
+    return b;
+  };
+  const sep = () => { const d = document.createElement('div'); d.style.borderTop = '1px solid var(--border)'; return d; };
+
+  dd.appendChild(mkBtn('✓ Use for ZFSNAS', 'var(--text-1)', !canActivate, () => activateCert(name)));
+  dd.appendChild(sep());
+  dd.appendChild(mkBtn('⬇ Export', 'var(--text-1)', false, () => exportCert(name)));
+  dd.appendChild(sep());
+  dd.appendChild(mkBtn('✕ Delete', 'var(--accent-danger)', !canDelete, () => deleteCert(name)));
+
+  // Append to body so it escapes all table overflow clipping, then position under button
+  document.body.appendChild(dd);
+  const rect = btn.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  if (spaceBelow < dd.offsetHeight + 8 && rect.top > dd.offsetHeight + 8) {
+    dd.style.top = (rect.top - dd.offsetHeight) + 'px';
+  } else {
+    dd.style.top = (rect.bottom + 4) + 'px';
+  }
+  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
+  _openCertMenu = { btn, el: dd };
+}
+document.addEventListener('click', _closeCertMenus);
+window.addEventListener('scroll', _closeCertMenus, true);
 
 function openUploadCertModal() {
   document.getElementById('upload-cert-name').value = '';
@@ -14648,19 +14808,27 @@ async function uploadCert() {
 }
 
 async function activateCert(name) {
-  document.querySelectorAll('[id^="cert-menu-"]').forEach(el => el.style.display = 'none');
-  if (!confirm('Activate "' + name + '" as the TLS certificate? A restart will be required to apply the change.')) return;
-  try {
-    const r = await fetch('/api/certs/' + encodeURIComponent(name) + '/activate', { method: 'POST' });
-    const d = await r.json();
-    if (!r.ok) { alert(d.error || JSON.stringify(d)); return; }
-    const jid = 'cert-act-' + Date.now(); addActiveJob(jid, 'Certificate activated — restart required.'); setTimeout(() => removeActiveJob(jid), 4000);
-    loadCertList();
-  } catch (e) { alert(e.message); }
+  _closeCertMenus();
+  showConfirm({
+    title: 'Activate Certificate',
+    body: `Set <strong style="font-family:monospace;">${esc(name)}</strong> as the active TLS certificate?<br><br>
+           A <strong>portal restart</strong> will be required to apply the change. You can restart from the banner that appears after activation.`,
+    confirmText: 'Activate',
+    danger: false,
+    onConfirm: async () => {
+      try {
+        const r = await fetch('/api/certs/' + encodeURIComponent(name) + '/activate', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || JSON.stringify(d), 'error'); return; }
+        const jid = 'cert-act-' + Date.now(); addActiveJob(jid, 'Certificate activated — restart required.'); setTimeout(() => removeActiveJob(jid), 4000);
+        loadCertList();
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+  });
 }
 
 function exportCert(name) {
-  document.querySelectorAll('[id^="cert-menu-"]').forEach(el => el.style.display = 'none');
+  _closeCertMenus();
   const a = document.createElement('a');
   a.href = '/api/certs/' + encodeURIComponent(name) + '/export';
   a.download = name + '.zip';
@@ -14668,26 +14836,41 @@ function exportCert(name) {
 }
 
 async function deleteCert(name) {
-  document.querySelectorAll('[id^="cert-menu-"]').forEach(el => el.style.display = 'none');
-  if (!confirm('Delete certificate "' + name + '"? This cannot be undone.')) return;
-  try {
-    const r = await fetch('/api/certs/' + encodeURIComponent(name), { method: 'DELETE' });
-    const d = await r.json();
-    if (!r.ok) { alert(d.error || JSON.stringify(d)); return; }
-    const jid = 'cert-del-' + Date.now(); addActiveJob(jid, 'Certificate deleted.'); setTimeout(() => removeActiveJob(jid), 3000);
-    loadCertList();
-  } catch (e) { alert(e.message); }
+  _closeCertMenus();
+  showConfirm({
+    title: '⚠ Delete Certificate',
+    body: `Permanently delete <strong style="font-family:monospace;">${esc(name)}</strong>?<br><br>
+           The certificate and private key files will be <strong>removed from the server</strong>. This cannot be undone.`,
+    confirmText: 'Delete Certificate',
+    danger: true,
+    onConfirm: async () => {
+      try {
+        const r = await fetch('/api/certs/' + encodeURIComponent(name), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || JSON.stringify(d), 'error'); return; }
+        const jid = 'cert-del-' + Date.now(); addActiveJob(jid, 'Certificate deleted.'); setTimeout(() => removeActiveJob(jid), 3000);
+        loadCertList();
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+  });
 }
 
 async function restartForCert() {
-  if (!confirm('Restart the portal now to apply the new certificate? The connection will briefly drop.')) return;
-  try {
-    await fetch('/api/certs/restart', { method: 'POST' });
-    addActiveJob('cert-restart', 'Portal restarting…');
-    setTimeout(() => location.reload(), 3000);
-  } catch (_) {
-    setTimeout(() => location.reload(), 3000);
-  }
+  showConfirm({
+    title: 'Restart Portal',
+    body: 'The portal will restart now to apply the new TLS certificate.<br><br>Your browser connection will <strong>briefly drop</strong> and reconnect automatically.',
+    confirmText: 'Restart Now',
+    danger: false,
+    onConfirm: async () => {
+      try {
+        await fetch('/api/certs/restart', { method: 'POST' });
+        addActiveJob('cert-restart', 'Portal restarting…');
+        setTimeout(() => location.reload(), 3000);
+      } catch (_) {
+        setTimeout(() => location.reload(), 3000);
+      }
+    }
+  });
 }
 
 // ===== Helpers =====
@@ -16727,6 +16910,8 @@ document.addEventListener('click', function(e) {
     'modal-power':            closePowerModal,
     'modal-apikey-info':       closeAPIKeyInfo,
     'modal-create-apikey':    closeCreateAPIKey,
+    'modal-delete-apikey':    closeDeleteAPIKeyModal,
+    'modal-generic-confirm':  closeGenericConfirm,
     'modal-create-user':      closeCreateUser,
     'modal-edit-user':        closeEditUser,
     'modal-smb-password':     closeSMBPasswordModal,
@@ -17063,9 +17248,17 @@ async function importKey() {
   await refreshKeyMgmtTable();
 }
 async function exportKey(id, name) {
-  // Show warning first, then trigger download.
-  if (!confirm(`⚠ Export key "${name}"?\n\nKeep this file safe. Anyone with the key file can decrypt your pool data. If lost, encrypted data cannot be recovered.`)) return;
-  window.location.href = `/api/encryption/keys/${encodeURIComponent(id)}/export`;
+  showConfirm({
+    title: '⚠ Export Encryption Key',
+    body: `You are about to download the key file for <strong style="font-family:monospace;">${esc(name)}</strong>.<br><br>
+           <strong>Keep this file safe.</strong> Anyone who obtains it can decrypt your pool data.<br>
+           <span style="font-size:13px;color:var(--text-3);">Store it in a secure location separate from this server. If lost, encrypted data cannot be recovered.</span>`,
+    confirmText: 'Export Key',
+    danger: true,
+    onConfirm: () => {
+      window.location.href = `/api/encryption/keys/${encodeURIComponent(id)}/export`;
+    }
+  });
 }
 async function deleteKey(id) {
   const alertEl = document.getElementById('key-mgmt-alert');
@@ -17107,14 +17300,14 @@ async function loadKeyMgmtSettings() {
           <button onclick="toggleKeyMenu('${menuId}',event)"
                   style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;"
                   title="Actions">⋮</button>
-          <div id="${menuId}" style="display:none;position:absolute;right:0;top:100%;z-index:200;
+          <div id="${menuId}" style="display:none;position:fixed;z-index:9999;
                background:var(--surface);border:1px solid var(--border);border-radius:8px;
                box-shadow:var(--shadow);min-width:130px;overflow:hidden;">
             <button onclick="exportKey('${esc(k.id)}','${esc(k.name)}');closeKeyMenus()"
                     style="display:block;width:100%;text-align:left;padding:8px 14px;background:none;border:none;
                            cursor:pointer;font-size:13px;color:var(--text-1);"
                     onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">Export</button>
-            <button onclick="${inUse ? '' : `deleteKeySettings('${esc(k.id)}');closeKeyMenus()`}"
+            <button onclick="${inUse ? '' : `closeKeyMenus();deleteKeySettings('${esc(k.id)}','${esc(k.name)}')`}"
                     ${inUse ? 'disabled title="In use by a pool or dataset"' : ''}
                     style="display:block;width:100%;text-align:left;padding:8px 14px;background:none;border:none;
                            cursor:${inUse ? 'not-allowed' : 'pointer'};font-size:13px;
@@ -17137,15 +17330,52 @@ function toggleKeyMenu(menuId, e) {
   if (!menu) return;
   const wasOpen = menu.style.display !== 'none';
   closeKeyMenus();
-  if (!wasOpen) menu.style.display = 'block';
+  if (!wasOpen) {
+    const btn = e.currentTarget;
+    const btnRect = btn.getBoundingClientRect();
+    menu.style.display = 'block';
+    const menuH = menu.offsetHeight;
+    const spaceBelow = window.innerHeight - btnRect.bottom;
+    if (spaceBelow < menuH + 8 && btnRect.top > menuH + 8) {
+      menu.style.top = (btnRect.top - menuH) + 'px';
+    } else {
+      menu.style.top = btnRect.bottom + 'px';
+    }
+    menu.style.left = (btnRect.right - menu.offsetWidth) + 'px';
+  }
 }
 // Close menus when clicking anywhere outside
 document.addEventListener('click', closeKeyMenus);
 
-async function deleteKeySettings(id) {
+let _deleteEncKeyId = null;
+function deleteKeySettings(id, name) {
+  _deleteEncKeyId = id;
+  document.getElementById('delete-enc-key-name').textContent = name;
+  document.getElementById('delete-enc-key-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-delete-enc-key-confirm');
+  btn.disabled = false; btn.textContent = 'Delete Key';
+  document.getElementById('modal-delete-enc-key').classList.remove('hidden');
+}
+function closeDeleteEncKeyModal() {
+  document.getElementById('modal-delete-enc-key').classList.add('hidden');
+  _deleteEncKeyId = null;
+}
+async function _executeDeleteEncKey() {
+  const id = _deleteEncKeyId;
+  if (!id) return;
+  const btn = document.getElementById('btn-delete-enc-key-confirm');
+  const alertEl = document.getElementById('delete-enc-key-alert');
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  alertEl.classList.add('hidden');
   const resp = await fetch('/api/encryption/keys/' + encodeURIComponent(id), { method: 'DELETE' });
   const data = await resp.json();
-  if (!resp.ok) { alert(data.error || 'Failed to delete key.'); return; }
+  if (!resp.ok) {
+    alertEl.textContent = data.error || 'Failed to delete key.';
+    alertEl.classList.remove('hidden');
+    btn.disabled = false; btn.textContent = 'Delete Key';
+    return;
+  }
+  closeDeleteEncKeyModal();
   await loadKeyMgmtSettings();
 }
 function showGenerateKeySettings() {
@@ -17169,14 +17399,14 @@ async function doGenerateKeySettings() {
     body: JSON.stringify({name}),
   });
   const data = await resp.json();
-  if (!resp.ok) { alert(data.error || 'Failed to generate key.'); return; }
+  if (!resp.ok) { showToast(data.error || 'Failed to generate key.', 'error'); return; }
   document.getElementById('key-mgmt-gen-wrap').classList.add('hidden');
   await loadKeyMgmtSettings();
 }
 async function doImportKeySettings() {
   const name = document.getElementById('key-mgmt-import-name').value.trim();
   const file = document.getElementById('key-mgmt-import-file').files[0];
-  if (!name || !file) { alert('Provide a name and a .json key file.'); return; }
+  if (!name || !file) { showToast('Provide a name and a .json key file.', 'error'); return; }
   let key_hex;
   try {
     const text = await file.text();
@@ -17184,14 +17414,14 @@ async function doImportKeySettings() {
     key_hex = Object.values(obj)[0];
     if (!key_hex) throw new Error('empty');
   } catch {
-    alert('Invalid key file — expected JSON format {"name": "hex"}.'); return;
+    showToast('Invalid key file — expected JSON format {"name": "hex"}.', 'error'); return;
   }
   const resp = await fetch('/api/encryption/keys/import', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({name, key_hex}),
   });
   const data = await resp.json();
-  if (!resp.ok) { alert(data.error || 'Failed to import key.'); return; }
+  if (!resp.ok) { showToast(data.error || 'Failed to import key.', 'error'); return; }
   document.getElementById('key-mgmt-import-wrap').classList.add('hidden');
   await loadKeyMgmtSettings();
 }
@@ -17230,22 +17460,29 @@ function init2FASection(user) {
 
 async function toggle2FA() {
   if (_2faCurrentlyEnabled) {
-    // Disable flow: just mark for deletion on save.
-    if (!confirm('Disable two-factor authentication on your account?')) return;
-    const resp = await fetch('/api/users/' + _editUserId + '/totp', { method: 'DELETE' });
-    if (!resp.ok) { const d = await resp.json(); alert(d.error || 'Failed.'); return; }
-    _2faCurrentlyEnabled = false;
-    _2faVerified = false;
-    // Re-init display.
-    const u = (_usersCache||[]).find(x=>x.id===_editUserId) || {};
-    u.totp_enabled = false;
-    init2FASection(u);
+    // Disable flow.
+    showConfirm({
+      title: '⚠ Disable Two-Factor Authentication',
+      body: 'Two-factor authentication will be <strong>disabled</strong> on your account.<br><br>Your account will only require a password to log in. This reduces your account security.',
+      confirmText: 'Disable 2FA',
+      danger: true,
+      onConfirm: async () => {
+        const resp = await fetch('/api/users/' + _editUserId + '/totp', { method: 'DELETE' });
+        if (!resp.ok) { const d = await resp.json(); showToast(d.error || 'Failed.', 'error'); return; }
+        _2faCurrentlyEnabled = false;
+        _2faVerified = false;
+        const u = (_usersCache||[]).find(x=>x.id===_editUserId) || {};
+        u.totp_enabled = false;
+        init2FASection(u);
+      }
+    });
+    return;
   } else {
     // Enable flow: fetch setup from server.
     try {
       const resp = await fetch('/api/auth/totp/setup', { method: 'POST' });
       const data = await resp.json();
-      if (!resp.ok) { alert(data.error || 'Failed to generate TOTP secret.'); return; }
+      if (!resp.ok) { showToast(data.error || 'Failed to generate TOTP secret.', 'error'); return; }
       _2faSecret   = data.secret;
       _2faVerified = false;
       document.getElementById('eu-2fa-secret-display').textContent = data.secret.match(/.{1,4}/g).join(' ');
@@ -17265,7 +17502,7 @@ async function toggle2FA() {
       }
       document.getElementById('eu-2fa-setup').classList.remove('hidden');
       document.getElementById('eu-2fa-toggle-btn').style.display = 'none';
-    } catch { alert('Network error.'); }
+    } catch { showToast('Network error.', 'error'); }
   }
 }
 
@@ -17617,7 +17854,7 @@ async function confirmDeleteReplicationTask() {
   btn.disabled = true;
   const r = await fetch('/api/replication/' + _repDeleteID, { method: 'DELETE' });
   btn.disabled = false;
-  if (!r.ok) { alert('Delete failed'); return; }
+  if (!r.ok) { showToast('Delete failed', 'error'); return; }
   closeDeleteReplicationModal();
   loadReplicationPage();
 }
@@ -18500,7 +18737,7 @@ function runReplicationTask(id, name) {
   };
 
   window.capTreeRefresh = async function() {
-    if (!capTreeCurrentDs) { alert('Select a dataset first.'); return; }
+    if (!capTreeCurrentDs) { showToast('Select a dataset first.', 'error'); return; }
     // Stop any ongoing poll.
     if (capTreePollTimer) { clearInterval(capTreePollTimer); capTreePollTimer = null; }
     capTreeScanStartedAt = capTreeCurrentData ? capTreeCurrentData.scanned_at : 0;
@@ -18881,7 +19118,8 @@ function runReplicationTask(id, name) {
     for (const s of (servers || [])) {
       const dotClass = pending ? 'pending' : (s.online ? 'online' : 'offline');
       const urlText  = pending ? '' : (() => { try { return new URL(s.url).host; } catch { return ''; } })();
-      html += `<div class="hdd-server" data-sid="${_esc(s.id)}" onclick="window._interlinkSwitch('${_esc(s.id)}')">` +
+      const offlineClass = (!pending && !s.online) ? ' offline' : '';
+      html += `<div class="hdd-server${offlineClass}" data-sid="${_esc(s.id)}" onclick="window._interlinkSwitch('${_esc(s.id)}')">` +
         `<span class="status-dot ${dotClass}"></span>` +
         `<span class="hdd-hostname">${_esc(s.hostname)}</span>` +
         `<span class="hdd-url">${_esc(urlText)}</span>` +
@@ -18899,6 +19137,7 @@ function runReplicationTask(id, name) {
       if (!row) continue;
       const dot = row.querySelector('.status-dot');
       if (dot) dot.className = 'status-dot ' + (s.online ? 'online' : 'offline');
+      row.classList.toggle('offline', !s.online);
       const urlSpan = row.querySelector('.hdd-url');
       if (urlSpan) { try { urlSpan.textContent = new URL(s.url).host; } catch {} }
     }
@@ -18986,16 +19225,24 @@ function runReplicationTask(id, name) {
 
   window.loadInterlinkList = loadInterlinkList;
 
-  window.unlinkServer = async function(id, hostname) {
-    if (!confirm(`Unlink ${hostname}? This only removes the connection locally.`)) return;
-    try {
-      await _apiFetch(`/api/interlink/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      _showToast(`Unlinked ${hostname}`, 'success');
-      loadInterlinkList();
-      loadHostnameDropdown();
-    } catch(e) {
-      _showToast('Unlink failed: ' + e.message, 'error');
-    }
+  window.unlinkServer = function(id, hostname) {
+    showConfirm({
+      title: 'Unlink Server',
+      body: `Remove the connection to <strong style="font-family:monospace;">${_esc(hostname)}</strong>?<br><br>
+             This only removes the link locally — the remote server is not affected.`,
+      confirmText: 'Unlink',
+      danger: false,
+      onConfirm: async () => {
+        try {
+          await _apiFetch(`/api/interlink/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          _showToast(`Unlinked ${hostname}`, 'success');
+          loadInterlinkList();
+          loadHostnameDropdown();
+        } catch(e) {
+          _showToast('Unlink failed: ' + e.message, 'error');
+        }
+      }
+    });
   };
 
   // ── add server sub-popup ──────────────────────────────────────────────────
@@ -19466,6 +19713,71 @@ function _startPushJobsPolling() {
   _pushJobsPollIv = setInterval(_pollPushJobs, 2500);
 }
 
+// ===== Global confirm modal =================================================
+// Usage: showConfirm({ title, body, confirmText, danger, onConfirm })
+//   danger: true  → red header + red confirm button
+//   danger: false → default accent confirm button
+let _confirmCallback = null;
+function showConfirm({ title, body, confirmText = 'Confirm', danger = false, onConfirm }) {
+  _confirmCallback = onConfirm;
+  document.getElementById('gc-title').textContent = title;
+  document.getElementById('gc-body').innerHTML = body;
+  const btn = document.getElementById('gc-confirm-btn');
+  btn.textContent = confirmText;
+  btn.style.background = danger ? 'var(--accent-danger)' : 'var(--accent)';
+  btn.style.color = '#fff';
+  btn.disabled = false;
+  const hdr = document.getElementById('gc-header');
+  if (danger) {
+    hdr.style.background = 'rgba(255,59,48,0.08)';
+    hdr.style.borderBottom = '1px solid var(--accent-danger)';
+    document.getElementById('gc-title').style.color = 'var(--accent-danger)';
+  } else {
+    hdr.style.background = '';
+    hdr.style.borderBottom = '';
+    document.getElementById('gc-title').style.color = '';
+  }
+  document.getElementById('modal-generic-confirm').classList.remove('hidden');
+}
+function closeGenericConfirm() {
+  document.getElementById('modal-generic-confirm').classList.add('hidden');
+  _confirmCallback = null;
+}
+async function _executeGenericConfirm() {
+  if (_confirmCallback) await _confirmCallback();
+  closeGenericConfirm();
+}
+
+// ===== Global toast =========================================================
+// Usage: showToast(msg, type)  type = 'error' | 'success' | 'info'
+function showToast(msg, type = 'error') {
+  const colors = { error: '#ff453a', success: '#22c55e', info: 'var(--accent)' };
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:99999;padding:10px 18px;
+    border-radius:8px;font-size:13px;font-weight:600;color:#fff;
+    box-shadow:0 4px 16px rgba(0,0,0,.4);transition:opacity .4s;
+    background:${colors[type] || colors.error};`;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 3000);
+}
+
 </script>
+
+<!-- Generic Confirm Modal -->
+<div class="modal-backdrop hidden" id="modal-generic-confirm" onclick="if(event.target===this)closeGenericConfirm()">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header" id="gc-header">
+      <h3 id="gc-title"></h3>
+      <button class="modal-close" onclick="closeGenericConfirm()">✕</button>
+    </div>
+    <div class="modal-body" id="gc-body" style="font-size:14px;color:var(--text-1);line-height:1.6;"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeGenericConfirm()">Cancel</button>
+      <button id="gc-confirm-btn" class="btn" onclick="_executeGenericConfirm()">Confirm</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
