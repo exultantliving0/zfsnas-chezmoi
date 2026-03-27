@@ -177,8 +177,10 @@ func DetectAndConfigureUPS(existingPassword string) (*DetectedUPS, error) {
 	result := &DetectedUPS{MonitorPassword: password, ScannerOutput: scanRaw}
 
 	if strings.Contains(scanRaw, "[") {
-		// Write the scanner output directly to ups.conf — no reconstruction needed.
-		if err := writeFileViaSudo("/etc/nut/ups.conf", scanRaw+"\n", 0640); err != nil {
+		// Write the scanner output to ups.conf, stripping hardware-specific
+		// location keys that break NUT when the UPS moves USB ports.
+		filtered := filterUPSConfLines(scanRaw)
+		if err := writeFileViaSudo("/etc/nut/ups.conf", filtered+"\n", 0640); err != nil {
 			return result, fmt.Errorf("write ups.conf: %w", err)
 		}
 
@@ -235,6 +237,24 @@ func parseSectionName(raw string) string {
 		}
 	}
 	return ""
+}
+
+// filterUPSConfLines removes hardware-location keys (bus, device, busport)
+// from nut-scanner output before writing ups.conf. Those keys are USB-port-
+// specific and cause NUT to fail to connect if the UPS is plugged into a
+// different port after the config was generated.
+func filterUPSConfLines(raw string) string {
+	skip := map[string]bool{"bus": true, "device": true, "busport": true}
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		key := strings.ToLower(strings.TrimSpace(strings.SplitN(line, "=", 2)[0]))
+		key = strings.Trim(key, `"`)
+		if skip[key] {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // parseNutScannerOutput parses INI-style nut-scanner output and returns the

@@ -3615,10 +3615,6 @@
           <input type="checkbox" id="share-guestok" style="width:15px;height:15px;accent-color:var(--accent-2);">
           <span>Guest OK <i class="info-tip tip-down" data-tip="Allows unauthenticated access to the share. Anyone on the network can connect without a username or password. Use with caution on untrusted networks."></i></span>
         </label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
-          <input type="checkbox" id="share-windows-acl" style="width:15px;height:15px;accent-color:var(--accent-2);">
-          <span>Windows ACL <i class="info-tip tip-down" data-tip="Enables full Windows ACL (NTFS-style permission) support for this share.&#10;&#10;SMB: activates the acl_xattr VFS module so Windows clients can read and write per-file ACLs. Also enables DOS attribute storage and ACL inheritance.&#10;&#10;ZFS dataset: sets acltype=nfsv4, aclinherit=passthrough, aclmode=passthrough, xattr=sa so the kernel honours NFSv4 ACLs — required for executable file attributes and fine-grained Windows permissions to work correctly for new files written through the share."></i></span>
-        </label>
       </div>
 
       <div class="form-group">
@@ -3697,6 +3693,12 @@
           <div class="form-group" style="margin-bottom:0;">
             <label>Hosts Deny <span class="text-3 text-xs">(optional)</span> <i class="info-tip" data-tip="Space-separated list of IP addresses, hostnames, or subnets explicitly denied access to this share."></i></label>
             <input type="text" id="share-hosts-deny" placeholder="10.0.1.0/24" autocomplete="off">
+          </div>
+          <div style="margin-top:12px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
+              <input type="checkbox" id="share-windows-acl" style="width:15px;height:15px;accent-color:var(--accent-2);">
+              <span>Windows ACL Support <i class="info-tip" data-tip="Enables full Windows ACL (NTFS-style permission) support for this share.&#10;&#10;Required if you need Windows executable files (.exe, .bat, etc.) stored on this share to be recognised as executable by Windows clients — without this, the execute bit is lost and Windows may refuse to run them.&#10;&#10;SMB: activates the acl_xattr VFS module so Windows clients can read and write per-file ACLs. Also enables DOS attribute storage and ACL inheritance.&#10;&#10;ZFS dataset: sets acltype=nfsv4, aclinherit=passthrough, aclmode=passthrough, xattr=sa so the kernel honours NFSv4 ACLs — required for executable file attributes and fine-grained Windows permissions to work correctly for new files written through the share."></i></span>
+            </label>
           </div>
         </div>
       </details>
@@ -10529,7 +10531,8 @@ function updateSnapshotNavDot(policies) {
   }
   const hasError = policies.some(p =>
     p.last_status === 'error' ||
-    p.last_rep_status === 'error'
+    (p.replication_enabled && p.last_rep_status === 'error') ||
+    (p.local_repl_enabled && p.last_local_repl_status === 'error')
   );
   dot.style.display = '';
   if (hasError) {
@@ -10597,7 +10600,7 @@ function renderSchedules(el, policies) {
     }
 
     return `<tr>
-      <td style="font-family:monospace;font-size:12px;">${esc(p.dataset)}</td>
+      <td style="font-family:monospace;font-size:12px;text-align:left;">${esc(p.dataset)}</td>
       <td><span class="badge badge-readonly">${esc(p.label||'auto')}</span></td>
       <td style="font-size:13px;">${freq}</td>
       <td style="font-size:13px;">${p.retention}</td>
@@ -10616,9 +10619,9 @@ function renderSchedules(el, policies) {
   }).join('');
   const repTh      = showRepCol      ? '<th>Remote Replication</th>' : '';
   const localRepTh = showLocalRepCol ? '<th>Local Replication</th>' : '';
-  el.innerHTML = `<div class="table-wrap"><table>
+  el.innerHTML = `<div class="table-wrap"><table style="text-align:center;">
     <thead><tr>
-      <th>Dataset</th><th>Label</th><th>Frequency</th><th>Keep</th>
+      <th style="text-align:left;">Dataset</th><th>Label</th><th>Frequency</th><th>Keep</th>
       <th>Last Run</th><th>Next Run</th><th>Snap</th>${repTh}${localRepTh}<th>Enabled</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -14116,7 +14119,10 @@ function _optFeatMenu(e, feature) {
   dd.style.cssText = 'position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);min-width:170px;overflow:hidden;';
   let itemHtml = '';
   if (state.installed) {
-    itemHtml = `<button onclick="_closeOptFeatMenus();uninstallFeature('${pkg}')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🗑 Uninstall Feature</button>`;
+    const redetectBtn = feature === 'ups'
+      ? `<button onclick="_closeOptFeatMenus();redetectUPS()" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🔍 Re-Detect UPS</button>`
+      : '';
+    itemHtml = redetectBtn + `<button onclick="_closeOptFeatMenus();uninstallFeature('${pkg}')" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🗑 Uninstall Feature</button>`;
   } else if (state.hidden) {
     itemHtml = `<button onclick="_closeOptFeatMenus();setFeatureNavVisibility('${feature}', false)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">👁 Unhide from menu</button>`;
   } else {
@@ -14283,7 +14289,7 @@ async function _updateUPSPrereqStatus() {
     if (!r.ok) return;
     const s = await r.json();
     if (s.installed) {
-      statusEl.textContent = '✓ Installed';
+      statusEl.innerHTML = '✓ Installed <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>';
       statusEl.style.color = '#30d158';
       statusEl.style.fontWeight = '600';
       if (btnEl) btnEl.style.display = 'none';
@@ -14325,7 +14331,7 @@ async function enableUPSFeature() {
         }
         const statusEl = document.getElementById('prereq-ups-status');
         if (statusEl) {
-          statusEl.textContent = '✓ Installed';
+          statusEl.innerHTML = '✓ Installed <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>';
           statusEl.style.color = '#30d158';
           statusEl.style.fontWeight = '600';
         }
@@ -14347,6 +14353,35 @@ async function enableUPSFeature() {
       }
     }
   );
+}
+
+// ── UPS Re-Detect ─────────────────────────────────────────────────────────────
+
+async function redetectUPS() {
+  const jobId = 'ups-redetect-' + Date.now();
+  addActiveJob(jobId, 'Re-detecting UPS… (scanning for device, please wait)');
+  try {
+    const r = await fetch('/api/ups/detect', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) {
+      showToast('Re-detect failed: ' + (d.error || JSON.stringify(d)), 'error');
+      return;
+    }
+    const det = d.detected;
+    if (det && det.name) {
+      const detId = 'ups-det-' + Date.now();
+      addActiveJob(detId, `UPS detected: ${det.name} (${det.driver} @ ${det.port}) — NUT services restarted`);
+      setTimeout(() => removeActiveJob(detId), 6000);
+    } else {
+      showToast('No UPS detected. Check USB connection and try again.', 'error');
+    }
+    pollUPSTopbar();
+    setTimeout(pollUPSTopbar, 3000);
+  } catch (e) {
+    showToast('Re-detect error: ' + e.message, 'error');
+  } finally {
+    removeActiveJob(jobId);
+  }
 }
 
 // ── UPS Top-Bar Poller ────────────────────────────────────────────────────────
