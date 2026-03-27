@@ -275,8 +275,10 @@ func HandleUpdateShare(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := system.ReloadSamba(); err != nil {
-		_ = err
+	if r.URL.Query().Get("restart") == "true" {
+		_ = system.RestartSamba()
+	} else {
+		_ = system.ReloadSamba()
 	}
 	// Apply (or revert) Windows ACL ZFS dataset properties.
 	_ = system.SetWindowsACLDatasetProps(req.Path, req.WindowsACL)

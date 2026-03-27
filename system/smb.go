@@ -159,7 +159,11 @@ func applySMBConf(shares []SMBShare) error {
 				sb.WriteString("   write list = " + strings.Join(writeList, " ") + "\n")
 			}
 		}
-		sb.WriteString("   create mask = 0664\n")
+		if s.WindowsACL {
+			sb.WriteString("   create mask = 0744\n")
+		} else {
+			sb.WriteString("   create mask = 0664\n")
+		}
 		sb.WriteString("   directory mask = 0775\n")
 		sb.WriteString("   force group = sambashare\n")
 
@@ -187,34 +191,18 @@ func applySMBConf(shares []SMBShare) error {
 		if s.TimeMachine {
 			vfsObjs = append(vfsObjs, "fruit", "streams_xattr")
 		}
-		if s.WindowsACL {
-			vfsObjs = append(vfsObjs, "acl_xattr")
+		if s.WindowsACL && !s.TimeMachine {
+			// fruit+streams_xattr needed for Windows exec support; avoid duplicates
+			// if TimeMachine already added them.
+			vfsObjs = append(vfsObjs, "fruit", "streams_xattr")
 		}
 		if len(vfsObjs) > 0 {
 			sb.WriteString("   vfs objects = " + strings.Join(vfsObjs, " ") + "\n")
 		}
 
-		// Windows ACL compatibility
+		// Windows ACL compatibility — ensures executables keep the execute bit.
 		if s.WindowsACL {
-			// Allow all POSIX permission bits through — Windows ACLs (not POSIX
-			// mode bits) control access, and executables need the execute bit.
-			// These override the create mask = 0664 / directory mask = 0775
-			// written above (Samba uses the last occurrence in a section).
-			sb.WriteString("   create mask = 0777\n")
-			sb.WriteString("   directory mask = 0777\n")
-			sb.WriteString("   force create mode = 0000\n")
-			sb.WriteString("   force directory mode = 0000\n")
-			// store dos attributes supersedes the legacy POSIX-bit → DOS attribute
-			// mapping.  Leaving those map_* options at their defaults (yes) causes
-			// Samba to flip the execute bit as a proxy for the archive flag, which
-			// corrupts the attribute picture Windows sees.
-			sb.WriteString("   map archive = no\n")
-			sb.WriteString("   map system = no\n")
-			sb.WriteString("   map hidden = no\n")
-			sb.WriteString("   map readonly = no\n")
-			sb.WriteString("   store dos attributes = yes\n")
-			sb.WriteString("   inherit acls = yes\n")
-			sb.WriteString("   map acl inherit = yes\n")
+			sb.WriteString("   force create mode = 0755\n")
 		}
 
 		// Apple-style character encoding (catia)

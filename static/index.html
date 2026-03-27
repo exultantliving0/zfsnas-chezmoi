@@ -4473,6 +4473,26 @@
 </div>
 
 <!-- Delete Share Confirm Modal (SMB + NFS) -->
+<div class="modal-backdrop hidden" id="modal-winacl-restart">
+  <div class="modal" style="max-width:440px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">⚠ Samba Restart Required</h3>
+      <button class="modal-close" onclick="closeWinACLRestartModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">Changing the <strong>Windows ACL</strong> setting requires a full Samba restart to take effect.</p>
+      <p style="font-size:13px;color:var(--accent-danger);font-weight:600;margin-bottom:6px;">All connected SMB users will be briefly disconnected.</p>
+      <p style="font-size:13px;color:var(--text-3);">Unsaved work in open files on this server may be lost. Make sure users are informed before proceeding.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeWinACLRestartModal()">Cancel</button>
+      <button class="btn" id="btn-winacl-restart-confirm"
+        style="background:var(--accent-danger);color:#fff;"
+        onclick="confirmWinACLRestart()">Restart Samba &amp; Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="modal-delete-share">
   <div class="modal" style="max-width:420px;border:1px solid var(--accent-danger);">
     <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
@@ -11766,7 +11786,9 @@ function tempBadge(d) {
 }
 
 // ===== SMB Shares =====
-let shareEditName = null; // null = create mode, string = edit mode
+let shareEditName = null;        // null = create mode, string = edit mode
+let _shareOrigWindowsACL = false; // windows_acl value when edit modal was opened
+let _pendingShareBody = null;     // body held while waiting for winacl restart confirmation
 
 async function loadShares() {
   const el = document.getElementById('shares-content');
@@ -12017,6 +12039,7 @@ async function _openEditShareObj(s) {
   document.getElementById('share-readonly').checked = !!s.read_only;
   document.getElementById('share-guestok').checked = !!s.guest_ok;
   document.getElementById('share-windows-acl').checked = !!s.windows_acl;
+  _shareOrigWindowsACL = !!s.windows_acl;
   document.getElementById('share-timemachine').checked = !!s.time_machine;
   document.getElementById('share-tm-quota').value = s.tm_quota_gb || 0;
   document.getElementById('share-tm-quota-wrap').classList.toggle('hidden', !s.time_machine);
@@ -12152,6 +12175,38 @@ function closeShareModal() {
   submitBtn.textContent = 'Create Share';
 }
 
+function closeWinACLRestartModal() {
+  document.getElementById('modal-winacl-restart').classList.add('hidden');
+  _pendingShareBody = null;
+}
+
+async function confirmWinACLRestart() {
+  const btn = document.getElementById('btn-winacl-restart-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Restarting…';
+  const name = shareEditName;
+  const body = _pendingShareBody;
+  document.getElementById('modal-winacl-restart').classList.add('hidden');
+  _pendingShareBody = null;
+
+  const resp = await fetch('/api/shares/' + encodeURIComponent(name) + '?restart=true', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    const alertEl = document.getElementById('share-alert');
+    alertEl.textContent = data.error || 'Failed to save share.';
+    alertEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Restart Samba & Save';
+    return;
+  }
+  closeShareModal();
+  loadShares();
+}
+
 async function submitShare(e) {
   e.preventDefault();
   const alertEl = document.getElementById('share-alert');
@@ -12190,6 +12245,18 @@ async function submitShare(e) {
     allowed_hosts: allowedHosts, hosts_deny: hostsDeny,
     windows_acl: windowsACL,
   };
+  const winACLChanged = isEdit && (windowsACL !== _shareOrigWindowsACL);
+  if (winACLChanged) {
+    // Restore button — the confirmation modal takes over from here.
+    submitBtn.disabled = false;
+    submitBtn.textContent = origLabel;
+    _pendingShareBody = body;
+    document.getElementById('btn-winacl-restart-confirm').disabled = false;
+    document.getElementById('btn-winacl-restart-confirm').textContent = 'Restart Samba & Save';
+    document.getElementById('modal-winacl-restart').classList.remove('hidden');
+    return;
+  }
+
   const url    = isEdit ? '/api/shares/' + encodeURIComponent(shareEditName) : '/api/shares';
   const method = isEdit ? 'PUT' : 'POST';
 
@@ -16925,6 +16992,7 @@ document.addEventListener('click', function(e) {
     'modal-sched-info':       closeSchedInfoModal,
     'modal-schedule':         closeScheduleModal,
     'modal-snapshot':         closeSnapshotModal,
+    'modal-winacl-restart':   closeWinACLRestartModal,
     'modal-delete-share':     closeDeleteShareModal,
     'modal-share':            closeShareModal,
     'modal-nfs-share':        closeNFSShareModal,
