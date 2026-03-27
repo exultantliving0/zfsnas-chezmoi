@@ -5247,6 +5247,7 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
   // Fetch version badge + server IP, then check for updates (cached, once/day)
   fetch('/api/version').then(r => r.ok ? r.json() : null).then(d => {
     if (!d) return;
+    window._appVersion = d.version;
     const el = document.getElementById('app-version');
     if (el) { el.textContent = 'v' + d.version; }
     if (d.server_ip) window._serverIP = d.server_ip;
@@ -5544,6 +5545,24 @@ function _queueInstall(id, pendingLabel, activeLabel, run) {
 }
 
 // ===== Prerequisites =====
+
+function _sudoWarnKey() {
+  return 'sudo_warn_dismissed_v' + (window._appVersion || 'unknown');
+}
+function _isSudoWarnDismissed() {
+  return localStorage.getItem(_sudoWarnKey()) === '1';
+}
+function dismissSudoWarning() {
+  localStorage.setItem(_sudoWarnKey(), '1');
+  loadPrereqs();
+  checkPrereqsBanner();
+}
+function enableSudoWarning() {
+  localStorage.removeItem(_sudoWarnKey());
+  loadPrereqs();
+  checkPrereqsBanner();
+}
+
 async function checkPrereqsBanner() {
   try {
     const resp = await fetch('/api/prereqs');
@@ -5552,7 +5571,9 @@ async function checkPrereqsBanner() {
     const missing = prereqData.packages.filter(p => !p.installed);
     const sudo = prereqData.sudo_access || {};
     const sudoCritical = sudo.type === 'none';
-    const sudoError = sudoCritical || (sudo.type === 'hardened' && (sudo.missing_commands || []).length > 0);
+    const sudoIncomplete = sudo.type === 'hardened' && (sudo.missing_commands || []).length > 0;
+    const sudoWarnDismissed = sudoIncomplete && _isSudoWarnDismissed();
+    const sudoError = sudoCritical || (sudoIncomplete && !sudoWarnDismissed);
     const needsAttention = missing.length > 0 || prereqData.zfs_module_warn || sudoError;
     const banner  = document.getElementById('prereq-banner');
     const dot     = document.getElementById('prereq-alert-dot');
@@ -5602,7 +5623,9 @@ async function loadPrereqs() {
   const sudo = prereqData.sudo_access || {};
   const sudoMissing = sudo.missing_commands || [];
   const sudoCritical = sudo.type === 'none';
-  const sudoError = sudoCritical || (sudo.type === 'hardened' && sudoMissing.length > 0);
+  const sudoIncomplete = sudo.type === 'hardened' && sudoMissing.length > 0;
+  const sudoWarnDismissed = sudoIncomplete && _isSudoWarnDismissed();
+  const sudoError = sudoCritical || (sudoIncomplete && !sudoWarnDismissed);
   let sudoIcon, sudoLabel, sudoLabelColor, sudoDesc;
   if (sudo.type === 'root') {
     sudoIcon = '⚠'; sudoLabelColor = '#f0b429';
@@ -5617,7 +5640,8 @@ async function loadPrereqs() {
     sudoLabel = 'Sudo — hardened (all commands covered)';
     sudoDesc = 'Specific sudo rules are in place and all required commands are permitted.';
   } else if (sudo.type === 'hardened') {
-    sudoIcon = '✕'; sudoLabelColor = 'var(--accent-danger)';
+    sudoIcon = sudoWarnDismissed ? '⚠' : '✕';
+    sudoLabelColor = sudoWarnDismissed ? '#f0b429' : 'var(--accent-danger)';
     sudoLabel = 'Sudo — hardened (incomplete)';
     const cmdReasons = {
       zpool:      'ZFS pool creation, deletion, status, import/export and scrub',
@@ -5648,13 +5672,17 @@ async function loadPrereqs() {
     const missingRows = sudoMissing.map(c => {
       const reason = cmdReasons[c] || 'required for portal operation';
       return `<tr>
-        <td style="padding:4px 10px 4px 0;white-space:nowrap;font-family:monospace;font-size:12px;color:var(--accent-danger);vertical-align:top;">${esc(c)}</td>
+        <td style="padding:4px 10px 4px 0;white-space:nowrap;font-family:monospace;font-size:12px;color:var(--accent-danger);vertical-align:top;">${esc(c)}<i class="info-tip" style="margin-left:5px;" data-tip="${esc(reason)}"></i></td>
         <td style="padding:4px 0;font-size:12px;color:var(--text-2);">${esc(reason)}</td>
       </tr>`;
     }).join('');
+    const dismissBtn = sudoWarnDismissed
+      ? `<button class="btn btn-ghost btn-sm" style="margin-top:10px;opacity:0.6;" onclick="enableSudoWarning()">Re-enable Warning</button>`
+      : `<button class="btn btn-ghost btn-sm" style="margin-top:10px;color:var(--text-3);border-color:var(--border);" onclick="dismissSudoWarning()">Disable Warning</button>`;
     sudoDesc = 'Specific sudo rules are in place but the following required commands are missing from your sudoers configuration:'
       + `<table style="margin-top:8px;border-collapse:collapse;">${missingRows}</table>`
-      + `<div style="margin-top:8px;font-size:12px;color:var(--text-3);">See <a href="https://github.com/macgaver/zfsnas-chezmoi/blob/main/SECURITY.md" target="_blank" rel="noopener" style="color:var(--accent-2);">SECURITY.md</a> for the full sudoers template.</div>`;
+      + `<div style="margin-top:8px;font-size:12px;color:var(--text-3);">See <a href="https://github.com/macgaver/zfsnas-chezmoi/blob/main/SECURITY.md" target="_blank" rel="noopener" style="color:var(--accent-2);">SECURITY.md</a> for the full sudoers template.</div>`
+      + dismissBtn;
   } else {
     sudoIcon = '✕'; sudoLabelColor = 'var(--accent-danger)';
     sudoLabel = 'No sudo access';
