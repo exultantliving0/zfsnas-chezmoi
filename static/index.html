@@ -3576,7 +3576,7 @@
 
 <!-- Create / Edit Share Modal -->
 <div class="modal-backdrop hidden" id="modal-share">
-  <div class="modal" style="max-width:520px;max-height:90vh;display:flex;flex-direction:column;">
+  <div class="modal" style="max-width:680px;max-height:90vh;display:flex;flex-direction:column;">
     <div class="modal-header" style="flex-shrink:0;">
       <h3 id="share-modal-title">New Share</h3>
       <button class="modal-close" onclick="closeShareModal()">✕</button>
@@ -3667,8 +3667,8 @@
         </div>
       </div>
 
-      <!-- Durable Handles + Apple Encoding -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+      <!-- Durable Handles + Apple Encoding + Windows ACL -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
           <input type="checkbox" id="share-durable" checked style="width:15px;height:15px;accent-color:var(--accent-2);">
           <span>Durable Handles <i class="info-tip tip-down" data-tip="Enables SMB2/3 durable handles so clients can reconnect seamlessly after a brief network interruption without losing open file handles. Recommended for macOS and Windows clients."></i></span>
@@ -3676,6 +3676,10 @@
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
           <input type="checkbox" id="share-apple-enc" style="width:15px;height:15px;accent-color:var(--accent-2);">
           <span>Apple Encoding <i class="info-tip tip-down" data-tip="Maps special characters used in macOS filenames (colons, backslashes, etc.) to Unicode equivalents via the Samba catia VFS module, allowing Mac clients to read and write those files correctly."></i></span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
+          <input type="checkbox" id="share-windows-acl" style="width:15px;height:15px;accent-color:var(--accent-2);">
+          <span>Windows ACL <i class="info-tip tip-down" data-tip="Enables full Windows ACL (NTFS-style permission) support for this share.&#10;&#10;Required if you need Windows executable files (.exe, .bat, etc.) stored on this share to be recognised as executable by Windows clients — without this, the execute bit is lost and Windows may refuse to run them.&#10;&#10;SMB: activates the acl_xattr VFS module so Windows clients can read and write per-file ACLs. Also enables DOS attribute storage and ACL inheritance.&#10;&#10;ZFS dataset: sets acltype=nfsv4, aclinherit=passthrough, aclmode=passthrough, xattr=sa so the kernel honours NFSv4 ACLs — required for executable file attributes and fine-grained Windows permissions to work correctly for new files written through the share."></i></span>
         </label>
       </div>
 
@@ -3693,12 +3697,6 @@
           <div class="form-group" style="margin-bottom:0;">
             <label>Hosts Deny <span class="text-3 text-xs">(optional)</span> <i class="info-tip" data-tip="Space-separated list of IP addresses, hostnames, or subnets explicitly denied access to this share."></i></label>
             <input type="text" id="share-hosts-deny" placeholder="10.0.1.0/24" autocomplete="off">
-          </div>
-          <div style="margin-top:12px;">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
-              <input type="checkbox" id="share-windows-acl" style="width:15px;height:15px;accent-color:var(--accent-2);">
-              <span>Windows ACL Support <i class="info-tip" data-tip="Enables full Windows ACL (NTFS-style permission) support for this share.&#10;&#10;Required if you need Windows executable files (.exe, .bat, etc.) stored on this share to be recognised as executable by Windows clients — without this, the execute bit is lost and Windows may refuse to run them.&#10;&#10;SMB: activates the acl_xattr VFS module so Windows clients can read and write per-file ACLs. Also enables DOS attribute storage and ACL inheritance.&#10;&#10;ZFS dataset: sets acltype=nfsv4, aclinherit=passthrough, aclmode=passthrough, xattr=sa so the kernel honours NFSv4 ACLs — required for executable file attributes and fine-grained Windows permissions to work correctly for new files written through the share."></i></span>
-            </label>
           </div>
         </div>
       </details>

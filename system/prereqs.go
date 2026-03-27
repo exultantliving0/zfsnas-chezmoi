@@ -122,7 +122,13 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "modprobe", Name: "modprobe"},
 	{Binary: "apt-get", Name: "apt-get"},
 	{Binary: "systemctl", Name: "systemctl"},
-	{Binary: "tee", Name: "tee"},
+	// tee is used for multiple config paths — check the ones most commonly missed
+	{Binary: "tee", Match: "/etc/samba/smb.conf", Name: "tee /etc/samba/smb.conf"},
+	{Binary: "tee", Match: "/etc/exports", Name: "tee /etc/exports"},
+	{Binary: "tee", Match: "/etc/systemd/system/zfsnas.service", Name: "tee /etc/systemd/system/zfsnas.service"},
+	{Binary: "tee", Match: "/etc/modprobe.d/zfs.conf", Name: "tee /etc/modprobe.d/zfs.conf"},
+	{Binary: "tee", Match: "/sys/module/zfs/parameters/zfs_arc_max", Name: "tee /sys/module/zfs/parameters/zfs_arc_max"},
+	{Binary: "tee", Match: "/sys/module/zfs/parameters/zfs_arc_min", Name: "tee /sys/module/zfs/parameters/zfs_arc_min"},
 	// User / Samba
 	{Binary: "useradd", Name: "useradd"},
 	{Binary: "usermod", Name: "usermod"},
