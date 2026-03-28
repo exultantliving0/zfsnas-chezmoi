@@ -133,7 +133,9 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "useradd", Name: "useradd"},
 	{Binary: "usermod", Name: "usermod"},
 	{Binary: "smbpasswd", Name: "smbpasswd"},
-	{Binary: "chmod", Name: "chmod"},
+	{Binary: "chgrp", Match: "sambashare", Name: "chgrp sambashare"},
+	{Binary: "chmod", Match: "0770", Name: "chmod 0770"},
+	{Binary: "groupadd", Match: "--system sambashare", Name: "groupadd --system sambashare"},
 	// NFS
 	{Binary: "exportfs", Name: "exportfs"},
 	// System

@@ -86,6 +86,8 @@ Cmnd_Alias ZFSNAS_ZFS = \
 # since v1.0.0 — Samba service control, user provisioning, share config write
 # since v6.0.0 — find (recycle bin cleanup: delete files older than retention in .recycle/)
 # since v6.1.0 — smbstatus -S (active session listing on the SMB shares page)
+# since v6.3.27 — chgrp/chmod 0770 replace chmod 777 for share path setup;
+#                 groupadd --system sambashare ensures the group exists
 Cmnd_Alias ZFSNAS_SMB = \
     /usr/bin/systemctl reload smbd, \
     /usr/bin/systemctl restart smbd, \
@@ -96,7 +98,9 @@ Cmnd_Alias ZFSNAS_SMB = \
     /usr/sbin/useradd -M -s /usr/sbin/nologin *, \
     /usr/sbin/usermod -aG sambashare *, \
     /usr/bin/smbpasswd -s -a *, \
-    /usr/bin/chmod 777 *, \
+    /usr/bin/chgrp sambashare *, \
+    /usr/bin/chmod 0770 *, \
+    /usr/sbin/groupadd --system sambashare, \
     /usr/bin/tee /etc/samba/smb.conf, \
     /usr/bin/find *, \
     /usr/bin/smbstatus -S
@@ -264,7 +268,7 @@ ExecStart=/opt/zfsnas/zfsnas
 ### Notes
 
 - **Web terminal** — the browser terminal runs a shell as the `zfsnas` user. With the restricted sudoers entry above, any `sudo` command typed in that terminal is still limited to the whitelist. If you do not use the web terminal feature you can remove the `/ws/terminal` route or simply accept that a logged-in admin can run a shell with the same restrictions.
-- **`chmod 777`** — the portal applies this to newly created SMB share paths. If your shares always live under a fixed parent (e.g. `/data`), you can tighten this to `/usr/bin/chmod 777 /data/*`.
+- **`chgrp sambashare *` / `chmod 0770 *`** — applied to the directory of every newly created SMB share, so that members of the `sambashare` group can read and write while other OS users cannot. If your shares always live under a fixed parent (e.g. `/data`), you can tighten the wildcards to `/usr/bin/chgrp sambashare /data/*` and `/usr/bin/chmod 0770 /data/*`.
 - **`tee` for config files** — write access is limited to the specific paths listed (`smb.conf`, `exports`, `zfsnas.service`, `zfs.conf`, and the two ARC sysfs paths). The wildcard form `tee *` is intentionally avoided.
 - **`dd` / `wipefs` / `sgdisk`** — used by the "Wipe Disk" feature before adding a disk to a pool. These are destructive by design; ensure only trusted admins have access to the portal.
 - **`zfs load-key` / `zfs unload-key`** — used for ZFS native encryption (v5.0.0+). Key files are stored in `config/keystore/` and are only readable by the `zfsnas` user.

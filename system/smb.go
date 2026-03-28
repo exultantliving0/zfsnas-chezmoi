@@ -515,7 +515,8 @@ func EnsureSambaUser(username, password string) error {
 		}
 	}
 
-	// Add to sambashare group (created by samba package; ignore error if absent).
+	// Ensure sambashare group exists, then add the user to it.
+	ensureSambashareGroup()
 	_ = exec.Command("sudo", "usermod", "-aG", "sambashare", username).Run()
 
 	// Set / update the Samba password (-s = silent, -a = add or update).
@@ -528,14 +529,26 @@ func EnsureSambaUser(username, password string) error {
 	return nil
 }
 
-// ChmodSharePath sets permissions on a share path so SMB clients can read and
-// write via the sambashare group. It recursively chgrps the tree to sambashare
-// and sets 0770 (owner+group full access, no world access).
+// ensureSambashareGroup creates the sambashare group if it does not already
+// exist. The Samba package creates this group on Debian/Ubuntu, but it may be
+// absent on minimal installs or before Samba is fully set up.
+func ensureSambashareGroup() {
+	// getent exits 0 when the group exists.
+	if exec.Command("getent", "group", "sambashare").Run() == nil {
+		return
+	}
+	_ = exec.Command("sudo", "groupadd", "--system", "sambashare").Run()
+}
+
+// ChmodSharePath sets group=sambashare and permissions 0770 on the share
+// directory so that SMB clients authenticating as sambashare members can
+// read and write, with no access for other users.
 func ChmodSharePath(path string) error {
-	if out, err := exec.Command("sudo", "chgrp", "-R", "sambashare", path).CombinedOutput(); err != nil {
+	ensureSambashareGroup()
+	if out, err := exec.Command("sudo", "chgrp", "sambashare", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("chgrp %s: %s", path, strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.Command("sudo", "chmod", "-R", "0770", path).CombinedOutput(); err != nil {
+	if out, err := exec.Command("sudo", "chmod", "0770", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("chmod %s: %s", path, strings.TrimSpace(string(out)))
 	}
 	return nil
