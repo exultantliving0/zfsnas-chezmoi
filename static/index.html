@@ -10876,19 +10876,25 @@ async function openEditSchedule(i) {
   document.getElementById('sched-dom').value        = p.day_of_month ?? 1;
   document.getElementById('sched-enabled').checked  = !!p.enabled;
   document.getElementById('sched-alert').classList.add('hidden');
-  // Populate replication sections
+  // Populate replication sections (sync setup first — show modal immediately)
   resetSchedReplSection();
   if (p.replication_enabled) {
     document.getElementById('sched-repl-body').style.display      = '';
     document.getElementById('sched-repl-arrow').textContent       = '▼';
     document.getElementById('sched-repl-enabled').checked         = true;
     document.getElementById('sched-repl-fields').style.display    = '';
-    await _replLoadILServers('sched-repl');
-    await _replRestoreTarget('sched-repl', p.replication_host || '', p.replication_user || '', p.replication_dataset || '');
+    // Prime the pool dropdown with a "connecting" placeholder so the modal opens
+    // instantly even when the remote InterLink server is unreachable.
+    document.getElementById('sched-repl-il-pool').innerHTML = '<option value="">Connecting to server…</option>';
+    document.getElementById('sched-repl-il-grp').style.display    = '';
+    document.getElementById('sched-repl-custom-grp').style.display = 'none';
     document.getElementById('sched-repl-recursive').checked  = !!p.replication_recursive;
     document.getElementById('sched-repl-compressed').checked = !!p.replication_compressed;
   }
-  // Restore local replication section.
+  loadSchedDatasets(p.dataset);
+  updateSchedFields();
+  document.getElementById('modal-schedule').classList.remove('hidden');
+  // Restore local replication section (local APIs — fast).
   if (p.local_repl_enabled && p.local_repl_dataset) {
     document.getElementById('sched-local-repl-body').style.display   = '';
     document.getElementById('sched-local-repl-arrow').textContent    = '▼';
@@ -10907,9 +10913,11 @@ async function openEditSchedule(i) {
   } else {
     await loadSchedLocalReplPools();
   }
-  loadSchedDatasets(p.dataset);
-  updateSchedFields();
-  document.getElementById('modal-schedule').classList.remove('hidden');
+  // Restore remote replication target asynchronously — may contact remote server.
+  if (p.replication_enabled) {
+    await _replLoadILServers('sched-repl');
+    await _replRestoreTarget('sched-repl', p.replication_host || '', p.replication_user || '', p.replication_dataset || '');
+  }
 }
 
 async function loadSchedDatasets(selected) {
@@ -17751,10 +17759,13 @@ function _replTargetChange(prefix) {
 // Fetch pools from the chosen InterLink server and populate the pool dropdown.
 async function _replLoadILPools(prefix, serverId) {
   const sel = document.getElementById(prefix + '-il-pool');
-  sel.innerHTML = '<option value="">Loading…</option>';
+  sel.innerHTML = '<option value="">Connecting to server…</option>';
   sel.disabled  = true;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const r = await fetch('/api/interlink/remote-pools/' + encodeURIComponent(serverId));
+    const r = await fetch('/api/interlink/remote-pools/' + encodeURIComponent(serverId), { signal: controller.signal });
+    clearTimeout(timer);
     if (r.ok) {
       const data  = await r.json();
       const pools = data.pools || [];
@@ -17765,8 +17776,13 @@ async function _replLoadILPools(prefix, serverId) {
     } else {
       sel.innerHTML = '<option value="">Failed to load pools</option>';
     }
-  } catch {
-    sel.innerHTML = '<option value="">Error loading pools</option>';
+  } catch (e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') {
+      sel.innerHTML = '<option value="">Server unreachable — enter destination manually</option>';
+    } else {
+      sel.innerHTML = '<option value="">Error loading pools</option>';
+    }
   }
   sel.disabled = false;
 }
@@ -17880,9 +17896,11 @@ async function openEditReplicationModal(id) {
   document.getElementById('edit-rep-recursive').checked  = !!t.recursive;
   document.getElementById('edit-rep-compressed').checked = !!t.compressed;
   const al = document.getElementById('edit-rep-alert'); al.classList.add('hidden'); al.textContent = '';
+  // Show modal immediately; populate target async so a down server doesn't block opening.
+  document.getElementById('edit-rep-il-pool').innerHTML = '<option value="">Connecting to server…</option>';
+  document.getElementById('modal-edit-replication').classList.remove('hidden');
   await _replLoadILServers('edit-rep');
   await _replRestoreTarget('edit-rep', t.remote_host, t.remote_user || '', t.remote_dataset);
-  document.getElementById('modal-edit-replication').classList.remove('hidden');
 }
 function closeEditReplicationModal() { document.getElementById('modal-edit-replication').classList.add('hidden'); }
 

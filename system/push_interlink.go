@@ -338,6 +338,7 @@ func RemotePoolsHMAC(sharedSecret string, timestamp int64, nonce string) string 
 }
 
 // GetRemotePools fetches pool names and the process user from a linked remote server.
+// A 5-second context deadline is applied so a down server fails fast.
 func GetRemotePools(remoteURL, sharedSecret string) (*RemotePoolsResponse, error) {
 	nonce := make([]byte, 8)
 	rand.Read(nonce) //nolint:errcheck
@@ -349,7 +350,14 @@ func GetRemotePools(remoteURL, sharedSecret string) (*RemotePoolsResponse, error
 		HMAC:      RemotePoolsHMAC(sharedSecret, ts, nh),
 	}
 	body, _ := json.Marshal(req)
-	resp, err := interlinkClient.Post(remoteURL+"/api/interlink/remote-pools", "application/json", bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", remoteURL+"/api/interlink/remote-pools", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := interlinkClient.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
