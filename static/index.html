@@ -2745,6 +2745,13 @@
       <div id="smb-configure-alert" class="alert alert-error hidden"></div>
       <div id="smb-configure-ok"    class="alert alert-success hidden"></div>
       <div class="form-group" style="margin-bottom:0;">
+        <label>Workgroup
+          <i class="info-tip tip-down" data-tip="The Windows workgroup or domain name Samba will advertise to network clients.&#10;&#10;This must match the workgroup configured on your Windows PCs for network browsing to work correctly. The default value 'WORKGROUP' is suitable for most home and small office networks.&#10;&#10;Changing this requires a full Samba restart — connected users will be briefly disconnected."></i>
+        </label>
+        <input type="text" id="smb-cfg-workgroup" value="WORKGROUP" style="max-width:220px;" placeholder="WORKGROUP">
+        <div class="text-3 text-sm" style="margin-top:4px;">Must match the workgroup on your Windows clients. Default: WORKGROUP.</div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
         <label>Max smbd Processes
           <i class="info-tip tip-down" data-tip="Controls the maximum number of simultaneous smbd processes Samba will spawn. Each connected client session forks a new smbd process.&#10;&#10;Memory impact:&#10;• Each smbd process uses ~15–30 MB of RAM at peak.&#10;• 100 processes ≈ 1.5–3 GB RAM — recommended for 4 GB systems.&#10;• Lower this value (e.g. 50) on systems with 2 GB or less.&#10;• Raise it (e.g. 200–500) only if you have 8 GB+ RAM and many concurrent users.&#10;&#10;Adjust with care: setting this too high on a low-memory NAS will cause the system to swap, degrading performance for all services."></i>
         </label>
@@ -2767,6 +2774,24 @@
           <i class="info-tip tip-down" data-tip="When enabled, the [printers], [print$], and [homes] sections written by the Samba package installer are commented out in smb.conf.&#10;&#10;This prevents those sections from conflicting with your settings. The [homes] section is replaced by the one ZFS NAS manages when a Home Folder Dataset is configured.&#10;&#10;Recommended for most NAS setups where printing is not needed."></i>
         </label>
         <div class="text-3 text-sm" style="margin-top:4px;">Removes [printers], [print$], and any distro-default [homes] outside the ZFS NAS managed block. This action is permanent and cannot be undone.</div>
+      </div>
+      <!-- Advanced settings collapsible -->
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px;">
+        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;" onclick="toggleSMBAdvanced()">
+          <span id="smb-advanced-chevron" style="font-size:11px;transition:transform 0.2s;">&#9654;</span>
+          <span style="font-size:13px;font-weight:600;color:var(--text-2);">Advanced Settings</span>
+        </div>
+        <div id="smb-advanced-body" style="display:none;margin-top:12px;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Custom global settings
+              <i class="info-tip tip-right" data-tip="Lines entered here are appended verbatim to the [global] section inside the ZFS NAS managed block in smb.conf.&#10;&#10;One Samba parameter per line, e.g.:&#10;  server string = My NAS&#10;  interfaces = lo eth0&#10;  bind interfaces only = yes&#10;&#10;Section headers (lines starting with [) are ignored. Changes take effect after saving and reloading Samba.&#10;&#10;⚠ For expert users only — incorrect values can prevent Samba from starting."></i>
+            </label>
+            <textarea id="smb-cfg-custom-global" rows="5" spellcheck="false"
+              style="width:100%;font-family:monospace;font-size:12px;resize:vertical;background:var(--surface2);color:var(--text-1);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;box-sizing:border-box;"
+              placeholder="# e.g.:&#10;server string = My NAS&#10;interfaces = lo eth0"></textarea>
+            <div class="text-3 text-sm" style="margin-top:4px;">Added to our [global] section. One parameter per line. Section headers are ignored.</div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -4489,6 +4514,26 @@
       <button class="btn" id="btn-winacl-restart-confirm"
         style="background:var(--accent-danger);color:#fff;"
         onclick="confirmWinACLRestart()">Restart Samba &amp; Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="modal-smb-workgroup-restart">
+  <div class="modal" style="max-width:440px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">⚠ Samba Restart Required</h3>
+      <button class="modal-close" onclick="closeSMBWorkgroupRestartModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">Changing the <strong>Workgroup</strong> setting requires a full Samba restart to take effect.</p>
+      <p style="font-size:13px;color:var(--accent-danger);font-weight:600;margin-bottom:6px;">All connected SMB users will be briefly disconnected.</p>
+      <p style="font-size:13px;color:var(--text-3);">Unsaved work in open files on this server may be lost. Make sure users are informed before proceeding.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSMBWorkgroupRestartModal()">Cancel</button>
+      <button class="btn" id="btn-smb-workgroup-restart-confirm"
+        style="background:var(--accent-danger);color:#fff;"
+        onclick="confirmSMBWorkgroupRestart()">Restart Samba &amp; Save</button>
     </div>
   </div>
 </div>
@@ -6457,6 +6502,17 @@ async function saveSettings() {
 }
 
 // ===== SMB Configure Modal =====
+let _smbCfgOrigWorkgroup = 'WORKGROUP';
+let _pendingSMBGlobalBody = null;
+
+function toggleSMBAdvanced() {
+  const body    = document.getElementById('smb-advanced-body');
+  const chevron = document.getElementById('smb-advanced-chevron');
+  const open    = body.style.display !== 'none';
+  body.style.display      = open ? 'none' : 'block';
+  chevron.style.transform = open ? '' : 'rotate(90deg)';
+}
+
 async function openSMBConfigureModal() {
   document.getElementById('smb-configure-alert').classList.add('hidden');
   document.getElementById('smb-configure-ok').classList.add('hidden');
@@ -6483,8 +6539,12 @@ async function openSMBConfigureModal() {
     const resp = await fetch('/api/smb/global-config');
     if (resp.ok) {
       const cfg = await resp.json();
+      const wg = cfg.workgroup || 'WORKGROUP';
+      document.getElementById('smb-cfg-workgroup').value = wg;
+      _smbCfgOrigWorkgroup = wg;
       document.getElementById('smb-cfg-max-processes').value = cfg.max_smbd_processes || 100;
       sel.value = cfg.home_dataset || '';
+      document.getElementById('smb-cfg-custom-global').value = cfg.custom_global || '';
       const cdEl = document.getElementById('smb-cfg-clean-defaults');
       cdEl.checked = !!cfg.clean_defaults;
       if (cfg.clean_defaults) {
@@ -6517,12 +6577,37 @@ async function saveSMBGlobalConfig() {
   }
   const homeDataset   = document.getElementById('smb-cfg-home-dataset').value;
   const cleanDefaults = document.getElementById('smb-cfg-clean-defaults').checked;
+  const workgroup     = (document.getElementById('smb-cfg-workgroup').value || 'WORKGROUP').trim().toUpperCase();
+  const customGlobal  = document.getElementById('smb-cfg-custom-global').value;
 
+  const body = { max_smbd_processes: maxVal, home_dataset: homeDataset, clean_defaults: cleanDefaults, workgroup, custom_global: customGlobal };
+
+  // If workgroup changed and shares exist, require a Samba restart confirmation.
+  const workgroupChanged = workgroup !== _smbCfgOrigWorkgroup;
+  if (workgroupChanged) {
+    const sharesResp = await fetch('/api/shares');
+    const shares = sharesResp.ok ? (await sharesResp.json() || []) : [];
+    if (shares.length > 0) {
+      _pendingSMBGlobalBody = body;
+      document.getElementById('btn-smb-workgroup-restart-confirm').disabled = false;
+      document.getElementById('btn-smb-workgroup-restart-confirm').textContent = 'Restart Samba & Save';
+      document.getElementById('modal-smb-workgroup-restart').classList.remove('hidden');
+      return;
+    }
+  }
+
+  await _doSaveSMBGlobalConfig(body, btn, alertEl, okEl);
+}
+
+async function _doSaveSMBGlobalConfig(body, btn, alertEl, okEl) {
+  btn = btn || document.getElementById('btn-smb-cfg-save');
+  alertEl = alertEl || document.getElementById('smb-configure-alert');
+  okEl    = okEl    || document.getElementById('smb-configure-ok');
   btn.disabled = true; btn.textContent = 'Saving…';
   const resp = await fetch('/api/smb/global-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_smbd_processes: maxVal, home_dataset: homeDataset, clean_defaults: cleanDefaults }),
+    body: JSON.stringify(body),
   });
   const data = await resp.json();
   btn.disabled = false; btn.textContent = 'Save';
@@ -6531,11 +6616,36 @@ async function saveSMBGlobalConfig() {
     alertEl.textContent = data.error || 'Failed to save SMB settings.';
     alertEl.classList.remove('hidden');
   } else {
-    appSettings.max_smbd_processes = maxVal;
+    appSettings.max_smbd_processes = body.max_smbd_processes;
+    _smbCfgOrigWorkgroup = body.workgroup || 'WORKGROUP';
+    // Re-fetch config so the textarea reflects any params migrated from the
+    // distro-written [global] section that were folded into SMBCustomGlobal.
+    try {
+      const cfgResp = await fetch('/api/smb/global-config');
+      if (cfgResp.ok) {
+        const cfg = await cfgResp.json();
+        const ta = document.getElementById('smb-cfg-custom-global');
+        if (ta) ta.value = cfg.custom_global || '';
+      }
+    } catch (_) {}
     okEl.textContent = 'SMB settings saved.';
     okEl.classList.remove('hidden');
     setTimeout(closeSMBConfigureModal, 1200);
   }
+}
+
+function closeSMBWorkgroupRestartModal() {
+  document.getElementById('modal-smb-workgroup-restart').classList.add('hidden');
+  _pendingSMBGlobalBody = null;
+}
+
+async function confirmSMBWorkgroupRestart() {
+  const btn = document.getElementById('btn-smb-workgroup-restart-confirm');
+  btn.disabled = true; btn.textContent = 'Restarting…';
+  const body = _pendingSMBGlobalBody;
+  document.getElementById('modal-smb-workgroup-restart').classList.add('hidden');
+  _pendingSMBGlobalBody = null;
+  await _doSaveSMBGlobalConfig(body, null, null, null);
 }
 
 // ===== Alerts =====
@@ -17061,7 +17171,8 @@ document.addEventListener('click', function(e) {
     'modal-sched-info':       closeSchedInfoModal,
     'modal-schedule':         closeScheduleModal,
     'modal-snapshot':         closeSnapshotModal,
-    'modal-winacl-restart':   closeWinACLRestartModal,
+    'modal-winacl-restart':          closeWinACLRestartModal,
+    'modal-smb-workgroup-restart':   closeSMBWorkgroupRestartModal,
     'modal-delete-share':     closeDeleteShareModal,
     'modal-share':            closeShareModal,
     'modal-nfs-share':        closeNFSShareModal,

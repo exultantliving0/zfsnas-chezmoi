@@ -149,6 +149,8 @@ type AppConfig struct {
 	MaxSmbdProcesses   int    `json:"max_smbd_processes,omitempty"`   // Samba max smbd processes (0 = use default 100)
 	SMBHomeDataset     string `json:"smb_home_dataset,omitempty"`     // ZFS dataset path for SMB user home folders; "" = disabled
 	SMBCleanDefaults   bool   `json:"smb_clean_defaults,omitempty"`   // remove distro default [printers], [print$], [homes] sections
+	SMBWorkgroup       string `json:"smb_workgroup,omitempty"`        // Samba workgroup name (default "WORKGROUP")
+	SMBCustomGlobal    string `json:"smb_custom_global,omitempty"`    // extra lines appended to the managed [global] section
 	TreeMapSchedule    string      `json:"treemap_schedule,omitempty"`     // daily | weekly | biweekly | monthly | "" (off)
 	TreeMapHour        int         `json:"treemap_hour"`                   // hour of day to run treemap scan (0-23)
 	TreeMapMinute      int         `json:"treemap_minute"`                 // minute of hour to run treemap scan (0-59)

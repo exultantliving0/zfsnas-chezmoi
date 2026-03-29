@@ -13,13 +13,19 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// HandleGetSMBGlobalConfig returns global Samba settings (max processes, home dataset).
+// HandleGetSMBGlobalConfig returns global Samba settings (max processes, home dataset, workgroup).
 func HandleGetSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		wg := appCfg.SMBWorkgroup
+		if wg == "" {
+			wg = "WORKGROUP"
+		}
 		jsonOK(w, map[string]interface{}{
 			"max_smbd_processes": appCfg.MaxSmbdProcesses,
 			"home_dataset":       appCfg.SMBHomeDataset,
 			"clean_defaults":     appCfg.SMBCleanDefaults,
+			"workgroup":          wg,
+			"custom_global":      appCfg.SMBCustomGlobal,
 		})
 	}
 }
@@ -31,6 +37,8 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			MaxSmbdProcesses *int    `json:"max_smbd_processes"`
 			HomeDataset      *string `json:"home_dataset"`
 			CleanDefaults    *bool   `json:"clean_defaults"`
+			Workgroup        *string `json:"workgroup"`
+			CustomGlobal     *string `json:"custom_global"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -39,6 +47,7 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 
 		changed := false
 		homeDatasetChanged := false
+		workgroupChanged := false
 		prevHomeDataset := appCfg.SMBHomeDataset
 		if req.MaxSmbdProcesses != nil {
 			if *req.MaxSmbdProcesses < 1 || *req.MaxSmbdProcesses > 10000 {
@@ -64,11 +73,39 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			appCfg.SMBCleanDefaults = *req.CleanDefaults
 			changed = true
 		}
+		if req.Workgroup != nil {
+			wg := strings.TrimSpace(*req.Workgroup)
+			if wg == "" {
+				wg = "WORKGROUP"
+			}
+			prev := appCfg.SMBWorkgroup
+			if prev == "" {
+				prev = "WORKGROUP"
+			}
+			if wg != prev {
+				workgroupChanged = true
+			}
+			appCfg.SMBWorkgroup = wg
+			changed = true
+		}
+		if req.CustomGlobal != nil {
+			appCfg.SMBCustomGlobal = *req.CustomGlobal
+			changed = true
+		}
 
 		if !changed {
 			jsonOK(w, map[string]string{"message": "no changes"})
 			return
 		}
+
+		// Before writing smb.conf, migrate any active parameter lines from the
+		// distro-written [global] section into SMBCustomGlobal so they are not
+		// silently lost when we comment that section out.  This is a no-op once
+		// the external [global] has already been commented out.
+		if extracted, err := system.ExtractExternalGlobalParams(); err == nil && extracted != "" {
+			appCfg.SMBCustomGlobal = mergeGlobalLines(appCfg.SMBCustomGlobal, extracted)
+		}
+
 		if err := config.SaveAppConfig(appCfg); err != nil {
 			jsonErr(w, http.StatusInternalServerError, "failed to save settings")
 			return
@@ -94,10 +131,10 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			}
 		}
 		if system.IsSambaInstalled() {
-			if err := system.ApplySmbGlobal(appCfg.MaxSmbdProcesses, appCfg.SMBHomeDataset, smbHomeUsernames(), appCfg.SMBCleanDefaults); err != nil {
+			if err := system.ApplySmbGlobal(config.Dir(), appCfg.MaxSmbdProcesses, appCfg.SMBWorkgroup, appCfg.SMBCustomGlobal, appCfg.SMBHomeDataset, smbHomeUsernames(), appCfg.SMBCleanDefaults); err != nil {
 				log.Printf("smb global config: ApplySmbGlobal: %v", err)
-			} else if homeDatasetChanged {
-				// [homes] section changes require a full restart to take effect.
+			} else if workgroupChanged || homeDatasetChanged {
+				// Workgroup and [homes] changes require a full restart to take effect.
 				if err := system.RestartSamba(); err != nil {
 					log.Printf("smb global config: RestartSamba: %v", err)
 				}
@@ -130,6 +167,41 @@ func smbHomeUsernames() []string {
 		}
 	}
 	return names
+}
+
+// mergeGlobalLines merges addition into existing, deduplicating by parameter key
+// (the part before "=").  existing lines take precedence; addition lines whose
+// key is already present in existing are skipped.  This prevents duplicate
+// entries when migrating distro-written [global] params into SMBCustomGlobal.
+func mergeGlobalLines(existing, addition string) string {
+	existingKeys := make(map[string]bool)
+	var result []string
+
+	for _, line := range strings.Split(existing, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		result = append(result, t)
+		if idx := strings.IndexByte(t, '='); idx > 0 {
+			key := strings.ToLower(strings.TrimSpace(t[:idx]))
+			existingKeys[key] = true
+		}
+	}
+	for _, line := range strings.Split(addition, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		if idx := strings.IndexByte(t, '='); idx > 0 {
+			key := strings.ToLower(strings.TrimSpace(t[:idx]))
+			if existingKeys[key] {
+				continue // user's explicit value takes precedence
+			}
+		}
+		result = append(result, t)
+	}
+	return strings.Join(result, "\n")
 }
 
 // HandleGetSMBSessions returns active Samba connections grouped by share name.

@@ -177,6 +177,12 @@ func main() {
 	// ===== Recycle bin nightly cleaner =====
 	system.StartRecycleCleaner(absConfig)
 
+	// ===== One-time smb.conf deduplication (cleans up duplicate managed sections
+	//       that may have been written by older versions of the software) =====
+	if err := system.DeduplicateSMBConf(); err != nil {
+		log.Printf("WARNING: smb.conf deduplication: %v", err)
+	}
+
 	// ===== UPS RRD collector (5-min battery/runtime/load samples) =====
 	system.StartUPSRRDCollector(absConfig, appCfg)
 

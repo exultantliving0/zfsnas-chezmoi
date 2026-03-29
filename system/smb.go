@@ -127,6 +127,126 @@ func SaveSMBShares(configDir string, shares []SMBShare) error {
 	return applySMBConf(shares)
 }
 
+// stripManagedSection removes every occurrence of a begin…end marked block from
+// conf, including any trailing newline that immediately follows the end marker.
+// If a begin marker exists without a matching end marker the content from the
+// begin marker to the end of the string is also removed.
+func stripManagedSection(conf, beginMarker, endMarker string) string {
+	for {
+		begin := strings.Index(conf, beginMarker)
+		if begin < 0 {
+			break
+		}
+		end := strings.Index(conf[begin:], endMarker)
+		if end < 0 {
+			// Orphaned begin with no end — trim to begin.
+			conf = conf[:begin]
+			break
+		}
+		end += begin + len(endMarker)
+		// Consume one trailing newline so we don't leave a blank line behind.
+		if end < len(conf) && conf[end] == '\n' {
+			end++
+		}
+		conf = conf[:begin] + conf[end:]
+	}
+	return conf
+}
+
+// collapseToLastOccurrence keeps only the last complete begin…end block in conf
+// and removes all earlier copies.  When there is only one (or zero) occurrence
+// the string is returned unchanged.
+func collapseToLastOccurrence(conf, beginMarker, endMarker string) string {
+	lastBegin := strings.LastIndex(conf, beginMarker)
+	if lastBegin < 0 {
+		return conf // no managed section present
+	}
+	lastEnd := strings.LastIndex(conf, endMarker)
+	if lastEnd <= lastBegin {
+		return conf // malformed — leave untouched
+	}
+	sectionEnd := lastEnd + len(endMarker)
+	if sectionEnd < len(conf) && conf[sectionEnd] == '\n' {
+		sectionEnd++
+	}
+	// Count occurrences — nothing to do when there is only one.
+	if strings.Index(conf, beginMarker) == lastBegin {
+		return conf
+	}
+	canonical := conf[lastBegin:sectionEnd]
+	conf = stripManagedSection(conf, beginMarker, endMarker)
+	return strings.TrimRight(conf, "\n") + "\n\n" + canonical
+}
+
+// DeduplicateSMBConf collapses any duplicate managed sections that may have
+// accumulated in smb.conf from older versions of the software.  It keeps the
+// last (most-recently written) copy of each section and is safe to call when
+// there are zero or one copies already present.
+func DeduplicateSMBConf() error {
+	existing, err := os.ReadFile(smbConfPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read smb.conf: %w", err)
+	}
+	conf := collapseToLastOccurrence(string(existing), smbBeginMarker, smbEndMarker)
+	conf = collapseToLastOccurrence(conf, smbGlobalBeginMarker, smbGlobalEndMarker)
+	return writeFileSudo(smbConfPath, conf)
+}
+
+// removeShareDuplicatesOutsideManaged scans conf line-by-line and removes any
+// [sharename] section that exists OUTSIDE the managed shares block and whose
+// name matches one of the provided shares.  This cleans up stale hand-written
+// or previously-leaked share entries so each share appears exactly once.
+func removeShareDuplicatesOutsideManaged(conf string, shares []SMBShare) string {
+	names := make(map[string]bool, len(shares))
+	for _, s := range shares {
+		names[strings.ToLower(s.Name)] = true
+	}
+
+	lines := strings.Split(conf, "\n")
+	var out strings.Builder
+	inManaged := false
+	inDrop := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Track all managed section boundaries (shares and global).
+		if strings.Contains(line, smbBeginMarker) || strings.Contains(line, smbGlobalBeginMarker) {
+			inManaged = true
+			inDrop = false
+			out.WriteString(line + "\n")
+			continue
+		}
+		if strings.Contains(line, smbEndMarker) || strings.Contains(line, smbGlobalEndMarker) {
+			inManaged = false
+			out.WriteString(line + "\n")
+			continue
+		}
+
+		// Inside a managed block — always keep as-is.
+		if inManaged {
+			out.WriteString(line + "\n")
+			continue
+		}
+
+		// Outside managed blocks: detect section headers.
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			section := strings.ToLower(strings.TrimSpace(trimmed[1 : len(trimmed)-1]))
+			inDrop = names[section]
+		}
+
+		if !inDrop {
+			out.WriteString(line + "\n")
+		}
+	}
+
+	result := strings.ReplaceAll(out.String(), "\n\n\n", "\n\n")
+	return strings.TrimSuffix(result, "\n")
+}
+
 // applySMBConf writes the managed section into /etc/samba/smb.conf.
 func applySMBConf(shares []SMBShare) error {
 	// Build the managed block.
@@ -239,27 +359,26 @@ func applySMBConf(shares []SMBShare) error {
 	}
 	conf := string(existing)
 
-	// Replace or append the managed section.
-	begin := strings.Index(conf, smbBeginMarker)
-	end := strings.Index(conf, smbEndMarker)
-	var newConf string
-	if begin >= 0 && end > begin {
-		newConf = conf[:begin] + managed + conf[end+len(smbEndMarker):]
-		// Trim any double newlines left by removal.
-		newConf = strings.ReplaceAll(newConf, "\n\n\n", "\n\n")
-	} else {
-		newConf = strings.TrimRight(conf, "\n") + "\n\n" + managed
-	}
+	// Strip all existing managed-shares sections (handles first-write and duplicates).
+	conf = stripManagedSection(conf, smbBeginMarker, smbEndMarker)
+	newConf := strings.TrimRight(conf, "\n") + "\n\n" + managed
+
+	// Remove any stray [sharename] sections outside the managed block so that
+	// each share appears exactly once in the file.
+	newConf = removeShareDuplicatesOutsideManaged(newConf, shares)
 
 	// If the managed global section is not yet in the file, seed it now with
 	// the default value (100) so the parameter is always present from the
 	// moment the first share is configured.
 	if !strings.Contains(newConf, smbGlobalBeginMarker) {
-		global := fmt.Sprintf("%s\n[global]\n   max smbd processes = 100\n%s\n",
+		global := fmt.Sprintf("%s\n[global]\n   max smbd processes = 100\n   workgroup = WORKGROUP\n%s\n",
 			smbGlobalBeginMarker, smbGlobalEndMarker)
 		newConf = strings.TrimRight(newConf, "\n") + "\n\n" + global
 	}
 
+	// Comment out any [global] section outside the managed block so our block wins.
+	newConf = removeSectionsOutsideManaged(newConf, smbGlobalBeginMarker, smbGlobalEndMarker,
+		nil, []string{"global"})
 
 	return writeFileSudo(smbConfPath, newConf)
 }
@@ -271,10 +390,29 @@ func applySMBConf(shares []SMBShare) error {
 // is safe alongside the distro-written [global].
 // When cleanDefaults is true the distro-default [homes], [printers], and
 // [print$] sections outside the managed block are commented out.
-func ApplySmbGlobal(maxSmbdProcesses int, homeDataset string, homeUsers []string, cleanDefaults bool) error {
+func ApplySmbGlobal(configDir string, maxSmbdProcesses int, workgroup string, customGlobal string, homeDataset string, homeUsers []string, cleanDefaults bool) error {
+	if workgroup == "" {
+		workgroup = "WORKGROUP"
+	}
 	var sb strings.Builder
 	sb.WriteString(smbGlobalBeginMarker + "\n")
-	sb.WriteString(fmt.Sprintf("[global]\n   max smbd processes = %d\n", maxSmbdProcesses))
+	sb.WriteString(fmt.Sprintf("[global]\n   max smbd processes = %d\n   workgroup = %s\n", maxSmbdProcesses, workgroup))
+
+	// Append expert-supplied custom lines, filtering out section headers to prevent
+	// injection of new sections inside our managed block.
+	if customGlobal != "" {
+		for _, line := range strings.Split(customGlobal, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			// Skip any line that looks like a section header — those belong outside [global].
+			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+				continue
+			}
+			sb.WriteString("   " + trimmed + "\n")
+		}
+	}
 
 	if homeDataset != "" && len(homeUsers) > 0 {
 		mountpoint := datasetMountpoint(homeDataset)
@@ -298,25 +436,29 @@ func ApplySmbGlobal(maxSmbdProcesses int, homeDataset string, homeUsers []string
 	}
 	conf := string(existing)
 
-	begin := strings.Index(conf, smbGlobalBeginMarker)
-	end   := strings.Index(conf, smbGlobalEndMarker)
-	var newConf string
-	if begin >= 0 && end > begin {
-		newConf = conf[:begin] + managed + conf[end+len(smbGlobalEndMarker):]
-		newConf = strings.ReplaceAll(newConf, "\n\n\n", "\n\n")
-	} else {
-		newConf = strings.TrimRight(conf, "\n") + "\n\n" + managed
-	}
+	// Strip all existing managed-global sections (handles first-write and duplicates).
+	conf = stripManagedSection(conf, smbGlobalBeginMarker, smbGlobalEndMarker)
+	newConf := strings.TrimRight(conf, "\n") + "\n\n" + managed
 
-	// Remove or comment out distro-default sections that conflict with our configuration.
+	// Always comment out any [global] section outside the managed block so that
+	// our managed [global] is the only active one.  This also silences any
+	// conflicting workgroup= or other parameters set by the distro installer.
+	commentOut := []string{"global"}
+	removeOut := []string(nil)
 	if cleanDefaults {
-		// When cleanDefaults is on, physically remove [printers] and [print$]; comment out [homes].
-		newConf = removeSectionsOutsideManaged(newConf, smbGlobalBeginMarker, smbGlobalEndMarker,
-			[]string{"printers", "print$"}, []string{"homes"})
+		removeOut   = []string{"printers", "print$"}
+		commentOut  = append(commentOut, "homes")
 	} else if homeDataset != "" {
-		// Even without cleanDefaults, suppress a distro [homes] when we manage our own.
-		newConf = removeSectionsOutsideManaged(newConf, smbGlobalBeginMarker, smbGlobalEndMarker,
-			nil, []string{"homes"})
+		commentOut = append(commentOut, "homes")
+	}
+	newConf = removeSectionsOutsideManaged(newConf, smbGlobalBeginMarker, smbGlobalEndMarker,
+		removeOut, commentOut)
+
+	// Remove any stray [sharename] sections outside the managed shares block so
+	// that each share appears exactly once.  This runs on every Configure save,
+	// not just on share edits.
+	if shares, err := ListSMBShares(configDir); err == nil && len(shares) > 0 {
+		newConf = removeShareDuplicatesOutsideManaged(newConf, shares)
 	}
 
 	return writeFileSudo(smbConfPath, newConf)
@@ -326,6 +468,77 @@ func ApplySmbGlobal(maxSmbdProcesses int, homeDataset string, homeUsers []string
 // in removeSections that lies outside the managed markers. The section header
 // and all its content lines are omitted from the output.
 // Sections in commentSections are commented out with "; " instead of deleted.
+// ExtractExternalGlobalParams reads smb.conf and returns the active (non-commented)
+// parameter lines found inside [global] sections that lie OUTSIDE the ZFS NAS
+// managed block.  Lines whose key is already managed by ZFS NAS (workgroup,
+// max smbd processes) are skipped so they are not duplicated in the textarea.
+// The result is suitable for merging into SMBCustomGlobal before the external
+// [global] is commented out.
+func ExtractExternalGlobalParams() (string, error) {
+	existing, err := os.ReadFile(smbConfPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read smb.conf: %w", err)
+	}
+
+	// Keys that ZFS NAS manages directly — never migrate these.
+	ownedKeys := map[string]bool{
+		"max smbd processes": true,
+		"workgroup":          true,
+	}
+
+	lines := strings.Split(string(existing), "\n")
+	var out strings.Builder
+	inManaged := false
+	inGlobal  := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Track managed section boundaries.
+		if strings.Contains(line, smbBeginMarker) || strings.Contains(line, smbGlobalBeginMarker) {
+			inManaged = true
+			inGlobal  = false
+			continue
+		}
+		if strings.Contains(line, smbEndMarker) || strings.Contains(line, smbGlobalEndMarker) {
+			inManaged = false
+			inGlobal  = false
+			continue
+		}
+		if inManaged {
+			continue
+		}
+
+		// Only recognise ACTIVE section headers (not already commented out).
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			section := strings.ToLower(strings.TrimSpace(trimmed[1 : len(trimmed)-1]))
+			inGlobal = section == "global"
+			continue // never include the header line itself
+		}
+
+		if !inGlobal {
+			continue
+		}
+		// Skip blank lines and comments.
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		// Skip keys ZFS NAS owns.
+		if idx := strings.IndexByte(trimmed, '='); idx > 0 {
+			key := strings.ToLower(strings.TrimSpace(trimmed[:idx]))
+			if ownedKeys[key] {
+				continue
+			}
+		}
+		out.WriteString(trimmed + "\n")
+	}
+
+	return strings.TrimSpace(out.String()), nil
+}
+
 func removeSectionsOutsideManaged(conf, managedBegin, managedEnd string, removeSections, commentSections []string) string {
 	remove  := make(map[string]bool, len(removeSections))
 	comment := make(map[string]bool, len(commentSections))
