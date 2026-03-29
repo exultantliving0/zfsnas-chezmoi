@@ -114,39 +114,9 @@ type sudoCheck struct {
 // in SECURITY.md. The check flags any entry whose expected string is absent from
 // the running user's "sudo -l -n" output.
 var requiredSudoChecks = []sudoCheck{
-	// ── ZFS pool management ──────────────────────────────────────────────────
-	{Binary: "zpool", Match: "list", Name: "zpool list"},
-	{Binary: "zpool", Match: "status", Name: "zpool status"},
-	{Binary: "zpool", Match: "get", Name: "zpool get"},
-	{Binary: "zpool", Match: "create", Name: "zpool create"},
-	{Binary: "zpool", Match: "import", Name: "zpool import"},
-	{Binary: "zpool", Match: "add", Name: "zpool add"},
-	{Binary: "zpool", Match: "attach", Name: "zpool attach"},
-	{Binary: "zpool", Match: "detach", Name: "zpool detach"},
-	{Binary: "zpool", Match: "remove", Name: "zpool remove"},
-	{Binary: "zpool", Match: "destroy", Name: "zpool destroy"},
-	{Binary: "zpool", Match: "upgrade", Name: "zpool upgrade"},
-	{Binary: "zpool", Match: "scrub", Name: "zpool scrub"},
-	{Binary: "zpool", Match: "offline", Name: "zpool offline"},
-	{Binary: "zpool", Match: "online", Name: "zpool online"},
-	{Binary: "zpool", Match: "clear", Name: "zpool clear"},
-	{Binary: "zpool", Match: "replace", Name: "zpool replace"},
-	// ── ZFS dataset management ───────────────────────────────────────────────
-	{Binary: "zfs", Match: "list", Name: "zfs list"},
-	{Binary: "zfs", Match: "get", Name: "zfs get"},
-	{Binary: "zfs", Match: "set", Name: "zfs set"},
-	{Binary: "zfs", Match: "inherit", Name: "zfs inherit"},
-	{Binary: "zfs", Match: "create", Name: "zfs create"},
-	{Binary: "zfs", Match: "destroy", Name: "zfs destroy"},
-	{Binary: "zfs", Match: "snapshot", Name: "zfs snapshot"},
-	{Binary: "zfs", Match: "send", Name: "zfs send"},
-	{Binary: "zfs", Match: "recv", Name: "zfs recv"},
-	{Binary: "zfs", Match: "allow", Name: "zfs allow"},
-	{Binary: "zfs", Match: "rollback", Name: "zfs rollback"},
-	{Binary: "zfs", Match: "clone", Name: "zfs clone"},
-	{Binary: "zfs", Match: "mount", Name: "zfs mount"},
-	{Binary: "zfs", Match: "load-key", Name: "zfs load-key"},
-	{Binary: "zfs", Match: "unload-key", Name: "zfs unload-key"},
+	// ── ZFS pool & dataset management ────────────────────────────────────────
+	{Binary: "zpool", Match: "*", Name: "zpool *"},
+	{Binary: "zfs", Match: "*", Name: "zfs *"},
 	// ── Hardware monitoring ──────────────────────────────────────────────────
 	{Binary: "smartctl", Match: "-j -a", Name: "smartctl -j -a"},
 	{Binary: "smartctl", Match: "-j -i", Name: "smartctl -j -i"},

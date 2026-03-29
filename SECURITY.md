@@ -37,50 +37,15 @@ Run `sudo visudo -f /etc/sudoers.d/zfsnas` and paste the block below.
 ```sudoers
 # ── ZFS pool & dataset management ────────────────────────────────────────────
 # since v1.0.0 — pool creation, import, status, dataset CRUD, snapshots
-# since v2.0.0 — zpool scrub / scrub -s (Scrub Management page)
+# since v2.0.0 — zpool scrub (Scrub Management page)
 # since v4.0.0 — zpool offline/online/clear (Pool Fixer Wizard)
 # since v5.0.0 — zfs load-key / unload-key (native encryption)
 # since v6.1.0 — zfs send / zfs recv (remote & local dataset replication)
-# since v6.3.21 — zpool replace -f (Pool Fixer Wizard: disk replacement for DEGRADED pools)
+# since v6.3.21 — zpool replace (Pool Fixer Wizard: disk replacement for DEGRADED pools)
 # since v6.3.26 — zfs allow (InterLink push & schedule replication: ZFS delegation to service user)
 Cmnd_Alias ZFSNAS_ZFS = \
-    /usr/sbin/zpool list *, \
-    /usr/sbin/zpool status, \
-    /usr/sbin/zpool status *, \
-    /usr/sbin/zpool get *, \
-    /usr/sbin/zpool create *, \
-    /usr/sbin/zpool import, \
-    /usr/sbin/zpool import *, \
-    /usr/sbin/zpool import -f *, \
-    /usr/sbin/zpool add *, \
-    /usr/sbin/zpool attach *, \
-    /usr/sbin/zpool detach *, \
-    /usr/sbin/zpool remove *, \
-    /usr/sbin/zpool destroy *, \
-    /usr/sbin/zpool upgrade *, \
-    /usr/sbin/zpool scrub *, \
-    /usr/sbin/zpool scrub -s *, \
-    /usr/sbin/zpool offline *, \
-    /usr/sbin/zpool online *, \
-    /usr/sbin/zpool clear *, \
-    /usr/sbin/zpool replace -f *, \
-    /usr/sbin/zfs list *, \
-    /usr/sbin/zfs get *, \
-    /usr/sbin/zfs set *, \
-    /usr/sbin/zfs inherit *, \
-    /usr/sbin/zfs create *, \
-    /usr/sbin/zfs destroy *, \
-    /usr/sbin/zfs destroy -r *, \
-    /usr/sbin/zfs snapshot *, \
-    /usr/sbin/zfs send *, \
-    /usr/sbin/zfs recv *, \
-    /usr/sbin/zfs receive *, \
-    /usr/sbin/zfs allow *, \
-    /usr/sbin/zfs rollback -r *, \
-    /usr/sbin/zfs clone *, \
-    /usr/sbin/zfs mount *, \
-    /usr/sbin/zfs load-key *, \
-    /usr/sbin/zfs unload-key *
+    /usr/sbin/zpool *, \
+    /usr/sbin/zfs *
 
 # ── Samba (SMB shares) ────────────────────────────────────────────────────────
 # since v1.0.0 — Samba service control, user provisioning, share config write
