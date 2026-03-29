@@ -774,7 +774,8 @@ func PrepareZFSPartition(device string) (string, error) {
 // compression: "off" | "lz4" | "zstd"
 // dedup: "off" | "on" | "verify"
 // keyFilePath: absolute path to 32-byte raw key file, or "" for no encryption
-func CreatePool(name, layout string, ashift int, compression, dedup string, devices []string, keyFilePath string) error {
+// mountRoot: if true, ZFS default mountpoint (/<name>); if false, pool is mounted at /mnt/<name>
+func CreatePool(name, layout string, ashift int, compression, dedup string, devices []string, keyFilePath string, mountRoot bool) error {
 	// Prepare each disk, then resolve the partuuid symlink to the real partition
 	// device path before passing to zpool create.  On some systems the symlink
 	// exists but its target is not yet accessible when zpool create runs,
@@ -791,6 +792,9 @@ func CreatePool(name, layout string, ashift int, compression, dedup string, devi
 	args := []string{"zpool", "create", "-f",
 		"-o", fmt.Sprintf("ashift=%d", ashift),
 		"-O", "atime=off",
+	}
+	if !mountRoot {
+		args = append(args, "-m", "/mnt/"+name)
 	}
 	if keyFilePath != "" {
 		args = append(args,

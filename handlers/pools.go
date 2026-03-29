@@ -63,6 +63,7 @@ func HandleCreatePool(w http.ResponseWriter, r *http.Request) {
 		Devices     []string `json:"devices"`
 		Encrypted   bool     `json:"encrypted"`    // enable ZFS native encryption
 		KeyFileID   string   `json:"key_file_id"`  // EncryptionKey.ID to use
+		MountRoot   bool     `json:"mount_root"`   // if true, mount at /<name>; default false → /mnt/<name>
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -138,7 +139,7 @@ func HandleCreatePool(w http.ResponseWriter, r *http.Request) {
 	poolCreateJobs.Store(jobID, job)
 
 	go func() {
-		err := system.CreatePool(req.Name, req.Layout, req.Ashift, req.Compression, req.Dedup, req.Devices, keyFilePath)
+		err := system.CreatePool(req.Name, req.Layout, req.Ashift, req.Compression, req.Dedup, req.Devices, keyFilePath, req.MountRoot)
 		job.mu.Lock()
 		defer job.mu.Unlock()
 		if err != nil {
