@@ -100,57 +100,103 @@ type SudoStatus struct {
 // that must appear in "sudo -l" output.  When a command is a specific subcommand
 // (e.g. "zpool get") set Binary to the executable and Match to the subcommand
 // suffix — the checker will look for "<fullpath> <match>" in the output.
+// IfBinary, when set, skips the check if that binary is not installed — used to
+// gate optional-feature entries (e.g. NUT, MinIO, iSCSI) that are irrelevant on
+// systems that have not enabled the feature.
 type sudoCheck struct {
-	Binary string // executable name passed to exec.LookPath
-	Match  string // extra suffix after the binary path (empty = binary path alone)
-	Name   string // display name reported in MissingCommands
+	Binary   string // executable name passed to exec.LookPath
+	Match    string // extra suffix after the binary path (empty = binary path alone)
+	Name     string // display name reported in MissingCommands
+	IfBinary string // skip this check if the named binary is absent from PATH
 }
 
 // requiredSudoChecks lists every entry covered by the hardened sudoers template
 // in SECURITY.md. The check flags any entry whose expected string is absent from
 // the running user's "sudo -l -n" output.
 var requiredSudoChecks = []sudoCheck{
-	// ZFS pool management
-	{Binary: "zpool", Name: "zpool"},
-	{Binary: "zpool", Match: "get", Name: "zpool get"}, // used for ashift / pool properties
-	// ZFS dataset management
-	{Binary: "zfs", Name: "zfs"},
-	// Hardware monitoring
-	{Binary: "smartctl", Name: "smartctl"},
+	// ── ZFS pool management ──────────────────────────────────────────────────
+	{Binary: "zpool", Match: "list", Name: "zpool list"},
+	{Binary: "zpool", Match: "status", Name: "zpool status"},
+	{Binary: "zpool", Match: "get", Name: "zpool get"},
+	{Binary: "zpool", Match: "create", Name: "zpool create"},
+	{Binary: "zpool", Match: "import", Name: "zpool import"},
+	{Binary: "zpool", Match: "add", Name: "zpool add"},
+	{Binary: "zpool", Match: "attach", Name: "zpool attach"},
+	{Binary: "zpool", Match: "detach", Name: "zpool detach"},
+	{Binary: "zpool", Match: "remove", Name: "zpool remove"},
+	{Binary: "zpool", Match: "destroy", Name: "zpool destroy"},
+	{Binary: "zpool", Match: "upgrade", Name: "zpool upgrade"},
+	{Binary: "zpool", Match: "scrub", Name: "zpool scrub"},
+	{Binary: "zpool", Match: "offline", Name: "zpool offline"},
+	{Binary: "zpool", Match: "online", Name: "zpool online"},
+	{Binary: "zpool", Match: "clear", Name: "zpool clear"},
+	{Binary: "zpool", Match: "replace", Name: "zpool replace"},
+	// ── ZFS dataset management ───────────────────────────────────────────────
+	{Binary: "zfs", Match: "list", Name: "zfs list"},
+	{Binary: "zfs", Match: "get", Name: "zfs get"},
+	{Binary: "zfs", Match: "set", Name: "zfs set"},
+	{Binary: "zfs", Match: "inherit", Name: "zfs inherit"},
+	{Binary: "zfs", Match: "create", Name: "zfs create"},
+	{Binary: "zfs", Match: "destroy", Name: "zfs destroy"},
+	{Binary: "zfs", Match: "snapshot", Name: "zfs snapshot"},
+	{Binary: "zfs", Match: "send", Name: "zfs send"},
+	{Binary: "zfs", Match: "recv", Name: "zfs recv"},
+	{Binary: "zfs", Match: "allow", Name: "zfs allow"},
+	{Binary: "zfs", Match: "rollback", Name: "zfs rollback"},
+	{Binary: "zfs", Match: "clone", Name: "zfs clone"},
+	{Binary: "zfs", Match: "mount", Name: "zfs mount"},
+	{Binary: "zfs", Match: "load-key", Name: "zfs load-key"},
+	{Binary: "zfs", Match: "unload-key", Name: "zfs unload-key"},
+	// ── Hardware monitoring ──────────────────────────────────────────────────
+	{Binary: "smartctl", Match: "-j -a", Name: "smartctl -j -a"},
+	{Binary: "smartctl", Match: "-j -i", Name: "smartctl -j -i"},
 	{Binary: "nvme", Name: "nvme"},
-	// Kernel / packages / service management
+	// ── Kernel / packages / service management ───────────────────────────────
 	{Binary: "modprobe", Name: "modprobe"},
 	{Binary: "apt-get", Name: "apt-get"},
 	{Binary: "systemctl", Name: "systemctl"},
-	// tee is used for multiple config paths — check the ones most commonly missed
+	// ── Config file write paths (tee) ────────────────────────────────────────
 	{Binary: "tee", Match: "/etc/samba/smb.conf", Name: "tee /etc/samba/smb.conf"},
 	{Binary: "tee", Match: "/etc/exports", Name: "tee /etc/exports"},
 	{Binary: "tee", Match: "/etc/systemd/system/zfsnas.service", Name: "tee /etc/systemd/system/zfsnas.service"},
 	{Binary: "tee", Match: "/etc/modprobe.d/zfs.conf", Name: "tee /etc/modprobe.d/zfs.conf"},
 	{Binary: "tee", Match: "/sys/module/zfs/parameters/zfs_arc_max", Name: "tee /sys/module/zfs/parameters/zfs_arc_max"},
 	{Binary: "tee", Match: "/sys/module/zfs/parameters/zfs_arc_min", Name: "tee /sys/module/zfs/parameters/zfs_arc_min"},
-	// User / Samba
+	// ── NUT (UPS) — only checked when nut packages are installed ─────────────
+	{Binary: "nut-scanner", Name: "nut-scanner", IfBinary: "upsc"},
+	{Binary: "tee", Match: "/etc/nut/nut.conf", Name: "tee /etc/nut/nut.conf", IfBinary: "upsc"},
+	{Binary: "tee", Match: "/etc/nut/ups.conf", Name: "tee /etc/nut/ups.conf", IfBinary: "upsc"},
+	{Binary: "tee", Match: "/etc/nut/upsd.conf", Name: "tee /etc/nut/upsd.conf", IfBinary: "upsc"},
+	{Binary: "tee", Match: "/etc/nut/upsd.users", Name: "tee /etc/nut/upsd.users", IfBinary: "upsc"},
+	{Binary: "tee", Match: "/etc/nut/upsmon.conf", Name: "tee /etc/nut/upsmon.conf", IfBinary: "upsc"},
+	// ── MinIO (S3) — only checked when minio is installed ────────────────────
+	{Binary: "tee", Match: "/etc/systemd/system/minio.service", Name: "tee /etc/systemd/system/minio.service", IfBinary: "minio"},
+	{Binary: "tee", Match: "/etc/default/minio", Name: "tee /etc/default/minio", IfBinary: "minio"},
+	// ── iSCSI — only checked when targetcli-fb is installed ──────────────────
+	{Binary: "targetcli", Name: "targetcli"},
+	// ── User / Samba ─────────────────────────────────────────────────────────
 	{Binary: "useradd", Name: "useradd"},
 	{Binary: "usermod", Name: "usermod"},
-	{Binary: "smbpasswd", Name: "smbpasswd"},
+	{Binary: "smbpasswd", Match: "-s -a", Name: "smbpasswd -s -a"},
+	{Binary: "smbstatus", Match: "-S", Name: "smbstatus -S"},
 	{Binary: "chgrp", Match: "sambashare", Name: "chgrp sambashare"},
 	{Binary: "chmod", Match: "0770", Name: "chmod 0770"},
 	{Binary: "groupadd", Match: "--system sambashare", Name: "groupadd --system sambashare"},
-	// NFS
-	{Binary: "exportfs", Name: "exportfs"},
-	// System
+	// ── NFS ──────────────────────────────────────────────────────────────────
+	{Binary: "exportfs", Match: "-ra", Name: "exportfs -ra"},
+	// ── System ───────────────────────────────────────────────────────────────
 	{Binary: "timedatectl", Name: "timedatectl"},
 	{Binary: "shutdown", Name: "shutdown"},
-	// Folder usage scanning & recycle bin cleanup
+	// ── Folder usage scanning & recycle bin cleanup ──────────────────────────
 	{Binary: "du", Name: "du"},
 	{Binary: "find", Name: "find"},
-	// Disk preparation & wipe
-	{Binary: "wipefs", Name: "wipefs"},
-	{Binary: "sgdisk", Name: "sgdisk"},
+	// ── Disk preparation & wipe ──────────────────────────────────────────────
+	{Binary: "wipefs", Match: "-a", Name: "wipefs -a"},
+	{Binary: "sgdisk", Match: "--zap-all", Name: "sgdisk --zap-all"},
 	{Binary: "dd", Name: "dd"},
 	{Binary: "partprobe", Name: "partprobe"},
 	{Binary: "udevadm", Name: "udevadm"},
-	{Binary: "blkid", Name: "blkid"},
+	{Binary: "blkid", Match: "-o export", Name: "blkid -o export"},
 }
 
 // CheckSudoAccess probes the effective sudo permissions of the running process.
@@ -174,6 +220,12 @@ func CheckSudoAccess() SudoStatus {
 	// Hardened configuration — check each required entry.
 	var missing []string
 	for _, chk := range requiredSudoChecks {
+		// Skip optional-feature entries when the feature is not installed.
+		if chk.IfBinary != "" {
+			if _, err := exec.LookPath(chk.IfBinary); err != nil {
+				continue
+			}
+		}
 		path, err := exec.LookPath(chk.Binary)
 		if err != nil {
 			continue // binary not installed on this system — not a sudo gap
