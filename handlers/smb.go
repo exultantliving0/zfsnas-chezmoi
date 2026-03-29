@@ -383,7 +383,7 @@ func HandleSetSMBPassword(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "username and password are required")
 		return
 	}
-	if err := system.EnsureSambaUser(req.Username, req.Password); err != nil {
+	if err := system.EnsureSambaUser(req.Username, req.Password, nil, nil); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -182,6 +182,8 @@ type User struct {
 	TOTPSecret    string          `json:"totp_secret,omitempty"`     // base32-encoded TOTP secret
 	TOTPEnabled   bool            `json:"totp_enabled,omitempty"`    // 2FA active
 	SMBHomeFolder bool            `json:"smb_home_folder,omitempty"` // home dir under SMBHomeDataset
+	UID           *int            `json:"uid,omitempty"`             // custom Linux UID (nil = auto)
+	GID           *int            `json:"gid,omitempty"`             // custom Linux GID (nil = auto)
 }
 
 // EncryptionKey is metadata for a stored ZFS encryption key file.

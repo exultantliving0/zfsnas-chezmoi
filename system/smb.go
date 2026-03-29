@@ -715,14 +715,34 @@ func ControlSamba(action string) error {
 
 // EnsureSambaUser creates a Linux system account (if absent) and sets its
 // Samba password, making the user ready for SMB authentication.
-func EnsureSambaUser(username, password string) error {
+// uid and gid are optional; pass nil for automatic assignment.
+func EnsureSambaUser(username, password string, uid, gid *int) error {
 	// Create a no-login Linux system account if it doesn't exist yet.
 	// id exits 0 if user exists, non-zero otherwise.
 	if err := exec.Command("id", username).Run(); err != nil {
-		out, err2 := exec.Command("sudo", "useradd",
-			"-M",                    // no home directory
-			"-s", "/usr/sbin/nologin", // no shell login
-			username).CombinedOutput()
+		// When a specific GID is requested the group must exist before useradd
+		// can reference it. Create it now (no-op if it already exists).
+		if gid != nil {
+			out, err2 := exec.Command("sudo", "groupadd", "-g", fmt.Sprintf("%d", *gid), username).CombinedOutput()
+			if err2 != nil {
+				msg := strings.TrimSpace(string(out))
+				// Exit code 9 = group already exists — safe to ignore.
+				if !strings.Contains(msg, "already exists") {
+					return fmt.Errorf("groupadd: %s", msg)
+				}
+			}
+		}
+
+		args := []string{"-M", "-s", "/usr/sbin/nologin"}
+		if uid != nil {
+			args = append(args, "--uid", fmt.Sprintf("%d", *uid))
+		}
+		if gid != nil {
+			// Group already exists; tell useradd not to create a new one.
+			args = append(args, "--gid", fmt.Sprintf("%d", *gid), "--no-user-group")
+		}
+		args = append(args, username)
+		out, err2 := exec.Command("sudo", append([]string{"useradd"}, args...)...).CombinedOutput()
 		if err2 != nil {
 			return fmt.Errorf("useradd: %s", strings.TrimSpace(string(out)))
 		}
@@ -732,14 +752,85 @@ func EnsureSambaUser(username, password string) error {
 	ensureSambashareGroup()
 	_ = exec.Command("sudo", "usermod", "-aG", "sambashare", username).Run()
 
-	// Set / update the Samba password (-s = silent, -a = add or update).
-	cmd := exec.Command("sudo", "smbpasswd", "-s", "-a", username)
-	cmd.Stdin = strings.NewReader(password + "\n" + password + "\n")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("smbpasswd: %s", strings.TrimSpace(string(out)))
+	// Set / update the Samba password only when smbpasswd is available.
+	smbpasswdPath, lookErr := exec.LookPath("smbpasswd")
+	if lookErr == nil {
+		cmd := exec.Command("sudo", smbpasswdPath, "-s", "-a", username)
+		cmd.Stdin = strings.NewReader(password + "\n" + password + "\n")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("smbpasswd: %s", strings.TrimSpace(string(out)))
+		}
 	}
 	return nil
+}
+
+// DeleteSambaUser removes the Samba password entry, the Linux system account,
+// and the primary group for the given username.
+func DeleteSambaUser(username string) error {
+	// Remove from Samba password database. Non-fatal: user may never have had
+	// an SMB password, or smbpasswd may not be installed.
+	if smbpasswdPath, err := exec.LookPath("smbpasswd"); err == nil {
+		if out, err := exec.Command("sudo", smbpasswdPath, "-x", username).CombinedOutput(); err != nil {
+			log.Printf("smb: smbpasswd -x %s: %v: %s", username, err, strings.TrimSpace(string(out)))
+		}
+	}
+
+	// First check if the Linux account actually exists; nothing to do if not.
+	if exec.Command("id", username).Run() != nil {
+		return nil
+	}
+
+	// Remove supplementary group memberships first so userdel has no blockers.
+	_ = exec.Command("sudo", "gpasswd", "-d", username, "sambashare").Run()
+
+	// Delete the Linux system account. -f forces removal even if the user is
+	// currently logged in. We do NOT use -r because home directories under
+	// ZFS datasets are managed separately.
+	if out, err := exec.Command("sudo", "userdel", "-f", username).CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		if !strings.Contains(msg, "does not exist") {
+			return fmt.Errorf("userdel %s: %s", username, msg)
+		}
+	}
+
+	// Clean up the primary group (same name as user). userdel normally handles
+	// this, but on some systems it is left behind — remove it explicitly.
+	_ = exec.Command("sudo", "groupdel", username).Run()
+
+	return nil
+}
+
+// UIDExistsOnSystem returns true if the given UID is already present in /etc/passwd.
+func UIDExistsOnSystem(uid int) (bool, error) {
+	data, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return false, fmt.Errorf("read /etc/passwd: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.Split(line, ":")
+		// /etc/passwd format: name:pw:uid:gid:gecos:home:shell — uid is field index 2
+		if len(parts) >= 4 && parts[2] == fmt.Sprintf("%d", uid) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// GIDExistsOnSystem returns true if the given GID is already present in /etc/group.
+func GIDExistsOnSystem(gid int) (bool, error) {
+	data, err := os.ReadFile("/etc/group")
+	if err != nil {
+		return false, fmt.Errorf("read /etc/group: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.Split(line, ":")
+		// /etc/group format: name:pw:gid:members — gid is field index 2
+		if len(parts) >= 3 && parts[2] == fmt.Sprintf("%d", gid) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ensureSambashareGroup creates the sambashare group if it does not already

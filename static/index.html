@@ -752,7 +752,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Created</th><th></th></tr></thead>
+            <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Created</th><th style="text-align:right;"></th></tr></thead>
             <tbody id="users-tbody">
               <tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
             </tbody>
@@ -2549,6 +2549,26 @@
         Home User Folder
         <i class="info-tip tip-down" data-tip="When enabled and a home-folder dataset is configured in SMB Shares &gt; Configure, this user's personal folder is created inside that dataset and served as their SMB home share (\\server\username)."></i>
       </label>
+      <!-- Advanced Settings collapsible -->
+      <div style="margin-bottom:16px;">
+        <button type="button" onclick="toggleCreateUserAdvanced()" id="btn-create-user-adv"
+          style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:13px;padding:0;display:flex;align-items:center;gap:6px;">
+          <span id="create-user-adv-arrow" style="display:inline-block;transition:transform 0.2s;">▶</span>
+          Advanced Settings
+        </button>
+        <div id="create-user-adv-panel" style="display:none;margin-top:12px;">
+          <div style="display:flex;gap:12px;">
+            <div class="form-group" style="flex:1;margin-bottom:0;">
+              <label style="font-size:13px;">User UID <i class="info-tip tip-down" data-tip="Linux numeric user ID for the SMB account. Leave blank to let the system assign one automatically. Must be 1000 or higher and must not already exist in /etc/passwd."></i></label>
+              <input type="number" id="new-uid" placeholder="Auto" min="1000" style="width:100%;" autocomplete="off">
+            </div>
+            <div class="form-group" style="flex:1;margin-bottom:0;">
+              <label style="font-size:13px;">User GID <i class="info-tip tip-down" data-tip="Linux numeric group ID. Leave blank to let the system assign one automatically. Must be 1000 or higher and must not already exist in /etc/group."></i></label>
+              <input type="number" id="new-gid" placeholder="Auto" min="1000" style="width:100%;" autocomplete="off">
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="flex gap-2" style="margin-top:8px;">
         <button type="button" class="btn btn-ghost" onclick="closeCreateUser()">Cancel</button>
         <button type="submit" class="btn btn-primary" style="flex:1;">Create User</button>
@@ -5951,23 +5971,67 @@ async function loadUsers() {
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">No users found.</td></tr>';
       return;
     }
-    tbody.innerHTML = users.map(u => `
+    tbody.innerHTML = users.map((u, idx) => `
       <tr>
         <td><div class="user-row-name"><div class="avatar">${u.username[0].toUpperCase()}</div><span>${esc(u.username)}</span></div></td>
         <td class="text-2">${esc(u.email||'—')}</td>
         <td><span class="badge badge-${roleBadge(u.role)}">${esc(u.role)}</span></td>
         <td class="text-2 text-sm">${formatDate(u.created_at)}</td>
-        <td>${currentUser.role==='admin' ? `
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-ghost btn-sm" onclick="openSMBPasswordModal('${esc(u.username)}')" title="Set SMB password">SMB Password</button>
-            <button class="btn btn-ghost btn-sm" onclick="openEditUser('${esc(u.id)}')" title="Edit user" style="padding:6px 9px;">✏️</button>
-            ${u.id!==currentUser.user_id ? `<button class="btn btn-ghost btn-sm" onclick="deleteUser('${u.id}','${esc(u.username)}')" title="Delete user" style="padding:6px 9px;color:var(--accent-danger);">🗑️</button>` : ''}
+        <td style="text-align:right;">${currentUser.role==='admin' ? `
+          <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">
+            <button class="btn btn-ghost btn-sm" onclick="openEditUser('${esc(u.id)}')" title="Edit user" style="padding:6px 10px;">Edit</button>
+            <span onclick="toggleUserMenu(event,${idx})" title="More actions" style="cursor:pointer;color:var(--text-2);font-size:20px;line-height:1;padding:2px 6px;user-select:none;">⋮</span>
           </div>` : ''}</td>
       </tr>
     `).join('');
   } catch {
     tbody.innerHTML = '<tr><td colspan="5" style="color:var(--accent-danger);padding:24px;">Failed to load users.</td></tr>';
   }
+}
+
+// ── User row burger menu ──────────────────────────────────────────────────────
+let _openUserMenu = null;
+
+function closeUserMenus() {
+  if (_openUserMenu) { _openUserMenu.dropdown.remove(); _openUserMenu = null; }
+}
+document.addEventListener('click', closeUserMenus);
+window.addEventListener('scroll', closeUserMenus, true);
+
+function toggleUserMenu(evt, idx) {
+  evt.stopPropagation();
+  const btn = evt.currentTarget;
+  if (_openUserMenu && _openUserMenu.btn === btn) { closeUserMenus(); return; }
+  closeUserMenus();
+
+  const u = _usersCache[idx];
+  const dd = document.createElement('div');
+  dd.className = 'row-menu-dropdown';
+  dd.addEventListener('click', e => e.stopPropagation());
+
+  const smbBtn = document.createElement('button');
+  smbBtn.textContent = '🔑 Change only the SMB Password';
+  smbBtn.addEventListener('click', () => { closeUserMenus(); openSMBPasswordModal(u.username); });
+  dd.appendChild(smbBtn);
+
+  if (u.id !== currentUser.user_id) {
+    const sep = document.createElement('hr');
+    sep.className = 'menu-sep';
+    dd.appendChild(sep);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'danger';
+    delBtn.textContent = '🗑️ Delete User';
+    delBtn.addEventListener('click', () => { closeUserMenus(); deleteUser(u.id, u.username); });
+    dd.appendChild(delBtn);
+  }
+
+  document.body.appendChild(dd);
+  const rect = btn.getBoundingClientRect();
+  dd.style.position = 'fixed';
+  dd.style.top  = (rect.bottom + 4) + 'px';
+  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
+  _openUserMenu = { btn, dropdown: dd };
 }
 
 let _deleteUserId = '';
@@ -6116,10 +6180,23 @@ function openCreateUser() {
   document.getElementById('new-role').value     = 'admin';
   document.getElementById('new-password-label').textContent = 'Password';
   document.getElementById('new-smb-home').checked = false;
+  document.getElementById('new-uid').value = '';
+  document.getElementById('new-gid').value = '';
+  // Collapse advanced settings panel.
+  document.getElementById('create-user-adv-panel').style.display = 'none';
+  document.getElementById('create-user-adv-arrow').style.transform = '';
   document.getElementById('modal-user-alert').classList.add('hidden');
   onNewRoleChange();
   document.getElementById('modal-create-user').classList.remove('hidden');
   setTimeout(() => document.getElementById('new-username').focus(), 50);
+}
+
+function toggleCreateUserAdvanced() {
+  const panel = document.getElementById('create-user-adv-panel');
+  const arrow = document.getElementById('create-user-adv-arrow');
+  const open  = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  arrow.style.transform = open ? '' : 'rotate(90deg)';
 }
 
 function closeCreateUser() { document.getElementById('modal-create-user').classList.add('hidden'); }
@@ -6135,7 +6212,12 @@ function onNewRoleChange() {
 async function submitCreateUser(e) {
   e.preventDefault();
   const alertEl = document.getElementById('modal-user-alert');
+  const submitBtn = e.submitter || document.querySelector('#modal-create-user button[type="submit"]');
   alertEl.classList.add('hidden');
+
+  // Disable button immediately so the user knows the request is in flight.
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Creating…'; }
+
   const role    = document.getElementById('new-role').value;
   const body    = {
     username:       document.getElementById('new-username').value.trim(),
@@ -6146,19 +6228,28 @@ async function submitCreateUser(e) {
   const pw = document.getElementById('new-password').value;
   if (role === 'smb-only') body.smb_password = pw;
   else body.password = pw;
-  const resp = await fetch('/api/users', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await resp.json();
-  if (!resp.ok) {
-    alertEl.textContent = data.error || 'Failed to create user.';
-    alertEl.classList.remove('hidden');
-    return;
+  const uidVal = document.getElementById('new-uid').value.trim();
+  const gidVal = document.getElementById('new-gid').value.trim();
+  if (uidVal !== '') body.uid = parseInt(uidVal, 10);
+  if (gidVal !== '') body.gid = parseInt(gidVal, 10);
+
+  try {
+    const resp = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alertEl.textContent = data.error || 'Failed to create user.';
+      alertEl.classList.remove('hidden');
+      return;
+    }
+    closeCreateUser();
+    loadUsers();
+  } finally {
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create User'; }
   }
-  closeCreateUser();
-  loadUsers();
 }
 
 // ===== API Key Info =====

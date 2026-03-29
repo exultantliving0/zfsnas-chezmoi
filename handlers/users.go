@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -99,6 +100,8 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		SMBPassword   string `json:"smb_password"`
 		Role          string `json:"role"`
 		SMBHomeFolder bool   `json:"smb_home_folder"`
+		UID           *int   `json:"uid"`
+		GID           *int   `json:"gid"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -125,6 +128,14 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
+	if req.UID != nil && *req.UID < 1000 {
+		jsonErr(w, http.StatusBadRequest, "UID must be 1000 or higher")
+		return
+	}
+	if req.GID != nil && *req.GID < 1000 {
+		jsonErr(w, http.StatusBadRequest, "GID must be 1000 or higher")
+		return
+	}
 
 	users, err := config.LoadUsers()
 	if err != nil {
@@ -135,6 +146,39 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if config.FindUserByUsername(users, req.Username) != nil {
 		jsonErr(w, http.StatusConflict, "username already exists")
 		return
+	}
+
+	// Check that the requested UID/GID are not already in use — first in portal
+	// users, then in the system /etc/passwd and /etc/group.
+	if req.UID != nil {
+		for _, u := range users {
+			if u.UID != nil && *u.UID == *req.UID {
+				jsonErr(w, http.StatusConflict, fmt.Sprintf("UID %d is already in use by user '%s'", *req.UID, u.Username))
+				return
+			}
+		}
+		if taken, err := system.UIDExistsOnSystem(*req.UID); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to check UID: "+err.Error())
+			return
+		} else if taken {
+			jsonErr(w, http.StatusConflict, fmt.Sprintf("UID %d is already in use by a system account", *req.UID))
+			return
+		}
+	}
+	if req.GID != nil {
+		for _, u := range users {
+			if u.GID != nil && *u.GID == *req.GID {
+				jsonErr(w, http.StatusConflict, fmt.Sprintf("GID %d is already in use by user '%s'", *req.GID, u.Username))
+				return
+			}
+		}
+		if taken, err := system.GIDExistsOnSystem(*req.GID); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to check GID: "+err.Error())
+			return
+		} else if taken {
+			jsonErr(w, http.StatusConflict, fmt.Sprintf("GID %d is already in use by a system group", *req.GID))
+			return
+		}
 	}
 
 	var passwordHash string
@@ -155,6 +199,8 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Role:          req.Role,
 		CreatedAt:     time.Now(),
 		SMBHomeFolder: req.SMBHomeFolder,
+		UID:           req.UID,
+		GID:           req.GID,
 	}
 	users = append(users, user)
 
@@ -163,15 +209,15 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set SMB (Samba) password for the new user if one was provided.
+	// Always create the Linux system account and set the SMB password.
+	// For smb-only users the dedicated smb_password field is used; for all
+	// other roles the portal password doubles as the SMB password.
 	smbPw := req.SMBPassword
-	if smbPw == "" && req.Role != config.RoleSMBOnly {
+	if smbPw == "" {
 		smbPw = req.Password
 	}
-	if smbPw != "" && system.IsSambaInstalled() {
-		if err := system.EnsureSambaUser(req.Username, smbPw); err != nil {
-			log.Printf("users: EnsureSambaUser for %s: %v", req.Username, err)
-		}
+	if err := system.EnsureSambaUser(req.Username, smbPw, req.UID, req.GID); err != nil {
+		log.Printf("users: EnsureSambaUser for %s: %v", req.Username, err)
 	}
 
 	// Create SMB home directory and update smb.conf valid users if applicable.
@@ -246,6 +292,7 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		user.Role = req.Role
 	}
+	passwordChanged := false
 	if req.Password != "" {
 		if len(req.Password) < 8 {
 			jsonErr(w, http.StatusBadRequest, "password must be at least 8 characters")
@@ -257,6 +304,7 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		user.PasswordHash = string(hash)
+		passwordChanged = true
 	}
 
 	enabledHome := false
@@ -292,6 +340,13 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 					_ = system.ReloadSamba()
 				}
 			}
+		}
+	}
+
+	// Sync the SMB password whenever the portal password is changed.
+	if passwordChanged {
+		if err := system.EnsureSambaUser(user.Username, req.Password, user.UID, user.GID); err != nil {
+			log.Printf("users: EnsureSambaUser (password sync) for %s: %v", user.Username, err)
 		}
 	}
 
@@ -365,6 +420,11 @@ func HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 				log.Printf("users: RemoveSMBHomeDirIfEmpty for %s: %v", username, err)
 			}
 		}
+	}
+
+	// Remove the Samba password entry and Linux system account.
+	if err := system.DeleteSambaUser(username); err != nil {
+		log.Printf("users: DeleteSambaUser for %s: %v", username, err)
 	}
 
 	audit.Log(audit.Entry{
