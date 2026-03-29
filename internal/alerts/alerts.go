@@ -87,10 +87,11 @@ type EventConfig struct {
 }
 
 type EmailTarget struct {
-	Enabled bool        `json:"enabled"`
-	SMTP    SMTPConfig  `json:"smtp"`
-	To      []string    `json:"to"`
-	Events  EventConfig `json:"events"`
+	Enabled        bool        `json:"enabled"`
+	SMTP           SMTPConfig  `json:"smtp"`
+	To             []string    `json:"to"`
+	SendSeparately bool        `json:"send_separately"`
+	Events         EventConfig `json:"events"`
 }
 
 type NtfyTarget struct {
@@ -466,15 +467,31 @@ func sendEmail(cfg *AlertConfig, subject, event, details, hostname string) error
 }
 
 func sendSMTP(t *EmailTarget, subject, htmlBody string) error {
+	if t.SendSeparately && len(t.To) > 1 {
+		var errs []string
+		for _, recipient := range t.To {
+			if err := sendSMTPToRecipients(t, []string{recipient}, subject, htmlBody); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", recipient, err))
+			}
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("some recipients failed: %s", strings.Join(errs, "; "))
+		}
+		return nil
+	}
+	return sendSMTPToRecipients(t, t.To, subject, htmlBody)
+}
+
+func sendSMTPToRecipients(t *EmailTarget, recipients []string, subject, htmlBody string) error {
 	addr := fmt.Sprintf("%s:%d", t.SMTP.Host, t.SMTP.Port)
-	msg := buildMIME(t.SMTP.From, t.To, subject, htmlBody)
+	msg := buildMIME(t.SMTP.From, recipients, subject, htmlBody)
 
 	switch t.SMTP.AuthMode {
 	case "none":
-		return smtp.SendMail(addr, nil, t.SMTP.From, t.To, msg)
+		return smtp.SendMail(addr, nil, t.SMTP.From, recipients, msg)
 	case "plain", "starttls":
 		auth := smtp.PlainAuth("", t.SMTP.Username, t.SMTP.Password, t.SMTP.Host)
-		return smtp.SendMail(addr, auth, t.SMTP.From, t.To, msg)
+		return smtp.SendMail(addr, auth, t.SMTP.From, recipients, msg)
 	case "tls":
 		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: t.SMTP.Host})
 		if err != nil {
@@ -494,7 +511,7 @@ func sendSMTP(t *EmailTarget, subject, htmlBody string) error {
 		if err := c.Mail(t.SMTP.From); err != nil {
 			return err
 		}
-		for _, r := range t.To {
+		for _, r := range recipients {
 			if err := c.Rcpt(r); err != nil {
 				return err
 			}

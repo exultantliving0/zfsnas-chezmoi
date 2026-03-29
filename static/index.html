@@ -1361,6 +1361,11 @@
                     <div class="form-group"><label>Username</label><input type="text" id="al-username" placeholder="SMTP username" autocomplete="off"></div>
                     <div class="form-group"><label>Password</label><input type="password" id="al-password" placeholder="SMTP password" autocomplete="new-password"></div>
                   </div>
+                  <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--text-2);cursor:pointer;">
+                    <input type="checkbox" id="al-em-send-separately" style="width:14px;height:14px;accent-color:var(--accent);">
+                    Send each mail separately
+                    <span class="info-tip" data-tip="Sends one email per recipient instead of a single email with all recipients in To:. Recommended when using Gmail SMTP relay, which rejects multi-recipient messages.">&#9432;</span>
+                  </label>
                 </div>
               </div>
             </div>
@@ -6747,14 +6752,15 @@ async function loadAlerts() {
     });
 
     // Email
-    document.getElementById('al-em-enabled').checked = !!d.email?.enabled;
-    document.getElementById('al-em-to').value       = (d.email?.to || []).join('\n');
-    document.getElementById('al-host').value         = d.email?.smtp?.host      || '';
-    document.getElementById('al-port').value         = d.email?.smtp?.port      || 587;
-    document.getElementById('al-from').value         = d.email?.smtp?.from      || '';
-    document.getElementById('al-auth').value         = d.email?.smtp?.auth_mode || 'starttls';
-    document.getElementById('al-username').value     = d.email?.smtp?.username  || '';
-    document.getElementById('al-password').value     = d.email?.smtp?.password  || '';
+    document.getElementById('al-em-enabled').checked          = !!d.email?.enabled;
+    document.getElementById('al-em-to').value                 = (d.email?.to || []).join('\n');
+    document.getElementById('al-host').value                  = d.email?.smtp?.host      || '';
+    document.getElementById('al-port').value                  = d.email?.smtp?.port      || 587;
+    document.getElementById('al-from').value                  = d.email?.smtp?.from      || '';
+    document.getElementById('al-auth').value                  = d.email?.smtp?.auth_mode || 'starttls';
+    document.getElementById('al-username').value              = d.email?.smtp?.username  || '';
+    document.getElementById('al-password').value              = d.email?.smtp?.password  || '';
+    document.getElementById('al-em-send-separately').checked  = !!d.email?.send_separately;
     _loadEventSubs('em', d.email?.events);
     updateAuthFields();
 
@@ -6811,8 +6817,9 @@ async function saveAlerts(prefix) {
         username:  document.getElementById('al-username').value,
         password:  document.getElementById('al-password').value,
       },
-      to:     document.getElementById('al-em-to').value.split('\n').map(s => s.trim()).filter(Boolean),
-      events: _collectEventSubs('em'),
+      to:              document.getElementById('al-em-to').value.split('\n').map(s => s.trim()).filter(Boolean),
+      send_separately: document.getElementById('al-em-send-separately').checked,
+      events:          _collectEventSubs('em'),
     },
     ntfy: {
       enabled:  document.getElementById('al-nt-enabled').checked,
