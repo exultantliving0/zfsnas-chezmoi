@@ -105,7 +105,7 @@ Cmnd_Alias ZFSNAS_SMART = \
 #   some Ubuntu releases. Verify the correct path with `which sgdisk` and adjust
 #   the two sgdisk lines below if needed.
 Cmnd_Alias ZFSNAS_DISK = \
-    /usr/bin/wipefs -a *, \
+    /usr/sbin/wipefs -a *, \
     /usr/sbin/sgdisk *, \
     /usr/bin/dd if=/dev/zero *, \
     /usr/sbin/partprobe *, \
