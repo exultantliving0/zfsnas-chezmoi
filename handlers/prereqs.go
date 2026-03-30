@@ -117,8 +117,9 @@ func HandleInstallPrereqs(w http.ResponseWriter, r *http.Request) {
 	aptInstallMu.Lock()
 	defer aptInstallMu.Unlock()
 
-	args := append([]string{"env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q"}, missing...)
+	args := append([]string{"apt-get", "install", "-y", "-q"}, missing...)
 	cmd := exec.Command("sudo", args...)
+	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 
 	// Pipe both stdout and stderr to the client.
 	pr, pw, err := os.Pipe()
@@ -329,10 +330,12 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 			preConf.Stdin = strings.NewReader(nutConf)
 			preConf.Run()
 
-			out, err := exec.Command("sudo", "env", "DEBIAN_FRONTEND=noninteractive",
+			nutCmd := exec.Command("sudo",
 				"apt-get", "install", "-y", "-q",
 				"-o", "Dpkg::Options::=--force-confold",
-				"nut", "nut-client").CombinedOutput()
+				"nut", "nut-client")
+			nutCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+			out, err := nutCmd.CombinedOutput()
 			if err != nil {
 				jsonErr(w, http.StatusInternalServerError, string(out))
 				return
@@ -377,8 +380,9 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 
-		out, err := exec.Command("sudo", "env", "DEBIAN_FRONTEND=noninteractive",
-			"apt-get", "install", "-y", "-q", req.Package).CombinedOutput()
+		pkgCmd := exec.Command("sudo", "apt-get", "install", "-y", "-q", req.Package)
+		pkgCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		out, err := pkgCmd.CombinedOutput()
 		if err != nil {
 			jsonErr(w, http.StatusInternalServerError, string(out))
 			return

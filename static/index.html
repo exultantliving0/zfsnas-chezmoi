@@ -366,7 +366,7 @@
               <button class="cap-range-btn perf-range-btn"        data-range="month" onclick="setPerfRange('month')">Month</button>
               <button class="cap-range-btn perf-range-btn"        data-range="year"  onclick="setPerfRange('year')" >Year</button>
             </div>
-            <select onchange="setPerfAgg(this.value)"
+            <select id="perf-agg-sel" onchange="setPerfAgg(this.value)"
                     style="padding:3px 20px 3px 4px;font-size:12px;font-weight:600;width:62px;
                            border-radius:6px;border:1px solid rgba(191,90,242,0.4);
                            background:rgba(191,90,242,0.12) url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23bf5af2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;) no-repeat right 4px center;
@@ -5276,6 +5276,8 @@ let _dashRefreshTimer = null;
 let _dashCharts      = {};
 let _hwTotalRamBytes = 0;  // populated by _loadHardwareInfo for memory GB tooltip
 let _perfActiveTab   = 'global'; // 'global' | poolname
+const PERF_LS_RANGE  = 'perf_selected_range';
+const PERF_LS_AGG    = 'perf_selected_agg';
 let _perfRange       = 'all';    // 'all'|'day'|'week'|'month'|'year'
 let _perfAgg         = 'avg';    // 'avg'|'min'|'max'
 let _perfCharts      = {};       // poolname → { read, write, busy } Chart instances
@@ -15870,6 +15872,21 @@ function startIOPoller() {
 // ===== Dashboard 24h RRD Charts =====
 async function loadDashboard() {
   if (_dashRefreshTimer) clearInterval(_dashRefreshTimer);
+  // Restore persisted perf range/agg preferences.
+  try {
+    const r = localStorage.getItem(PERF_LS_RANGE);
+    if (r && ['all','day','week','month','year'].includes(r)) _perfRange = r;
+    const a = localStorage.getItem(PERF_LS_AGG);
+    if (a && ['avg','min','max'].includes(a)) _perfAgg = a;
+  } catch(_) {}
+  // Sync static range buttons and agg selects to restored values.
+  document.querySelectorAll('.perf-range-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === _perfRange);
+  });
+  ['perf-agg-sel', 'ups-perf-agg-sel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = _perfAgg;
+  });
   _loadHardwareInfo();
   await _loadGlobalPerfData();
   await buildPerfPoolTabs();
@@ -16701,6 +16718,7 @@ function switchPerfTab(name) {
 function setPerfRange(range) {
   _perfRange = range;
   _perfZoom  = null;
+  try { localStorage.setItem(PERF_LS_RANGE, range); } catch(_) {}
   const zb = document.getElementById('perf-reset-zoom-btn-' + _perfActiveTab);
   if (zb) zb.classList.add('hidden');
   document.querySelectorAll('.perf-range-btn').forEach(b => {
@@ -16711,6 +16729,7 @@ function setPerfRange(range) {
 
 function setPerfAgg(agg) {
   _perfAgg = agg;
+  try { localStorage.setItem(PERF_LS_AGG, agg); } catch(_) {}
   _reloadActivePerfTab();
 }
 

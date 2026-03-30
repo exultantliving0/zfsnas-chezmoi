@@ -23,6 +23,7 @@ var RequiredPackages = []Package{
 	{Name: "smartmontools", Description: "SSD/HDD health monitoring (smartctl)"},
 	{Name: "nvme-cli", Description: "NVMe drive health monitoring"},
 	{Name: "util-linux", Description: "Disk utilities (lsblk)"},
+	{Name: "gdisk", Description: "GPT disk partitioning utilities (sgdisk)"},
 }
 
 // CheckPackages returns RequiredPackages with Installed and Version populated.
@@ -213,7 +214,11 @@ func CheckSudoAccess() SudoStatus {
 			needle = path + " " + chk.Match
 			altNeedle = "/" + chk.Binary + " " + chk.Match
 		}
-		if !strings.Contains(sudoList, needle) && !strings.Contains(sudoList, altNeedle) {
+		// A wildcard sudoers entry (binary *) covers any specific subcommand match.
+		wildcardNeedle := path + " *"
+		wildcardAlt := "/" + chk.Binary + " *"
+		if !strings.Contains(sudoList, needle) && !strings.Contains(sudoList, altNeedle) &&
+			!strings.Contains(sudoList, wildcardNeedle) && !strings.Contains(sudoList, wildcardAlt) {
 			missing = append(missing, chk.Name)
 		}
 	}
