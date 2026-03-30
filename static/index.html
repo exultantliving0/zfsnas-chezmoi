@@ -6787,7 +6787,8 @@ function _buildEventSubsHTML(p) {
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-snapshot"><span>Snapshot auto-policy failure</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-replication"><span>Replication policy failure</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-users"><span>User created / deleted</span></label>
-    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-shares"><span>Share created / deleted</span></label>`;
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-shares"><span>Share created / deleted</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-pool-actions"><span>ZFS Pool actions (pool destroyed / disconnected / imported, dataset created / deleted, zvol created / deleted)</span></label>`;
 }
 
 function _loadEventSubs(p, ev) {
@@ -6807,8 +6808,9 @@ function _loadEventSubs(p, ev) {
   setChk(`al-${p}-ev-scrub`,    ev.scrub_errors);
   setChk(`al-${p}-ev-snapshot`,    ev.snapshot_failure);
   setChk(`al-${p}-ev-replication`, ev.replication_failure);
-  setChk(`al-${p}-ev-users`,       ev.user_created_deleted);
-  setChk(`al-${p}-ev-shares`,   ev.share_created_deleted);
+  setChk(`al-${p}-ev-users`,        ev.user_created_deleted);
+  setChk(`al-${p}-ev-shares`,       ev.share_created_deleted);
+  setChk(`al-${p}-ev-pool-actions`, ev.pool_actions);
 }
 
 function _collectEventSubs(p) {
@@ -6827,6 +6829,7 @@ function _collectEventSubs(p) {
     replication_failure:    chk(`al-${p}-ev-replication`),
     user_created_deleted:   chk(`al-${p}-ev-users`),
     share_created_deleted:  chk(`al-${p}-ev-shares`),
+    pool_actions:           chk(`al-${p}-ev-pool-actions`),
   };
 }
 

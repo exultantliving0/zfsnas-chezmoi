@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"zfsnas/internal/alerts"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/keystore"
 	"zfsnas/system"
@@ -96,6 +97,12 @@ func HandleCreateZVol(w http.ResponseWriter, r *http.Request) {
 		Result:  audit.ResultOK,
 		Details: "size=" + req.Size,
 	})
+	go alerts.Send(
+		alerts.EventPoolActions,
+		"ZVol created: "+fullName,
+		"ZFS ZVol Created",
+		"ZVol '"+fullName+"' (size: "+req.Size+") was created by "+sess.Username+".",
+	)
 
 	jsonCreated(w, map[string]string{"name": fullName})
 }
@@ -156,6 +163,12 @@ func HandleDeleteZVol(w http.ResponseWriter, r *http.Request) {
 		Target: req.Name,
 		Result: audit.ResultOK,
 	})
+	go alerts.Send(
+		alerts.EventPoolActions,
+		"ZVol deleted: "+req.Name,
+		"ZFS ZVol Deleted",
+		"ZVol '"+req.Name+"' was deleted by "+sess.Username+".",
+	)
 
 	jsonOK(w, map[string]string{"message": "zvol deleted"})
 }

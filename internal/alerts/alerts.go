@@ -35,6 +35,7 @@ const (
 	EventReplicationFailure EventKey = "replication_failure"
 	EventUserCreated        EventKey = "user_created_deleted"
 	EventShareCreated    EventKey = "share_created_deleted"
+	EventPoolActions     EventKey = "pool_actions"
 	EventTest            EventKey = "test" // always passes filter
 )
 
@@ -54,6 +55,7 @@ func matchesEvent(key EventKey, ev EventConfig) bool {
 	case EventReplicationFailure: return ev.ReplicationFailure
 	case EventUserCreated:        return ev.UserCreatedDeleted
 	case EventShareCreated:    return ev.ShareCreatedDeleted
+	case EventPoolActions:     return ev.PoolActions
 	}
 	return false
 }
@@ -84,6 +86,7 @@ type EventConfig struct {
 	ReplicationFailure   bool `json:"replication_failure"`
 	UserCreatedDeleted   bool `json:"user_created_deleted"`
 	ShareCreatedDeleted  bool `json:"share_created_deleted"`
+	PoolActions          bool `json:"pool_actions"`
 }
 
 type EmailTarget struct {

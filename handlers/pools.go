@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"zfsnas/internal/alerts"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
 	"zfsnas/internal/keystore"
@@ -381,6 +382,12 @@ func HandleExportPool(w http.ResponseWriter, r *http.Request) {
 		Target: pool.Name,
 		Result: audit.ResultOK,
 	})
+	go alerts.Send(
+		alerts.EventPoolActions,
+		"Pool disconnected: "+pool.Name,
+		"ZFS Pool Disconnected",
+		"Pool '"+pool.Name+"' was disconnected (exported) by "+sess.Username+".",
+	)
 
 	jsonOK(w, map[string]string{"message": "pool exported"})
 }
@@ -418,6 +425,12 @@ func HandleDestroyPool(w http.ResponseWriter, r *http.Request) {
 		Target: pool.Name,
 		Result: audit.ResultOK,
 	})
+	go alerts.Send(
+		alerts.EventPoolActions,
+		"Pool destroyed: "+pool.Name,
+		"ZFS Pool Destroyed",
+		"Pool '"+pool.Name+"' was permanently destroyed by "+sess.Username+".",
+	)
 
 	jsonOK(w, map[string]string{"message": "pool destroyed"})
 }
@@ -586,6 +599,12 @@ func HandleImportPool(w http.ResponseWriter, r *http.Request) {
 		Target: req.Name,
 		Result: audit.ResultOK,
 	})
+	go alerts.Send(
+		alerts.EventPoolActions,
+		"Pool imported: "+req.Name,
+		"ZFS Pool Imported",
+		"Pool '"+req.Name+"' was imported by "+sess.Username+".",
+	)
 
 	pool, _ := system.GetPoolByName(req.Name)
 	jsonOK(w, pool)

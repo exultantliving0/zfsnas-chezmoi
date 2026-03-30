@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"zfsnas/internal/alerts"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/keystore"
 	"zfsnas/system"
@@ -94,6 +95,12 @@ func HandleCreateDataset(w http.ResponseWriter, r *http.Request) {
 		Result:  audit.ResultOK,
 		Details: "compression=" + req.Compression,
 	})
+	go alerts.Send(
+		alerts.EventPoolActions,
+		"Dataset created: "+req.Name,
+		"ZFS Dataset Created",
+		"Dataset '"+req.Name+"' was created by "+sess.Username+".",
+	)
 
 	jsonCreated(w, map[string]string{"name": req.Name})
 }
@@ -214,6 +221,12 @@ func HandleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 		Target: path,
 		Result: audit.ResultOK,
 	})
+	go alerts.Send(
+		alerts.EventPoolActions,
+		"Dataset deleted: "+path,
+		"ZFS Dataset Deleted",
+		"Dataset '"+path+"' was deleted by "+sess.Username+".",
+	)
 
 	jsonOK(w, map[string]string{"message": "dataset deleted"})
 }
