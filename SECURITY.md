@@ -49,8 +49,13 @@ Cmnd_Alias ZFSNAS_ZFS = \
 
 # ── Samba (SMB shares) ────────────────────────────────────────────────────────
 # since v1.0.0 — Samba service control, user provisioning, share config write
+# since v3.0.0 — useradd with optional --uid/--gid/--no-user-group (custom UID/GID feature);
+#                groupadd -g <gid> for primary group pre-creation;
+#                userdel -f / groupdel / gpasswd -d for user deletion
 # since v6.0.0 — find (recycle bin cleanup: delete files older than retention in .recycle/)
 # since v6.1.0 — smbstatus -S (active session listing on the SMB shares page)
+# since v6.3.21 — mkdir -p / chmod 0700 / chown for SMB home folder creation;
+#                 rmdir for home folder removal on user delete
 # since v6.3.27 — chgrp/chmod 0770 replace chmod 777 for share path setup;
 #                 groupadd --system sambashare ensures the group exists
 Cmnd_Alias ZFSNAS_SMB = \
@@ -60,12 +65,20 @@ Cmnd_Alias ZFSNAS_SMB = \
     /usr/bin/systemctl stop smbd, \
     /usr/bin/systemctl start nmbd, \
     /usr/bin/systemctl stop nmbd, \
-    /usr/sbin/useradd -M -s /usr/sbin/nologin *, \
+    /usr/sbin/useradd *, \
     /usr/sbin/usermod -aG sambashare *, \
+    /usr/sbin/userdel -f *, \
+    /usr/sbin/groupadd *, \
+    /usr/sbin/groupdel *, \
+    /usr/bin/gpasswd -d * sambashare, \
     /usr/bin/smbpasswd -s -a *, \
+    /usr/bin/smbpasswd -x *, \
     /usr/bin/chgrp sambashare *, \
     /usr/bin/chmod 0770 *, \
-    /usr/sbin/groupadd --system sambashare, \
+    /usr/bin/chmod 0700 *, \
+    /usr/bin/chown * *, \
+    /usr/bin/mkdir -p *, \
+    /usr/bin/rmdir *, \
     /usr/bin/tee /etc/samba/smb.conf, \
     /usr/bin/find *, \
     /usr/bin/smbstatus -S
@@ -90,10 +103,12 @@ Cmnd_Alias ZFSNAS_SMART = \
 # since v1.0.0 — wipe and partition a disk before adding it to a pool;
 #   wipefs clears signatures, sgdisk creates GPT layout, dd zero-fills,
 #   partprobe + udevadm settle kernel/udev state, blkid reads UUIDs
+# NOTE: sgdisk lives at /usr/sbin/sgdisk on Debian 12 and at /usr/bin/sgdisk on
+#   some Ubuntu releases. Verify the correct path with `which sgdisk` and adjust
+#   the two sgdisk lines below if needed.
 Cmnd_Alias ZFSNAS_DISK = \
     /usr/bin/wipefs -a *, \
-    /usr/bin/sgdisk --zap-all *, \
-    /usr/bin/sgdisk -n 1\:0\:0 -t 1\:BF01 *, \
+    /usr/sbin/sgdisk *, \
     /usr/bin/dd if=/dev/zero *, \
     /usr/sbin/partprobe *, \
     /usr/bin/udevadm settle *, \
@@ -146,10 +161,13 @@ Cmnd_Alias ZFSNAS_MINIO = \
 
 # ── UPS Management (NUT) ──────────────────────────────────────────────────────
 # since v6.3.22 — optional NUT daemon; install, auto-detect UPS, write /etc/nut/
-#   config files, service control; uninstall purges packages and removes /etc/nut
+#   config files, service control; uninstall purges packages and removes /etc/nut;
+#   udevadm control/trigger used after writing USB udev rules for UPS detection
 Cmnd_Alias ZFSNAS_UPS = \
     /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get purge -y nut nut-client nut-server, \
     /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get remove -y nut nut-client, \
+    /usr/bin/udevadm control --reload-rules, \
+    /usr/bin/udevadm trigger --subsystem-match=usb, \
     /usr/bin/systemctl enable nut-server, \
     /usr/bin/systemctl disable nut-server, \
     /usr/bin/systemctl start nut-server, \
@@ -206,10 +224,14 @@ Cmnd_Alias ZFSNAS_SYSTEM = \
 # since v1.0.0 — prerequisite package install (apt-get install) and
 #   systemd service setup (tee + daemon-reload + enable)
 # since v3.0.0 — OS package updates (apt-get upgrade) from the Settings page
+# since v6.1.0 — apt-get remove / autoremove for optional feature uninstall
+#   (e.g. targetcli-fb removal when iSCSI feature is disabled)
 Cmnd_Alias ZFSNAS_APT = \
     /usr/bin/apt-get update -qq, \
     /usr/bin/apt-get install -y *, \
     /usr/bin/apt-get upgrade -y, \
+    /usr/bin/apt-get remove -y *, \
+    /usr/bin/apt-get autoremove -y, \
     /usr/bin/tee /etc/systemd/system/zfsnas.service, \
     /usr/bin/systemctl daemon-reload, \
     /usr/bin/systemctl enable zfsnas
@@ -250,7 +272,13 @@ ExecStart=/opt/zfsnas/zfsnas
 - **`tee /etc/modprobe.d/zfs.conf` and sysfs tee entries** — used by the ARC Level 1 tuning feature (v6.3.22+) to persist ZFS ARC size limits across reboots and to apply them immediately via kernel sysfs. These are write-only paths; the portal only ever pipes well-formed `options zfs ...` lines or numeric byte values through `tee`.
 - **`zfs send *` / `zfs recv *` / `zfs receive *`** — used by the remote replication feature (snapshot policies and standalone replication tasks) and the local dataset-to-dataset replication feature. `zfs send` streams a snapshot to stdout; `zfs recv`/`zfs receive` reads a stream from stdin. Both are required locally for local replication (`zfs send | zfs recv` piped on the same host). For remote replication and InterLink push, only `zfs send` is run locally — the remote side runs `zfs recv` via SSH under its own service account (no local sudo required for that side). Including both forms (`recv` and `receive`) is necessary because OpenZFS accepts either spelling.
 - **`zfs allow *`** — used by the InterLink push feature and scheduled replication via InterLink servers to delegate ZFS permissions (`snapshot,send,receive,create,mount`) to the service account on every pool. This is required so that `zfs send` / `zfs recv` can be invoked without sudo when the remote side accepts the SSH connection as the non-root service user. The portal always restricts delegation to the service account's own username and to the specific permission set shown above.
-- **Command paths** — paths shown are for Ubuntu 22.04/24.04. Some tools (`sgdisk`, `wipefs`, `nvme`) may live under `/usr/sbin/` instead of `/usr/bin/` on older releases; verify with `which <command>`.
+- **`useradd *` / `groupadd *`** — broad wildcards are required because user creation accepts optional `--uid`, `--gid`, and `--no-user-group` flags (v3.0.0+ custom UID/GID feature). The original narrower forms (`useradd -M -s /usr/sbin/nologin *`, `groupadd --system sambashare`) are replaced to cover all combinations the portal may generate.
+- **`userdel -f *` / `groupdel *` / `gpasswd -d * sambashare`** — used when deleting a portal user: Samba password entry is removed, the user is removed from the `sambashare` group, the Linux account is deleted, and the primary group is cleaned up.
+- **`smbpasswd -x *`** — deletes the Samba password database entry for a user. The existing `smbpasswd -s -a *` entry covers creation/update; `-x` is needed for deletion.
+- **`mkdir -p *` / `rmdir *` / `chmod 0700 *` / `chown * *`** (in `ZFSNAS_SMB`) — used when creating or deleting SMB home folders (v6.3.21+). The path is the user's home directory under the configured dataset mount point. `chmod 0700` and `chown` ensure only the owner can access their home directory.
+- **`udevadm control --reload-rules` / `udevadm trigger --subsystem-match=usb`** — run after writing a udev rule for UPS USB detection (v6.3.22+). These are distinct from `udevadm settle` (used in disk prep) and require their own sudoers entries.
+- **`apt-get remove -y *` / `apt-get autoremove -y`** — used when uninstalling optional features (e.g. removing `targetcli-fb` when iSCSI is disabled, v6.1.0+).
+- **Command paths** — `sgdisk` lives at `/usr/sbin/sgdisk` on Debian 12 and at `/usr/bin/sgdisk` on some Ubuntu releases. The entries above use `/usr/sbin/sgdisk` (the Debian default). Verify the correct path with `which sgdisk` and adjust if needed. Other tools listed under `/usr/bin/` or `/usr/sbin/` follow the same rule — check with `which <command>` on your system.
 
 ---
 

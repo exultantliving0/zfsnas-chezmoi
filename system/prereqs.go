@@ -147,11 +147,15 @@ var requiredSudoChecks = []sudoCheck{
 	// ── User / Samba ─────────────────────────────────────────────────────────
 	{Binary: "useradd", Name: "useradd"},
 	{Binary: "usermod", Name: "usermod"},
+	{Binary: "userdel", Match: "-f", Name: "userdel -f"},
+	{Binary: "groupadd", Name: "groupadd"},
+	{Binary: "groupdel", Name: "groupdel"},
+	{Binary: "gpasswd", Name: "gpasswd"},
 	{Binary: "smbpasswd", Match: "-s -a", Name: "smbpasswd -s -a"},
+	{Binary: "smbpasswd", Match: "-x", Name: "smbpasswd -x"},
 	{Binary: "smbstatus", Match: "-S", Name: "smbstatus -S"},
 	{Binary: "chgrp", Match: "sambashare", Name: "chgrp sambashare"},
 	{Binary: "chmod", Match: "0770", Name: "chmod 0770"},
-	{Binary: "groupadd", Match: "--system sambashare", Name: "groupadd --system sambashare"},
 	// ── NFS ──────────────────────────────────────────────────────────────────
 	{Binary: "exportfs", Match: "-ra", Name: "exportfs -ra"},
 	// ── System ───────────────────────────────────────────────────────────────
@@ -165,8 +169,13 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "sgdisk", Match: "--zap-all", Name: "sgdisk --zap-all"},
 	{Binary: "dd", Name: "dd"},
 	{Binary: "partprobe", Name: "partprobe"},
-	{Binary: "udevadm", Name: "udevadm"},
+	{Binary: "udevadm", Match: "settle", Name: "udevadm settle"},
 	{Binary: "blkid", Match: "-o export", Name: "blkid -o export"},
+	// ── UPS udev rules reload — only checked when NUT is installed ───────────
+	{Binary: "udevadm", Match: "control", Name: "udevadm control", IfBinary: "upsc"},
+	// ── Package removal — optional feature uninstall (e.g. targetcli-fb) ────
+	{Binary: "apt-get", Match: "remove", Name: "apt-get remove"},
+	{Binary: "apt-get", Match: "autoremove", Name: "apt-get autoremove"},
 }
 
 // CheckSudoAccess probes the effective sudo permissions of the running process.
