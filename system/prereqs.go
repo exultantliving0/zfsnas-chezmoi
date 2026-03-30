@@ -118,12 +118,11 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "zpool", Match: "*", Name: "zpool *"},
 	{Binary: "zfs", Match: "*", Name: "zfs *"},
 	// ── Hardware monitoring ──────────────────────────────────────────────────
-	{Binary: "smartctl", Match: "-j -a", Name: "smartctl -j -a"},
-	{Binary: "smartctl", Match: "-j -i", Name: "smartctl -j -i"},
+	{Binary: "smartctl", Match: "*", Name: "smartctl *"},
 	{Binary: "nvme", Name: "nvme"},
 	// ── Kernel / packages / service management ───────────────────────────────
 	{Binary: "modprobe", Name: "modprobe"},
-	{Binary: "apt-get", Name: "apt-get"},
+	{Binary: "apt-get", Match: "*", Name: "apt-get *"},
 	{Binary: "systemctl", Name: "systemctl"},
 	// ── Config file write paths (tee) ────────────────────────────────────────
 	{Binary: "tee", Match: "/etc/samba/smb.conf", Name: "tee /etc/samba/smb.conf"},
@@ -151,8 +150,7 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "groupadd", Name: "groupadd"},
 	{Binary: "groupdel", Name: "groupdel"},
 	{Binary: "gpasswd", Name: "gpasswd"},
-	{Binary: "smbpasswd", Match: "-s -a", Name: "smbpasswd -s -a"},
-	{Binary: "smbpasswd", Match: "-x", Name: "smbpasswd -x"},
+	{Binary: "smbpasswd", Match: "*", Name: "smbpasswd *"},
 	{Binary: "smbstatus", Match: "-S", Name: "smbstatus -S"},
 	{Binary: "chgrp", Match: "sambashare", Name: "chgrp sambashare"},
 	{Binary: "chmod", Match: "0770", Name: "chmod 0770"},
@@ -160,7 +158,7 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "exportfs", Match: "-ra", Name: "exportfs -ra"},
 	// ── System ───────────────────────────────────────────────────────────────
 	{Binary: "timedatectl", Name: "timedatectl"},
-	{Binary: "shutdown", Name: "shutdown"},
+	{Binary: "shutdown", Match: "*", Name: "shutdown *"},
 	// ── Folder usage scanning & recycle bin cleanup ──────────────────────────
 	{Binary: "du", Name: "du"},
 	{Binary: "find", Name: "find"},
@@ -173,9 +171,6 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "blkid", Match: "-o export", Name: "blkid -o export"},
 	// ── UPS udev rules reload — only checked when NUT is installed ───────────
 	{Binary: "udevadm", Match: "control", Name: "udevadm control", IfBinary: "upsc"},
-	// ── Package removal — optional feature uninstall (e.g. targetcli-fb) ────
-	{Binary: "apt-get", Match: "remove", Name: "apt-get remove"},
-	{Binary: "apt-get", Match: "autoremove", Name: "apt-get autoremove"},
 }
 
 // CheckSudoAccess probes the effective sudo permissions of the running process.

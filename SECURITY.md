@@ -71,8 +71,7 @@ Cmnd_Alias ZFSNAS_SMB = \
     /usr/sbin/groupadd *, \
     /usr/sbin/groupdel *, \
     /usr/bin/gpasswd -d * sambashare, \
-    /usr/bin/smbpasswd -s -a *, \
-    /usr/bin/smbpasswd -x *, \
+    /usr/bin/smbpasswd *, \
     /usr/bin/chgrp sambashare *, \
     /usr/bin/chmod 0770 *, \
     /usr/bin/chmod 0700 *, \
@@ -95,8 +94,7 @@ Cmnd_Alias ZFSNAS_NFS = \
 # since v1.0.0 — SMART disk health data (SAS/SATA)
 # since v3.0.0 — NVMe health and temperature monitoring
 Cmnd_Alias ZFSNAS_SMART = \
-    /usr/sbin/smartctl -j -a *, \
-    /usr/sbin/smartctl -j -i *, \
+    /usr/sbin/smartctl *, \
     /usr/bin/nvme smart-log -o json *
 
 # ── Disk preparation & wipe ───────────────────────────────────────────────────
@@ -212,8 +210,7 @@ Cmnd_Alias ZFSNAS_SCAN = \
 # since v6.3.22 — tee entries for ARC Level 1 tuning (modprobe.d + sysfs parameters)
 Cmnd_Alias ZFSNAS_SYSTEM = \
     /usr/bin/timedatectl set-timezone *, \
-    /usr/sbin/shutdown -r now, \
-    /usr/sbin/shutdown -h now, \
+    /usr/sbin/shutdown *, \
     /usr/sbin/modprobe zfs, \
     /usr/bin/systemctl restart zfsnas, \
     /usr/bin/tee /etc/modprobe.d/zfs.conf, \
@@ -227,11 +224,7 @@ Cmnd_Alias ZFSNAS_SYSTEM = \
 # since v6.1.0 — apt-get remove / autoremove for optional feature uninstall
 #   (e.g. targetcli-fb removal when iSCSI feature is disabled)
 Cmnd_Alias ZFSNAS_APT = \
-    /usr/bin/apt-get update -qq, \
-    /usr/bin/apt-get install -y *, \
-    /usr/bin/apt-get upgrade -y, \
-    /usr/bin/apt-get remove -y *, \
-    /usr/bin/apt-get autoremove -y, \
+    /usr/bin/apt-get *, \
     /usr/bin/tee /etc/systemd/system/zfsnas.service, \
     /usr/bin/systemctl daemon-reload, \
     /usr/bin/systemctl enable zfsnas
@@ -277,7 +270,6 @@ ExecStart=/opt/zfsnas/zfsnas
 - **`smbpasswd -x *`** — deletes the Samba password database entry for a user. The existing `smbpasswd -s -a *` entry covers creation/update; `-x` is needed for deletion.
 - **`mkdir -p *` / `rmdir *` / `chmod 0700 *` / `chown * *`** (in `ZFSNAS_SMB`) — used when creating or deleting SMB home folders (v6.3.21+). The path is the user's home directory under the configured dataset mount point. `chmod 0700` and `chown` ensure only the owner can access their home directory.
 - **`udevadm control --reload-rules` / `udevadm trigger --subsystem-match=usb`** — run after writing a udev rule for UPS USB detection (v6.3.22+). These are distinct from `udevadm settle` (used in disk prep) and require their own sudoers entries.
-- **`apt-get remove -y *` / `apt-get autoremove -y`** — used when uninstalling optional features (e.g. removing `targetcli-fb` when iSCSI is disabled, v6.1.0+).
 - **Command paths** — `sgdisk` lives at `/usr/sbin/sgdisk` on Debian 12 and at `/usr/bin/sgdisk` on some Ubuntu releases. The entries above use `/usr/sbin/sgdisk` (the Debian default). Verify the correct path with `which sgdisk` and adjust if needed. Other tools listed under `/usr/bin/` or `/usr/sbin/` follow the same rule — check with `which <command>` on your system.
 
 ---
