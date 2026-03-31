@@ -26,7 +26,7 @@ Most NAS management software are slow to install, slow to load, and buried under
 - **Guided setup wizard** — first-run installs missing system packages, registers a systemd service, detects existing ZFS pools, and creates your admin account. Start to finish in under five minutes.
 
 Version 5.0.0 Full End-To-End DEMO on Youtube: [Version 5.0.0 DEMO](https://youtu.be/usFcZ15AyOs?si=U-neyJLCjkAfNHMc) \
-Version 6.3.26 DEMO of Interlink and other new features! [Version 6.3.26 DEMO](https://youtu.be/_2i9qFS2H14)
+Version 6.3.26 DEMO of Interlink and other new features! [Version 6.3.26 DEMO](https://youtu.be/UjaSBK0vWkk)
 
 ![Demo](assets/zfsnas-v6-3-26-demo.gif)
 
