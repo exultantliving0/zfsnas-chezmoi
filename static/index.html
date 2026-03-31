@@ -361,6 +361,7 @@
                     style="background:rgba(255,159,10,0.15);border:1px solid rgba(255,159,10,0.4);color:#ff9f0a;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔍 Reset Zoom</button>
             <div style="display:flex;gap:4px;">
               <button class="cap-range-btn perf-range-btn active" data-range="all"   onclick="setPerfRange('all')"  >Since Data</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="4h"    onclick="setPerfRange('4h')"   >4 Hours</button>
               <button class="cap-range-btn perf-range-btn"        data-range="day"   onclick="setPerfRange('day')"  >Day</button>
               <button class="cap-range-btn perf-range-btn"        data-range="week"  onclick="setPerfRange('week')" >Week</button>
               <button class="cap-range-btn perf-range-btn"        data-range="month" onclick="setPerfRange('month')">Month</button>
@@ -483,6 +484,7 @@
                              border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔍 Reset Zoom</button>
               <div style="display:flex;gap:4px;">
                 <button class="cap-range-btn perf-range-btn active" data-range="all"   onclick="setPerfRange('all')"  >Since Data</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="4h"    onclick="setPerfRange('4h')"   >4 Hours</button>
                 <button class="cap-range-btn perf-range-btn"        data-range="day"   onclick="setPerfRange('day')"  >Day</button>
                 <button class="cap-range-btn perf-range-btn"        data-range="week"  onclick="setPerfRange('week')" >Week</button>
                 <button class="cap-range-btn perf-range-btn"        data-range="month" onclick="setPerfRange('month')">Month</button>
@@ -574,6 +576,7 @@
               🔍 Reset Zoom
             </button>
             <button class="cap-range-btn active" data-range="all"   onclick="setCapRange('all')">Since Data</button>
+            <button class="cap-range-btn"        data-range="4h"    onclick="setCapRange('4h')">4 Hours</button>
             <button class="cap-range-btn"        data-range="day"   onclick="setCapRange('day')">Day</button>
             <button class="cap-range-btn"        data-range="week"  onclick="setCapRange('week')">Week</button>
             <button class="cap-range-btn"        data-range="month" onclick="setCapRange('month')">Month</button>
@@ -16298,7 +16301,7 @@ async function loadDashboard() {
   // Restore persisted perf range/agg preferences.
   try {
     const r = localStorage.getItem(PERF_LS_RANGE);
-    if (r && ['all','day','week','month','year'].includes(r)) _perfRange = r;
+    if (r && ['all','4h','day','week','month','year'].includes(r)) _perfRange = r;
     const a = localStorage.getItem(PERF_LS_AGG);
     if (a && ['avg','min','max'].includes(a)) _perfAgg = a;
   } catch(_) {}
@@ -16823,6 +16826,7 @@ async function buildPerfPoolTabs() {
             🔍 Reset Zoom
           </button>
           <button class="cap-range-btn perf-range-btn${_perfRange==='all'?' active':''}"   data-range="all"   onclick="setPerfRange('all')"  >Since Data</button>
+          <button class="cap-range-btn perf-range-btn${_perfRange==='4h'?' active':''}"    data-range="4h"    onclick="setPerfRange('4h')"   >4 Hours</button>
           <button class="cap-range-btn perf-range-btn${_perfRange==='day'?' active':''}"   data-range="day"   onclick="setPerfRange('day')"  >Day</button>
           <button class="cap-range-btn perf-range-btn${_perfRange==='week'?' active':''}"  data-range="week"  onclick="setPerfRange('week')" >Week</button>
           <button class="cap-range-btn perf-range-btn${_perfRange==='month'?' active':''}" data-range="month" onclick="setPerfRange('month')">Month</button>
@@ -17158,7 +17162,7 @@ function setPerfAgg(agg) {
 
 // Determine tier and since-timestamp from _perfRange.
 function _perfTierForRange(pool) {
-  if (_perfRange === 'day' || _perfRange === 'week') return 0;
+  if (_perfRange === '4h' || _perfRange === 'day' || _perfRange === 'week') return 0;
   if (_perfRange === 'month') return 1;
   if (_perfRange === 'year')  return 2;
   // 'all': pick tier based on data age (mirrors capTierForRange)
@@ -17172,7 +17176,7 @@ function _perfTierForRange(pool) {
 
 function _perfSinceTs() {
   const now = Math.floor(Date.now() / 1000);
-  const map = { day: 86400, week: 604800, month: 2592000, year: 31536000 };
+  const map = { '4h': 14400, day: 86400, week: 604800, month: 2592000, year: 31536000 };
   return map[_perfRange] ? now - map[_perfRange] : 0;
 }
 
@@ -19155,7 +19159,7 @@ function runReplicationTask(id, name) {
   };
 
   function capTierForRange(range) {
-    if (range === 'day' || range === 'week') return 0;
+    if (range === '4h' || range === 'day' || range === 'week') return 0;
     if (range === 'month') return 1;
     if (range === 'year')  return 2;
     // 'all': pick tier based on data age
@@ -19168,7 +19172,7 @@ function runReplicationTask(id, name) {
 
   function capSinceTs(range) {
     const now = Math.floor(Date.now() / 1000);
-    const map = { day: 86400, week: 604800, month: 2592000, year: 31536000 };
+    const map = { '4h': 14400, day: 86400, week: 604800, month: 2592000, year: 31536000 };
     return map[range] ? now - map[range] : 0;
   }
 
