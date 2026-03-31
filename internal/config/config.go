@@ -157,8 +157,13 @@ type AppConfig struct {
 	ISCSI              ISCSIConfig      `json:"iscsi,omitempty"`
 	MinIO              MinIOConfig      `json:"minio,omitempty"`
 	UPS                UPSConfig        `json:"ups,omitempty"`
-	ActiveCertName     string           `json:"active_cert_name,omitempty"`
-	PendingCertRestart bool             `json:"pending_cert_restart,omitempty"`
+	ActiveCertName          string   `json:"active_cert_name,omitempty"`
+	PendingCertRestart      bool     `json:"pending_cert_restart,omitempty"`
+	SudoersHardeningEnabled  bool     `json:"sudoers_hardening_enabled,omitempty"`
+	SudoersSilencedLines     []string `json:"sudoers_silenced_lines,omitempty"`
+	SudoersSilencedMissing   []string `json:"sudoers_silenced_missing,omitempty"`
+	SudoersSilencedExtra     []string `json:"sudoers_silenced_extra,omitempty"`
+	SudoersAppliedHash       string   `json:"sudoers_applied_hash,omitempty"`
 	Replication        []ReplicationTask `json:"replication,omitempty"`
 	InterLink          []LinkedServer    `json:"inter_link,omitempty"`
 }

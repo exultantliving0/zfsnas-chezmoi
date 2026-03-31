@@ -139,6 +139,7 @@ h3 { font-size: 16px; font-weight: 600; }
 .btn-danger:hover:not(:disabled) { opacity: 0.85; }
 
 .btn-sm { padding: 6px 14px; font-size: 13px; }
+.btn-xs { padding: 3px 9px; font-size: 11px; border-radius: 5px; }
 .btn-lg { padding: 14px 28px; font-size: 16px; width: 100%; justify-content: center; }
 
 /* ===== Forms ===== */
@@ -994,3 +995,15 @@ body.light .iscsi-icon { filter: none; }
 .interlink-table tr:last-child td { border-bottom: none; }
 .interlink-table .col-status { width: 32px; }
 .interlink-table .col-actions { width: 80px; text-align: right; }
+
+/* Sudoers diff rows */
+.sudoers-diff-row           { display:flex; gap:12px; padding:10px 0; border-bottom:1px solid var(--border); align-items:flex-start; }
+.sudoers-diff-row:last-child { border-bottom:none; }
+.sudoers-row-prefix         { font-size:1.1rem; font-weight:700; width:18px; flex-shrink:0; line-height:1.4; }
+.sudoers-tr                 { border-bottom:1px solid var(--border); transition:background .15s; }
+.sudoers-tr:last-child      { border-bottom:none; }
+.sudoers-radio              { background:none; border:none; cursor:pointer; font-size:18px; line-height:1;
+                               padding:2px 8px; transition:color .1s; }
+.sudoers-radio:hover        { opacity:.8; }
+.sudoers-section-label      { font-size:.72rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+                               color:var(--text-3); margin:14px 0 6px; }

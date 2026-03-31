@@ -113,6 +113,8 @@ const (
 	ActionPushInterlink = "push_interlink"
 	// Software self-update.
 	ActionSoftwareUpdate = "software_update"
+	// Sudoers hardening.
+	ActionUpdateSudoers = "update_sudoers"
 )
 
 var (

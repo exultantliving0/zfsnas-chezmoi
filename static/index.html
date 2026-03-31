@@ -4522,6 +4522,101 @@
   </div>
 </div>
 
+<!-- Sudoers Review Modal -->
+<div class="modal-backdrop hidden" id="modal-sudoers-review" onclick="if(event.target===this)closeSudoersReviewModal()">
+  <div class="modal" style="max-width:760px;width:95%;">
+    <div class="modal-header">
+      <div>
+        <h3 style="margin:0;">Sudoers Review — /etc/sudoers.d/zfsnas</h3>
+        <div id="sudoers-review-subtitle" style="font-size:13px;color:var(--text-3);margin-top:3px;"></div>
+      </div>
+      <button class="modal-close" onclick="closeSudoersReviewModal()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:0;max-height:62vh;overflow-y:auto;">
+      <table id="sudoers-review-table" style="width:100%;border-collapse:collapse;">
+        <thead style="position:sticky;top:0;z-index:2;background:var(--bg-2);">
+          <tr>
+            <th colspan="4" style="padding:8px 12px 6px;text-align:left;font-weight:normal;border-bottom:1px solid var(--border);">
+              <button class="btn btn-sm" onclick="approveAllSudoers()" style="font-size:12px;">✓ Approve All</button>
+            </th>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <th style="text-align:left;padding:5px 12px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);">Command</th>
+            <th style="text-align:center;padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#f0b429;white-space:nowrap;width:70px;">New</th>
+            <th style="text-align:center;padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2);white-space:nowrap;width:80px;">Silenced</th>
+            <th style="text-align:center;padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--accent-3);white-space:nowrap;width:90px;">Approved</th>
+          </tr>
+        </thead>
+        <tbody id="sudoers-review-tbody"></tbody>
+      </table>
+      <div id="sudoers-review-empty" class="hidden" style="padding:24px;text-align:center;color:var(--text-3);font-size:14px;">
+        No sudoers commands found to review.
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between;align-items:center;gap:12px;">
+      <span id="sudoers-apply-note" style="font-size:12px;color:var(--text-3);flex:1;"></span>
+      <button class="btn btn-ghost" onclick="closeSudoersReviewModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-sudoers-apply" onclick="applySudoersChanges()" disabled>Apply 0 Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sudoers Bootstrap Modal — shows the lines to manually add before auto-hardening can work -->
+<div class="modal-backdrop hidden" id="modal-sudoers-bootstrap" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal" style="max-width:620px;width:95%;">
+    <div class="modal-header">
+      <div>
+        <h3 style="margin:0;">Enable Auto Sudoers Hardening</h3>
+        <div style="font-size:13px;color:var(--text-3);margin-top:3px;">One-time manual step to grant write access to the sudoers file</div>
+      </div>
+      <button class="modal-close" onclick="document.getElementById('modal-sudoers-bootstrap').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--text-2);margin-bottom:16px;">
+        To let ZFS NAS manage its own sudoers file automatically, add the following alias to
+        <code style="background:var(--surface2);padding:1px 6px;border-radius:4px;font-size:12px;">/etc/sudoers.d/zfsnas</code>
+        and include it in the grant line.
+      </p>
+
+      <!-- Step 1: alias block -->
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">1 — Add this alias</div>
+        <div style="position:relative;">
+          <pre id="sudoers-bootstrap-alias" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;font-size:12px;font-family:monospace;color:var(--text);margin:0;white-space:pre;overflow-x:auto;line-height:1.6;">Cmnd_Alias ZFSNAS_SECURITY = \
+    /usr/bin/tee /etc/sudoers.d/zfsnas</pre>
+          <button onclick="sudoersBootstrapCopy('alias')" title="Copy"
+            style="position:absolute;top:8px;right:8px;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:3px 9px;font-size:11px;color:var(--text-2);cursor:pointer;" id="btn-bootstrap-copy-alias">Copy</button>
+        </div>
+      </div>
+
+      <!-- Step 2: grant line -->
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">2 — Append <code style="font-size:12px;font-weight:400;">ZFSNAS_SECURITY</code> to your grant line</div>
+        <div style="position:relative;">
+          <pre id="sudoers-bootstrap-grant" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;font-size:12px;font-family:monospace;color:var(--text);margin:0;white-space:pre;overflow-x:auto;line-height:1.6;">zfsnas ALL=(ALL) NOPASSWD: …, ZFSNAS_SECURITY</pre>
+          <button onclick="sudoersBootstrapCopy('grant')" title="Copy"
+            style="position:absolute;top:8px;right:8px;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:3px 9px;font-size:11px;color:var(--text-2);cursor:pointer;" id="btn-bootstrap-copy-grant">Copy</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-3);margin-top:6px;">Replace <code style="font-size:11px;">…</code> with your existing alias list — keep all existing entries and add <code style="font-size:11px;">ZFSNAS_SECURITY</code> at the end.</p>
+      </div>
+
+      <!-- Step 3: apply -->
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;">
+        <div style="font-size:12px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">3 — Apply with visudo</div>
+        <div style="position:relative;">
+          <code style="font-size:12px;color:var(--text);">sudo visudo -f /etc/sudoers.d/zfsnas</code>
+          <button onclick="sudoersBootstrapCopy('visudo')" title="Copy"
+            style="float:right;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:3px 9px;font-size:11px;color:var(--text-2);cursor:pointer;" id="btn-bootstrap-copy-visudo">Copy</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-3);margin-top:8px;margin-bottom:0;">After saving, refresh the Prerequisites page — the <strong>Enable Sudoers Hardening</strong> button will appear in its place.</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-sudoers-bootstrap').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Delete Share Confirm Modal (SMB + NFS) -->
 <div class="modal-backdrop hidden" id="modal-winacl-restart">
   <div class="modal" style="max-width:440px;border:1px solid var(--accent-danger);">
@@ -5616,19 +5711,27 @@ function _queueInstall(id, pendingLabel, activeLabel, run) {
 
 // ===== Prerequisites =====
 
-function _sudoWarnKey() {
-  return 'sudo_warn_dismissed_v' + (window._appVersion || 'unknown');
-}
 function _isSudoWarnDismissed() {
-  return localStorage.getItem(_sudoWarnKey()) === '1';
+  return localStorage.getItem('sudo_warn_dismissed') === '1';
 }
 function dismissSudoWarning() {
-  localStorage.setItem(_sudoWarnKey(), '1');
+  localStorage.setItem('sudo_warn_dismissed', '1');
+  _prereqDotReasons.sudoIncomplete = false;
+  updatePrereqDot();
+  // If dot is still visible, another issue (e.g. missing packages) is keeping it on.
+  const dot = document.getElementById('prereq-alert-dot');
+  if (dot && dot.style.display !== 'none') {
+    const reasons = [];
+    if (_prereqDotReasons.packages)       reasons.push('packages missing');
+    if (_prereqDotReasons.zfsWarn)        reasons.push('ZFS version warning');
+    if (_prereqDotReasons.sudoersPending) reasons.push('sudoers changes pending');
+    if (reasons.length) showToast('Sudo warning dismissed — dot still showing: ' + reasons.join(', ') + '.', 'info');
+  }
   loadPrereqs();
   checkPrereqsBanner();
 }
 function enableSudoWarning() {
-  localStorage.removeItem(_sudoWarnKey());
+  localStorage.removeItem('sudo_warn_dismissed');
   loadPrereqs();
   checkPrereqsBanner();
 }
@@ -5643,15 +5746,26 @@ async function checkPrereqsBanner() {
     const sudoCritical = sudo.type === 'none';
     const sudoIncomplete = sudo.type === 'hardened' && (sudo.missing_commands || []).length > 0;
     const sudoWarnDismissed = sudoIncomplete && _isSudoWarnDismissed();
-    const sudoError = sudoCritical || (sudoIncomplete && !sudoWarnDismissed);
-    const needsAttention = missing.length > 0 || prereqData.zfs_module_warn || sudoError;
-    const banner  = document.getElementById('prereq-banner');
-    const dot     = document.getElementById('prereq-alert-dot');
-    if (dot) {
-      dot.style.display = needsAttention ? 'inline-block' : 'none';
-      dot.style.background = sudoCritical ? '#ff3b30' : '#f0b429';
-      dot.style.boxShadow  = sudoCritical ? '0 0 4px rgba(255,59,48,0.6)' : '0 0 4px rgba(240,180,41,0.6)';
-    }
+
+    // Fetch sudoers status so we can suppress sudoIncomplete when hardening is managing commands.
+    let hardeningEnabled = false, sudoersPending = false;
+    try {
+      const sr = await fetch('/api/sudoers/status');
+      if (sr.ok) {
+        const ss = await sr.json();
+        hardeningEnabled = !!(ss && ss.enabled);
+        sudoersPending   = hardeningEnabled && ((ss.missing_count || 0) + (ss.extra_count || 0)) > 0;
+      }
+    } catch (_) {}
+
+    _prereqDotReasons.packages       = missing.length > 0;
+    _prereqDotReasons.zfsWarn        = !!prereqData.zfs_module_warn;
+    _prereqDotReasons.sudoCritical   = !!sudoCritical;
+    _prereqDotReasons.sudoIncomplete = !hardeningEnabled && !!(sudoIncomplete && !sudoWarnDismissed);
+    _prereqDotReasons.sudoersPending = sudoersPending;
+    updatePrereqDot();
+
+    const banner = document.getElementById('prereq-banner');
     if (missing.length) {
       banner.className = 'banner banner-warn';
       banner.innerHTML = `
@@ -5746,9 +5860,11 @@ async function loadPrereqs() {
         <td style="padding:4px 0;font-size:12px;color:var(--text-2);">${esc(reason)}</td>
       </tr>`;
     }).join('');
-    const dismissBtn = sudoWarnDismissed
+    // Hide Disable Warning when sudoers hardening is active — Review Sudoers covers it.
+    const _hardeningActive = !!(_sudoersStatus && _sudoersStatus.enabled);
+    const dismissBtn = _hardeningActive ? '' : (sudoWarnDismissed
       ? `<button class="btn btn-ghost btn-sm" style="margin-top:10px;opacity:0.6;" onclick="enableSudoWarning()">Re-enable Warning</button>`
-      : `<button class="btn btn-ghost btn-sm" style="margin-top:10px;color:var(--text-3);border-color:var(--border);" onclick="dismissSudoWarning()">Disable Warning</button>`;
+      : `<button id="sudo-dismiss-btn" class="btn btn-ghost btn-sm" style="margin-top:10px;color:var(--text-3);border-color:var(--border);" onclick="dismissSudoWarning()">Disable Warning</button>`);
     sudoDesc = 'Specific sudo rules are in place but the following required commands are missing from your sudoers configuration:'
       + `<table style="margin-top:8px;border-collapse:collapse;">${missingRows}</table>`
       + `<div style="margin-top:8px;font-size:12px;color:var(--text-3);">See <a href="https://github.com/macgaver/zfsnas-chezmoi/blob/main/SECURITY.md" target="_blank" rel="noopener" style="color:var(--accent-2);">SECURITY.md</a> for the full sudoers template.</div>`
@@ -5763,6 +5879,7 @@ async function loadPrereqs() {
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
         <h3 style="margin:0;color:var(--text-2);">Security</h3>
         <a href="https://github.com/macgaver/zfsnas-chezmoi/blob/main/SECURITY.md" target="_blank" rel="noopener" style="font-size:13px;color:var(--accent-2);text-decoration:none;line-height:1;" title="Open SECURITY.md">ⓘ</a>
+        <div id="sudoers-hardening-btns" style="margin-left:auto;display:flex;align-items:center;gap:8px;"></div>
       </div>
       <div class="prereq-row">
         <div>
@@ -5771,15 +5888,25 @@ async function loadPrereqs() {
         </div>
       </div>
     </div>`;
+  // Await sudoers status so the dot is updated atomically with both data sets.
+  await loadSudoersStatus();
+
+  // If hardening just became known-enabled, remove the Disable Warning button that
+  // may have been rendered before the status fetch returned (first-load race).
+  if (_sudoersStatus && _sudoersStatus.enabled) {
+    const b = document.getElementById('sudo-dismiss-btn');
+    if (b) b.remove();
+  }
 
   // Keep the sidebar dot in sync with the live data.
-  const needsAttention = missing.length > 0 || prereqData.zfs_module_warn || sudoError;
-  const dot = document.getElementById('prereq-alert-dot');
-  if (dot) {
-    dot.style.display = needsAttention ? 'inline-block' : 'none';
-    dot.style.background = sudoCritical ? '#ff3b30' : '#f0b429';
-    dot.style.boxShadow  = sudoCritical ? '0 0 4px rgba(255,59,48,0.6)' : '0 0 4px rgba(240,180,41,0.6)';
-  }
+  // When hardening is enabled, sudoersPending (set by renderSudoersHardeningBtns) is the
+  // sole indicator — suppress sudoIncomplete so silenced commands don't re-trigger the dot.
+  const hardeningEnabled = !!(_sudoersStatus && _sudoersStatus.enabled);
+  _prereqDotReasons.packages       = missing.length > 0;
+  _prereqDotReasons.zfsWarn        = !!prereqData.zfs_module_warn;
+  _prereqDotReasons.sudoCritical   = !!sudoCritical;
+  _prereqDotReasons.sudoIncomplete = !hardeningEnabled && !!(sudoIncomplete && !sudoWarnDismissed);
+  updatePrereqDot();
 
   document.getElementById('prereq-list').innerHTML = prereqData.packages.map(p => {
     const isZfsWarn = zfsWarn && p.name === 'zfsutils-linux';
@@ -5957,6 +6084,302 @@ async function installService() {
 
 function skipService() {
   closeInstallModal();
+}
+
+// ===== Sudoers Hardening =====
+let _sudoersStatus = null;
+// Per-row state: maps line → 'approved' | 'silenced' | null
+let _sudoersRowState = {};
+// Initial state when modal opened: used to detect changes for the Apply button.
+let _sudoersInitialState = {};
+
+// ===== Prerequisites nav dot =====
+// Tracks individual reasons to show the yellow dot on the Prerequisites nav item.
+const _prereqDotReasons = {};
+function updatePrereqDot() {
+  const dot = document.getElementById('prereq-alert-dot');
+  if (!dot) return;
+  const show = Object.values(_prereqDotReasons).some(Boolean);
+  dot.style.display = show ? 'inline-block' : 'none';
+  const critical = !!_prereqDotReasons.sudoCritical;
+  dot.style.background = critical ? '#ff3b30' : '#f0b429';
+  dot.style.boxShadow  = critical ? '0 0 4px rgba(255,59,48,0.6)' : '0 0 4px rgba(240,180,41,0.6)';
+}
+
+async function loadSudoersStatus() {
+  const el = document.getElementById('sudoers-hardening-btns');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/sudoers/status');
+    if (!r.ok) { el.innerHTML = ''; return; }
+    _sudoersStatus = await r.json();
+    renderSudoersHardeningBtns(el, _sudoersStatus);
+  } catch (_) { el.innerHTML = ''; }
+}
+
+function renderSudoersHardeningBtns(el, s) {
+  if (!s) { el.innerHTML = ''; return; }
+  if (!s.available) {
+    if (s.sudo_type === 'hardened') {
+      el.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="openSudoersBootstrapModal()" style="font-size:12px;">🔒 Enable Auto Sudoers Hardening (optional)</button>`;
+    } else {
+      el.innerHTML = '';
+    }
+    return;
+  }
+
+  if (!s.enabled) {
+    el.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="enableSudoersHardening(true)" style="font-size:12px;">🔒 Enable Hardening UI (optional)</button>`;
+    return;
+  }
+
+  // Enabled — single Review button (green = no pending, yellow = pending New lines).
+  const disableBtn = `<button class="btn btn-ghost btn-sm" onclick="enableSudoersHardening(false)" style="font-size:11px;opacity:0.5;padding:2px 7px;" title="Disable Sudoers Hardening">Disable</button>`;
+  const silLabel = s.silenced_count > 0 ? ` (${s.silenced_count} silenced)` : '';
+  const pendingN = (s.missing_count || 0) + (s.extra_count || 0);
+  if (pendingN === 0) {
+    el.innerHTML = `<button class="btn btn-sm" onclick="openSudoersReviewModal()" style="font-size:12px;background:color-mix(in srgb,var(--accent-3) 12%,transparent);border-color:var(--accent-3);color:var(--accent-3);">🔒 Review Sudoers${silLabel}</button> ${disableBtn}`;
+  } else {
+    el.innerHTML = `<button class="btn btn-sm" onclick="openSudoersReviewModal()" style="font-size:12px;background:#f0b4290d;border-color:#f0b429;color:#f0b429;">🔒 Review Sudoers${silLabel}</button> ${disableBtn}`;
+  }
+
+  // Yellow dot only when there are unreviewed "New"-state lines.
+  // When hardening is enabled, sudoersPending is the sole dot indicator — suppress
+  // sudoIncomplete so silenced commands (missing from sudo -l) don't re-trigger it.
+  _prereqDotReasons.sudoersPending = s.enabled && pendingN > 0;
+  if (s.enabled) _prereqDotReasons.sudoIncomplete = false;
+  updatePrereqDot();
+}
+
+async function enableSudoersHardening(on) {
+  const el = document.getElementById('sudoers-hardening-btns');
+  if (el) el.innerHTML = `<span style="font-size:12px;color:var(--text-3);">Saving…</span>`;
+  try {
+    const r = await fetch('/api/sudoers/enable', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({enabled: on})
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+  } catch (e) {
+    showToast('Sudoers Hardening: ' + e.message, 'error');
+  }
+  await loadSudoersStatus();
+}
+
+async function openSudoersReviewModal() {
+  _sudoersRowState = {};
+  _sudoersInitialState = {};
+  const modal = document.getElementById('modal-sudoers-review');
+  modal.classList.remove('hidden');
+  document.getElementById('sudoers-review-tbody').innerHTML = '';
+  document.getElementById('sudoers-review-table').classList.remove('hidden');
+  document.getElementById('sudoers-review-empty').classList.add('hidden');
+  document.getElementById('sudoers-review-subtitle').textContent = 'Loading…';
+  document.getElementById('btn-sudoers-apply').disabled = true;
+  document.getElementById('btn-sudoers-apply').textContent = 'No Changes';
+
+  try {
+    const r = await fetch('/api/sudoers/diff');
+    if (!r.ok) throw new Error('Failed to load diff');
+    const diff = await r.json();
+    renderSudoersDiff(diff);
+  } catch (e) {
+    document.getElementById('sudoers-review-subtitle').textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderSudoersDiff(diff) {
+  const matched     = diff.matched_lines || [];
+  const missing     = (diff.missing_lines || []).filter(d => !d.silenced);
+  const extra       = (diff.extra_lines   || []).filter(d => !d.silenced);
+  const silencedAll = [
+    ...(diff.missing_lines||[]).filter(d => d.silenced).map(d => ({...d, _type:'missing'})),
+    ...(diff.extra_lines  ||[]).filter(d => d.silenced).map(d => ({...d, _type:'extra'}))
+  ];
+  const total = matched.length + missing.length + extra.length + silencedAll.length;
+
+  if (total === 0) {
+    document.getElementById('sudoers-review-subtitle').textContent = 'No sudoers commands found.';
+    document.getElementById('sudoers-review-table').classList.add('hidden');
+    document.getElementById('sudoers-review-empty').classList.remove('hidden');
+    return;
+  }
+
+  const pendingN = missing.length + extra.length;
+  document.getElementById('sudoers-review-subtitle').textContent =
+    `${matched.length} approved · ${pendingN} pending · ${silencedAll.length} silenced`;
+
+  // Assign initial states.
+  matched.forEach(d     => { _sudoersRowState[d.line] = 'approved'; _sudoersInitialState[d.line] = 'approved'; });
+  missing.forEach(d     => { _sudoersRowState[d.line] = 'new';      _sudoersInitialState[d.line] = 'new'; });
+  extra.forEach(d       => { _sudoersRowState[d.line] = 'new';      _sudoersInitialState[d.line] = 'new'; });
+  silencedAll.forEach(d => { _sudoersRowState[d.line] = 'silenced'; _sudoersInitialState[d.line] = 'silenced'; });
+
+  // Flat table: approved first, then pending, then silenced.
+  const tbody = document.getElementById('sudoers-review-tbody');
+  tbody.innerHTML = [
+    ...matched.map(d     => sudoersRowTR(d, 'matched')),
+    ...missing.map(d     => sudoersRowTR(d, 'missing')),
+    ...extra.map(d       => sudoersRowTR(d, 'extra')),
+    ...silencedAll.map(d => sudoersRowTR(d, d._type)),
+  ].join('');
+
+  // Apply initial visual state to all rows.
+  [...matched, ...missing, ...extra, ...silencedAll].forEach(d => _sudoersUpdateRow(d.line));
+
+  updateSudoersApplyButton();
+}
+
+function approveAllSudoers() {
+  for (const line of Object.keys(_sudoersRowState)) {
+    _sudoersRowState[line] = 'approved';
+    _sudoersUpdateRow(line);
+  }
+  updateSudoersApplyButton();
+}
+
+function sudoersRowTR(d, type) {
+  // data-type drives apply logic: matched → 'missing' (silenced = remove from template)
+  const dataType = type === 'matched' ? 'missing' : type;
+  const lineId   = 'sdr-' + btoa(d.line).replace(/=/g,'');
+  return `<tr class="sudoers-tr" id="${lineId}" data-line="${esc(d.line)}" data-type="${dataType}">
+    <td style="padding:6px 12px;vertical-align:top;">
+      <code style="display:block;font-size:.78rem;font-family:monospace;word-break:break-all;color:var(--text);">${esc(d.line)}</code>
+      <span style="font-size:.72rem;color:var(--text-3);line-height:1.4;">${esc(d.explanation||'')}</span>
+    </td>
+    <td style="text-align:center;vertical-align:middle;padding:4px;" id="${lineId}-new">
+      <button onclick="setSudoersState('${esc(d.line)}','new')" class="sudoers-radio" title="Mark as new/pending">○</button>
+    </td>
+    <td style="text-align:center;vertical-align:middle;padding:4px;" id="${lineId}-silenced">
+      <button onclick="setSudoersState('${esc(d.line)}','silenced')" class="sudoers-radio" title="Silence this command">○</button>
+    </td>
+    <td style="text-align:center;vertical-align:middle;padding:4px;" id="${lineId}-approved">
+      <button onclick="setSudoersState('${esc(d.line)}','approved')" class="sudoers-radio" title="Approve this command">○</button>
+    </td>
+  </tr>`;
+}
+
+function _sudoersLineId(line) {
+  return 'sdr-' + btoa(line).replace(/=/g,'');
+}
+
+function setSudoersState(line, state) {
+  _sudoersRowState[line] = state;
+  _sudoersUpdateRow(line);
+  updateSudoersApplyButton();
+}
+
+function _sudoersUpdateRow(line) {
+  const id  = _sudoersLineId(line);
+  const row = document.getElementById(id);
+  if (!row) return;
+  const state = _sudoersRowState[line] || 'new';
+
+  // Row background
+  row.style.background =
+    state === 'approved' ? 'color-mix(in srgb,var(--accent-3) 10%,transparent)' :
+    state === 'new'      ? 'color-mix(in srgb,#f0b429 10%,transparent)' : '';
+
+  // Radio circles — filled bullet for selected column, hollow for others
+  ['new', 'silenced', 'approved'].forEach(s => {
+    const cell = document.getElementById(id + '-' + s);
+    if (!cell) return;
+    const btn = cell.querySelector('button');
+    if (!btn) return;
+    const sel = state === s;
+    btn.textContent = sel ? '●' : '○';
+    btn.style.color = sel
+      ? (s === 'approved' ? 'var(--accent-3)' : s === 'new' ? '#f0b429' : 'var(--text-2)')
+      : 'var(--text-3)';
+  });
+}
+
+function updateSudoersApplyButton() {
+  const btn = document.getElementById('btn-sudoers-apply');
+  if (!btn) return;
+  let changes = 0;
+  for (const [line, state] of Object.entries(_sudoersRowState)) {
+    if (state !== (_sudoersInitialState[line] ?? 'new')) changes++;
+  }
+  btn.disabled = changes === 0;
+  btn.textContent = changes > 0 ? `Apply ${changes} Change${changes !== 1 ? 's' : ''}` : 'No Changes';
+  const note = document.getElementById('sudoers-apply-note');
+  if (note) {
+    const silencedCount = Object.values(_sudoersRowState).filter(s => s === 'silenced').length;
+    note.textContent = silencedCount > 0 ? `${silencedCount} command${silencedCount!==1?'s':''} silenced` : '';
+  }
+}
+
+async function applySudoersChanges() {
+  const btn = document.getElementById('btn-sudoers-apply');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = 'Applying…';
+
+  // Build three lists based on row state:
+  //   silenced → persisted as silenced (excluded from file, remembered)
+  //   new      → pending (excluded from file this run, but NOT stored as silenced → shows as New next time)
+  //   approved → included in file
+  const silMissing = [], silExtra = [], pendingMissing = [], pendingExtra = [];
+  document.querySelectorAll('#sudoers-review-tbody .sudoers-tr').forEach(row => {
+    const line = row.dataset.line;
+    const type = row.dataset.type;
+    if (!line) return;
+    const state = _sudoersRowState[line];
+    if (state === 'silenced') {
+      if (type === 'missing') silMissing.push(line);
+      else if (type === 'extra') silExtra.push(line);
+    } else if (state === 'new') {
+      if (type === 'missing') pendingMissing.push(line);
+      else if (type === 'extra') pendingExtra.push(line);
+    }
+    // 'approved' → not in any exclusion list → written to file
+  });
+
+  try {
+    const r = await fetch('/api/sudoers/apply', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({silenced_missing: silMissing, silenced_extra: silExtra, pending_missing: pendingMissing, pending_extra: pendingExtra})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'apply failed');
+    closeSudoersReviewModal();
+    showToast(`Sudoers updated: ${data.added||0} added, ${data.removed||0} removed.`, 'success');
+    await loadPrereqs();
+  } catch (e) {
+    btn.disabled = false;
+    updateSudoersApplyButton();
+    showToast('Apply failed: ' + e.message, 'error');
+  }
+}
+
+function closeSudoersReviewModal() {
+  document.getElementById('modal-sudoers-review').classList.add('hidden');
+  _sudoersRowState = {};
+  _sudoersInitialState = {};
+}
+
+function openSudoersBootstrapModal() {
+  document.getElementById('modal-sudoers-bootstrap').classList.remove('hidden');
+}
+
+function sudoersBootstrapCopy(part) {
+  const texts = {
+    alias:  'Cmnd_Alias ZFSNAS_SECURITY = \\\n    /usr/bin/tee /etc/sudoers.d/zfsnas',
+    grant:  'zfsnas ALL=(ALL) NOPASSWD: \u2026, ZFSNAS_SECURITY',
+    visudo: 'sudo visudo -f /etc/sudoers.d/zfsnas',
+  };
+  const btnIds = { alias: 'btn-bootstrap-copy-alias', grant: 'btn-bootstrap-copy-grant', visudo: 'btn-bootstrap-copy-visudo' };
+  navigator.clipboard.writeText(texts[part]).then(() => {
+    const btn = document.getElementById(btnIds[part]);
+    if (!btn) return;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.style.color = 'var(--accent-3)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1800);
+  });
 }
 
 // ===== Users =====

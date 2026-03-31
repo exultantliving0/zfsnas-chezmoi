@@ -217,6 +217,16 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/prereqs/install-service",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallService)))).Methods("POST")
 
+	// --- Sudoers Hardening (admin only) ---
+	r.Handle("/api/sudoers/status",
+		RequireAuth(RequireAdmin(HandleSudoersStatus(appCfg)))).Methods("GET")
+	r.Handle("/api/sudoers/diff",
+		RequireAuth(RequireAdmin(HandleSudoersDiff(appCfg)))).Methods("GET")
+	r.Handle("/api/sudoers/enable",
+		RequireAuth(RequireAdmin(HandleEnableSudoersHardening(appCfg)))).Methods("POST")
+	r.Handle("/api/sudoers/apply",
+		RequireAuth(RequireAdmin(HandleApplySudoers(appCfg)))).Methods("POST")
+
 	// WebSocket: stream apt-get install output (admin only)
 	r.Handle("/ws/prereqs-install",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallPrereqs)))).Methods("GET")
