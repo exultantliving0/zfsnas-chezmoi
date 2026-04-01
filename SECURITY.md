@@ -84,11 +84,13 @@ Cmnd_Alias ZFSNAS_SMB = \
 
 # ── NFS shares ────────────────────────────────────────────────────────────────
 # since v2.0.0 — NFS share management and export config write
+# since v6.3.22 — chmod 0777 on the dataset path when creating or editing a share
 Cmnd_Alias ZFSNAS_NFS = \
     /usr/sbin/exportfs -ra, \
     /usr/bin/systemctl start nfs-server, \
     /usr/bin/systemctl stop nfs-server, \
-    /usr/bin/tee /etc/exports
+    /usr/bin/tee /etc/exports, \
+    /usr/bin/chmod 0777 *
 
 # ── SMART & hardware monitoring ───────────────────────────────────────────────
 # since v1.0.0 — SMART disk health data (SAS/SATA)
@@ -229,11 +231,11 @@ Cmnd_Alias ZFSNAS_APT = \
     /usr/bin/systemctl daemon-reload, \
     /usr/bin/systemctl enable zfsnas
 
-# ── Sudoers self-management (Sudoers Hardening feature) ───────────────────────
+# ── Sudoers self-management (Sudoers Hardening feature - OPTIONAL) ───────────────────────
 # since v6.3.31 — lets the portal overwrite its own sudoers file when the
 #   Sudoers Hardening feature is enabled in the Prerequisites tab.
-Cmnd_Alias ZFSNAS_SECURITY = \
-    /usr/bin/tee /etc/sudoers.d/zfsnas
+#Cmnd_Alias ZFSNAS_SECURITY = \
+#    /usr/bin/tee /etc/sudoers.d/zfsnas
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
@@ -254,6 +256,7 @@ ExecStart=/opt/zfsnas/zfsnas
 ### Notes
 
 - **Web terminal** — the browser terminal runs a shell as the `zfsnas` user. With the restricted sudoers entry above, any `sudo` command typed in that terminal is still limited to the whitelist. If you do not use the web terminal feature you can remove the `/ws/terminal` route or simply accept that a logged-in admin can run a shell with the same restrictions.
+- **`chmod 0777 *`** (in `ZFSNAS_NFS`) — applied to the dataset path when an NFS share is created or edited (v6.3.22+). Sets world-readable/writable permissions so NFS clients can access the share regardless of their UID/GID mapping. If you want tighter permissions, restrict the wildcard to your shares root (e.g. `/usr/bin/chmod 0777 /data/*`) and configure `all_squash` + `anonuid`/`anongid` in your NFS export options instead.
 - **`chgrp sambashare *` / `chmod 0770 *`** — applied to the directory of every newly created SMB share, so that members of the `sambashare` group can read and write while other OS users cannot. If your shares always live under a fixed parent (e.g. `/data`), you can tighten the wildcards to `/usr/bin/chgrp sambashare /data/*` and `/usr/bin/chmod 0770 /data/*`.
 - **`tee` for config files** — write access is limited to the specific paths listed (`smb.conf`, `exports`, `zfsnas.service`, `zfs.conf`, and the two ARC sysfs paths). The wildcard form `tee *` is intentionally avoided.
 - **`dd` / `wipefs` / `sgdisk`** — used by the "Wipe Disk" feature before adding a disk to a pool. These are destructive by design; ensure only trusted admins have access to the portal.
