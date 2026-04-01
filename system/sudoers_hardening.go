@@ -340,6 +340,7 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/smbpasswd *":                               "Sets or removes the Samba password for a user.",
 	"/usr/bin/smbstatus -S":                              "Lists active SMB sessions per share (v6.1.0+).",
 	"/usr/bin/chgrp sambashare *":                        "Sets group ownership of a share directory to sambashare (v6.3.27+).",
+	"/usr/bin/chmod 0777 *":                              "Sets NFS share directory permissions to world-readable/writable so NFS clients can access regardless of UID/GID.",
 	"/usr/bin/chmod 0770 *":                              "Sets share directory permissions so sambashare members can read and write (v6.3.27+).",
 	"/usr/bin/chmod 0700 *":                              "Sets home directory permissions to owner-only access (SMB home folders, v6.3.21+).",
 	"/usr/bin/chown * *":                                 "Sets ownership of share or home directories.",
@@ -421,11 +422,13 @@ Cmnd_Alias ZFSNAS_SMB = \
 
 # ── NFS shares ────────────────────────────────────────────────────────────────
 # since v2.0.0 — NFS share management and export config write
+# since v6.3.22 — chmod 0777 on the dataset path when creating or editing a share
 Cmnd_Alias ZFSNAS_NFS = \
     /usr/sbin/exportfs -ra, \
     /usr/bin/systemctl start nfs-server, \
     /usr/bin/systemctl stop nfs-server, \
-    /usr/bin/tee /etc/exports
+    /usr/bin/tee /etc/exports, \
+    /usr/bin/chmod 0777 *
 
 # ── SMART & hardware monitoring ───────────────────────────────────────────────
 # since v1.0.0 — SMART disk health data (SAS/SATA)

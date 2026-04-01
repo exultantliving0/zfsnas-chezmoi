@@ -296,3 +296,13 @@ func ControlNFS(action string) error {
 	}
 	return nil
 }
+
+// ChmodNFSPath sets permissions 0777 on the given path so that NFS clients
+// have full read/write access regardless of the connecting user's UID/GID.
+func ChmodNFSPath(path string) error {
+	out, err := exec.Command("sudo", "chmod", "0777", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("chmod 0777 %s: %s", path, strings.TrimSpace(string(out)))
+	}
+	return nil
+}

@@ -86,7 +86,10 @@ func HandleCreateNFSShare(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = system.ChmodSharePath(req.Path)
+	var chmodWarn string
+	if err := system.ChmodNFSPath(req.Path); err != nil {
+		chmodWarn = "chmod 0777 failed: " + err.Error() + " — add /usr/bin/chmod 0777 * to the sudoers file (Settings > Sudoers Hardening)"
+	}
 
 	sess := MustSession(r)
 	audit.Log(audit.Entry{
@@ -102,7 +105,10 @@ func HandleCreateNFSShare(w http.ResponseWriter, r *http.Request) {
 		"NFS Share Created",
 		"NFS export '"+req.Path+"' (client: "+req.Client+") was created by "+sess.Username+".",
 	)
-	jsonCreated(w, req)
+	jsonCreated(w, struct {
+		system.NFSShare
+		Warning string `json:"warning,omitempty"`
+	}{req, chmodWarn})
 }
 
 // HandleUpdateNFSShare replaces an existing NFS export by ID.
@@ -142,6 +148,10 @@ func HandleUpdateNFSShare(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	var chmodWarn string
+	if err := system.ChmodNFSPath(req.Path); err != nil {
+		chmodWarn = "chmod 0777 failed: " + err.Error() + " — add /usr/bin/chmod 0777 * to the sudoers file (Settings > Sudoers Hardening)"
+	}
 
 	sess := MustSession(r)
 	audit.Log(audit.Entry{
@@ -152,7 +162,10 @@ func HandleUpdateNFSShare(w http.ResponseWriter, r *http.Request) {
 		Result:  audit.ResultOK,
 		Details: "updated",
 	})
-	jsonOK(w, req)
+	jsonOK(w, struct {
+		system.NFSShare
+		Warning string `json:"warning,omitempty"`
+	}{req, chmodWarn})
 }
 
 // HandleDeleteNFSShare removes an NFS export by ID.
