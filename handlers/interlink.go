@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/hmac"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -185,7 +186,7 @@ func HandleInterlinkCheckUser(appCfg *config.AppConfig) http.HandlerFunc {
 		var matched bool
 		for _, ls := range appCfg.InterLink {
 			expected := system.CheckUserHMAC(ls.SharedSecret, req.Username, req.Timestamp, req.Nonce)
-			if expected == req.HMAC {
+			if hmac.Equal([]byte(expected), []byte(req.HMAC)) {
 				matched = true
 				break
 			}
@@ -508,7 +509,7 @@ func HandleInterlinkRemotePools(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		var matched bool
 		for _, ls := range appCfg.InterLink {
-			if system.RemotePoolsHMAC(ls.SharedSecret, req.Timestamp, req.Nonce) == req.HMAC {
+			if hmac.Equal([]byte(system.RemotePoolsHMAC(ls.SharedSecret, req.Timestamp, req.Nonce)), []byte(req.HMAC)) {
 				matched = true
 				break
 			}
@@ -553,7 +554,7 @@ func HandleInterlinkPushSSHKey(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		var matched bool
 		for _, ls := range appCfg.InterLink {
-			if system.PushSSHKeyHMAC(ls.SharedSecret, req.PublicKey, req.ProcessUser, req.Timestamp, req.Nonce) == req.HMAC {
+			if hmac.Equal([]byte(system.PushSSHKeyHMAC(ls.SharedSecret, req.PublicKey, req.ProcessUser, req.Timestamp, req.Nonce)), []byte(req.HMAC)) {
 				matched = true
 				break
 			}
@@ -592,7 +593,7 @@ func HandleInterlinkGrantZFSAccess(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		var matched bool
 		for _, ls := range appCfg.InterLink {
-			if system.GrantZFSAccessHMAC(ls.SharedSecret, req.Timestamp, req.Nonce) == req.HMAC {
+			if hmac.Equal([]byte(system.GrantZFSAccessHMAC(ls.SharedSecret, req.Timestamp, req.Nonce)), []byte(req.HMAC)) {
 				matched = true
 				break
 			}
@@ -626,7 +627,7 @@ func HandleInterlinkCheckZFSAccess(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		var matched bool
 		for _, ls := range appCfg.InterLink {
-			if system.CheckZFSAccessHMAC(ls.SharedSecret, req.Timestamp, req.Nonce) == req.HMAC {
+			if hmac.Equal([]byte(system.CheckZFSAccessHMAC(ls.SharedSecret, req.Timestamp, req.Nonce)), []byte(req.HMAC)) {
 				matched = true
 				break
 			}
@@ -664,7 +665,7 @@ func HandleInterlinkRemoteUnlink(appCfg *config.AppConfig) http.HandlerFunc {
 				continue
 			}
 			expected := system.RemoteUnlinkHMAC(ls.SharedSecret, req.RemoteID, req.Timestamp, req.Nonce)
-			if expected == req.HMAC {
+			if hmac.Equal([]byte(expected), []byte(req.HMAC)) {
 				matched = ls
 				break
 			}
