@@ -417,6 +417,9 @@ var sudoersExplanations = map[string]string{
 	"/usr/sbin/blkid -o export":                         "Reads disk UUIDs and filesystem types after partitioning.",
 	"/usr/bin/targetcli":                                 "Configures iSCSI LIO targets, backstores, and ACLs (v6.1.0+).",
 	"/usr/sbin/nut-scanner *":                            "Scans USB and SNMP buses for attached UPS devices. Requires raw USB access.",
+	"/usr/bin/nut-scanner":                               "Scans for attached UPS devices (Debian/Ubuntu path for nut-scanner binary).",
+	"/usr/bin/systemctl stop nut-monitor":                "Stops the NUT monitor service (nut-monitor) during UPS config changes or uninstall.",
+	"/usr/bin/systemctl disable nut-monitor":             "Disables the NUT monitor service from starting at boot during uninstall.",
 	"/usr/bin/tee /etc/nut/ups.conf":                     "Writes the NUT UPS device configuration file.",
 	"/usr/bin/tee /etc/nut/nut.conf":                     "Writes the NUT mode configuration file (MODE=standalone or MODE=none).",
 	"/usr/bin/tee /etc/nut/upsd.conf":                    "Writes the NUT daemon configuration (listen address, port).",
@@ -571,8 +574,13 @@ Cmnd_Alias ZFSNAS_UPS = \
     /usr/bin/systemctl disable nut-client, \
     /usr/bin/systemctl start nut-client, \
     /usr/bin/systemctl stop nut-client, \
+    /usr/bin/systemctl enable nut-monitor, \
+    /usr/bin/systemctl disable nut-monitor, \
+    /usr/bin/systemctl start nut-monitor, \
+    /usr/bin/systemctl stop nut-monitor, \
     /usr/bin/systemctl reset-failed, \
     /usr/sbin/nut-scanner *, \
+    /usr/bin/nut-scanner, \
     /usr/bin/chown root\:nut /etc/nut, \
     /usr/bin/chmod 750 /etc/nut, \
     /usr/bin/chown root\:nut /etc/nut/nut.conf, \
