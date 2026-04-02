@@ -126,6 +126,7 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "apt-get", Match: "*", Name: "apt-get *"},
 	{Binary: "systemctl", Name: "systemctl"},
 	// ── Config file write paths (tee) ────────────────────────────────────────
+	{Binary: "cat", Match: "/etc/sudoers.d/zfsnas", Name: "cat /etc/sudoers.d/zfsnas"},
 	{Binary: "tee", Match: "/etc/samba/smb.conf", Name: "tee /etc/samba/smb.conf"},
 	{Binary: "tee", Match: "/etc/exports", Name: "tee /etc/exports"},
 	{Binary: "tee", Match: "/etc/systemd/system/zfsnas.service", Name: "tee /etc/systemd/system/zfsnas.service"},

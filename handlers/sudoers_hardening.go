@@ -10,14 +10,21 @@ import (
 )
 
 // sudoersCurrentContent returns the current file content, falling back to the
-// last-applied content (via hash verification) when the file is root-readable only.
-// Returns ("", false) when the file cannot be verified.
+// last-applied content when the file is root-readable only (hardened sudoers mode).
+// Returns ("", false) when the file has never been applied.
 func sudoersCurrentContent(appCfg *config.AppConfig) (content string, fromCache bool) {
 	content, _ = system.GetCurrentSudoersContent()
 	if content != "" {
 		return content, false
 	}
-	// File unreadable — check if what we last wrote still matches the expected content.
+	// File unreadable — use the exact content we last wrote, stored in config.
+	// This is correct across template changes (new builds): the stored content
+	// reflects what is actually on disk, so the diff only shows genuinely new
+	// commands rather than re-flagging everything already approved.
+	if appCfg.SudoersAppliedContent != "" {
+		return appCfg.SudoersAppliedContent, true
+	}
+	// Legacy fallback: re-derive from hash (pre-upgrade configs without stored content).
 	if appCfg.SudoersAppliedHash != "" {
 		required := system.RequiredSudoersContent()
 		expected := system.BuildSudoersContent(required, appCfg.SudoersSilencedMissing, appCfg.SudoersSilencedExtra)
@@ -37,6 +44,7 @@ func HandleSudoersStatus(appCfg *config.AppConfig) http.HandlerFunc {
 
 		missingCount, extraCount, silencedCount := 0, 0, 0
 		upToDate := true
+		var pendingMissingLines []string
 
 		if appCfg.SudoersHardeningEnabled {
 			current, _ := sudoersCurrentContent(appCfg)
@@ -47,6 +55,7 @@ func HandleSudoersStatus(appCfg *config.AppConfig) http.HandlerFunc {
 					silencedCount++
 				} else {
 					missingCount++
+					pendingMissingLines = append(pendingMissingLines, d.Line)
 				}
 			}
 			for _, d := range diff.ExtraLines {
@@ -57,15 +66,19 @@ func HandleSudoersStatus(appCfg *config.AppConfig) http.HandlerFunc {
 				}
 			}
 		}
+		if pendingMissingLines == nil {
+			pendingMissingLines = []string{}
+		}
 
 		jsonOK(w, map[string]interface{}{
-			"available":      available,
-			"sudo_type":      sudo.Type,
-			"enabled":        appCfg.SudoersHardeningEnabled,
-			"up_to_date":     upToDate,
-			"missing_count":  missingCount,
-			"extra_count":    extraCount,
-			"silenced_count": silencedCount,
+			"available":             available,
+			"sudo_type":             sudo.Type,
+			"enabled":               appCfg.SudoersHardeningEnabled,
+			"up_to_date":            upToDate,
+			"missing_count":         missingCount,
+			"extra_count":           extraCount,
+			"silenced_count":        silencedCount,
+			"pending_missing_lines": pendingMissingLines,
 		})
 	}
 }
@@ -74,19 +87,43 @@ func HandleSudoersStatus(appCfg *config.AppConfig) http.HandlerFunc {
 // GET /api/sudoers/diff
 func HandleSudoersDiff(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		current, _ := sudoersCurrentContent(appCfg)
+		current, fromCache := sudoersCurrentContent(appCfg)
 		diff := system.ComputeSudoersDiff(current, system.RequiredSudoersContent(), appCfg.SudoersSilencedLines)
-		jsonOK(w, diff)
+
+		// When using cached content, cross-check effectiveness via sudo -l.
+		// If sudo reports commands that should be covered by the template as missing,
+		// the file likely has a syntax error — warn the user to re-apply.
+		cacheWarning := ""
+		if fromCache && diff.UpToDate {
+			sudo := system.CheckSudoAccess()
+			if sudo.Type == "hardened" && len(sudo.MissingCommands) > 0 {
+				cacheWarning = "The sudoers file cannot be read directly. " +
+					"The file content appears correct but sudo reports some commands as unavailable, " +
+					"which usually means a syntax error in the file. " +
+					"Click Apply to rewrite the file and clear the issue."
+			}
+		}
+
+		type diffResp struct {
+			system.SudoersDiff
+			FromCache    bool   `json:"from_cache"`
+			CacheWarning string `json:"cache_warning,omitempty"`
+		}
+		jsonOK(w, diffResp{diff, fromCache, cacheWarning})
 	}
 }
 
 // HandleEnableSudoersHardening enables or disables sudoers hardening monitoring.
 // POST /api/sudoers/enable
-// Body: { "enabled": true | false }
+// Body: { "enabled": true | false, "remove_write_access": false }
+// When enabled=false and remove_write_access=true, the handler also rewrites the
+// sudoers file removing the "tee /etc/sudoers.d/zfsnas" entry (write access) while
+// keeping the "cat /etc/sudoers.d/zfsnas" entry (read access for the diff view).
 func HandleEnableSudoersHardening(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Enabled bool `json:"enabled"`
+			Enabled           bool `json:"enabled"`
+			RemoveWriteAccess bool `json:"remove_write_access"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -100,16 +137,29 @@ func HandleEnableSudoersHardening(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 
 		action := "enabled"
+		details := "sudoers hardening: enabled"
 		if !req.Enabled {
-			action = "disabled"
+			if req.RemoveWriteAccess {
+				if err := system.RemoveSudoersWriteAccess(); err != nil {
+					jsonErr(w, http.StatusInternalServerError, "sudoers write-access removal failed: "+err.Error())
+					return
+				}
+				action = "disabled (write access removed from sudoers)"
+				details = "sudoers hardening: disabled; tee entry removed from /etc/sudoers.d/zfsnas"
+			} else {
+				action = "disabled (sudoers unchanged)"
+				details = "sudoers hardening: disabled; sudoers file left as-is"
+			}
 		}
+		_ = action
+
 		sess := MustSession(r)
 		audit.Log(audit.Entry{
 			User:    sess.Username,
 			Role:    sess.Role,
 			Action:  audit.ActionUpdateSudoers,
 			Result:  audit.ResultOK,
-			Details: "sudoers hardening: " + action,
+			Details: details,
 		})
 
 		jsonOK(w, map[string]bool{"ok": true})
@@ -192,10 +242,12 @@ func HandleApplySudoers(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 
 		// Persist only the explicitly silenced decisions (not pending/new).
-		// The hash is computed from the full written content (including pending exclusions)
-		// so hash verification still works on next startup.
+		// Store the full written content so the diff fallback (when the file is
+		// root-readable only) always knows exactly what is installed — even after
+		// the template changes in a new build.
 		content := system.BuildSudoersContent(required, allExcludedMissing, allKeptExtra)
 		appCfg.SudoersAppliedHash = system.SudoersContentHash(content)
+		appCfg.SudoersAppliedContent = content
 		appCfg.SudoersSilencedMissing = req.SilencedMissing
 		appCfg.SudoersSilencedExtra = req.SilencedExtra
 		appCfg.SudoersSilencedLines = append(req.SilencedMissing, req.SilencedExtra...)

@@ -164,6 +164,7 @@ type AppConfig struct {
 	SudoersSilencedMissing   []string `json:"sudoers_silenced_missing,omitempty"`
 	SudoersSilencedExtra     []string `json:"sudoers_silenced_extra,omitempty"`
 	SudoersAppliedHash       string   `json:"sudoers_applied_hash,omitempty"`
+	SudoersAppliedContent    string   `json:"sudoers_applied_content,omitempty"`
 	Replication        []ReplicationTask `json:"replication,omitempty"`
 	InterLink          []LinkedServer    `json:"inter_link,omitempty"`
 }

@@ -231,11 +231,14 @@ Cmnd_Alias ZFSNAS_APT = \
     /usr/bin/systemctl daemon-reload, \
     /usr/bin/systemctl enable zfsnas
 
-# ── Sudoers self-management (Sudoers Hardening feature - OPTIONAL) ───────────────────────
+# ── Sudoers self-management (Sudoers Hardening feature) ───────────────────────
 # since v6.3.31 — lets the portal overwrite its own sudoers file when the
 #   Sudoers Hardening feature is enabled in the Prerequisites tab.
-#Cmnd_Alias ZFSNAS_SECURITY = \
-#    /usr/bin/tee /etc/sudoers.d/zfsnas
+# since v6.3.32 — cat /etc/sudoers.d/zfsnas lets the portal read its own file
+#   so the Sudoers Review diff is always accurate (detects manual edits).
+Cmnd_Alias ZFSNAS_SECURITY = \
+    /usr/bin/tee /etc/sudoers.d/zfsnas, \
+    /usr/bin/cat /etc/sudoers.d/zfsnas
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
@@ -271,7 +274,8 @@ ExecStart=/opt/zfsnas/zfsnas
 - **`nut-scanner *`** — the NUT USB/HID scanner runs under sudo because it requires raw USB device access. The portal always invokes it with either `-C -N` (fast USB-only scan) or `-a -t 2` (full scan with 2 s timeout). If you do not use the UPS feature you can omit `ZFSNAS_UPS` from the grant line entirely.
 - **`/sbin/shutdown -h +0` (UPS watcher)** — the UPS shutdown watcher calls `/sbin/shutdown -h +0` directly (no `sudo` wrapper) to halt the system when battery thresholds are breached. This command does not appear in the sudoers whitelist; it relies on the process having shutdown permission via polkit (standard on Ubuntu 22.04+) or on the portal running as root. If you observe shutdown failures, add a polkit rule granting the `zfsnas` user shutdown permission, or add `/sbin/shutdown -h +0` to `ZFSNAS_SYSTEM` and update the code to use `sudo`.
 - **`env DEBIAN_FRONTEND=noninteractive apt-get purge/remove`** — NUT uninstall wraps `apt-get` with the `env` command to suppress interactive prompts. The sudoers entry therefore targets `/usr/bin/env` (not `/usr/bin/apt-get` directly) and must match the exact argument sequence shown in `ZFSNAS_UPS`. The NUT *install* path (`apt-get install -y nut nut-client`) is already covered by the wildcard entry in `ZFSNAS_APT`.
-- **`tee /etc/sudoers.d/zfsnas`** — used by the Sudoers Hardening feature (v6.3.31+) to apply in-portal sudoers changes. Only the portal's own drop-in file is writable; the main `/etc/sudoers` file is never touched. If you do not use the Sudoers Hardening feature you can omit this entry and the `ZFSNAS_SECURITY` alias from the grant line.
+- **`tee /etc/sudoers.d/zfsnas`** — used by the Sudoers Hardening feature (v6.3.31+) to apply in-portal sudoers changes. Only the portal's own drop-in file is writable; the main `/etc/sudoers` file is never touched.
+- **`cat /etc/sudoers.d/zfsnas`** — used by the Sudoers Review diff (v6.3.32+) to read the portal's own sudoers file so the review always shows the accurate current state, including manual edits. Without this, the portal can only compare against the last content it wrote. If you do not use the Sudoers Hardening feature you can omit both entries and the `ZFSNAS_SECURITY` alias from the grant line.
 - **`tee /etc/modprobe.d/zfs.conf` and sysfs tee entries** — used by the ARC Level 1 tuning feature (v6.3.22+) to persist ZFS ARC size limits across reboots and to apply them immediately via kernel sysfs. These are write-only paths; the portal only ever pipes well-formed `options zfs ...` lines or numeric byte values through `tee`.
 - **`zfs send *` / `zfs recv *` / `zfs receive *`** — used by the remote replication feature (snapshot policies and standalone replication tasks) and the local dataset-to-dataset replication feature. `zfs send` streams a snapshot to stdout; `zfs recv`/`zfs receive` reads a stream from stdin. Both are required locally for local replication (`zfs send | zfs recv` piped on the same host). For remote replication and InterLink push, only `zfs send` is run locally — the remote side runs `zfs recv` via SSH under its own service account (no local sudo required for that side). Including both forms (`recv` and `receive`) is necessary because OpenZFS accepts either spelling.
 - **`zfs allow *`** — used by the InterLink push feature and scheduled replication via InterLink servers to delegate ZFS permissions (`snapshot,send,receive,create,mount`) to the service account on every pool. This is required so that `zfs send` / `zfs recv` can be invoked without sudo when the remote side accepts the SSH connection as the non-root service user. The portal always restricts delegation to the service account's own username and to the specific permission set shown above.

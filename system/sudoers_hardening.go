@@ -167,6 +167,61 @@ func ApplySudoers(required string, silencedMissing, silencedExtra []string) erro
 	return nil
 }
 
+// RemoveSudoersWriteAccess rewrites /etc/sudoers.d/zfsnas removing the
+// "tee /etc/sudoers.d/zfsnas" entry so ZNAS can no longer self-modify sudoers,
+// while keeping "cat /etc/sudoers.d/zfsnas" so the diff view still works.
+func RemoveSudoersWriteAccess() error {
+	const teeLine = "/usr/bin/tee /etc/sudoers.d/zfsnas"
+
+	current, err := GetCurrentSudoersContent()
+	if err != nil || current == "" {
+		// Nothing to remove.
+		return nil
+	}
+
+	lines := strings.Split(current, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		norm := normalizeSudoLine(strings.TrimSpace(line))
+		if norm == teeLine {
+			continue
+		}
+		kept = append(kept, line)
+	}
+
+	// Fix orphaned trailing ", \" on the line that preceded the removed entry.
+	for i := 0; i < len(kept); i++ {
+		stripped := strings.TrimRight(kept[i], " ")
+		if !strings.HasSuffix(stripped, ", \\") {
+			continue
+		}
+		nextIsCmd := false
+		for j := i + 1; j < len(kept); j++ {
+			t := strings.TrimSpace(kept[j])
+			if t == "" || strings.HasPrefix(t, "#") {
+				continue
+			}
+			nextIsCmd = strings.HasPrefix(t, "/")
+			break
+		}
+		if !nextIsCmd {
+			kept[i] = strings.TrimRight(stripped[:len(stripped)-3], " ")
+		}
+	}
+
+	content := strings.Join(kept, "\n")
+	if err := validateSudoersContent(content); err != nil {
+		return fmt.Errorf("content validation after removal failed: %w", err)
+	}
+
+	teeCmd := exec.Command("sudo", "tee", "/etc/sudoers.d/zfsnas")
+	teeCmd.Stdin = strings.NewReader(content)
+	if out, err := teeCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tee failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
 // BuildSudoersContent is the exported version of buildSudoersContent.
 func BuildSudoersContent(required string, silencedMissing, silencedExtra []string) string {
 	return buildSudoersContent(required, silencedMissing, silencedExtra)
@@ -331,6 +386,7 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/tee /sys/module/zfs/parameters/zfs_arc_max": "Applies a new ARC maximum immediately via the ZFS sysfs interface without requiring a reboot.",
 	"/usr/bin/tee /sys/module/zfs/parameters/zfs_arc_min": "Applies a new ARC minimum immediately via the ZFS sysfs interface without requiring a reboot.",
 	"/usr/bin/tee /etc/sudoers.d/zfsnas":                 "Lets the portal write its own sudoers file when using the Sudoers Hardening feature. Required so in-app changes continue to work after sudo is restricted.",
+	"/usr/bin/cat /etc/sudoers.d/zfsnas":                 "Lets the portal read its own sudoers file so the Sudoers Review diff is always accurate and detects manual edits (v6.3.32+).",
 	"/usr/sbin/useradd *":                                "Creates the Linux account for a new portal user. Wildcards required for optional --uid/--gid/--no-user-group flags (v3.0.0+).",
 	"/usr/sbin/usermod -aG sambashare *":                 "Adds a user to the sambashare group for SMB access.",
 	"/usr/sbin/userdel -f *":                             "Deletes a portal user's Linux account (force flag covers locked accounts).",
@@ -571,8 +627,11 @@ Cmnd_Alias ZFSNAS_APT = \
 # ── Sudoers self-management (Sudoers Hardening feature) ───────────────────────
 # since v6.3.31 — lets the portal overwrite its own sudoers file when the
 #   Sudoers Hardening feature is enabled in the Prerequisites tab.
+# since v6.3.32 — cat /etc/sudoers.d/zfsnas lets the portal read its own file
+#   so the Sudoers Review diff is always accurate (detects manual edits).
 Cmnd_Alias ZFSNAS_SECURITY = \
-    /usr/bin/tee /etc/sudoers.d/zfsnas
+    /usr/bin/tee /etc/sudoers.d/zfsnas, \
+    /usr/bin/cat /etc/sudoers.d/zfsnas
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \

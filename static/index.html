@@ -4535,6 +4535,7 @@
       </div>
       <button class="modal-close" onclick="closeSudoersReviewModal()">✕</button>
     </div>
+    <div id="sudoers-cache-warning" class="hidden" style="margin:12px 16px 0;padding:10px 14px;background:color-mix(in srgb,#f0b429 12%,transparent);border:1px solid color-mix(in srgb,#f0b429 40%,transparent);border-radius:var(--radius-sm);font-size:13px;color:var(--text);line-height:1.5;"></div>
     <div class="modal-body" style="padding:0;max-height:62vh;overflow-y:auto;">
       <table id="sudoers-review-table" style="width:100%;border-collapse:collapse;">
         <thead style="position:sticky;top:0;z-index:2;background:var(--bg-2);">
@@ -4616,6 +4617,52 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="document.getElementById('modal-sudoers-bootstrap').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Disable Sudoers Hardening Choice Modal -->
+<div class="modal-backdrop hidden" id="modal-sudoers-disable">
+  <div class="modal" style="max-width:560px;width:95%;">
+    <div class="modal-header">
+      <div>
+        <h3 style="margin:0;">Disable Sudoers Hardening</h3>
+        <div style="font-size:13px;color:var(--text-3);margin-top:3px;">Choose how to handle the existing sudoers configuration</div>
+      </div>
+      <button class="modal-close" onclick="document.getElementById('modal-sudoers-disable').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;padding-top:20px;">
+      <!-- Option 1 -->
+      <button id="sudoers-disable-opt1" onclick="sudoersDisableChoose(false)"
+        style="text-align:left;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;cursor:pointer;transition:border-color .15s,background .15s;"
+        onmouseenter="this.style.borderColor='var(--accent-2)';this.style.background='color-mix(in srgb,var(--accent-2) 8%,var(--surface2))'"
+        onmouseleave="this.style.borderColor='var(--border)';this.style.background='var(--surface2)'">
+        <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:6px;">Disable monitoring — keep sudoers as-is</div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;">
+          The ZNAS hardening UI is turned off, but <code>/etc/sudoers.d/zfsnas</code> is left unchanged.
+          ZNAS retains full write access to its sudoers file. You can re-enable the hardening UI at any time.
+        </div>
+      </button>
+      <!-- Option 2 -->
+      <button id="sudoers-disable-opt2" onclick="sudoersDisableChoose(true)"
+        style="text-align:left;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;cursor:pointer;transition:border-color .15s,background .15s;"
+        onmouseenter="this.style.borderColor='var(--accent-danger)';this.style.background='rgba(255,59,48,0.06)'"
+        onmouseleave="this.style.borderColor='var(--border)';this.style.background='var(--surface2)'">
+        <div style="font-size:14px;font-weight:600;color:var(--accent-danger);margin-bottom:6px;">Disable monitoring &amp; remove write access from sudoers</div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;">
+          The hardening UI is turned off <em>and</em> the
+          <code>tee /etc/sudoers.d/zfsnas</code> entry is removed from the sudoers file.
+          ZNAS can no longer self-modify sudoers, which reduces its privilege footprint.
+          <br><br>
+          <span style="color:var(--accent-danger);font-weight:500;">Note:</span>
+          Re-enabling the hardening UI later will require a manual sudoers edit to restore write access
+          (the bootstrap wizard will guide you). The <code>cat</code> entry is preserved so
+          the diff view continues to work.
+        </div>
+      </button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('modal-sudoers-disable').classList.add('hidden')">Cancel</button>
     </div>
   </div>
 </div>
@@ -5807,12 +5854,22 @@ async function loadPrereqs() {
   document.getElementById('zfs-module-warn').classList.toggle('hidden', !prereqData.zfs_module_warn);
 
   // ── Sudo security row ─────────────────────────────────────────────────────
+  // Pre-fetch sudoers status so pending new-template entries are visible here.
+  if (!_sudoersStatus) {
+    try {
+      const _sr = await fetch('/api/sudoers/status');
+      if (_sr.ok) _sudoersStatus = await _sr.json();
+    } catch (_) {}
+  }
+
   const sudo = prereqData.sudo_access || {};
   const sudoMissing = sudo.missing_commands || [];
+  const sudoPendingLines = (_sudoersStatus && _sudoersStatus.pending_missing_lines) || [];
   const sudoCritical = sudo.type === 'none';
   const sudoIncomplete = sudo.type === 'hardened' && sudoMissing.length > 0;
+  const sudoPending   = sudo.type === 'hardened' && sudoMissing.length === 0 && sudoPendingLines.length > 0;
   const sudoWarnDismissed = sudoIncomplete && _isSudoWarnDismissed();
-  const sudoError = sudoCritical || (sudoIncomplete && !sudoWarnDismissed);
+  const sudoError = sudoCritical || sudoPending || (sudoIncomplete && !sudoWarnDismissed);
   let sudoIcon, sudoLabel, sudoLabelColor, sudoDesc;
   if (sudo.type === 'root') {
     sudoIcon = '⚠'; sudoLabelColor = '#f0b429';
@@ -5822,6 +5879,14 @@ async function loadPrereqs() {
     sudoIcon = '✓'; sudoLabelColor = 'var(--accent-3)';
     sudoLabel = 'Sudo — full access (NOPASSWD: ALL)';
     sudoDesc = 'Full passwordless sudo is granted. All ZFS, system, and package operations are available.';
+  } else if (sudo.type === 'hardened' && sudoMissing.length === 0 && sudoPendingLines.length > 0) {
+    sudoIcon = '✕'; sudoLabelColor = 'var(--accent-danger)';
+    sudoLabel = 'Sudo — hardened (new rules pending approval)';
+    const pendingRows = sudoPendingLines.map(c =>
+      `<tr><td style="padding:4px 10px 4px 0;font-family:monospace;font-size:12px;color:var(--accent-danger);vertical-align:top;">${esc(c)}</td><td style="padding:4px 0;font-size:12px;color:var(--text-2);">New — not yet applied to the sudoers file</td></tr>`
+    ).join('');
+    sudoDesc = 'The following commands are required by this version of ZNAS but have not been approved yet. Open <b>Review Sudoers</b> to approve and apply them.'
+      + `<table style="margin-top:8px;border-collapse:collapse;">${pendingRows}</table>`;
   } else if (sudo.type === 'hardened' && sudoMissing.length === 0) {
     sudoIcon = '✓'; sudoLabelColor = 'var(--accent-3)';
     sudoLabel = 'Sudo — hardened (all commands covered)';
@@ -6137,7 +6202,7 @@ function renderSudoersHardeningBtns(el, s) {
   }
 
   // Enabled — single Review button (green = no pending, yellow = pending New lines).
-  const disableBtn = `<button class="btn btn-ghost btn-sm" onclick="enableSudoersHardening(false)" style="font-size:11px;opacity:0.5;padding:2px 7px;" title="Disable Sudoers Hardening">Disable</button>`;
+  const disableBtn = `<button class="btn btn-ghost btn-sm" onclick="openSudoersDisableModal()" style="font-size:11px;opacity:0.5;padding:2px 7px;" title="Disable Sudoers Hardening">Disable</button>`;
   const silLabel = s.silenced_count > 0 ? ` (${s.silenced_count} silenced)` : '';
   const pendingN = (s.missing_count || 0) + (s.extra_count || 0);
   if (pendingN === 0) {
@@ -6154,20 +6219,32 @@ function renderSudoersHardeningBtns(el, s) {
   updatePrereqDot();
 }
 
-async function enableSudoersHardening(on) {
+async function enableSudoersHardening(on, removeWriteAccess) {
   const el = document.getElementById('sudoers-hardening-btns');
   if (el) el.innerHTML = `<span style="font-size:12px;color:var(--text-3);">Saving…</span>`;
   try {
     const r = await fetch('/api/sudoers/enable', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({enabled: on})
+      body: JSON.stringify({enabled: on, remove_write_access: !!removeWriteAccess})
     });
     if (!r.ok) throw new Error((await r.json()).error || 'failed');
   } catch (e) {
     showToast('Sudoers Hardening: ' + e.message, 'error');
   }
   await loadSudoersStatus();
+}
+
+function openSudoersDisableModal() {
+  document.getElementById('modal-sudoers-disable').classList.remove('hidden');
+}
+
+async function sudoersDisableChoose(removeWriteAccess) {
+  document.getElementById('modal-sudoers-disable').classList.add('hidden');
+  await enableSudoersHardening(false, removeWriteAccess);
+  if (removeWriteAccess) {
+    showToast('Sudoers Hardening disabled — write access removed from sudoers.', 'info');
+  }
 }
 
 async function openSudoersReviewModal() {
@@ -6193,6 +6270,16 @@ async function openSudoersReviewModal() {
 }
 
 function renderSudoersDiff(diff) {
+  const warnEl = document.getElementById('sudoers-cache-warning');
+  if (warnEl) {
+    if (diff.cache_warning) {
+      warnEl.textContent = '⚠ ' + diff.cache_warning;
+      warnEl.classList.remove('hidden');
+    } else {
+      warnEl.classList.add('hidden');
+    }
+  }
+
   const matched     = diff.matched_lines || [];
   const missing     = (diff.missing_lines || []).filter(d => !d.silenced);
   const extra       = (diff.extra_lines   || []).filter(d => !d.silenced);
@@ -6360,6 +6447,8 @@ async function applySudoersChanges() {
 
 function closeSudoersReviewModal() {
   document.getElementById('modal-sudoers-review').classList.add('hidden');
+  const warnEl = document.getElementById('sudoers-cache-warning');
+  if (warnEl) warnEl.classList.add('hidden');
   _sudoersRowState = {};
   _sudoersInitialState = {};
 }
