@@ -334,14 +334,14 @@ func execScheduledSnapshot(p *scheduler.Policy, appCfg *config.AppConfig) error 
 		// ZFS permissions just like Push InterLink does before every transfer.
 		if ls := findLinkedServerByHost(appCfg, p.ReplicationHost); ls != nil {
 			if pubKey, keyErr := system.EnsureSSHKey(); keyErr == nil {
-				if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey); err != nil {
+				if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey, ls.TLSFingerprint); err != nil {
 					log.Printf("[replication] policy %s: push SSH key to IL server: %v", p.ID, err)
 				}
 			}
 			if err := system.GrantLocalZFSAccess(); err != nil {
 				log.Printf("[replication] policy %s: local zfs allow: %v", p.ID, err)
 			}
-			if err := system.EnsureRemoteZFSAccess(ls.URL, ls.SharedSecret); err != nil {
+			if err := system.EnsureRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint); err != nil {
 				log.Printf("[replication] policy %s: remote zfs allow: %v", p.ID, err)
 			}
 		}

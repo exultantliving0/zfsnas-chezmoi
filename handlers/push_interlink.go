@@ -31,7 +31,7 @@ func HandlePushInterlinkGetRemotePools(appCfg *config.AppConfig) http.HandlerFun
 			jsonErr(w, http.StatusNotFound, "linked server not found")
 			return
 		}
-		resp, err := system.GetRemotePools(ls.URL, ls.SharedSecret)
+		resp, err := system.GetRemotePools(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
 		if err != nil {
 			jsonErr(w, http.StatusBadGateway, "cannot get remote pools: "+err.Error())
 			return
@@ -77,7 +77,7 @@ func HandlePushInterlinkStart(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "cannot set up SSH key: "+err.Error())
 			return
 		}
-		if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey); err != nil {
+		if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey, ls.TLSFingerprint); err != nil {
 			jsonErr(w, http.StatusBadGateway, "cannot push SSH key to remote: "+err.Error())
 			return
 		}
@@ -91,7 +91,7 @@ func HandlePushInterlinkStart(appCfg *config.AppConfig) http.HandlerFunc {
 		remoteHost := remoteURL.Hostname()
 
 		// Get the remote process user.
-		remoteInfo, err := system.GetRemotePools(ls.URL, ls.SharedSecret)
+		remoteInfo, err := system.GetRemotePools(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
 		if err != nil {
 			jsonErr(w, http.StatusBadGateway, "cannot reach remote server: "+err.Error())
 			return
@@ -107,7 +107,7 @@ func HandlePushInterlinkStart(appCfg *config.AppConfig) http.HandlerFunc {
 		if err := system.GrantLocalZFSAccess(); err != nil {
 			log.Printf("push-interlink: local zfs allow: %v", err)
 		}
-		if err := system.EnsureRemoteZFSAccess(ls.URL, ls.SharedSecret); err != nil {
+		if err := system.EnsureRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint); err != nil {
 			jsonErr(w, http.StatusBadGateway, "cannot grant ZFS permissions on remote: "+err.Error())
 			return
 		}
@@ -201,7 +201,7 @@ func HandlePushInterlinkStartDataset(appCfg *config.AppConfig) http.HandlerFunc 
 			jsonErr(w, http.StatusInternalServerError, "cannot set up SSH key: "+err.Error())
 			return
 		}
-		if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey); err != nil {
+		if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey, ls.TLSFingerprint); err != nil {
 			system.DestroySnapshot(tempSnap) //nolint:errcheck
 			jsonErr(w, http.StatusBadGateway, "cannot push SSH key to remote: "+err.Error())
 			return
@@ -215,7 +215,7 @@ func HandlePushInterlinkStartDataset(appCfg *config.AppConfig) http.HandlerFunc 
 		}
 		remoteHost := remoteURL.Hostname()
 
-		remoteInfo, err := system.GetRemotePools(ls.URL, ls.SharedSecret)
+		remoteInfo, err := system.GetRemotePools(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
 		if err != nil {
 			system.DestroySnapshot(tempSnap) //nolint:errcheck
 			jsonErr(w, http.StatusBadGateway, "cannot reach remote server: "+err.Error())
@@ -233,7 +233,7 @@ func HandlePushInterlinkStartDataset(appCfg *config.AppConfig) http.HandlerFunc 
 			system.DestroySnapshot(tempSnap) //nolint:errcheck
 			log.Printf("push-interlink: local zfs allow: %v", err)
 		}
-		if err := system.EnsureRemoteZFSAccess(ls.URL, ls.SharedSecret); err != nil {
+		if err := system.EnsureRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint); err != nil {
 			system.DestroySnapshot(tempSnap) //nolint:errcheck
 			jsonErr(w, http.StatusBadGateway, "cannot grant ZFS permissions on remote: "+err.Error())
 			return

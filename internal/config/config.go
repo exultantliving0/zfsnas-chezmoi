@@ -126,13 +126,14 @@ type UPSConfig struct {
 
 // LinkedServer represents a remote ZNAS instance trusted for single-click SSO switching.
 type LinkedServer struct {
-	ID           string    `json:"id"`            // our local UUID for this link
-	URL          string    `json:"url"`            // e.g. "https://192.168.2.5:8443"
-	Hostname     string    `json:"hostname"`       // remote hostname, fetched at link time
-	SharedSecret string    `json:"shared_secret"`  // 32-byte hex; HMAC signing key for SSO tokens
-	RemoteID     string    `json:"remote_id"`      // the ID the remote server uses for this link (sent in redirect)
-	LinkedBy     string    `json:"linked_by"`      // admin username who created the link
-	LinkedAt     time.Time `json:"linked_at"`
+	ID             string    `json:"id"`              // our local UUID for this link
+	URL            string    `json:"url"`             // e.g. "https://192.168.2.5:8443"
+	Hostname       string    `json:"hostname"`        // remote hostname, fetched at link time
+	SharedSecret   string    `json:"shared_secret"`   // 32-byte hex; HMAC signing key for SSO tokens
+	RemoteID       string    `json:"remote_id"`       // the ID the remote server uses for this link (sent in redirect)
+	LinkedBy       string    `json:"linked_by"`       // admin username who created the link
+	LinkedAt       time.Time `json:"linked_at"`
+	TLSFingerprint string    `json:"tls_fingerprint,omitempty"` // SHA-256 hex of peer TLS cert (TOFU pin)
 }
 
 // AppConfig holds top-level application settings.
@@ -222,6 +223,7 @@ var (
 	mu        sync.RWMutex
 	totpKey   []byte // AES-256 key for TOTP secret encryption
 	chapKey   []byte // AES-256 key for iSCSI CHAP credential encryption
+	apiKeyKey []byte // AES-256 key for API key encryption
 )
 
 // Init creates the config directory, stores its path, and loads encryption keys.
@@ -240,6 +242,11 @@ func Init(dir string) error {
 	} else {
 		chapKey = key
 	}
+	if key, err := secret.LoadOrCreateKey(filepath.Join(dir, "api_keys.key")); err != nil {
+		log.Printf("[config] warning: could not load/create API key encryption key: %v — API keys stored unencrypted", err)
+	} else {
+		apiKeyKey = key
+	}
 	return nil
 }
 
@@ -249,6 +256,8 @@ func Dir() string {
 }
 
 func loadJSON(filename string, v interface{}) error {
+	mu.RLock()
+	defer mu.RUnlock()
 	path := filepath.Join(configDir, filename)
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -268,7 +277,13 @@ func saveJSON(filename string, v interface{}) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0640)
+	// Write atomically: write to a temp file then rename.
+	// os.Rename is a POSIX atomic operation, so readers always see a complete file.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0640); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // LoadAppConfig loads or initializes application config with defaults.
@@ -370,7 +385,7 @@ type APIKeyEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// LoadAPIKeys loads all API keys from disk.
+// LoadAPIKeys loads all API keys from disk, decrypting key values if encrypted.
 func LoadAPIKeys() ([]APIKeyEntry, error) {
 	var keys []APIKeyEntry
 	if err := loadJSON("api_keys.json", &keys); err != nil {
@@ -379,12 +394,36 @@ func LoadAPIKeys() ([]APIKeyEntry, error) {
 	if keys == nil {
 		keys = []APIKeyEntry{}
 	}
+	// Decrypt key values. Legacy plaintext keys pass through unchanged.
+	if apiKeyKey != nil {
+		for i := range keys {
+			if secret.IsEncrypted(keys[i].Key) {
+				if plain, err := secret.Decrypt(apiKeyKey, keys[i].Key); err == nil {
+					keys[i].Key = plain
+				}
+			}
+		}
+	}
 	return keys, nil
 }
 
-// SaveAPIKeys persists all API keys to disk.
+// SaveAPIKeys persists all API keys to disk, encrypting key values if a key is available.
 func SaveAPIKeys(keys []APIKeyEntry) error {
-	return saveJSON("api_keys.json", keys)
+	if apiKeyKey == nil {
+		return saveJSON("api_keys.json", keys)
+	}
+	// Encrypt on a copy so we don't modify the caller's slice.
+	toWrite := make([]APIKeyEntry, len(keys))
+	copy(toWrite, keys)
+	for i := range toWrite {
+		k := toWrite[i].Key
+		if k != "" && !secret.IsEncrypted(k) {
+			if enc, err := secret.Encrypt(apiKeyKey, k); err == nil {
+				toWrite[i].Key = enc
+			}
+		}
+	}
+	return saveJSON("api_keys.json", toWrite)
 }
 
 // SaveAppConfig persists application config, encrypting CHAP credentials if a key is available.

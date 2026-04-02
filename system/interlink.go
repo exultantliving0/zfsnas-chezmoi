@@ -14,12 +14,64 @@ import (
 	"time"
 )
 
-// interlinkClient skips TLS verification — self-signed certs are normal on a LAN.
-var interlinkClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-	},
+// interlinkClientFor returns an HTTP client for inter-server communication.
+// When tlsFP is empty the client accepts any self-signed cert (used for initial
+// discovery / link setup — TOFU phase). When tlsFP is a hex SHA-256 fingerprint
+// the client verifies that the server presents exactly that certificate, rejecting
+// anything else — this pins the connection after the first contact.
+func interlinkClientFor(tlsFP string) *http.Client {
+	tlsConf := &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	if tlsFP != "" {
+		pinned := tlsFP
+		tlsConf.VerifyConnection = func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return fmt.Errorf("interlink: server presented no TLS certificate")
+			}
+			h := sha256.Sum256(cs.PeerCertificates[0].Raw)
+			got := hex.EncodeToString(h[:])
+			if got != pinned {
+				return fmt.Errorf("interlink: TLS certificate fingerprint mismatch (want %s…, got %s…)",
+					pinned[:16], got[:16])
+			}
+			return nil
+		}
+	}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsConf},
+	}
+}
+
+// captureCertFingerprint returns the SHA-256 fingerprint of the TLS leaf cert
+// at url without verifying the certificate chain.
+func captureCertFingerprint(url string) string {
+	var fp string
+	tlsConf := &tls.Config{ //nolint:gosec
+		InsecureSkipVerify: true,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) > 0 {
+				h := sha256.Sum256(cs.PeerCertificates[0].Raw)
+				fp = hex.EncodeToString(h[:])
+			}
+			return nil
+		},
+	}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsConf},
+	}
+	resp, err := client.Get(url + "/api/interlink/ping")
+	if err != nil {
+		return ""
+	}
+	resp.Body.Close()
+	return fp
+}
+
+// CaptureTLSFingerprint returns the SHA-256 fingerprint of the TLS certificate
+// presented by url. Used to record a peer's fingerprint for TOFU pinning.
+func CaptureTLSFingerprint(url string) string {
+	return captureCertFingerprint(url)
 }
 
 // InterlinkPingResponse is what /api/interlink/ping returns.
@@ -30,8 +82,10 @@ type InterlinkPingResponse struct {
 }
 
 // PingServer calls GET <url>/api/interlink/ping and returns the remote hostname + version.
-func PingServer(url string) (hostname, version string, err error) {
-	resp, err := interlinkClient.Get(url + "/api/interlink/ping")
+// tlsFP is the expected SHA-256 certificate fingerprint for pinning; pass "" on first contact
+// (TOFU) to accept any certificate.
+func PingServer(url, tlsFP string) (hostname, version string, err error) {
+	resp, err := interlinkClientFor(tlsFP).Get(url + "/api/interlink/ping")
 	if err != nil {
 		return "", "", err
 	}
@@ -65,9 +119,10 @@ type AcceptLinkResponse struct {
 }
 
 // SendAcceptLink calls POST <url>/api/interlink/accept-link.
-func SendAcceptLink(url string, req AcceptLinkRequest) (*AcceptLinkResponse, error) {
+// tlsFP pins the TLS certificate; pass "" on first contact (TOFU).
+func SendAcceptLink(url, tlsFP string, req AcceptLinkRequest) (*AcceptLinkResponse, error) {
 	body, _ := json.Marshal(req)
-	resp, err := interlinkClient.Post(url+"/api/interlink/accept-link", "application/json", bytes.NewReader(body))
+	resp, err := interlinkClientFor(tlsFP).Post(url+"/api/interlink/accept-link", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +159,8 @@ type CheckUserResponse struct {
 }
 
 // CheckUserOnRemote calls POST <url>/api/interlink/check-user, signing with sharedSecret.
-func CheckUserOnRemote(remoteURL, sharedSecret, username string) (*CheckUserResponse, error) {
+// tlsFP pins the TLS certificate of the remote server.
+func CheckUserOnRemote(remoteURL, sharedSecret, username, tlsFP string) (*CheckUserResponse, error) {
 	nonce := make([]byte, 8)
 	rand.Read(nonce) //nolint:errcheck
 	req := CheckUserRequest{
@@ -116,7 +172,7 @@ func CheckUserOnRemote(remoteURL, sharedSecret, username string) (*CheckUserResp
 	req.HMAC = checkUserHMAC(sharedSecret, req.Username, req.Timestamp, req.Nonce)
 
 	body, _ := json.Marshal(req)
-	resp, err := interlinkClient.Post(remoteURL+"/api/interlink/check-user", "application/json", bytes.NewReader(body))
+	resp, err := interlinkClientFor(tlsFP).Post(remoteURL+"/api/interlink/check-user", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +232,8 @@ func RemoteUnlinkHMAC(sharedSecret, remoteID string, timestamp int64, nonce stri
 
 // SendRemoteUnlink calls POST <url>/api/interlink/remote-unlink, asking the remote
 // server to remove us from its linked-server list. Errors are ignored (best-effort).
-func SendRemoteUnlink(remoteURL, sharedSecret, remoteID string) error {
+// tlsFP pins the TLS certificate of the remote server.
+func SendRemoteUnlink(remoteURL, sharedSecret, remoteID, tlsFP string) error {
 	nonce := make([]byte, 8)
 	rand.Read(nonce) //nolint:errcheck
 	ts := time.Now().Unix()
@@ -187,7 +244,7 @@ func SendRemoteUnlink(remoteURL, sharedSecret, remoteID string) error {
 		HMAC:      RemoteUnlinkHMAC(sharedSecret, remoteID, ts, hex.EncodeToString(nonce)),
 	}
 	body, _ := json.Marshal(req)
-	resp, err := interlinkClient.Post(remoteURL+"/api/interlink/remote-unlink", "application/json", bytes.NewReader(body))
+	resp, err := interlinkClientFor(tlsFP).Post(remoteURL+"/api/interlink/remote-unlink", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

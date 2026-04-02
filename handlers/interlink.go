@@ -145,9 +145,20 @@ func HandleInterlinkAcceptLink(appCfg *config.AppConfig) http.HandlerFunc {
 		})
 
 		// Ensure our local user has ZFS access, then push our SSH key back to the caller.
-		// This means both sides set up ZFS permissions during the link handshake.
-		callerURL, callerSecret := req.CallerURL, req.SharedSecret
+		// Capture the caller's TLS fingerprint (TOFU) and store it for future pinning.
+		callerURL, callerSecret, callerLSID := req.CallerURL, req.SharedSecret, localID
 		go func() {
+			// TOFU: capture and pin the caller's certificate on first outbound contact.
+			callerFP := system.CaptureTLSFingerprint(callerURL)
+			if callerFP != "" {
+				for i := range appCfg.InterLink {
+					if appCfg.InterLink[i].ID == callerLSID {
+						appCfg.InterLink[i].TLSFingerprint = callerFP
+						config.SaveAppConfig(appCfg) //nolint:errcheck
+						break
+					}
+				}
+			}
 			if err := system.GrantLocalZFSAccess(); err != nil {
 				log.Printf("interlink accept-link: zfs allow failed: %v", err)
 			}
@@ -156,7 +167,7 @@ func HandleInterlinkAcceptLink(appCfg *config.AppConfig) http.HandlerFunc {
 				log.Printf("interlink accept-link: SSH key setup failed: %v", err)
 				return
 			}
-			if err := system.SendPushSSHKey(callerURL, callerSecret, pubKey); err != nil {
+			if err := system.SendPushSSHKey(callerURL, callerSecret, pubKey, callerFP); err != nil {
 				log.Printf("interlink accept-link: push SSH key to %s failed: %v", callerURL, err)
 			}
 		}()
@@ -302,14 +313,14 @@ func HandleInterlinkList(appCfg *config.AppConfig) http.HandlerFunc {
 			ls := ls
 			go func() {
 				if s, ok := cachedStatus(ls.ID); ok {
-					zfsAccess, _ := system.GetRemoteZFSAccess(ls.URL, ls.SharedSecret)
+					zfsAccess, _ := system.GetRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
 					ch <- result{ls.ID, s.Online, s.RemoteVersion, zfsAccess}
 					return
 				}
-				h, v, err := system.PingServer(ls.URL)
+				h, v, err := system.PingServer(ls.URL, ls.TLSFingerprint)
 				online := err == nil && h != ""
 				setStatus(ls.ID, serverStatus{Online: online, RemoteVersion: v, FetchedAt: time.Now()})
-				zfsAccess, _ := system.GetRemoteZFSAccess(ls.URL, ls.SharedSecret)
+				zfsAccess, _ := system.GetRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
 				ch <- result{ls.ID, online, v, zfsAccess}
 			}()
 		}
@@ -366,12 +377,13 @@ func HandleInterlinkLink(appCfg *config.AppConfig) http.HandlerFunc {
 			}
 		}
 
-		// Verify reachability and get hostname.
-		remoteHostname, _, err := system.PingServer(req.URL)
+		// Verify reachability, get hostname, and capture TLS fingerprint (TOFU pin).
+		remoteHostname, _, err := system.PingServer(req.URL, "")
 		if err != nil {
 			jsonErr(w, http.StatusServiceUnavailable, "cannot reach remote server: "+err.Error())
 			return
 		}
+		remoteFP := system.CaptureTLSFingerprint(req.URL)
 
 		localHostname, _ := os.Hostname()
 		if localHostname == "" {
@@ -381,7 +393,7 @@ func HandleInterlinkLink(appCfg *config.AppConfig) http.HandlerFunc {
 		localID := newID()
 		secret := system.GenerateSharedSecret()
 
-		resp, err := system.SendAcceptLink(req.URL, system.AcceptLinkRequest{
+		resp, err := system.SendAcceptLink(req.URL, remoteFP, system.AcceptLinkRequest{
 			CallerURL:      localURL(r, appCfg),
 			CallerHostname: localHostname,
 			CallerID:       localID,
@@ -400,13 +412,14 @@ func HandleInterlinkLink(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 
 		ls := config.LinkedServer{
-			ID:           localID,
-			URL:          req.URL,
-			Hostname:     remoteHostname,
-			SharedSecret: secret,
-			RemoteID:     resp.RemoteID,
-			LinkedBy:     sess.Username,
-			LinkedAt:     time.Now(),
+			ID:             localID,
+			URL:            req.URL,
+			Hostname:       remoteHostname,
+			SharedSecret:   secret,
+			RemoteID:       resp.RemoteID,
+			LinkedBy:       sess.Username,
+			LinkedAt:       time.Now(),
+			TLSFingerprint: remoteFP,
 		}
 		appCfg.InterLink = append(appCfg.InterLink, ls)
 		if err := config.SaveAppConfig(appCfg); err != nil {
@@ -421,7 +434,7 @@ func HandleInterlinkLink(appCfg *config.AppConfig) http.HandlerFunc {
 			log.Printf("interlink link: zfs allow failed: %v", err)
 		}
 		if pubKey, err := system.EnsureSSHKey(); err == nil {
-			if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey); err != nil {
+			if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey, ls.TLSFingerprint); err != nil {
 				log.Printf("interlink link: push SSH key to %s failed: %v", ls.URL, err)
 			}
 		} else {
@@ -477,7 +490,7 @@ func HandleInterlinkUnlink(appCfg *config.AppConfig) http.HandlerFunc {
 
 		// Best-effort: tell the remote to remove us from its list too.
 		if removed.RemoteID != "" {
-			go system.SendRemoteUnlink(removed.URL, removed.SharedSecret, removed.RemoteID) //nolint:errcheck
+			go system.SendRemoteUnlink(removed.URL, removed.SharedSecret, removed.RemoteID, removed.TLSFingerprint) //nolint:errcheck
 		}
 
 		audit.Log(audit.Entry{
@@ -728,7 +741,7 @@ func HandleInterlinkSwitch(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 
-		checkResp, err := system.CheckUserOnRemote(ls.URL, ls.SharedSecret, sess.Username)
+		checkResp, err := system.CheckUserOnRemote(ls.URL, ls.SharedSecret, sess.Username, ls.TLSFingerprint)
 		if err != nil || !checkResp.Exists {
 			jsonOK(w, map[string]interface{}{
 				"user_exists":  false,

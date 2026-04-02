@@ -108,7 +108,8 @@ func PushSSHKeyHMAC(sharedSecret, publicKey, processUser string, timestamp int64
 
 // SendPushSSHKey sends our SSH public key and process username to a remote server over HMAC-auth.
 // The remote will add the key to authorized_keys and grant ZFS interlink permissions to our process user.
-func SendPushSSHKey(remoteURL, sharedSecret, publicKey string) error {
+// tlsFP pins the TLS certificate of the remote server.
+func SendPushSSHKey(remoteURL, sharedSecret, publicKey, tlsFP string) error {
 	nonce := make([]byte, 8)
 	rand.Read(nonce) //nolint:errcheck
 	ts := time.Now().Unix()
@@ -122,7 +123,7 @@ func SendPushSSHKey(remoteURL, sharedSecret, publicKey string) error {
 		HMAC:        PushSSHKeyHMAC(sharedSecret, publicKey, pu, ts, nh),
 	}
 	body, _ := json.Marshal(req)
-	resp, err := interlinkClient.Post(remoteURL+"/api/interlink/push-ssh-key", "application/json", bytes.NewReader(body))
+	resp, err := interlinkClientFor(tlsFP).Post(remoteURL+"/api/interlink/push-ssh-key", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -235,7 +236,8 @@ func CheckZFSAccessHMAC(sharedSecret string, timestamp int64, nonce string) stri
 
 // GetRemoteZFSAccess asks a linked remote server whether its own process user has the
 // required ZFS permissions on its pools (i.e. whether zfs recv will succeed).
-func GetRemoteZFSAccess(remoteURL, sharedSecret string) (bool, error) {
+// tlsFP pins the TLS certificate of the remote server.
+func GetRemoteZFSAccess(remoteURL, sharedSecret, tlsFP string) (bool, error) {
 	nonce := make([]byte, 8)
 	rand.Read(nonce) //nolint:errcheck
 	ts := time.Now().Unix()
@@ -246,7 +248,7 @@ func GetRemoteZFSAccess(remoteURL, sharedSecret string) (bool, error) {
 		HMAC:      CheckZFSAccessHMAC(sharedSecret, ts, nh),
 	}
 	body, _ := json.Marshal(req)
-	resp, err := interlinkClient.Post(remoteURL+"/api/interlink/check-zfs-access", "application/json", bytes.NewReader(body))
+	resp, err := interlinkClientFor(tlsFP).Post(remoteURL+"/api/interlink/check-zfs-access", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return false, err
 	}
@@ -278,7 +280,8 @@ func GrantZFSAccessHMAC(sharedSecret string, timestamp int64, nonce string) stri
 
 // EnsureRemoteZFSAccess asks the remote server to run zfs allow on all its pools.
 // Called before each push so newly-created pools on the target are always covered.
-func EnsureRemoteZFSAccess(remoteURL, sharedSecret string) error {
+// tlsFP pins the TLS certificate of the remote server.
+func EnsureRemoteZFSAccess(remoteURL, sharedSecret, tlsFP string) error {
 	nonce := make([]byte, 8)
 	rand.Read(nonce) //nolint:errcheck
 	ts := time.Now().Unix()
@@ -289,7 +292,7 @@ func EnsureRemoteZFSAccess(remoteURL, sharedSecret string) error {
 		HMAC:      GrantZFSAccessHMAC(sharedSecret, ts, nh),
 	}
 	body, _ := json.Marshal(req)
-	resp, err := interlinkClient.Post(remoteURL+"/api/interlink/grant-zfs-access", "application/json", bytes.NewReader(body))
+	resp, err := interlinkClientFor(tlsFP).Post(remoteURL+"/api/interlink/grant-zfs-access", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -339,7 +342,8 @@ func RemotePoolsHMAC(sharedSecret string, timestamp int64, nonce string) string 
 
 // GetRemotePools fetches pool names and the process user from a linked remote server.
 // A 5-second context deadline is applied so a down server fails fast.
-func GetRemotePools(remoteURL, sharedSecret string) (*RemotePoolsResponse, error) {
+// tlsFP pins the TLS certificate of the remote server.
+func GetRemotePools(remoteURL, sharedSecret, tlsFP string) (*RemotePoolsResponse, error) {
 	nonce := make([]byte, 8)
 	rand.Read(nonce) //nolint:errcheck
 	ts := time.Now().Unix()
@@ -357,7 +361,7 @@ func GetRemotePools(remoteURL, sharedSecret string) (*RemotePoolsResponse, error
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := interlinkClient.Do(httpReq)
+	resp, err := interlinkClientFor(tlsFP).Do(httpReq)
 	if err != nil {
 		return nil, err
 	}

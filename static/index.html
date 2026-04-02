@@ -15747,7 +15747,7 @@ async function restartForCert() {
 
 // ===== Helpers =====
 function esc(s) {
-  return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/\\/g,'&#92;');
 }
 
 // Returns a hard-drive/SSD SVG icon string at the given pixel size.
@@ -20626,8 +20626,7 @@ function showConfirm({ title, body, confirmText = 'Confirm', danger = false, onC
   document.getElementById('gc-body').innerHTML = body;
   const btn = document.getElementById('gc-confirm-btn');
   btn.textContent = confirmText;
-  btn.style.background = danger ? 'var(--accent-danger)' : 'var(--accent)';
-  btn.style.color = '#fff';
+  btn.className = danger ? 'btn btn-danger' : 'btn btn-primary';
   btn.disabled = false;
   const hdr = document.getElementById('gc-header');
   if (danger) {
