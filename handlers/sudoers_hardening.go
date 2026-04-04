@@ -166,6 +166,36 @@ func HandleEnableSudoersHardening(appCfg *config.AppConfig) http.HandlerFunc {
 	}
 }
 
+// HandleApplySudoAll writes a minimal "sudo all" sudoers entry and disables hardening.
+// POST /api/sudoers/apply-sudo-all
+func HandleApplySudoAll(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := system.ApplySudoAll(); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "apply sudo-all failed: "+err.Error())
+			return
+		}
+
+		appCfg.SudoersHardeningEnabled = false
+		appCfg.SudoersAppliedContent = system.SudoAllContent()
+		appCfg.SudoersAppliedHash = ""
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionUpdateSudoers,
+			Result:  audit.ResultOK,
+			Details: fmt.Sprintf("sudoers replaced with unrestricted sudo-all by %s", sess.Username),
+		})
+
+		jsonOK(w, map[string]bool{"ok": true})
+	}
+}
+
 // HandleApplySudoers assembles and writes the sudoers file from approved changes.
 // POST /api/sudoers/apply
 // Body: { "silenced_missing": [...], "silenced_extra": [...], "pending_missing": [...], "pending_extra": [...] }

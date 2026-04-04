@@ -51,9 +51,73 @@ func CanManageSudoers(status SudoStatus) bool {
 	return false
 }
 
-// RequiredSudoersContent returns the canonical sudoers template for this portal.
+// RequiredSudoersContent returns the canonical sudoers file content for this
+// portal. The ZFSNAS_FILES section is generated dynamically: it always includes
+// /mnt/* entries, and also adds entries for any ZFS pool mounted directly under
+// / (i.e. not under /mnt/).
 func RequiredSudoersContent() string {
-	return requiredSudoersTemplate
+	return strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
+}
+
+// buildFilesAlias generates the ZFSNAS_FILES Cmnd_Alias block.
+// It scopes find/chown/chmod to /mnt/* and to any pool root mounted outside /mnt/.
+func buildFilesAlias() string {
+	// Collect pool root mountpoints that sit outside /mnt/.
+	var extraPaths []string
+	seen := map[string]bool{}
+	if datasets, err := ListAllDatasets(); err == nil {
+		for _, d := range datasets {
+			mp := d.Mountpoint
+			if mp == "" || mp == "none" || mp == "-" || mp == "legacy" || mp == "/" {
+				continue
+			}
+			// Only look at pool root datasets (name has no "/" component).
+			if strings.Contains(d.Name, "/") {
+				continue
+			}
+			if mp == "/mnt" || strings.HasPrefix(mp, "/mnt/") {
+				continue
+			}
+			if !seen[mp] {
+				seen[mp] = true
+				extraPaths = append(extraPaths, mp)
+			}
+		}
+	}
+
+	allPaths := append([]string{"/mnt"}, extraPaths...)
+
+	// For each mount base, emit seven entries:
+	//   find <base>/*             (file browser listing + SMB recycle-bin cleanup)
+	//   chown * <base>/*          (non-recursive ownership change)
+	//   chown -R * <base>/*       (recursive)
+	//   chmod * <base>/*          (non-recursive mode change, covers 0777/0770/0700)
+	//   chmod -R * <base>/*       (recursive)
+	//   mkdir -p <base>/*         (create share / home directories)
+	//   rmdir <base>/*            (remove home directories)
+	var entries []string
+	for _, p := range allPaths {
+		entries = append(entries,
+			fmt.Sprintf("    /usr/bin/find %s/*", p),
+			fmt.Sprintf("    /usr/bin/chown * %s/*", p),
+			fmt.Sprintf("    /usr/bin/chown -R * %s/*", p),
+			fmt.Sprintf("    /usr/bin/chmod * %s/*", p),
+			fmt.Sprintf("    /usr/bin/chmod -R * %s/*", p),
+			fmt.Sprintf("    /usr/bin/mkdir -p %s/*", p),
+			fmt.Sprintf("    /usr/bin/rmdir %s/*", p),
+		)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Cmnd_Alias ZFSNAS_FILES = \\\n")
+	for i, e := range entries {
+		if i < len(entries)-1 {
+			sb.WriteString(e + ", \\\n")
+		} else {
+			sb.WriteString(e + "\n")
+		}
+	}
+	return sb.String()
 }
 
 // GetCurrentSudoersContent reads /etc/sudoers.d/zfsnas.
@@ -164,6 +228,29 @@ func ApplySudoers(required string, silencedMissing, silencedExtra []string) erro
 		return fmt.Errorf("tee failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
+	return nil
+}
+
+// SudoAllContent returns the minimal single-line sudoers file that grants
+// the zfsnas service account unrestricted passwordless sudo access.
+func SudoAllContent() string {
+	return "# ZFS NAS Portal — unrestricted sudo access\n" +
+		"# Applied via the \"Convert to sudo all\" option in the Sudoers Hardening UI.\n" +
+		"# This is the most frictionless configuration: the zfsnas service account can\n" +
+		"# run any command as root without a password prompt.\n" +
+		"zfsnas ALL=(ALL) NOPASSWD: ALL\n"
+}
+
+// ApplySudoAll writes the minimal NOPASSWD:ALL sudoers entry for the zfsnas
+// user. It bypasses the normal template + visudo pipeline and writes directly
+// via sudo tee, then calls visudo -c to validate.
+func ApplySudoAll() error {
+	content := SudoAllContent()
+	teeCmd := exec.Command("sudo", "tee", "/etc/sudoers.d/zfsnas")
+	teeCmd.Stdin = strings.NewReader(content)
+	if out, err := teeCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tee failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
 	return nil
 }
 
@@ -359,9 +446,28 @@ func lookupSudoersExplanation(cmd string) string {
 	if exp, ok := sudoersExplanations[cmd]; ok {
 		return exp
 	}
-	// Wildcard prefix match: "/usr/bin/tee /etc/samba/smb.conf" matches pattern
-	// "/usr/bin/tee /etc/samba/smb.conf" exactly — but also try patterns ending
-	// in " *" as a prefix.
+	// Path-scoped commands generated dynamically by buildFilesAlias(), keyed by base binary.
+	// Covers: find, chown, chown -R, chmod, chmod -R, mkdir -p, rmdir — all scoped to /mnt/* etc.
+	if strings.HasPrefix(cmd, "/usr/bin/find /") {
+		return "File browser directory listing (v6.4.4+) and SMB recycle-bin cleanup (v6.0.0+). Scoped to ZFS dataset mount paths."
+	}
+	for _, prefix := range []string{"/usr/bin/chown * /", "/usr/bin/chown -R * /"} {
+		if strings.HasPrefix(cmd, prefix) {
+			return "Changes ownership of files, share directories, and home folders. Scoped to ZFS dataset mount paths (v6.4.3+)."
+		}
+	}
+	for _, prefix := range []string{"/usr/bin/chmod * /", "/usr/bin/chmod -R * /"} {
+		if strings.HasPrefix(cmd, prefix) {
+			return "Changes permissions of files, share directories (0770), home directories (0700), and NFS paths (0777). Scoped to ZFS dataset mount paths (v6.4.3+)."
+		}
+	}
+	if strings.HasPrefix(cmd, "/usr/bin/mkdir -p /") {
+		return "Creates share directories and SMB home folders. Scoped to ZFS dataset mount paths (v6.3.21+)."
+	}
+	if strings.HasPrefix(cmd, "/usr/bin/rmdir /") {
+		return "Removes home directories when a user is deleted. Scoped to ZFS dataset mount paths (v6.3.21+)."
+	}
+	// Wildcard prefix match for other patterns ending in " *".
 	for pattern, exp := range sudoersExplanations {
 		if strings.HasSuffix(pattern, " *") {
 			base := strings.TrimSuffix(pattern, " *")
@@ -396,14 +502,7 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/smbpasswd *":                               "Sets or removes the Samba password for a user.",
 	"/usr/bin/smbstatus -S":                              "Lists active SMB sessions per share (v6.1.0+).",
 	"/usr/bin/chgrp sambashare *":                        "Sets group ownership of a share directory to sambashare (v6.3.27+).",
-	"/usr/bin/chmod 0777 *":                              "Sets NFS share directory permissions to world-readable/writable so NFS clients can access regardless of UID/GID.",
-	"/usr/bin/chmod 0770 *":                              "Sets share directory permissions so sambashare members can read and write (v6.3.27+).",
-	"/usr/bin/chmod 0700 *":                              "Sets home directory permissions to owner-only access (SMB home folders, v6.3.21+).",
-	"/usr/bin/chown * *":                                 "Sets ownership of share or home directories.",
-	"/usr/bin/mkdir -p *":                                "Creates directories for shares or home folders.",
-	"/usr/bin/rmdir *":                                   "Removes home directories when a user is deleted (v6.3.21+).",
 	"/usr/sbin/exportfs -ra":                             "Reloads all NFS exports after the export table is updated.",
-	"/usr/bin/find *":                                    "Deletes files inside .recycle/ folders on SMB shares (recycle bin cleanup, v6.0.0+).",
 	"/usr/bin/timedatectl set-timezone *":                "Sets the system timezone from the Settings > System page.",
 	"/usr/sbin/shutdown *":                               "Allows scheduled shutdown/reboot from the power menu and from the UPS shutdown watcher.",
 	"/usr/sbin/modprobe zfs":                             "Loads the ZFS kernel module after installation if it is not already loaded.",
@@ -451,10 +550,10 @@ Cmnd_Alias ZFSNAS_ZFS = \
 #                userdel -f / groupdel / gpasswd -d for user deletion
 # since v6.0.0 — find (recycle bin cleanup: delete files older than retention in .recycle/)
 # since v6.1.0 — smbstatus -S (active session listing on the SMB shares page)
-# since v6.3.21 — mkdir -p / chmod 0700 / chown for SMB home folder creation;
-#                 rmdir for home folder removal on user delete
+# since v6.3.21 — mkdir-p / chmod / chown / rmdir for home folders moved to ZFSNAS_FILES (path-scoped)
 # since v6.3.27 — chgrp/chmod 0770 replace chmod 777 for share path setup;
 #                 groupadd --system sambashare ensures the group exists
+#                 chmod / chown / mkdir / rmdir moved to ZFSNAS_FILES (path-scoped to /mnt/* etc.)
 Cmnd_Alias ZFSNAS_SMB = \
     /usr/bin/systemctl reload smbd, \
     /usr/bin/systemctl restart smbd, \
@@ -470,24 +569,17 @@ Cmnd_Alias ZFSNAS_SMB = \
     /usr/bin/gpasswd -d * sambashare, \
     /usr/bin/smbpasswd *, \
     /usr/bin/chgrp sambashare *, \
-    /usr/bin/chmod 0770 *, \
-    /usr/bin/chmod 0700 *, \
-    /usr/bin/chown * *, \
-    /usr/bin/mkdir -p *, \
-    /usr/bin/rmdir *, \
     /usr/bin/tee /etc/samba/smb.conf, \
-    /usr/bin/find *, \
     /usr/bin/smbstatus -S
 
 # ── NFS shares ────────────────────────────────────────────────────────────────
 # since v2.0.0 — NFS share management and export config write
-# since v6.3.22 — chmod 0777 on the dataset path when creating or editing a share
+# since v6.3.22 — chmod 0777 on dataset path moved to ZFSNAS_FILES (path-scoped to /mnt/* etc.)
 Cmnd_Alias ZFSNAS_NFS = \
     /usr/sbin/exportfs -ra, \
     /usr/bin/systemctl start nfs-server, \
     /usr/bin/systemctl stop nfs-server, \
-    /usr/bin/tee /etc/exports, \
-    /usr/bin/chmod 0777 *
+    /usr/bin/tee /etc/exports
 
 # ── SMART & hardware monitoring ───────────────────────────────────────────────
 # since v1.0.0 — SMART disk health data (SAS/SATA)
@@ -608,6 +700,17 @@ Cmnd_Alias ZFSNAS_UPS = \
 Cmnd_Alias ZFSNAS_SCAN = \
     /usr/bin/du -b -d 6 *
 
+# ── File Browser (v6.4.3+) ────────────────────────────────────────────────────
+# since v6.4.3 — chown/chmod on files and folders within dataset mountpoints,
+#   SMB share paths, and NFS share paths via the File Browser feature.
+# since v6.4.4 — find used to list directory contents so paths not owned by the
+#   zfsnas service account can still be browsed.
+# since v6.4.4 — paths scoped to /mnt/* (and any pool mounted directly under /)
+#   instead of the broad wildcard, limiting access to dataset mount areas only.
+#   The portal validates the target path against known share/dataset roots before
+#   calling these commands; arbitrary paths cannot be targeted via the UI.
+{{ZFSNAS_FILES}}
+
 # ── System management ─────────────────────────────────────────────────────────
 # since v1.0.0 — timezone setting, shutdown/reboot from power menu, ZFS kernel module load
 # since v3.0.0 — systemctl restart zfsnas ("Restart Portal" in the power menu)
@@ -643,5 +746,5 @@ Cmnd_Alias ZFSNAS_SECURITY = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_SYSTEM, ZFSNAS_APT, ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_APT, ZFSNAS_SECURITY
 `

@@ -2140,6 +2140,86 @@
 </div>
 
 <!-- ===== UPS Feature Info Modal ===== -->
+<!-- Security Info Modal -->
+<div class="modal-backdrop hidden" id="modal-security-info" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal" style="max-width:620px;width:95%;">
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:24px;line-height:1;">🛡️</span>
+        <div>
+          <h3 style="margin:0;">ZNAS Security Overview</h3>
+          <div style="font-size:13px;color:var(--text-3);margin-top:2px;">Security features built into the portal</div>
+        </div>
+      </div>
+      <button class="modal-close" onclick="document.getElementById('modal-security-info').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;max-height:72vh;overflow-y:auto;">
+
+      <!-- Session Auth + Roles -->
+      <div style="background:color-mix(in srgb,#8b5cf6 10%,var(--surface2));border:1px solid color-mix(in srgb,#8b5cf6 35%,var(--border));border-radius:var(--radius);padding:14px 16px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+          <span style="font-size:16px;">🪪</span>
+          <span style="font-weight:600;color:#8b5cf6;font-size:14px;">Session Authentication &amp; Role-Based Access</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;">
+          Every action requires a login session. Four roles control what each user can do:
+          <div style="margin-top:7px;display:flex;flex-direction:column;gap:3px;">
+            <div><span style="color:#f59e0b;font-weight:600;">Admin</span> — full access to all features including settings and user management.</div>
+            <div><span style="color:#22c55e;font-weight:600;">Standard</span> — configurable per-feature permissions (11 individual flags).</div>
+            <div><span style="color:#3b82f6;font-weight:600;">Read-Only</span> — can view all pages but cannot make any changes.</div>
+            <div><span style="color:var(--text-3);font-weight:600;">SMB-Only</span> — no portal access; account used only for SMB file share authentication.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2FA -->
+      <div style="background:color-mix(in srgb,#f59e0b 10%,var(--surface2));border:1px solid color-mix(in srgb,#f59e0b 35%,var(--border));border-radius:var(--radius);padding:14px 16px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+          <span style="font-size:16px;">📲</span>
+          <span style="font-weight:600;color:#f59e0b;font-size:14px;">Two-Factor Authentication (TOTP)</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;">Per-user optional 2FA using RFC 6238 time-based one-time passwords. Works with any standard authenticator app (Google Authenticator, Authy, etc.). When enabled, login requires both a password and a 6-digit rotating code.</div>
+      </div>
+
+      <!-- ZFS Encryption -->
+      <div style="background:color-mix(in srgb,#22c55e 10%,var(--surface2));border:1px solid color-mix(in srgb,#22c55e 35%,var(--border));border-radius:var(--radius);padding:14px 16px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+          <span style="font-size:16px;">🔒</span>
+          <span style="font-weight:600;color:#22c55e;font-size:14px;">ZFS Native Encryption — Data at Rest</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;">Pools and datasets can be encrypted with AES-256-GCM (ZFS native). Encryption keys are stored as raw key files in <code style="background:var(--surface);padding:1px 5px;border-radius:3px;font-size:12px;">config/keys/</code> and loaded automatically at startup. Keys can be generated, imported, exported, or deleted from Settings → Key Management.</div>
+      </div>
+
+      <!-- Sudoers -->
+      <div style="background:color-mix(in srgb,#ef4444 10%,var(--surface2));border:1px solid color-mix(in srgb,#ef4444 35%,var(--border));border-radius:var(--radius);padding:14px 16px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <span style="font-size:16px;">🧱</span>
+          <span style="font-weight:600;color:#ef4444;font-size:14px;">Every admin command using sudo</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;margin-bottom:10px;">ZNAS requires elevated privileges for ZFS, disk, SMB, NFS and system operations. Three modes are available to control how that access is granted:</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="background:color-mix(in srgb,#22c55e 12%,var(--surface));border:1px solid color-mix(in srgb,#22c55e 30%,var(--border));border-radius:var(--radius-sm);padding:10px 12px;">
+            <div style="font-weight:600;color:#22c55e;font-size:13px;margin-bottom:3px;">sudo:all — Recommended for normal deployments</div>
+            <div style="font-size:12px;color:var(--text-2);line-height:1.5;">A single line grants the ZNAS account unrestricted passwordless sudo. Completely frictionless: no approval steps when new features are installed or when ZNAS is updated. Use this unless you have a specific compliance requirement.</div>
+          </div>
+          <div style="background:color-mix(in srgb,#f59e0b 12%,var(--surface));border:1px solid color-mix(in srgb,#f59e0b 30%,var(--border));border-radius:var(--radius-sm);padding:10px 12px;">
+            <div style="font-weight:600;color:#f59e0b;font-size:13px;margin-bottom:3px;">UI Managed Sudoers — Easy incremental approval</div>
+            <div style="font-size:12px;color:var(--text-2);line-height:1.5;">ZNAS manages its own <code style="background:var(--surface2);padding:1px 4px;border-radius:3px;">sudoers</code> file and shows a diff whenever a new feature introduces a new command. Each command is individually approved or silenced from the portal UI. Good when you want visibility without full manual control.</div>
+          </div>
+          <div style="background:color-mix(in srgb,#ef4444 12%,var(--surface));border:1px solid color-mix(in srgb,#ef4444 30%,var(--border));border-radius:var(--radius-sm);padding:10px 12px;">
+            <div style="font-weight:600;color:#ef4444;font-size:13px;margin-bottom:3px;">Manual root-only sudoers — High security environments</div>
+            <div style="font-size:12px;color:var(--text-2);line-height:1.5;">ZNAS has no write access to its own sudoers file. All changes must be made manually by the root user. Requires a manual sudoers edit after every ZNAS update that introduces new commands. Use in environments where every privilege grant must go through a change-control process.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="document.getElementById('modal-security-info').classList.add('hidden')">Got it</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="modal-ups-info" onclick="if(event.target===this)this.classList.add('hidden')">
   <div class="modal" style="max-width:520px;">
     <div class="modal-header">
@@ -2539,9 +2619,27 @@
         <label>Role <i class="info-tip tip-down" data-tip="Admin: full access to all portal features including settings and user management.&#10;&#10;Read-Only: can view all pages but cannot make changes.&#10;&#10;SMB-Only: no portal login — this account is used only for SMB file share authentication (Samba)."></i></label>
         <select id="new-role" onchange="onNewRoleChange()">
           <option value="admin">Admin — full access</option>
+          <option value="standard">Standard — granular permissions</option>
           <option value="read-only">Read-Only — browse only</option>
           <option value="smb-only">SMB-Only — file shares only (no portal login)</option>
         </select>
+      </div>
+      <!-- Standard user permissions panel — shown only when role = standard -->
+      <div id="new-standard-perms" style="display:none;margin-bottom:16px;padding:14px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-2);">Capabilities</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-terminal"            style="accent-color:var(--accent-2);"> Terminal</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-review-sudoers"      style="accent-color:var(--accent-2);"> Review Sudoers</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-browse-files"         style="accent-color:var(--accent-2);"> Browse Files</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-pool-dataset"  style="accent-color:var(--accent-2);"> Pool &amp; Datasets</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-smb"           style="accent-color:var(--accent-2);"> SMB Shares</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-nfs"           style="accent-color:var(--accent-2);"> NFS Shares</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-iscsi"         style="accent-color:var(--accent-2);"> iSCSI Shares</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-protection"    style="accent-color:var(--accent-2);"> Protection Policies</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-snapshots"     style="accent-color:var(--accent-2);"> Snapshots</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-edit-settings"        style="accent-color:var(--accent-2);"> Edit Settings</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-interlink"     style="accent-color:var(--accent-2);"> Manage Interlink</label>
+        </div>
       </div>
       <div id="new-password-wrap" class="form-group">
         <label id="new-password-label">Password</label>
@@ -2706,10 +2804,28 @@
         <label>Role</label>
         <select id="eu-role" onchange="onEditRoleChange()">
           <option value="admin">Admin — full access</option>
+          <option value="standard">Standard — granular permissions</option>
           <option value="read-only">Read-Only — browse only</option>
           <option value="smb-only">SMB-Only — file shares only (no portal login)</option>
         </select>
         <div id="eu-role-self-hint" class="hidden" style="font-size:12px;color:var(--text-3);margin-top:4px;">Role cannot be changed for your own account.</div>
+      </div>
+      <!-- Standard user permissions panel — shown only when role = standard -->
+      <div id="eu-standard-perms" style="display:none;margin-bottom:16px;padding:14px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-2);">Capabilities</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-terminal"            style="accent-color:var(--accent-2);"> Terminal</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-review-sudoers"      style="accent-color:var(--accent-2);"> Review Sudoers</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-browse-files"         style="accent-color:var(--accent-2);"> Browse Files</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-pool-dataset"  style="accent-color:var(--accent-2);"> Pool &amp; Datasets</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-smb"           style="accent-color:var(--accent-2);"> SMB Shares</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-nfs"           style="accent-color:var(--accent-2);"> NFS Shares</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-iscsi"         style="accent-color:var(--accent-2);"> iSCSI Shares</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-protection"    style="accent-color:var(--accent-2);"> Protection Policies</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-snapshots"     style="accent-color:var(--accent-2);"> Snapshots</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-edit-settings"        style="accent-color:var(--accent-2);"> Edit Settings</label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-interlink"     style="accent-color:var(--accent-2);"> Manage Interlink</label>
+        </div>
       </div>
       <div id="eu-password-wrap" class="form-group" style="margin-bottom:0;">
         <label>New Password <span style="color:var(--text-3);font-weight:400;">(leave blank to keep current)</span></label>
@@ -4541,7 +4657,10 @@
         <thead style="position:sticky;top:0;z-index:2;background:var(--bg-2);">
           <tr>
             <th colspan="4" style="padding:8px 12px 6px;text-align:left;font-weight:normal;border-bottom:1px solid var(--border);">
-              <button class="btn btn-sm" onclick="approveAllSudoers()" style="font-size:12px;">✓ Approve All</button>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <button class="btn btn-sm" onclick="approveAllSudoers()" style="font-size:12px;">✓ Approve All</button>
+                <button class="btn btn-sm" id="btn-sudoers-reset" onclick="resetSudoers(this)" style="font-size:12px;background:color-mix(in srgb,var(--accent-danger) 10%,transparent);border-color:color-mix(in srgb,var(--accent-danger) 40%,var(--border));color:var(--accent-danger);">↺ Reset Sudoers</button>
+              </div>
             </th>
           </tr>
           <tr style="border-bottom:1px solid var(--border);">
@@ -4632,6 +4751,19 @@
       <button class="modal-close" onclick="document.getElementById('modal-sudoers-disable').classList.add('hidden')">✕</button>
     </div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;padding-top:20px;">
+      <!-- Option 0: Convert to sudo all -->
+      <button id="sudoers-disable-opt0" onclick="sudoersConvertToAll()"
+        style="text-align:left;background:color-mix(in srgb,#22c55e 10%,var(--surface2));border:1px solid color-mix(in srgb,#22c55e 40%,var(--border));border-radius:var(--radius);padding:16px 18px;cursor:pointer;transition:border-color .15s,background .15s;"
+        onmouseenter="this.style.borderColor='#22c55e';this.style.background='color-mix(in srgb,#22c55e 18%,var(--surface2))'"
+        onmouseleave="this.style.borderColor='color-mix(in srgb,#22c55e 40%,var(--border))';this.style.background='color-mix(in srgb,#22c55e 10%,var(--surface2))'">
+        <div style="font-size:14px;font-weight:600;color:#22c55e;margin-bottom:6px;">Convert to sudo all — most frictionless</div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.5;">
+          Replaces <code>/etc/sudoers.d/zfsnas</code> with a single line granting ZNAS unrestricted
+          passwordless sudo. This is the most frictionless security configuration for ZNAS: all
+          features work without any individual command approvals, and no future sudoers updates
+          will be needed when new features are added.
+        </div>
+      </button>
       <!-- Option 1 -->
       <button id="sudoers-disable-opt1" onclick="sudoersDisableChoose(false)"
         style="text-align:left;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;cursor:pointer;transition:border-color .15s,background .15s;"
@@ -4648,7 +4780,7 @@
         style="text-align:left;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;cursor:pointer;transition:border-color .15s,background .15s;"
         onmouseenter="this.style.borderColor='var(--accent-danger)';this.style.background='rgba(255,59,48,0.06)'"
         onmouseleave="this.style.borderColor='var(--border)';this.style.background='var(--surface2)'">
-        <div style="font-size:14px;font-weight:600;color:var(--accent-danger);margin-bottom:6px;">Disable monitoring &amp; remove write access from sudoers</div>
+        <div style="font-size:14px;font-weight:600;color:var(--accent-danger);margin-bottom:6px;">Manual root user only sudoers management</div>
         <div style="font-size:13px;color:var(--text-2);line-height:1.5;">
           The hardening UI is turned off <em>and</em> the
           <code>tee /etc/sudoers.d/zfsnas</code> entry is removed from the sudoers file.
@@ -5405,6 +5537,19 @@ const dotFor      = i => COLORS[i%COLORS.length][0];
 // ===== State =====
 let currentUser      = null;
 let abExpanded       = true;
+
+// hasPerm: returns true if the current user has a given permission.
+// Admin always passes. Standard users check their standard_perms flags.
+// key must match the JSON field name in StandardPermissions.
+function hasPerm(key) {
+  if (!currentUser) return false;
+  if (currentUser.role === 'admin') return true;
+  if (currentUser.role === 'standard') {
+    const p = currentUser.standard_perms;
+    return !!(p && p[key]);
+  }
+  return false;
+}
 let abRefreshInt     = null;
 let activeJobs       = {};  // id -> { label, startedAt, pending? }
 let _installRunning  = false;           // true while an install fetch is in flight
@@ -5443,9 +5588,11 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
     if (!resp.ok) { window.location.href = '/login'; return; }
     currentUser = await resp.json();
     // username/role no longer shown in sidebar
+    if (!hasPerm('terminal')) document.getElementById('nav-terminal').style.display = 'none';
     if (currentUser.role !== 'admin') {
-      document.getElementById('nav-terminal').style.display = 'none';
       document.getElementById('btn-create-user').style.display = 'none';
+    }
+    if (!hasPerm('manage_pool_dataset')) {
       document.getElementById('btn-scan-disks').style.display = 'none';
       document.getElementById('btn-refresh-disks').style.display = 'none';
     }
@@ -5946,7 +6093,7 @@ async function loadPrereqs() {
     <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
         <h3 style="margin:0;color:var(--text-2);">Security</h3>
-        <a href="https://github.com/macgaver/zfsnas-chezmoi/blob/main/SECURITY.md" target="_blank" rel="noopener" style="font-size:13px;color:var(--accent-2);text-decoration:none;line-height:1;" title="Open SECURITY.md">ⓘ</a>
+        <i class="info-tip" style="cursor:pointer;" onclick="document.getElementById('modal-security-info').classList.remove('hidden')" title="Security overview"></i>
         <div id="sudoers-hardening-btns" style="margin-left:auto;display:flex;align-items:center;gap:8px;"></div>
       </div>
       <div class="prereq-row">
@@ -6247,6 +6394,18 @@ async function sudoersDisableChoose(removeWriteAccess) {
   }
 }
 
+async function sudoersConvertToAll() {
+  document.getElementById('modal-sudoers-disable').classList.add('hidden');
+  try {
+    const r = await fetch('/api/sudoers/apply-sudo-all', {method:'POST'});
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    showToast('Sudoers replaced with unrestricted sudo access.', 'ok');
+  } catch (e) {
+    showToast('Convert to sudo all failed: ' + e.message, 'error');
+  }
+  await loadSudoersStatus();
+}
+
 async function openSudoersReviewModal() {
   _sudoersRowState = {};
   _sudoersInitialState = {};
@@ -6445,6 +6604,47 @@ async function applySudoersChanges() {
   }
 }
 
+async function resetSudoers(btn) {
+  if (btn.dataset.confirm !== '1') {
+    btn.dataset.confirm = '1';
+    btn.textContent = 'Confirm Reset?';
+    btn.style.background = 'color-mix(in srgb,var(--accent-danger) 22%,transparent)';
+    btn.style.borderColor = 'var(--accent-danger)';
+    setTimeout(() => {
+      if (btn.dataset.confirm === '1') {
+        btn.dataset.confirm = '';
+        btn.textContent = '↺ Reset Sudoers';
+        btn.style.background = 'color-mix(in srgb,var(--accent-danger) 10%,transparent)';
+        btn.style.borderColor = 'color-mix(in srgb,var(--accent-danger) 40%,var(--border))';
+      }
+    }, 4000);
+    return;
+  }
+  btn.dataset.confirm = '';
+  btn.disabled = true;
+  btn.textContent = 'Resetting…';
+  try {
+    const r = await fetch('/api/sudoers/apply', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({silenced_missing:[], silenced_extra:[], pending_missing:[], pending_extra:[]})
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'reset failed');
+    btn.disabled = false;
+    btn.textContent = '↺ Reset Sudoers';
+    btn.style.background = 'color-mix(in srgb,var(--accent-danger) 10%,transparent)';
+    btn.style.borderColor = 'color-mix(in srgb,var(--accent-danger) 40%,var(--border))';
+    closeSudoersReviewModal();
+    showToast(`Sudoers reset: ${data.added||0} added, ${data.removed||0} removed. All commands approved.`, 'success');
+    await loadPrereqs();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '↺ Reset Sudoers';
+    showToast('Reset failed: ' + e.message, 'error');
+  }
+}
+
 function closeSudoersReviewModal() {
   document.getElementById('modal-sudoers-review').classList.add('hidden');
   const warnEl = document.getElementById('sudoers-cache-warning');
@@ -6488,19 +6688,24 @@ async function loadUsers() {
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px;">No users found.</td></tr>';
       return;
     }
-    tbody.innerHTML = users.map((u, idx) => `
+    tbody.innerHTML = users.map((u, idx) => {
+      const capCount = u.role === 'standard' && u.standard_perms
+        ? Object.values(u.standard_perms).filter(Boolean).length : -1;
+      const capBadge = capCount >= 0
+        ? ` <span style="font-size:10px;background:rgba(10,132,255,0.15);color:var(--accent-2);border-radius:4px;padding:1px 6px;margin-left:4px;">${capCount} cap${capCount===1?'':'s'}</span>` : '';
+      return `
       <tr>
         <td><div class="user-row-name"><div class="avatar">${u.username[0].toUpperCase()}</div><span>${esc(u.username)}</span></div></td>
         <td class="text-2">${esc(u.email||'—')}</td>
-        <td><span class="badge badge-${roleBadge(u.role)}">${esc(u.role)}</span></td>
+        <td><span class="badge badge-${roleBadge(u.role)}">${esc(u.role)}</span>${capBadge}</td>
         <td class="text-2 text-sm">${formatDate(u.created_at)}</td>
         <td style="text-align:right;">${currentUser.role==='admin' ? `
           <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">
             <button class="btn btn-ghost btn-sm" onclick="openEditUser('${esc(u.id)}')" title="Edit user" style="padding:6px 10px;">Edit</button>
             <span onclick="toggleUserMenu(event,${idx})" title="More actions" style="cursor:pointer;color:var(--text-2);font-size:20px;line-height:1;padding:2px 6px;user-select:none;">⋮</span>
           </div>` : ''}</td>
-      </tr>
-    `).join('');
+      </tr>`;
+    }).join('');
   } catch {
     tbody.innerHTML = '<tr><td colspan="5" style="color:var(--accent-danger);padding:24px;">Failed to load users.</td></tr>';
   }
@@ -6585,6 +6790,20 @@ function openEditUser(id) {
   document.getElementById('edit-user-alert').classList.add('hidden');
   document.getElementById('edit-user-ok').classList.add('hidden');
 
+  // Populate standard permissions panel.
+  const sp = u.standard_perms || {};
+  document.getElementById('ep-terminal').checked            = !!sp.terminal;
+  document.getElementById('ep-review-sudoers').checked      = !!sp.review_sudoers;
+  document.getElementById('ep-browse-files').checked        = !!sp.browse_files;
+  document.getElementById('ep-manage-pool-dataset').checked = !!sp.manage_pool_dataset;
+  document.getElementById('ep-manage-smb').checked          = !!sp.manage_smb;
+  document.getElementById('ep-manage-nfs').checked          = !!sp.manage_nfs;
+  document.getElementById('ep-manage-iscsi').checked        = !!sp.manage_iscsi;
+  document.getElementById('ep-manage-protection').checked   = !!sp.manage_protection;
+  document.getElementById('ep-manage-snapshots').checked    = !!sp.manage_snapshots;
+  document.getElementById('ep-edit-settings').checked       = !!sp.edit_settings;
+  document.getElementById('ep-manage-interlink').checked    = !!sp.manage_interlink;
+
   // Prevent changing your own role (avoid accidental self-lockout).
   const isSelf = id === currentUser.user_id;
   document.getElementById('eu-role').disabled = isSelf;
@@ -6609,9 +6828,12 @@ function closeEditUser() {
 }
 
 function onEditRoleChange() {
-  const isSMB = document.getElementById('eu-role').value === 'smb-only';
+  const role = document.getElementById('eu-role').value;
+  const isSMB = role === 'smb-only';
+  const isStandard = role === 'standard';
   document.getElementById('eu-password-wrap').classList.toggle('hidden', isSMB);
   document.getElementById('eu-smb-hint').classList.toggle('hidden', !isSMB);
+  document.getElementById('eu-standard-perms').style.display = isStandard ? '' : 'none';
   if (isSMB) document.getElementById('eu-password').value = '';
 }
 
@@ -6630,6 +6852,21 @@ async function submitEditUser() {
   };
   const pw = document.getElementById('eu-password').value;
   if (pw && role !== 'smb-only') body.password = pw;
+  if (role === 'standard') {
+    body.standard_perms = {
+      terminal:            document.getElementById('ep-terminal').checked,
+      review_sudoers:      document.getElementById('ep-review-sudoers').checked,
+      browse_files:        document.getElementById('ep-browse-files').checked,
+      manage_pool_dataset: document.getElementById('ep-manage-pool-dataset').checked,
+      manage_smb:          document.getElementById('ep-manage-smb').checked,
+      manage_nfs:          document.getElementById('ep-manage-nfs').checked,
+      manage_iscsi:        document.getElementById('ep-manage-iscsi').checked,
+      manage_protection:   document.getElementById('ep-manage-protection').checked,
+      manage_snapshots:    document.getElementById('ep-manage-snapshots').checked,
+      edit_settings:       document.getElementById('ep-edit-settings').checked,
+      manage_interlink:    document.getElementById('ep-manage-interlink').checked,
+    };
+  }
 
   btn.disabled = true; btn.textContent = 'Saving…';
   const resp = await fetch('/api/users/' + _editUserId, {
@@ -6699,6 +6936,12 @@ function openCreateUser() {
   document.getElementById('new-smb-home').checked = false;
   document.getElementById('new-uid').value = '';
   document.getElementById('new-gid').value = '';
+  // Reset standard permissions checkboxes.
+  ['np-terminal','np-review-sudoers','np-browse-files','np-manage-pool-dataset',
+   'np-manage-smb','np-manage-nfs','np-manage-iscsi','np-manage-protection',
+   'np-manage-snapshots','np-edit-settings','np-manage-interlink'].forEach(id => {
+    document.getElementById(id).checked = false;
+  });
   // Collapse advanced settings panel.
   document.getElementById('create-user-adv-panel').style.display = 'none';
   document.getElementById('create-user-adv-arrow').style.transform = '';
@@ -6719,11 +6962,14 @@ function toggleCreateUserAdvanced() {
 function closeCreateUser() { document.getElementById('modal-create-user').classList.add('hidden'); }
 
 function onNewRoleChange() {
-  const isSMB = document.getElementById('new-role').value === 'smb-only';
+  const role = document.getElementById('new-role').value;
+  const isSMB = role === 'smb-only';
+  const isStandard = role === 'standard';
   document.getElementById('new-password-label').textContent = isSMB ? 'SMB Password' : 'Password';
   const pwInput = document.getElementById('new-password');
   pwInput.placeholder = 'Min 8 characters';
   pwInput.required = true;
+  document.getElementById('new-standard-perms').style.display = isStandard ? '' : 'none';
 }
 
 async function submitCreateUser(e) {
@@ -6745,6 +6991,21 @@ async function submitCreateUser(e) {
   const pw = document.getElementById('new-password').value;
   if (role === 'smb-only') body.smb_password = pw;
   else body.password = pw;
+  if (role === 'standard') {
+    body.standard_perms = {
+      terminal:            document.getElementById('np-terminal').checked,
+      review_sudoers:      document.getElementById('np-review-sudoers').checked,
+      browse_files:        document.getElementById('np-browse-files').checked,
+      manage_pool_dataset: document.getElementById('np-manage-pool-dataset').checked,
+      manage_smb:          document.getElementById('np-manage-smb').checked,
+      manage_nfs:          document.getElementById('np-manage-nfs').checked,
+      manage_iscsi:        document.getElementById('np-manage-iscsi').checked,
+      manage_protection:   document.getElementById('np-manage-protection').checked,
+      manage_snapshots:    document.getElementById('np-manage-snapshots').checked,
+      edit_settings:       document.getElementById('np-edit-settings').checked,
+      manage_interlink:    document.getElementById('np-manage-interlink').checked,
+    };
+  }
   const uidVal = document.getElementById('new-uid').value.trim();
   const gidVal = document.getElementById('new-gid').value.trim();
   if (uidVal !== '') body.uid = parseInt(uidVal, 10);
@@ -8092,13 +8353,13 @@ function renderPoolExists(el, pool) {
     const present = pool.member_present && pool.member_present[i];
     return st !== 'ONLINE' && present;
   });
-  const showFixer = currentUser.role === 'admin' &&
+  const showFixer = hasPerm('manage_pool_dataset') &&
     (pool.health === 'SUSPENDED' || pool.health === 'DEGRADED');
   const fixerBtn = showFixer
     ? `<button class="btn btn-sm" onclick="openPoolFixerWizard()"
         style="background:linear-gradient(135deg,#6e40c9 0%,#2d7dd2 50%,#0dbbbd 100%);color:#fff;border:none;font-weight:600;letter-spacing:.02em;box-shadow:0 0 12px rgba(110,64,201,0.45);">✦ Pool Fixer Wizard</button>`
     : '';
-  document.getElementById('pool-header-actions').innerHTML = currentUser.role === 'admin' ? `
+  document.getElementById('pool-header-actions').innerHTML = hasPerm('manage_pool_dataset') ? `
     ${fixerBtn}
     <span id="pool-upgrade-btn-wrap"></span>
     <button class="btn btn-primary btn-sm" onclick="openNewPool()">+ Pool</button>
@@ -8129,7 +8390,7 @@ function renderPoolExists(el, pool) {
     const stateColor = diskState === 'ONLINE' ? '' : diskState === 'OFFLINE' ? 'color:var(--text-3);' : 'color:var(--accent-danger);';
     const stateLabel = diskState && diskState !== 'ONLINE' ? ` <span style="font-size:10px;font-weight:600;${stateColor}">${esc(diskState)}</span>` : '';
     const menuId = 'disk-menu-' + Math.random().toString(36).slice(2);
-    const isAdmin = currentUser && currentUser.role === 'admin';
+    const isAdmin = hasPerm('manage_pool_dataset');
     const burgerMenu = isAdmin && poolName ? `
       <div style="position:relative;flex-shrink:0;">
         <button onclick="toggleDiskMenu('${menuId}')" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;" title="Disk actions">⋮</button>
@@ -8171,7 +8432,7 @@ function renderPoolExists(el, pool) {
     ? allRows.join('')
     : '<div class="text-3 text-sm" style="padding:10px 0;">No device info available (run SMART refresh)</div>';
 
-  const addDiskBtn = currentUser.role === 'admin'
+  const addDiskBtn = hasPerm('manage_pool_dataset')
     ? `<button class="btn btn-sm" style="margin-top:14px;width:100%;background:rgba(48,209,88,0.15);border:1.5px solid rgba(48,209,88,0.45);color:#30d158;font-weight:600;" onclick="openAddDisksModal()">+ Add Capacity</button>`
     : '';
 
@@ -8692,7 +8953,7 @@ async function _fetchScrubStatus() {
     if (hourWrap) hourWrap.style.display = sched.schedule ? 'flex' : 'none';
 
     // Actions bar
-    const isAdmin = currentUser && currentUser.role === 'admin';
+    const isAdmin = hasPerm('manage_protection');
     if (isAdmin) {
       if (s.state === 'running') {
         actions.innerHTML = `<button class="btn btn-ghost btn-sm" style="color:var(--accent-danger);" onclick="stopScrub()">■ Stop Scrub</button>`;
@@ -10449,7 +10710,7 @@ function _datasetRow(d, showComment, showQuota) {
       <td style="font-size:13px;">${esc(d.compression)} <span class="text-3">${esc(d.compress_ratio)}</span></td>
       ${showComment ? `<td style="font-size:12px;color:var(--text-2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(d.comment||'')}">${d.comment ? esc(d.comment) : '<span style="color:var(--text-3);">—</span>'}</td>` : ''}
       <td style="text-align:right;white-space:nowrap;">
-        ${!isRoot && currentUser.role==='admin' ? `
+        ${!isRoot && hasPerm('manage_pool_dataset') ? `
           <button class="btn btn-ghost btn-sm" onclick="openEditDataset('${esc(d.name)}')">Edit</button>
           <div class="row-menu-wrap" style="display:inline-block;">
             <button class="row-menu-btn" data-dsname="${esc(d.name)}" onclick="toggleDsMenu(event)" title="More actions">⋮</button>
@@ -10538,7 +10799,7 @@ function _zvolRow(z, showComment, showQuota) {
       <td style="font-size:13px;">${esc(z.compression)} <span class="text-3">${esc(z.comp_ratio)}</span></td>
       ${showComment ? `<td style="font-size:12px;color:var(--text-2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(z.comment||'')}">${z.comment ? esc(z.comment) : '<span style="color:var(--text-3);">—</span>'}</td>` : ''}
       <td style="text-align:right;white-space:nowrap;">
-        ${currentUser.role==='admin' ? `
+        ${hasPerm('manage_pool_dataset') ? `
           <button class="btn btn-ghost btn-sm" onclick="openEditZVol('${esc(z.name)}')">Edit</button>
           <div class="row-menu-wrap" style="display:inline-block;">
             <button class="row-menu-btn" data-zvolname="${esc(z.name)}" onclick="toggleZVolMenu(event)" title="More actions">⋮</button>
@@ -10926,7 +11187,7 @@ function openZVolDetail(name) {
 
   // Action buttons at top
   const actions = document.getElementById('zvol-detail-actions');
-  if (currentUser && currentUser.role === 'admin') {
+  if (hasPerm('manage_pool_dataset')) {
     actions.innerHTML = `
       <button class="btn btn-primary btn-sm" onclick="closeZVolDetail();openEditZVol('${esc(name)}')">Edit</button>
       <button onclick="closeZVolDetail();capSelectOnlyZVol('${esc(name)}')"
@@ -11269,7 +11530,7 @@ async function loadSchedules() {
   } catch {
     el.innerHTML = '<div style="color:var(--accent-danger);font-size:13px;">Failed to load schedules.</div>';
   }
-  if (currentUser && currentUser.role !== 'admin') {
+  if (!hasPerm('manage_protection')) {
     const btn = document.getElementById('btn-create-schedule');
     if (btn) btn.style.display = 'none';
   }
@@ -11372,7 +11633,7 @@ function renderSchedules(el, policies) {
       ${repCell}
       ${localRepCell}
       <td>${p.enabled ? '<span style="color:var(--accent-3);">On</span>' : '<span style="color:var(--text-3);">Off</span>'}</td>
-      <td style="text-align:right;white-space:nowrap;">${currentUser.role==='admin' ? `
+      <td style="text-align:right;white-space:nowrap;">${hasPerm('manage_protection') ? `
         <button class="btn btn-ghost btn-sm" onclick="openEditSchedule(${i})">Edit</button>
         <div class="row-menu-wrap" style="display:inline-block;">
           <button class="row-menu-btn" data-schedid="${esc(p.id)}" onclick="toggleSchedMenu(event)" title="More actions">⋮</button>
@@ -11848,7 +12109,7 @@ function renderSnapshots(el, snaps) {
           <span style="opacity:.6;">📁</span>
           <span style="font-weight:700;font-size:15px;">${esc(dataset)}</span>
           <span class="badge badge-readonly" style="margin-left:4px;">${list.length} snapshot${list.length!==1?'s':''}</span>
-          ${currentUser.role==='admin' ? `
+          ${hasPerm('manage_snapshots') ? `
             <div style="margin-left:auto;display:flex;align-items:center;gap:4px;" onclick="event.stopPropagation()">
               <button class="btn btn-ghost btn-sm" title="New Snapshot" onclick="openCreateSnapshot('${esc(dataset)}')" style="padding:4px 7px;font-size:15px;line-height:1;">📸</button>
               <div class="row-menu-wrap" style="display:inline-block;">
@@ -11864,7 +12125,7 @@ function renderSnapshots(el, snaps) {
               <div style="font-weight:600;font-size:14px;">${esc(s.snap_name)}</div>
               <div class="text-3 text-xs">${formatDate(s.creation)} · Used: ${fmtBytes(s.used)} · Refer: ${fmtBytes(s.refer)}</div>
             </div>
-            ${currentUser.role==='admin' ? `
+            ${hasPerm('manage_snapshots') ? `
               <div style="display:flex;gap:6px;flex-shrink:0;align-items:center;">
                 <button class="btn btn-ghost btn-sm" onclick="restoreSnapshot('${esc(s.name)}','${esc(s.dataset)}')">Restore</button>
                 <button class="btn btn-ghost btn-sm" onclick="cloneSnapshot('${esc(s.name)}')">Clone</button>
@@ -12413,7 +12674,7 @@ function diskTableHeader(withActions) {
     <th>Wearout <i class="info-tip tip-left tip-down" data-tip="Drive endurance consumed (% of rated P/E cycles or TBW used). From SMART attribute 177 (SSD wear levelling) or 231 (SSD life left). N/A for HDDs without an endurance rating."></i></th>
     <th>Temp <i class="info-tip tip-left tip-down" data-tip="Current drive temperature from SMART data. Read from smartctl JSON (temperature.current field for ATA/NVMe, or attribute IDs 194/190 for older drives). Updated on each SMART refresh."></i></th>
     <th>SMART <i class="info-tip tip-left tip-down" data-tip="Overall drive health from smartctl self-assessment. PASSED: drive reports no critical errors. FAILED: one or more SMART thresholds exceeded — consider replacing the drive. Unknown: SMART data not yet collected (click ↻ Refresh SMART)."></i></th>
-    ${withActions && currentUser && currentUser.role==='admin' ? '<th></th>' : ''}
+    ${withActions && hasPerm('manage_pool_dataset') ? '<th></th>' : ''}
   </tr></thead>`;
 }
 
@@ -12430,7 +12691,7 @@ function diskTableHeaderWithPool() {
 
 function diskRow(d, dimmed, withActions) {
   const tc  = dimmed ? 'color:var(--text-3);' : 'color:var(--text);';
-  const isAdmin = currentUser && currentUser.role === 'admin';
+  const isAdmin = hasPerm('manage_pool_dataset');
   const actionCell = (withActions && isAdmin) ? `
     <td style="text-align:right;">
       <button onclick="event.stopPropagation();openAvailDiskMenu(this,'${esc(d.device)}')"
@@ -12596,12 +12857,12 @@ async function loadShares() {
         svcBtn.style.color = 'var(--text-3)';
         svcBtn.style.border = '1px solid var(--border)';
       }
-      if (currentUser && currentUser.role !== 'admin') {
+      if (!hasPerm('manage_smb')) {
         document.getElementById('smb-svc-btn').style.display = 'none';
       }
     }
     const btn = document.getElementById('btn-create-share');
-    if (btn && currentUser && currentUser.role !== 'admin') btn.style.display = 'none';
+    if (btn && !hasPerm('manage_smb')) btn.style.display = 'none';
   } catch {}
 
   try {
@@ -12648,7 +12909,7 @@ function renderShares(el, shares, sessions = {}) {
         ? `<td data-sess-key="${esc(s.name)}"><span class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle;"></span></td>`
         : _renderShareClientCell(sessions[s.name] || [], s.name)}
       <td style="text-align:right;white-space:nowrap;">
-        ${currentUser.role==='admin' ? `
+        ${hasPerm('manage_smb') ? `
           <button class="btn btn-ghost btn-sm" onclick="openEditShareByIdx(${i})">Edit</button>
           <div class="row-menu-wrap" style="display:inline-block;">
             <button class="row-menu-btn" onclick="toggleShareMenu(event,${i})" title="More actions">⋮</button>
@@ -12716,6 +12977,13 @@ function toggleShareMenu(evt, idx) {
     cleanBtn.textContent = '♻️ Clean Recycle Bin';
     cleanBtn.addEventListener('click', () => { closeShareMenus(); cleanShareRecycleBin(s.name); });
     dd.appendChild(cleanBtn);
+  }
+
+  if (s.path) {
+    const browseSmbBtn = document.createElement('button');
+    browseSmbBtn.textContent = '📂 Browse Files';
+    browseSmbBtn.addEventListener('click', () => { closeShareMenus(); openFileBrowser('smb', s.name); });
+    dd.appendChild(browseSmbBtn);
   }
 
   const sep = document.createElement('hr');
@@ -13131,12 +13399,12 @@ async function loadNFSShares() {
         svcBtn.style.color = 'var(--text-3)';
         svcBtn.style.border = '1px solid var(--border)';
       }
-      if (currentUser && currentUser.role !== 'admin') {
+      if (!hasPerm('manage_nfs')) {
         svcBtn.style.display = 'none';
       }
     }
     const btn = document.getElementById('btn-create-nfs-share');
-    if (btn && currentUser && currentUser.role !== 'admin') btn.style.display = 'none';
+    if (btn && !hasPerm('manage_nfs')) btn.style.display = 'none';
   } catch {}
 
   try {
@@ -13175,7 +13443,7 @@ function renderNFSShares(el, shares, sessions = {}) {
         ? `<td data-nfs-sess-key="${esc(s.path)}"><span class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle;"></span></td>`
         : _renderShareClientCell(sessions[s.path] || [], s.path, 'nfs')}
       ${showComment ? `<td class="text-2" style="font-size:13px;">${esc(s.comment||'—')}</td>` : ''}
-      <td style="text-align:right;white-space:nowrap;">${currentUser.role==='admin' ? `
+      <td style="text-align:right;white-space:nowrap;">${hasPerm('manage_nfs') ? `
         <button class="btn btn-ghost btn-sm" onclick="openEditNFSShare(${i})">Edit</button>
         <div class="row-menu-wrap" style="display:inline-block;">
           <button class="row-menu-btn" onclick="toggleNFSMenu(event,${i})" title="More actions">⋮</button>
@@ -13364,6 +13632,11 @@ function toggleDsMenu(evt) {
   pushILBtn.addEventListener('click', () => { closeShareMenus(); openPushDsILModal(dsName, false); });
   dd.appendChild(pushILBtn);
 
+  const browseBtn = document.createElement('button');
+  browseBtn.textContent = '📂 Browse Files';
+  browseBtn.addEventListener('click', () => { closeShareMenus(); openFileBrowser('dataset', dsName); });
+  dd.appendChild(browseBtn);
+
   const sep = document.createElement('hr');
   sep.className = 'menu-sep';
   dd.appendChild(sep);
@@ -13404,6 +13677,12 @@ function toggleNFSMenu(evt, idx) {
     editDsBtn.textContent = '✏️ Edit Related Dataset';
     editDsBtn.addEventListener('click', () => { closeShareMenus(); openEditDataset(dsName); });
     dd.appendChild(editDsBtn);
+
+    const browseNfsBtn = document.createElement('button');
+    browseNfsBtn.textContent = '📂 Browse Files';
+    browseNfsBtn.addEventListener('click', () => { closeShareMenus(); openFileBrowser('nfs', s.id); });
+    dd.appendChild(browseNfsBtn);
+
     const sep = document.createElement('hr');
     sep.className = 'menu-sep';
     dd.appendChild(sep);
@@ -13554,7 +13833,7 @@ async function loadISCSIShares() {
     const hostMap = {};
     (_iscsiHostsCache).forEach(h => { hostMap[h.id] = h.name || h.iqn; });
     tbody.innerHTML = sr.map(share => {
-      const isAdmin = currentUser && currentUser.role === 'admin';
+      const isAdmin = hasPerm('manage_iscsi');
       const shareSessions = sessions[share.iqn] || [];
       const sessionCell = _renderISCSISessionCell(shareSessions);
       if (share.orphaned) {
@@ -20679,6 +20958,565 @@ function showToast(msg, type = 'error') {
     </div>
   </div>
 </div>
+
+<!-- ── File Browser Modal ─────────────────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-file-browser">
+  <div class="modal" style="max-width:960px;">
+    <div class="modal-header">
+      <h3>📂 Browse Files — <span id="fb-root-label"></span></h3>
+      <button class="modal-close" onclick="closeFileBrowser()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:0;">
+      <div id="fb-breadcrumb" class="fb-breadcrumb"></div>
+      <div class="fb-table-wrap">
+        <table class="tbl" id="fb-table">
+          <thead id="fb-thead"><tr>
+            <th>Name</th><th>Size</th><th>Permissions</th>
+            <th>Owner</th><th>Group</th><th>Modified</th>
+            <th class="admin-only"></th>
+          </tr></thead>
+          <tbody id="fb-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeFileBrowser()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Change Ownership Modal ─────────────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-fb-chown">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-header">
+      <h3>Change Ownership</h3>
+      <button class="modal-close" onclick="closeChownModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="fb-chown-path" class="fb-target-path"></p>
+      <div class="form-row">
+        <label>Owner</label>
+        <select id="fb-chown-owner"></select>
+      </div>
+      <div class="form-row">
+        <label>Group</label>
+        <select id="fb-chown-group"></select>
+      </div>
+      <label class="checkbox-label" id="fb-chown-recursive-wrap">
+        <input type="checkbox" id="fb-chown-recursive">
+        Apply recursively to all contents
+      </label>
+      <div class="alert alert-error hidden" id="fb-chown-err"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeChownModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="applyChown()">Apply Ownership</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Change Permissions Modal ───────────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-fb-chmod">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <h3>Change Permissions</h3>
+      <button class="modal-close" onclick="closeChmodModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="fb-chmod-path" class="fb-target-path"></p>
+      <table class="tbl fb-chmod-table">
+        <thead><tr><th></th><th>Read</th><th>Write</th><th>Execute</th></tr></thead>
+        <tbody>
+          <tr><td>Owner</td>
+            <td><input type="checkbox" id="chmod-ur" onchange="syncChmodCheckboxes()"></td>
+            <td><input type="checkbox" id="chmod-uw" onchange="syncChmodCheckboxes()"></td>
+            <td><input type="checkbox" id="chmod-ux" onchange="syncChmodCheckboxes()"></td></tr>
+          <tr><td>Group</td>
+            <td><input type="checkbox" id="chmod-gr" onchange="syncChmodCheckboxes()"></td>
+            <td><input type="checkbox" id="chmod-gw" onchange="syncChmodCheckboxes()"></td>
+            <td><input type="checkbox" id="chmod-gx" onchange="syncChmodCheckboxes()"></td></tr>
+          <tr><td>Others</td>
+            <td><input type="checkbox" id="chmod-or" onchange="syncChmodCheckboxes()"></td>
+            <td><input type="checkbox" id="chmod-ow" onchange="syncChmodCheckboxes()"></td>
+            <td><input type="checkbox" id="chmod-ox" onchange="syncChmodCheckboxes()"></td></tr>
+        </tbody>
+      </table>
+      <div class="form-row" style="margin-top:12px;">
+        <label>Octal</label>
+        <input type="text" id="fb-chmod-octal" maxlength="3" style="width:60px;" oninput="syncChmodOctal()">
+      </div>
+      <label class="checkbox-label" id="fb-chmod-recursive-wrap">
+        <input type="checkbox" id="fb-chmod-recursive">
+        Apply recursively to all contents
+      </label>
+      <div class="alert alert-error hidden" id="fb-chmod-err"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeChmodModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="applyChmod()">Apply Permissions</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── File Browser ──────────────────────────────────────────────────────────────
+
+let fileBrowserState = {
+  root: '',           // base64url token
+  rootLabel: '',      // display name (e.g. "tank/media")
+  subpath: '',        // current relative path within root
+  entries: [],        // current FileEntry[]
+  currentDirInfo: null, // FileEntry for the directory being listed
+  usersGroups: null,  // cached { users, groups } from API
+  activeEntryIdx: -1, // entry targeted by sub-modal; -1 = current directory
+  sortCol: 'name',    // active sort column
+  sortDir: 'asc'      // 'asc' | 'desc'
+};
+
+function encodeRootToken(absPath) {
+  // base64url encode (no padding)
+  const bytes = new TextEncoder().encode(absPath);
+  let binary = '';
+  bytes.forEach(b => binary += String.fromCharCode(b));
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function formatFileSize(bytes) {
+  if (bytes === 0 || bytes == null) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  if (bytes < 1024 * 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(1) + ' GB';
+  return (bytes / 1024 / 1024 / 1024 / 1024).toFixed(1) + ' TB';
+}
+
+async function openFileBrowser(sourceType, sourceId) {
+  let absPath = '';
+  let label = '';
+
+  if (sourceType === 'dataset') {
+    const d = datasetCache.find(x => x.name === sourceId);
+    if (!d || !d.mountpoint || d.mountpoint === 'none' || d.mountpoint === 'legacy' || d.mountpoint === '-') {
+      showToast('Dataset has no accessible mountpoint', 'error');
+      return;
+    }
+    absPath = d.mountpoint;
+    label = sourceId;
+  } else if (sourceType === 'smb') {
+    const s = _sharesCache.find(x => x.name === sourceId);
+    if (!s || !s.path) { showToast('Share has no path configured', 'error'); return; }
+    absPath = s.path;
+    label = sourceId;
+  } else if (sourceType === 'nfs') {
+    const s = _nfsSharesCache.find(x => x.id === sourceId);
+    if (!s || !s.path) { showToast('NFS share has no path configured', 'error'); return; }
+    absPath = s.path;
+    label = s.path;
+  } else {
+    return;
+  }
+
+  fileBrowserState.root = encodeRootToken(absPath);
+  fileBrowserState.rootLabel = label;
+  fileBrowserState.subpath = '';
+  fileBrowserState.entries = [];
+  fileBrowserState.activeEntryIdx = -1;
+  fileBrowserState.sortCol = 'name';
+  fileBrowserState.sortDir = 'asc';
+
+  document.getElementById('fb-root-label').textContent = label;
+  document.getElementById('modal-file-browser').classList.remove('hidden');
+  await fileBrowserNavigate('');
+}
+
+async function fileBrowserNavigate(subpath) {
+  fileBrowserState.subpath = subpath;
+  const params = new URLSearchParams({ root: fileBrowserState.root, subpath });
+  try {
+    const resp = await fetch('/api/files/list?' + params);
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      showToast('Browse error: ' + (data.error || resp.status), 'error');
+      return;
+    }
+    const result = await resp.json();
+    fileBrowserState.entries = result.entries || [];
+    fileBrowserState.currentDirInfo = result.current_dir || null;
+    renderFileBrowserBreadcrumb(subpath);
+    renderFileBrowserTable(fileBrowserState.entries);
+  } catch (e) {
+    showToast('Browse error: ' + e.message, 'error');
+  }
+}
+
+function renderFileBrowserBreadcrumb(subpath) {
+  const el = document.getElementById('fb-breadcrumb');
+  const parts = subpath ? subpath.split('/').filter(Boolean) : [];
+  let html = '';
+
+  if (parts.length > 0) {
+    html += `<a onclick="fileBrowserNavigate('')">← Back</a><span class="sep">|</span>`;
+  }
+
+  html += `<a onclick="fileBrowserNavigate('')">/</a>`;
+  let built = '';
+  parts.forEach((p, i) => {
+    built = built ? built + '/' + p : p;
+    const path = built;
+    html += `<span class="sep">›</span>`;
+    if (i === parts.length - 1) {
+      html += `<span>${esc(p)}</span>`;
+    } else {
+      html += `<a onclick="fileBrowserNavigate('${esc(path)}')">${esc(p)}</a>`;
+    }
+  });
+  el.innerHTML = html;
+}
+
+async function openChownModalForCurrentDir() {
+  fileBrowserState.activeEntryIdx = -1;
+  const dirInfo = fileBrowserState.currentDirInfo;
+  const displayPath = '/' + (fileBrowserState.subpath || '');
+
+  document.getElementById('fb-chown-path').textContent = displayPath;
+  document.getElementById('fb-chown-recursive-wrap').style.display = '';  // always a dir
+  document.getElementById('fb-chown-recursive').checked = false;
+  document.getElementById('fb-chown-err').classList.add('hidden');
+
+  try {
+    const ug = await loadUsersGroups();
+    const ownerSel = document.getElementById('fb-chown-owner');
+    const groupSel = document.getElementById('fb-chown-group');
+    const curOwner = dirInfo ? dirInfo.owner : '';
+    const curGroup = dirInfo ? dirInfo.group : '';
+    ownerSel.innerHTML = ug.users.map(u => `<option${u===curOwner?' selected':''}>${esc(u)}</option>`).join('');
+    groupSel.innerHTML = ug.groups.map(g => `<option${g===curGroup?' selected':''}>${esc(g)}</option>`).join('');
+  } catch(err) {
+    document.getElementById('fb-chown-err').textContent = err.message;
+    document.getElementById('fb-chown-err').classList.remove('hidden');
+  }
+
+  document.getElementById('modal-fb-chown').classList.remove('hidden');
+}
+
+function openChmodModalForCurrentDir() {
+  fileBrowserState.activeEntryIdx = -1;
+  const dirInfo = fileBrowserState.currentDirInfo;
+  const displayPath = '/' + (fileBrowserState.subpath || '');
+  const octal = dirInfo ? dirInfo.mode_octal : '755';
+
+  document.getElementById('fb-chmod-path').textContent = displayPath + '   (current: ' + octal + ')';
+  document.getElementById('fb-chmod-recursive-wrap').style.display = '';  // always a dir
+  document.getElementById('fb-chmod-recursive').checked = false;
+  document.getElementById('fb-chmod-err').classList.add('hidden');
+  document.getElementById('fb-chmod-octal').value = octal;
+  _setChmodCheckboxes(octal);
+
+  document.getElementById('modal-fb-chmod').classList.remove('hidden');
+}
+
+function sortFileBrowser(col) {
+  if (fileBrowserState.sortCol === col) {
+    fileBrowserState.sortDir = fileBrowserState.sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    fileBrowserState.sortCol = col;
+    fileBrowserState.sortDir = 'asc';
+  }
+  renderFileBrowserTable(fileBrowserState.entries);
+}
+
+function _fbSortedEntries(entries) {
+  const col = fileBrowserState.sortCol;
+  const dir = fileBrowserState.sortDir === 'asc' ? 1 : -1;
+  return [...entries].sort((a, b) => {
+    // Directories always group before files regardless of sort column.
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    let av, bv;
+    switch (col) {
+      case 'size':        av = a.size_bytes || 0; bv = b.size_bytes || 0; break;
+      case 'permissions': av = a.permissions;     bv = b.permissions;     break;
+      case 'owner':       av = a.owner;           bv = b.owner;           break;
+      case 'group':       av = a.group;           bv = b.group;           break;
+      case 'modified':    av = a.modified_unix;   bv = b.modified_unix;   break;
+      default:            av = a.name.toLowerCase(); bv = b.name.toLowerCase();
+    }
+    if (av < bv) return -1 * dir;
+    if (av > bv) return  1 * dir;
+    return 0;
+  });
+}
+
+function _fbRenderThead(isAdmin) {
+  const cols = [
+    { key: 'name',        label: 'Name' },
+    { key: 'size',        label: 'Size' },
+    { key: 'permissions', label: 'Permissions' },
+    { key: 'owner',       label: 'Owner' },
+    { key: 'group',       label: 'Group' },
+    { key: 'modified',    label: 'Modified' },
+  ];
+  const arrow = dir => dir === 'asc' ? ' ▲' : ' ▼';
+  const ths = cols.map(c => {
+    const active = fileBrowserState.sortCol === c.key;
+    const indicator = active ? `<span style="color:var(--accent-2);font-size:.7em;">${arrow(fileBrowserState.sortDir)}</span>` : '';
+    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;" onclick="sortFileBrowser('${c.key}')">${c.label}${indicator}</th>`;
+  }).join('');
+  document.getElementById('fb-thead').innerHTML = `<tr>${ths}${isAdmin ? '<th></th>' : ''}</tr>`;
+}
+
+function renderFileBrowserTable(entries) {
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  _fbRenderThead(isAdmin);
+  const tbody = document.getElementById('fb-table-body');
+
+  const dirInfo = fileBrowserState.currentDirInfo;
+  const dotDate = dirInfo ? new Date(dirInfo.modified_unix * 1000) : null;
+  const dotModified = dotDate
+    ? dotDate.getFullYear() + '-' + String(dotDate.getMonth()+1).padStart(2,'0')
+    : '—';
+  const dotMenuCell = isAdmin
+    ? `<td style="text-align:right;"><button class="row-menu-btn" onclick="toggleFileBrowserRowMenu(event,-1)" title="More actions">⋮</button></td>`
+    : '';
+  const dotRow = `<tr style="color:var(--text-2);">
+    <td style="font-family:monospace;font-size:13px;">📁 .</td>
+    <td style="font-family:monospace;font-size:12px;">—</td>
+    <td style="font-family:monospace;font-size:12px;">${dirInfo ? esc(dirInfo.permissions) : '—'}</td>
+    <td style="font-size:12px;">${dirInfo ? esc(dirInfo.owner) : '—'}</td>
+    <td style="font-size:12px;">${dirInfo ? esc(dirInfo.group) : '—'}</td>
+    <td style="font-size:12px;">${dotModified}</td>
+    ${dotMenuCell}
+  </tr>`;
+
+  if (!entries || entries.length === 0) {
+    tbody.innerHTML = dotRow;
+    return;
+  }
+  const sorted = _fbSortedEntries(entries);
+  tbody.innerHTML = dotRow + sorted.map((e) => {
+    const origIdx = fileBrowserState.entries.indexOf(e);
+    const icon = e.is_dir ? '📁' : '📄';
+    const size = e.is_dir ? '—' : formatFileSize(e.size_bytes);
+    const date = new Date(e.modified_unix * 1000);
+    const modified = date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0');
+    const subP = esc((fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + e.name);
+    const nameCell = e.is_dir
+      ? `<a class="fb-name-link" onclick="fileBrowserNavigate('${subP}')">${icon} ${esc(e.name)}</a>`
+      : `${icon} ${esc(e.name)}`;
+    const menuCell = isAdmin
+      ? `<td style="text-align:right;"><button class="row-menu-btn" onclick="toggleFileBrowserRowMenu(event,${origIdx})" title="More actions">⋮</button></td>`
+      : '';
+    return `<tr>
+      <td>${nameCell}</td>
+      <td style="font-family:monospace;font-size:12px;">${esc(size)}</td>
+      <td style="font-family:monospace;font-size:12px;">${esc(e.permissions)}</td>
+      <td style="font-size:12px;">${esc(e.owner)}</td>
+      <td style="font-size:12px;">${esc(e.group)}</td>
+      <td style="font-size:12px;">${esc(modified)}</td>
+      ${menuCell}
+    </tr>`;
+  }).join('');
+}
+
+function toggleFileBrowserRowMenu(event, entryIdx) {
+  event.stopPropagation();
+  const btn = event.currentTarget;
+
+  if (_openShareMenu && _openShareMenu.btn === btn) {
+    closeShareMenus();
+    return;
+  }
+  closeShareMenus();
+
+  const dd = document.createElement('div');
+  dd.className = 'row-menu-dropdown';
+  dd.addEventListener('click', ev => ev.stopPropagation());
+
+  const chownBtn = document.createElement('button');
+  chownBtn.textContent = '🔑 Change Ownership…';
+  chownBtn.addEventListener('click', () => {
+    closeShareMenus();
+    if (entryIdx === -1) openChownModalForCurrentDir(); else openChownModal(entryIdx);
+  });
+  dd.appendChild(chownBtn);
+
+  const chmodBtn = document.createElement('button');
+  chmodBtn.textContent = '🔒 Change Permissions…';
+  chmodBtn.addEventListener('click', () => {
+    closeShareMenus();
+    if (entryIdx === -1) openChmodModalForCurrentDir(); else openChmodModal(entryIdx);
+  });
+  dd.appendChild(chmodBtn);
+
+  document.body.appendChild(dd);
+  const rect = btn.getBoundingClientRect();
+  dd.style.position = 'fixed';
+  dd.style.top  = (rect.bottom + 4) + 'px';
+  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
+  _openShareMenu = { btn, dropdown: dd };
+}
+
+async function loadUsersGroups() {
+  if (fileBrowserState.usersGroups) return fileBrowserState.usersGroups;
+  const resp = await fetch('/api/files/users-groups');
+  if (!resp.ok) throw new Error('Failed to load users/groups');
+  fileBrowserState.usersGroups = await resp.json();
+  return fileBrowserState.usersGroups;
+}
+
+async function openChownModal(entryIdx) {
+  fileBrowserState.activeEntryIdx = entryIdx;
+  const e = fileBrowserState.entries[entryIdx];
+  const relPath = (fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + e.name;
+
+  document.getElementById('fb-chown-path').textContent = '/' + relPath;
+  document.getElementById('fb-chown-recursive-wrap').style.display = e.is_dir ? '' : 'none';
+  document.getElementById('fb-chown-recursive').checked = false;
+  document.getElementById('fb-chown-err').classList.add('hidden');
+
+  try {
+    const ug = await loadUsersGroups();
+    const ownerSel = document.getElementById('fb-chown-owner');
+    const groupSel = document.getElementById('fb-chown-group');
+    ownerSel.innerHTML = ug.users.map(u => `<option${u===e.owner?' selected':''}>${esc(u)}</option>`).join('');
+    groupSel.innerHTML = ug.groups.map(g => `<option${g===e.group?' selected':''}>${esc(g)}</option>`).join('');
+  } catch(err) {
+    document.getElementById('fb-chown-err').textContent = err.message;
+    document.getElementById('fb-chown-err').classList.remove('hidden');
+  }
+
+  document.getElementById('modal-fb-chown').classList.remove('hidden');
+}
+
+async function applyChown() {
+  const errEl = document.getElementById('fb-chown-err');
+  errEl.classList.add('hidden');
+  const subpath = fileBrowserState.activeEntryIdx === -1
+    ? fileBrowserState.subpath
+    : (fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + fileBrowserState.entries[fileBrowserState.activeEntryIdx].name;
+
+  try {
+    const resp = await fetch('/api/files/chown', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        root: fileBrowserState.root,
+        subpath,
+        owner: document.getElementById('fb-chown-owner').value,
+        group: document.getElementById('fb-chown-group').value,
+        recursive: document.getElementById('fb-chown-recursive').checked
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok) { errEl.textContent = data.error || 'Failed'; errEl.classList.remove('hidden'); return; }
+    closeChownModal();
+    await fileBrowserNavigate(fileBrowserState.subpath);
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  }
+}
+
+function openChmodModal(entryIdx) {
+  fileBrowserState.activeEntryIdx = entryIdx;
+  const e = fileBrowserState.entries[entryIdx];
+  const relPath = (fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + e.name;
+
+  document.getElementById('fb-chmod-path').textContent = '/' + relPath + '   (current: ' + e.mode_octal + ')';
+  document.getElementById('fb-chmod-recursive-wrap').style.display = e.is_dir ? '' : 'none';
+  document.getElementById('fb-chmod-recursive').checked = false;
+  document.getElementById('fb-chmod-err').classList.add('hidden');
+
+  // Set checkboxes from octal
+  const octal = e.mode_octal || '644';
+  document.getElementById('fb-chmod-octal').value = octal;
+  _setChmodCheckboxes(octal);
+
+  document.getElementById('modal-fb-chmod').classList.remove('hidden');
+}
+
+function _setChmodCheckboxes(octal) {
+  const digits = octal.padStart(3, '0').split('').map(Number);
+  const ids = [
+    ['chmod-ur','chmod-uw','chmod-ux'],
+    ['chmod-gr','chmod-gw','chmod-gx'],
+    ['chmod-or','chmod-ow','chmod-ox']
+  ];
+  digits.forEach((d, i) => {
+    document.getElementById(ids[i][0]).checked = !!(d & 4);
+    document.getElementById(ids[i][1]).checked = !!(d & 2);
+    document.getElementById(ids[i][2]).checked = !!(d & 1);
+  });
+}
+
+function syncChmodCheckboxes() {
+  const ids = [
+    ['chmod-ur','chmod-uw','chmod-ux'],
+    ['chmod-gr','chmod-gw','chmod-gx'],
+    ['chmod-or','chmod-ow','chmod-ox']
+  ];
+  const octal = ids.map(row => {
+    const r = document.getElementById(row[0]).checked ? 4 : 0;
+    const w = document.getElementById(row[1]).checked ? 2 : 0;
+    const x = document.getElementById(row[2]).checked ? 1 : 0;
+    return (r + w + x).toString();
+  }).join('');
+  document.getElementById('fb-chmod-octal').value = octal;
+}
+
+function syncChmodOctal() {
+  const val = document.getElementById('fb-chmod-octal').value;
+  if (/^[0-7]{3}$/.test(val)) {
+    _setChmodCheckboxes(val);
+  }
+}
+
+async function applyChmod() {
+  const errEl = document.getElementById('fb-chmod-err');
+  errEl.classList.add('hidden');
+  const subpath = fileBrowserState.activeEntryIdx === -1
+    ? fileBrowserState.subpath
+    : (fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + fileBrowserState.entries[fileBrowserState.activeEntryIdx].name;
+  const mode = document.getElementById('fb-chmod-octal').value;
+
+  if (!/^[0-7]{3}$/.test(mode)) {
+    errEl.textContent = 'Invalid octal mode (must be 3 digits, e.g. 755)';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/files/chmod', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        root: fileBrowserState.root,
+        subpath,
+        mode,
+        recursive: document.getElementById('fb-chmod-recursive').checked
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok) { errEl.textContent = data.error || 'Failed'; errEl.classList.remove('hidden'); return; }
+    closeChmodModal();
+    await fileBrowserNavigate(fileBrowserState.subpath);
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  }
+}
+
+function closeFileBrowser() {
+  document.getElementById('modal-file-browser').classList.add('hidden');
+}
+
+function closeChownModal() {
+  document.getElementById('modal-fb-chown').classList.add('hidden');
+}
+
+function closeChmodModal() {
+  document.getElementById('modal-fb-chmod').classList.add('hidden');
+}
+</script>
 
 </body>
 </html>

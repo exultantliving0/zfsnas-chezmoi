@@ -438,14 +438,20 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 	users, _ := config.LoadUsers()
 	user := config.FindUserByID(users, sess.UserID)
 	prefs := config.UserPreferences{}
+	var totpEnabled bool
+	var standardPerms *config.StandardPermissions
 	if user != nil {
 		prefs = user.Preferences
+		totpEnabled = user.TOTPEnabled
+		standardPerms = user.StandardPerms
 	}
 	jsonOK(w, map[string]interface{}{
-		"user_id":     sess.UserID,
-		"username":    sess.Username,
-		"role":        sess.Role,
-		"preferences": prefs,
+		"user_id":        sess.UserID,
+		"username":       sess.Username,
+		"role":           sess.Role,
+		"totp_enabled":   totpEnabled,
+		"preferences":    prefs,
+		"standard_perms": standardPerms,
 	})
 }
 

@@ -22,7 +22,7 @@ func HandleDisableTOTP(w http.ResponseWriter, r *http.Request) {
 	id   := mux.Vars(r)["id"]
 	sess := MustSession(r)
 
-	// Non-admins may only affect their own account.
+	// Non-admins (including standard users) may only affect their own account.
 	if sess.Role != config.RoleAdmin && sess.UserID != id {
 		jsonErr(w, http.StatusForbidden, "forbidden")
 		return
@@ -67,13 +67,14 @@ func HandleListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type safeUser struct {
-		ID            string    `json:"id"`
-		Username      string    `json:"username"`
-		Email         string    `json:"email"`
-		Role          string    `json:"role"`
-		CreatedAt     time.Time `json:"created_at"`
-		TOTPEnabled   bool      `json:"totp_enabled"`
-		SMBHomeFolder bool      `json:"smb_home_folder"`
+		ID            string                      `json:"id"`
+		Username      string                      `json:"username"`
+		Email         string                      `json:"email"`
+		Role          string                      `json:"role"`
+		CreatedAt     time.Time                   `json:"created_at"`
+		TOTPEnabled   bool                        `json:"totp_enabled"`
+		SMBHomeFolder bool                        `json:"smb_home_folder"`
+		StandardPerms *config.StandardPermissions `json:"standard_perms,omitempty"`
 	}
 
 	out := make([]safeUser, len(users))
@@ -86,6 +87,7 @@ func HandleListUsers(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:     u.CreatedAt,
 			TOTPEnabled:   u.TOTPEnabled,
 			SMBHomeFolder: u.SMBHomeFolder,
+			StandardPerms: u.StandardPerms,
 		}
 	}
 	jsonOK(w, out)
@@ -94,14 +96,15 @@ func HandleListUsers(w http.ResponseWriter, r *http.Request) {
 // HandleCreateUser creates a new user (admin only).
 func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username      string `json:"username"`
-		Email         string `json:"email"`
-		Password      string `json:"password"`
-		SMBPassword   string `json:"smb_password"`
-		Role          string `json:"role"`
-		SMBHomeFolder bool   `json:"smb_home_folder"`
-		UID           *int   `json:"uid"`
-		GID           *int   `json:"gid"`
+		Username      string                      `json:"username"`
+		Email         string                      `json:"email"`
+		Password      string                      `json:"password"`
+		SMBPassword   string                      `json:"smb_password"`
+		Role          string                      `json:"role"`
+		SMBHomeFolder bool                        `json:"smb_home_folder"`
+		UID           *int                        `json:"uid"`
+		GID           *int                        `json:"gid"`
+		StandardPerms *config.StandardPermissions `json:"standard_perms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -116,8 +119,8 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "username is required")
 		return
 	}
-	if req.Role != config.RoleAdmin && req.Role != config.RoleReadOnly && req.Role != config.RoleSMBOnly {
-		jsonErr(w, http.StatusBadRequest, "role must be admin, read-only, or smb-only")
+	if req.Role != config.RoleAdmin && req.Role != config.RoleReadOnly && req.Role != config.RoleSMBOnly && req.Role != config.RoleStandard {
+		jsonErr(w, http.StatusBadRequest, "role must be admin, read-only, smb-only, or standard")
 		return
 	}
 	if req.Role == config.RoleSMBOnly && len(req.SMBPassword) < 8 {
@@ -191,6 +194,14 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		passwordHash = string(hash)
 	}
 
+	var stdPerms *config.StandardPermissions
+	if req.Role == config.RoleStandard {
+		if req.StandardPerms != nil {
+			stdPerms = req.StandardPerms
+		} else {
+			stdPerms = &config.StandardPermissions{}
+		}
+	}
 	user := config.User{
 		ID:            newID(),
 		Username:      req.Username,
@@ -201,6 +212,7 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		SMBHomeFolder: req.SMBHomeFolder,
 		UID:           req.UID,
 		GID:           req.GID,
+		StandardPerms: stdPerms,
 	}
 	users = append(users, user)
 
@@ -272,10 +284,11 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Email         string `json:"email"`
-		Password      string `json:"password"`
-		Role          string `json:"role"`
-		SMBHomeFolder *bool  `json:"smb_home_folder"`
+		Email         string                      `json:"email"`
+		Password      string                      `json:"password"`
+		Role          string                      `json:"role"`
+		SMBHomeFolder *bool                       `json:"smb_home_folder"`
+		StandardPerms *config.StandardPermissions `json:"standard_perms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -286,11 +299,21 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		user.Email = strings.TrimSpace(req.Email)
 	}
 	if req.Role != "" {
-		if req.Role != config.RoleAdmin && req.Role != config.RoleReadOnly && req.Role != config.RoleSMBOnly {
+		if req.Role != config.RoleAdmin && req.Role != config.RoleReadOnly && req.Role != config.RoleSMBOnly && req.Role != config.RoleStandard {
 			jsonErr(w, http.StatusBadRequest, "invalid role")
 			return
 		}
 		user.Role = req.Role
+	}
+	// Sync StandardPerms with role.
+	if user.Role == config.RoleStandard {
+		if req.StandardPerms != nil {
+			user.StandardPerms = req.StandardPerms
+		} else if user.StandardPerms == nil {
+			user.StandardPerms = &config.StandardPermissions{}
+		}
+	} else {
+		user.StandardPerms = nil
 	}
 	passwordChanged := false
 	if req.Password != "" {

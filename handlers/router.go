@@ -83,49 +83,49 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/pool",
 		RequireAuth(http.HandlerFunc(HandleGetPool))).Methods("GET")
 	r.Handle("/api/pool",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreatePool)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleCreatePool)))).Methods("POST")
 	r.Handle("/api/pool/create-status",
 		RequireAuth(http.HandlerFunc(HandlePoolCreateStatus))).Methods("GET")
 	r.Handle("/api/pool/detect",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDetectPools)))).Methods("GET")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleDetectPools)))).Methods("GET")
 	r.Handle("/api/pool/import",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleImportPool)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleImportPool)))).Methods("POST")
 	r.Handle("/api/pool/status",
 		RequireAuth(http.HandlerFunc(HandlePoolStatus))).Methods("GET")
 	r.Handle("/api/pool/zfs-version",
 		RequireAuth(http.HandlerFunc(HandleGetZFSVersion))).Methods("GET")
 	r.Handle("/api/pool/grow",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleGrowPool)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleGrowPool)))).Methods("POST")
 	r.Handle("/api/pool/export",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleExportPool)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleExportPool)))).Methods("POST")
 	r.Handle("/api/pool/destroy",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDestroyPool)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleDestroyPool)))).Methods("POST")
 	r.Handle("/api/pool/upgrade",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpgradePool)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleUpgradePool)))).Methods("POST")
 	r.Handle("/api/pool/cache",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleAddPoolCache)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleAddPoolCache)))).Methods("POST")
 	r.Handle("/api/pool/cache",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleRemovePoolCache)))).Methods("DELETE")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleRemovePoolCache)))).Methods("DELETE")
 	r.Handle("/api/pool/clear",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleClearPool)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleClearPool)))).Methods("POST")
 	r.Handle("/api/pool/fixer/online",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePoolFixerOnline)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandlePoolFixerOnline)))).Methods("POST")
 	r.Handle("/api/pool/fixer/replace",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePoolFixerReplace)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandlePoolFixerReplace)))).Methods("POST")
 	r.Handle("/api/pool/disk/offline",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskOffline)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleDiskOffline)))).Methods("POST")
 	r.Handle("/api/pool/disk/online",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskOnline)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleDiskOnline)))).Methods("POST")
 	r.Handle("/api/pool/settings",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetPoolProperties)))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleSetPoolProperties)))).Methods("PUT")
 	r.Handle("/api/pool/load-key",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLoadPoolKey)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleLoadPoolKey)))).Methods("POST")
 	r.Handle("/api/pool/unload-key",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUnloadPoolKey)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleUnloadPoolKey)))).Methods("POST")
 	r.Handle("/api/pool/arc",
 		RequireAuth(http.HandlerFunc(HandleGetARC))).Methods("GET")
 	r.Handle("/api/pool/arc",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetARC)))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleSetARC)))).Methods("PUT")
 
 	// --- Encryption key management (admin only) ---
 	r.Handle("/api/encryption/keys",
@@ -145,37 +145,37 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/zvols",
 		RequireAuth(http.HandlerFunc(HandleListZVols))).Methods("GET")
 	r.Handle("/api/zvol/create",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateZVol)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleCreateZVol)))).Methods("POST")
 	r.Handle("/api/zvol/edit",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleEditZVol)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleEditZVol)))).Methods("POST")
 	r.Handle("/api/zvol/delete",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteZVol)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleDeleteZVol)))).Methods("POST")
 
 	// --- Datasets ---
 	r.Handle("/api/datasets",
 		RequireAuth(http.HandlerFunc(HandleListDatasets))).Methods("GET")
 	r.Handle("/api/datasets",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateDataset)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleCreateDataset)))).Methods("POST")
 	r.Handle("/api/datasets/{path:.+}/load-key",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLoadDatasetKey)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleLoadDatasetKey)))).Methods("POST")
 	r.Handle("/api/datasets/{path:.+}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateDataset)))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleUpdateDataset)))).Methods("PUT")
 	r.Handle("/api/datasets/{path:.+}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteDataset)))).Methods("DELETE")
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleDeleteDataset)))).Methods("DELETE")
 
 	// --- Snapshots ---
 	r.Handle("/api/snapshots",
 		RequireAuth(http.HandlerFunc(HandleListSnapshots))).Methods("GET")
 	r.Handle("/api/snapshots",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateSnapshot)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_snapshots")(http.HandlerFunc(HandleCreateSnapshot)))).Methods("POST")
 	r.Handle("/api/snapshots/restore",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleRestoreSnapshot)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_snapshots")(http.HandlerFunc(HandleRestoreSnapshot)))).Methods("POST")
 	r.Handle("/api/snapshots/clone",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCloneSnapshot)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_snapshots")(http.HandlerFunc(HandleCloneSnapshot)))).Methods("POST")
 	r.Handle("/api/snapshots/delete",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteSnapshot)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_snapshots")(http.HandlerFunc(HandleDeleteSnapshot)))).Methods("POST")
 	r.Handle("/api/snapshots/delete-all",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteAllSnapshots)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_snapshots")(http.HandlerFunc(HandleDeleteAllSnapshots)))).Methods("POST")
 
 	// --- Disks ---
 	r.Handle("/api/disks",
@@ -191,25 +191,25 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/smb/global-config",
 		RequireAuth(http.HandlerFunc(HandleGetSMBGlobalConfig(appCfg)))).Methods("GET")
 	r.Handle("/api/smb/global-config",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateSMBGlobalConfig(appCfg))))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleUpdateSMBGlobalConfig(appCfg))))).Methods("PUT")
 	r.Handle("/api/shares/status",
 		RequireAuth(http.HandlerFunc(HandleSMBStatus))).Methods("GET")
 	r.Handle("/api/shares/service",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSMBService)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleSMBService)))).Methods("POST")
 	r.Handle("/api/shares/set-password",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetSMBPassword)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleSetSMBPassword)))).Methods("POST")
 	r.Handle("/api/shares",
 		RequireAuth(http.HandlerFunc(HandleListShares))).Methods("GET")
 	r.Handle("/api/shares",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateShare)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleCreateShare)))).Methods("POST")
 	r.Handle("/api/shares/sessions",
 		RequireAuth(http.HandlerFunc(HandleGetSMBSessions))).Methods("GET")
 	r.Handle("/api/shares/{name}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateShare)))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleUpdateShare)))).Methods("PUT")
 	r.Handle("/api/shares/{name}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteShare)))).Methods("DELETE")
+		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleDeleteShare)))).Methods("DELETE")
 	r.Handle("/api/shares/{name}/clean-recycle",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCleanShareRecycleBin)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleCleanShareRecycleBin)))).Methods("POST")
 
 	// --- Prerequisites & systemd service (admin only) ---
 	r.Handle("/api/prereqs",
@@ -219,21 +219,23 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 
 	// --- Sudoers Hardening (admin only) ---
 	r.Handle("/api/sudoers/status",
-		RequireAuth(RequireAdmin(HandleSudoersStatus(appCfg)))).Methods("GET")
+		RequireAuth(RequirePermission("review_sudoers")(HandleSudoersStatus(appCfg)))).Methods("GET")
 	r.Handle("/api/sudoers/diff",
-		RequireAuth(RequireAdmin(HandleSudoersDiff(appCfg)))).Methods("GET")
+		RequireAuth(RequirePermission("review_sudoers")(HandleSudoersDiff(appCfg)))).Methods("GET")
 	r.Handle("/api/sudoers/enable",
 		RequireAuth(RequireAdmin(HandleEnableSudoersHardening(appCfg)))).Methods("POST")
 	r.Handle("/api/sudoers/apply",
 		RequireAuth(RequireAdmin(HandleApplySudoers(appCfg)))).Methods("POST")
+	r.Handle("/api/sudoers/apply-sudo-all",
+		RequireAuth(RequireAdmin(HandleApplySudoAll(appCfg)))).Methods("POST")
 
 	// WebSocket: stream apt-get install output (admin only)
 	r.Handle("/ws/prereqs-install",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallPrereqs)))).Methods("GET")
 
-	// WebSocket: interactive PTY terminal (admin only)
+	// WebSocket: interactive PTY terminal
 	r.Handle("/ws/terminal",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleTerminal)))).Methods("GET")
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleTerminal)))).Methods("GET")
 
 	// --- OS Updates (admin only) ---
 	r.Handle("/api/os-info",
@@ -245,87 +247,87 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/ws/updates-apply",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleApplyUpdates)))).Methods("GET")
 
-	// --- Settings (admin only) ---
+	// --- Settings ---
 	r.Handle("/api/settings",
 		RequireAuth(http.HandlerFunc(HandleGetSettings(appCfg)))).Methods("GET")
 	r.Handle("/api/settings",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateSettings(appCfg))))).Methods("PUT")
+		RequireAuth(RequirePermission("edit_settings")(http.HandlerFunc(HandleUpdateSettings(appCfg))))).Methods("PUT")
 	r.Handle("/api/settings/timezone",
 		RequireAuth(http.HandlerFunc(HandleGetTimezone))).Methods("GET")
 	r.Handle("/api/settings/timezone",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetTimezone)))).Methods("PUT")
+		RequireAuth(RequirePermission("edit_settings")(http.HandlerFunc(HandleSetTimezone)))).Methods("PUT")
 
 	// --- Scrub ---
 	r.Handle("/api/pool/scrub/status",
 		RequireAuth(http.HandlerFunc(HandleScrubStatus))).Methods("GET")
 	r.Handle("/api/pool/scrub/start",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleStartScrub)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleStartScrub)))).Methods("POST")
 	r.Handle("/api/pool/scrub/stop",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleStopScrub)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleStopScrub)))).Methods("POST")
 	r.Handle("/api/pool/scrub/schedule",
 		RequireAuth(http.HandlerFunc(HandleGetScrubSchedule(appCfg)))).Methods("GET")
 	r.Handle("/api/pool/scrub/schedule",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetScrubSchedule(appCfg))))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleSetScrubSchedule(appCfg))))).Methods("PUT")
 	r.Handle("/api/treemap/schedule",
 		RequireAuth(http.HandlerFunc(HandleGetTreeMapSchedule(appCfg)))).Methods("GET")
 	r.Handle("/api/treemap/schedule",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetTreeMapSchedule(appCfg))))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleSetTreeMapSchedule(appCfg))))).Methods("PUT")
 
 	// --- Snapshot schedules ---
 	r.Handle("/api/snapshot-schedules",
 		RequireAuth(http.HandlerFunc(HandleListSchedules))).Methods("GET")
 	r.Handle("/api/snapshot-schedules",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateSchedule)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleCreateSchedule)))).Methods("POST")
 	r.Handle("/api/snapshot-schedules/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateSchedule)))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleUpdateSchedule)))).Methods("PUT")
 	r.Handle("/api/snapshot-schedules/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteSchedule)))).Methods("DELETE")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleDeleteSchedule)))).Methods("DELETE")
 	r.Handle("/api/snapshot-schedules/{id}/run-now",
-		RequireAuth(RequireAdmin(HandleRunScheduleNow(appCfg)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_protection")(HandleRunScheduleNow(appCfg)))).Methods("POST")
 
 	// --- iSCSI sharing ---
 	r.Handle("/api/iscsi/status",
 		RequireAuth(http.HandlerFunc(HandleISCSIStatus(appCfg)))).Methods("GET")
 	r.Handle("/api/iscsi/service",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleISCSIServiceAction)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleISCSIServiceAction)))).Methods("POST")
 	r.Handle("/api/iscsi/config",
 		RequireAuth(http.HandlerFunc(HandleGetISCSIConfig))).Methods("GET")
 	r.Handle("/api/iscsi/config",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSaveISCSIConfig)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleSaveISCSIConfig)))).Methods("POST")
 	r.Handle("/api/iscsi/hosts",
 		RequireAuth(http.HandlerFunc(HandleListISCSIHosts))).Methods("GET")
 	r.Handle("/api/iscsi/host",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSaveISCSIHost)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleSaveISCSIHost)))).Methods("POST")
 	r.Handle("/api/iscsi/host/delete",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteISCSIHost)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleDeleteISCSIHost)))).Methods("POST")
 	r.Handle("/api/iscsi/shares",
 		RequireAuth(http.HandlerFunc(HandleListISCSIShares))).Methods("GET")
 	r.Handle("/api/iscsi/share/create",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateISCSIShare)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleCreateISCSIShare)))).Methods("POST")
 	r.Handle("/api/iscsi/share/edit",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleEditISCSIShare)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleEditISCSIShare)))).Methods("POST")
 	r.Handle("/api/iscsi/share/delete",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteISCSIShare)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleDeleteISCSIShare)))).Methods("POST")
 	r.Handle("/api/iscsi/credentials",
 		RequireAuth(http.HandlerFunc(HandleListISCSICredentials))).Methods("GET")
 	r.Handle("/api/iscsi/credential",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSaveISCSICredential)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleSaveISCSICredential)))).Methods("POST")
 	r.Handle("/api/iscsi/credential/delete",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteISCSICredential)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_iscsi")(http.HandlerFunc(HandleDeleteISCSICredential)))).Methods("POST")
 	r.Handle("/api/iscsi/sessions",
 		RequireAuth(http.HandlerFunc(HandleGetISCSISessions))).Methods("GET")
 
-	// --- Replication tasks (admin only) ---
+	// --- Replication tasks ---
 	r.Handle("/api/replication",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleListReplicationTasks)))).Methods("GET")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleListReplicationTasks)))).Methods("GET")
 	r.Handle("/api/replication",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateReplicationTask)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleCreateReplicationTask)))).Methods("POST")
 	r.Handle("/api/replication/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleEditReplicationTask)))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleEditReplicationTask)))).Methods("PUT")
 	r.Handle("/api/replication/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteReplicationTask)))).Methods("DELETE")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleDeleteReplicationTask)))).Methods("DELETE")
 	r.Handle("/ws/replication/{id}/run",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleRunReplicationTask)))).Methods("GET")
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleRunReplicationTask)))).Methods("GET")
 
 	// --- Prerequisites: install optional packages (admin only) ---
 	r.Handle("/api/prereqs/op-status",
@@ -369,15 +371,15 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/nfs/status",
 		RequireAuth(http.HandlerFunc(HandleNFSStatus))).Methods("GET")
 	r.Handle("/api/nfs/service",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleNFSService)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_nfs")(http.HandlerFunc(HandleNFSService)))).Methods("POST")
 	r.Handle("/api/nfs/shares",
 		RequireAuth(http.HandlerFunc(HandleListNFSShares))).Methods("GET")
 	r.Handle("/api/nfs/shares",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateNFSShare)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_nfs")(http.HandlerFunc(HandleCreateNFSShare)))).Methods("POST")
 	r.Handle("/api/nfs/shares/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateNFSShare)))).Methods("PUT")
+		RequireAuth(RequirePermission("manage_nfs")(http.HandlerFunc(HandleUpdateNFSShare)))).Methods("PUT")
 	r.Handle("/api/nfs/shares/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteNFSShare)))).Methods("DELETE")
+		RequireAuth(RequirePermission("manage_nfs")(http.HandlerFunc(HandleDeleteNFSShare)))).Methods("DELETE")
 	r.Handle("/api/nfs/sessions",
 		RequireAuth(http.HandlerFunc(HandleGetNFSSessions))).Methods("GET")
 
@@ -518,22 +520,32 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/interlink/servers",
 		RequireAuth(http.HandlerFunc(HandleInterlinkList(appCfg)))).Methods("GET")
 	r.Handle("/api/interlink/link",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInterlinkLink(appCfg))))).Methods("POST")
+		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandleInterlinkLink(appCfg))))).Methods("POST")
 	r.Handle("/api/interlink/switch",
 		RequireAuth(http.HandlerFunc(HandleInterlinkSwitch(appCfg)))).Methods("POST")
 	r.Handle("/api/interlink/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInterlinkUnlink(appCfg))))).Methods("DELETE")
+		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandleInterlinkUnlink(appCfg))))).Methods("DELETE")
 	r.Handle("/api/interlink/remote-pools/{server_id}",
 		RequireAuth(http.HandlerFunc(HandlePushInterlinkGetRemotePools(appCfg)))).Methods("GET")
 	// Push InterLink job endpoints.
 	r.Handle("/api/push-interlink/start",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePushInterlinkStart(appCfg)))))
+		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandlePushInterlinkStart(appCfg)))))
 	r.Handle("/api/push-interlink/start-dataset",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePushInterlinkStartDataset(appCfg))))).Methods("POST").Methods("POST")
+		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandlePushInterlinkStartDataset(appCfg))))).Methods("POST").Methods("POST")
 	r.Handle("/api/push-interlink/jobs",
 		RequireAuth(http.HandlerFunc(HandlePushInterlinkJobs))).Methods("GET")
 	r.Handle("/api/push-interlink/cancel/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandlePushInterlinkCancel)))).Methods("POST")
+		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandlePushInterlinkCancel)))).Methods("POST")
+
+	// --- File Browser ---
+	r.Handle("/api/files/list",
+		RequireAuth(RequirePermission("browse_files")(http.HandlerFunc(HandleFileBrowserList)))).Methods("GET")
+	r.Handle("/api/files/users-groups",
+		RequireAuth(RequirePermission("browse_files")(http.HandlerFunc(HandleFileBrowserUsersGroups)))).Methods("GET")
+	r.Handle("/api/files/chown",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserChown)))).Methods("POST")
+	r.Handle("/api/files/chmod",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserChmod)))).Methods("POST")
 
 	// --- Homepage widget API keys (admin only) ---
 	r.Handle("/api/settings/api-keys",

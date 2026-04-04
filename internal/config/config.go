@@ -30,7 +30,24 @@ const (
 	RoleAdmin    = "admin"
 	RoleReadOnly = "read-only"
 	RoleSMBOnly  = "smb-only"
+	RoleStandard = "standard"
 )
+
+// StandardPermissions holds granular capability flags for a "standard" role user.
+// All fields are omitempty so the struct serialises to {} when all are false.
+type StandardPermissions struct {
+	Terminal          bool `json:"terminal,omitempty"`
+	ReviewSudoers     bool `json:"review_sudoers,omitempty"`
+	BrowseFiles       bool `json:"browse_files,omitempty"`
+	ManagePoolDataset bool `json:"manage_pool_dataset,omitempty"`
+	ManageSMB         bool `json:"manage_smb,omitempty"`
+	ManageNFS         bool `json:"manage_nfs,omitempty"`
+	ManageISCSI       bool `json:"manage_iscsi,omitempty"`
+	ManageProtection  bool `json:"manage_protection,omitempty"`
+	ManageSnapshots   bool `json:"manage_snapshots,omitempty"`
+	EditSettings      bool `json:"edit_settings,omitempty"`
+	ManageInterlink   bool `json:"manage_interlink,omitempty"`
+}
 
 // S3Bucket is a MinIO bucket managed by ZFSNAS and tracked in portal config.
 type S3Bucket struct {
@@ -186,11 +203,12 @@ type User struct {
 	Role         string          `json:"role"` // admin, read-only, smb-only
 	CreatedAt    time.Time       `json:"created_at"`
 	Preferences  UserPreferences `json:"preferences,omitempty"`
-	TOTPSecret    string          `json:"totp_secret,omitempty"`     // base32-encoded TOTP secret
-	TOTPEnabled   bool            `json:"totp_enabled,omitempty"`    // 2FA active
-	SMBHomeFolder bool            `json:"smb_home_folder,omitempty"` // home dir under SMBHomeDataset
-	UID           *int            `json:"uid,omitempty"`             // custom Linux UID (nil = auto)
-	GID           *int            `json:"gid,omitempty"`             // custom Linux GID (nil = auto)
+	TOTPSecret    string               `json:"totp_secret,omitempty"`     // base32-encoded TOTP secret
+	TOTPEnabled   bool                 `json:"totp_enabled,omitempty"`    // 2FA active
+	SMBHomeFolder bool                 `json:"smb_home_folder,omitempty"` // home dir under SMBHomeDataset
+	UID           *int                 `json:"uid,omitempty"`             // custom Linux UID (nil = auto)
+	GID           *int                 `json:"gid,omitempty"`             // custom Linux GID (nil = auto)
+	StandardPerms *StandardPermissions `json:"standard_perms,omitempty"`  // nil unless role == "standard"
 }
 
 // EncryptionKey is metadata for a stored ZFS encryption key file.

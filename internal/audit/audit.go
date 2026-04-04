@@ -115,6 +115,9 @@ const (
 	ActionSoftwareUpdate = "software_update"
 	// Sudoers hardening.
 	ActionUpdateSudoers = "update_sudoers"
+	// File Browser.
+	ActionFileBrowserChown = "filebrowser_chown"
+	ActionFileBrowserChmod = "filebrowser_chmod"
 )
 
 var (

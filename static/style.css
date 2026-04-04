@@ -1007,3 +1007,20 @@ body.light .iscsi-icon { filter: none; }
 .sudoers-radio:hover        { opacity:.8; }
 .sudoers-section-label      { font-size:.72rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
                                color:var(--text-3); margin:14px 0 6px; }
+
+/* ── File Browser ─────────────────────────────────────────────────────────── */
+.fb-breadcrumb         { display:flex; align-items:center; gap:6px; padding:10px 16px;
+                         border-bottom:1px solid var(--border); flex-wrap:wrap;
+                         font-size:.85rem; }
+.fb-breadcrumb a       { color:var(--accent-2); text-decoration:none; cursor:pointer; }
+.fb-breadcrumb a:hover { text-decoration:underline; }
+.fb-breadcrumb .sep    { color:var(--text-3); }
+.fb-table-wrap         { overflow-y:auto; max-height:calc(72vh - 130px); }
+.fb-name-link          { cursor:pointer; color:var(--accent-2); text-decoration:none; }
+.fb-name-link:hover    { text-decoration:underline; }
+.fb-target-path        { font-size:.8rem; color:var(--text-3); word-break:break-all;
+                         margin:0 0 14px; }
+.fb-chmod-table        { width:100%; margin-bottom:4px; }
+.fb-chmod-table td,
+.fb-chmod-table th     { text-align:center; padding:4px 8px; }
+.fb-chmod-table td:first-child { text-align:left; font-weight:500; width:70px; }

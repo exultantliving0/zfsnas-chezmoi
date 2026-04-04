@@ -52,6 +52,47 @@ func RequireAdmin(next http.Handler) http.Handler {
 	})
 }
 
+// RequirePermission passes if the session user is admin, or if the session user
+// is "standard" and their StandardPerms field named by perm is true.
+// perm must be a json key of StandardPermissions (e.g. "terminal").
+func RequirePermission(perm string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sess := MustSession(r)
+			if sess.Role == config.RoleAdmin {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if sess.Role == config.RoleStandard {
+				users, _ := config.LoadUsers()
+				u := config.FindUserByID(users, sess.UserID)
+				if u != nil && u.StandardPerms != nil && permEnabled(u.StandardPerms, perm) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			jsonErr(w, http.StatusForbidden, "permission denied")
+		})
+	}
+}
+
+func permEnabled(p *config.StandardPermissions, perm string) bool {
+	switch perm {
+	case "terminal":            return p.Terminal
+	case "review_sudoers":      return p.ReviewSudoers
+	case "browse_files":        return p.BrowseFiles
+	case "manage_pool_dataset": return p.ManagePoolDataset
+	case "manage_smb":          return p.ManageSMB
+	case "manage_nfs":          return p.ManageNFS
+	case "manage_iscsi":        return p.ManageISCSI
+	case "manage_protection":   return p.ManageProtection
+	case "manage_snapshots":    return p.ManageSnapshots
+	case "edit_settings":       return p.EditSettings
+	case "manage_interlink":    return p.ManageInterlink
+	}
+	return false
+}
+
 // RequireWriteAccess rejects read-only and smb-only users.
 func RequireWriteAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
