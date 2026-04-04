@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go" alt="Go 1.22+"/>
   <img src="https://img.shields.io/badge/Platform-Ubuntu%2022.04%2B-E95420?style=flat-square&logo=ubuntu" alt="Ubuntu 22.04+"/>
   <img src="https://img.shields.io/badge/License-GPLv3-8a2cff?style=flat-square" alt="GPLv3 License"/>
-  <img src="https://img.shields.io/badge/Version-4.0.0-00eaff?style=flat-square" alt="Version 4.0.0"/>
+  <img src="https://img.shields.io/badge/Version-6.4.4-00eaff?style=flat-square" alt="Version 6.4.4"/>
 </p>
 
 ## Why ZNAS Chezmoi?
@@ -37,10 +37,11 @@ Version 6.3.26 DEMO of Interlink and other new features! [Version 6.3.26 DEMO](h
 ### Storage Management
 - **Multi-Pool Support** — manage any number of ZFS pools side by side; switch between pools with a dropdown in the top bar and the Pool tab; last selection remembered per user across sessions
 - **ZFS Pools** — create (Stripe / Mirror / RAIDZ1 / RAIDZ2) with configurable ashift, compression, and dedup; import existing pools; expand with new devices; upgrade pool feature flags; destroy
-- **Pool Cache Devices** — add and remove ZFS L2ARC cache devices per pool via the ⚡ Cache Config modal
+- **Pool Cache Devices** — add and remove ZFS L2ARC / ZIL devices per pool; separate ARC Level 1 (memory) tuning reads live `/proc/spl/kstat/zfs/arcstats` and writes `/etc/modprobe.d/zfs.conf` for persistence
 - **Pool Fixer Wizard** — guided recovery for degraded, faulted, or suspended pools; automatically clears error state and brings offline disks back online in two steps
 - **Disk Online / Offline** — manually take individual pool member disks offline or bring them back online without leaving the portal
 - **Datasets** — full nested hierarchy with quota, refquota, reservation, record size, compression, sync, dedup, case sensitivity, and a free-text comment stored as a ZFS user property (`zfsnas:comment`)
+- **ZVols** — create and manage ZFS block volumes (ZVols) with size, sync, compression, dedup, block size, and optional encryption; listed inline in the dataset table; used as iSCSI backing devices
 - **Snapshots** — create, restore, clone, and delete; visual tree per dataset; snapshot list spans all pools
 - **Scheduled Snapshots** — automated policies (hourly / daily / weekly / monthly) with configurable retention counts
 - **ZFS Scrub** — trigger, monitor progress, stop, and schedule auto-scrubs (weekly / bi-weekly / monthly / every 2 or 4 months) at a configurable hour
@@ -48,20 +49,26 @@ Version 6.3.26 DEMO of Interlink and other new features! [Version 6.3.26 DEMO](h
 - **Encryption Key Management** — generate, import, export, and delete encryption keys from the Settings tab; export format is compatible with TrueNAS key exports, making migration between platforms straightforward; lock icons throughout the UI identify which pools and datasets are encrypted
 
 ### File Sharing
-- **SMB Shares** — create and manage Samba shares with per-user read/write or read-only permissions
+- **SMB Shares** — create and manage Samba shares with per-user read/write or read-only access; global SMB configuration (workgroup, server string, `[homes]` section); per-user home folder provisioning
 - **NFS Shares** — Linux/macOS NFS exports with per-client CIDR and options (ro/rw, sync/async)
+- **S3 Object Storage** — optional MinIO-backed S3 server; install with one click from Prerequisites; manage buckets (versioning, object lock, quota, anonymous access) and IAM users from the portal; TLS toggle included
+- **iSCSI Sharing** — optional targetcli-fb backend; create iSCSI shares backed by ZVols; manage initiator host registry; enable from Prerequisites with one click
+- **File Browser** — browse any dataset, SMB share, or NFS share path directly in the portal; admin can change ownership (`chown`) and permissions (`chmod`), optionally recursive; safe path traversal prevention
 
 ### Monitoring & Alerts
 - **Physical Disks** — list all non-system disks with vendor, model, serial number, type, temperature, and SMART wearout (ATA + NVMe), color-coded by health
 - **Pool Member Status** — per-disk health state (ONLINE / FAULTED / OFFLINE / etc.) shown inline in the pool view; presence detection for disks that have been physically removed
 - **Pool Capacity Bar** — persistent capacity visualization at the top of every page with a pool selector when multiple pools are configured; per-dataset segments with hover tooltips
 - **System Dashboard** — 24-hour RRD charts for CPU, memory (app + cache stacked), network (per interface), and disk I/O; live sparklines updated every few seconds
+- **Capacity Trend** — dedicated page with stacked area charts; select any pool or dataset combination; dashed red usable-capacity ceiling line; time ranges from "since data" up to 5 years; backed by a 3-tier RRD (5-min/1-week, 30-min/1-month, daily/5-years)
+- **UPS Management** — optional NUT install from Prerequisites; compact battery widget in top bar; UPS settings panel with visual battery gauge, metrics grid, and configurable shutdown policy (e.g. shut down at N% after M minutes on battery)
 - **Hardware Info** — CPU core count and total RAM exposed via `/api/sysinfo/hardware`
-- **Email Alerts** — SMTP-based notifications for pool degradation, disk wearout, SMART errors, and failed logins; all pools monitored (not just the first)
+- **Multi-Target Notifications** — six independent alert channels: Email (SMTP), ntfy, Gotify, Pushover, Syslog, and in-app WebSocket toasts; each channel has its own enable toggle and per-event subscriptions; all channels can be active simultaneously
 - **Audit Health Events** — pool problem / recovery and disk problem / recovery transitions are written to the audit log automatically by the background health poller
 
 ### Administration
-- **User Management** — three roles: `admin`, `read-only`, `smb-only`; active session listing and remote kill; per-user UI preferences (pool selection, sidebar state) persisted across sessions
+- **User Management** — four roles: `admin`, `standard`, `read-only`, `smb-only`; the `standard` role has 11 granular permission flags (terminal, file browser, pool/dataset management, SMB, NFS, iSCSI, snapshots, protection, settings, interlink, and sudo review); active session listing and remote kill; per-user UI preferences persisted across sessions
+- **Certificate Management** — import and manage TLS certificates from the Settings tab; activate any cert and restart the portal in-place; self-signed cert auto-generated on first run
 - **Audit Log** — append-only activity log with live sidebar widget and full log page (filterable by user, action, date); covers storage, sharing, auth, OS, and health events
 - **Web Terminal** — browser-based PTY terminal (admin only), powered by xterm.js over WebSocket
 - **OS Updates** — check for and stream-apply `apt` security updates from the portal
@@ -95,6 +102,18 @@ The following system packages are required. If any are missing, the **Prerequisi
 ---
 
 ## Installation
+
+### Choose your installation type
+
+| Installation type | Description | Guide |
+|---|---|---|
+| **Proxmox VM** | Run ZNAS inside a Debian VM on a Proxmox host; ZFS disks passed through via PCIe/HBA or virtio | [Wiki — Proxmox VM](https://github.com/macgaver/zfsnas-chezmoi/wiki/Installation-Proxmox-VM) |
+| **Physical / Bare-metal** | Install directly on dedicated NAS hardware | [Wiki — Hardware](https://github.com/macgaver/zfsnas-chezmoi/wiki/Installation-Hardware) |
+| **Quick installer (script)** | One-command automated setup on any supported Debian/Ubuntu host | [Option A below](#option-a--quick-installer-recommended) |
+| **Build from source** | Clone the repo and compile; useful for development or custom builds | [Option B below](#option-b--build-from-source) |
+| **Download binary** | Grab the latest release binary and run it directly | [Option C below](#option-c--download-a-release-binary) |
+
+---
 
 ### Option A — Quick installer (recommended)
 
