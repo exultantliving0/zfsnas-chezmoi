@@ -267,9 +267,28 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	jsonCreated(w, map[string]string{"id": user.ID, "username": user.Username})
 }
 
-// HandleUpdateUser updates a user's email, password, or role (admin only).
+// HandleUpdateUser updates a user's details.
+// Admins can update any user's email, password, role, and permissions.
+// Non-admins can only update their own password.
 func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
+	id   := mux.Vars(r)["id"]
+	sess := MustSession(r)
+	isAdmin := sess.Role == config.RoleAdmin
+	isSelf  := sess.UserID == id
+
+	// Non-admins can only update their own account.
+	if !isAdmin && !isSelf {
+		audit.Log(audit.Entry{
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionForbidden,
+			Target:  r.Method + " " + r.URL.Path,
+			Result:  audit.ResultError,
+			Details: "attempted to edit another user's account",
+		})
+		jsonErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
 
 	users, err := config.LoadUsers()
 	if err != nil {
@@ -292,6 +311,40 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Non-admins may only change their own password — all other fields are ignored.
+	if !isAdmin {
+		if req.Password == "" {
+			jsonErr(w, http.StatusBadRequest, "password is required")
+			return
+		}
+		if len(req.Password) < 8 {
+			jsonErr(w, http.StatusBadRequest, "password must be at least 8 characters")
+			return
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to hash password")
+			return
+		}
+		user.PasswordHash = string(hash)
+		if err := config.SaveUsers(users); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to save users")
+			return
+		}
+		if err := system.EnsureSambaUser(user.Username, req.Password, user.UID, user.GID); err != nil {
+			log.Printf("users: EnsureSambaUser (password sync) for %s: %v", user.Username, err)
+		}
+		audit.Log(audit.Entry{
+			User:   sess.Username,
+			Role:   sess.Role,
+			Action: audit.ActionUpdateUser,
+			Target: user.Username,
+			Result: audit.ResultOK,
+		})
+		jsonOK(w, map[string]string{"message": "password updated"})
 		return
 	}
 
@@ -373,7 +426,6 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess := MustSession(r)
 	audit.Log(audit.Entry{
 		User:   sess.Username,
 		Role:   sess.Role,

@@ -630,13 +630,13 @@ func EnsureSMBHomeDir(dataset, username string) error {
 	}
 
 	dir := mountpoint + "/" + username
-	if out, err := exec.Command("sudo", "mkdir", "-p", dir).CombinedOutput(); err != nil {
+	if out, err := exec.Command("mkdir", "-p", dir).CombinedOutput(); err != nil {
 		return fmt.Errorf("mkdir %s: %s", dir, strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.Command("sudo", "chmod", "0700", dir).CombinedOutput(); err != nil {
+	if out, err := exec.Command("chmod", "0700", dir).CombinedOutput(); err != nil {
 		return fmt.Errorf("chmod %s: %s", dir, strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.Command("sudo", "chown", username+":"+username, dir).CombinedOutput(); err != nil {
+	if out, err := exec.Command("chown", username+":"+username, dir).CombinedOutput(); err != nil {
 		return fmt.Errorf("chown %s: %s", dir, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -650,7 +650,7 @@ func RemoveSMBHomeDirIfEmpty(dataset, username string) error {
 		return fmt.Errorf("cannot determine mountpoint for dataset %q", dataset)
 	}
 	dir := mountpoint + "/" + username
-	out, err := exec.Command("sudo", "rmdir", dir).CombinedOutput()
+	out, err := exec.Command("rmdir", dir).CombinedOutput()
 	if err != nil {
 		// rmdir exits non-zero when the dir is non-empty or doesn't exist — both are fine.
 		_ = out

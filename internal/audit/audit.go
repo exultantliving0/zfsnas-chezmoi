@@ -118,6 +118,8 @@ const (
 	// File Browser.
 	ActionFileBrowserChown = "filebrowser_chown"
 	ActionFileBrowserChmod = "filebrowser_chmod"
+	// Access control.
+	ActionForbidden = "forbidden_access"
 )
 
 var (

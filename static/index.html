@@ -4665,8 +4665,8 @@
           </tr>
           <tr style="border-bottom:1px solid var(--border);">
             <th style="text-align:left;padding:5px 12px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);">Command</th>
-            <th style="text-align:center;padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#f0b429;white-space:nowrap;width:70px;">New</th>
-            <th style="text-align:center;padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2);white-space:nowrap;width:80px;">Silenced</th>
+            <th style="text-align:center;padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#f0b429;white-space:nowrap;width:70px;">Pending</th>
+            <th style="text-align:center;padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2);white-space:nowrap;width:80px;">Refused</th>
             <th style="text-align:center;padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--accent-3);white-space:nowrap;width:90px;">Approved</th>
           </tr>
         </thead>
@@ -6651,6 +6651,12 @@ function closeSudoersReviewModal() {
   if (warnEl) warnEl.classList.add('hidden');
   _sudoersRowState = {};
   _sudoersInitialState = {};
+  // Invalidate the cached sudoers status so the next loadPrereqs() re-fetches it.
+  _sudoersStatus = null;
+  // Refresh the prerequisites page if it is currently visible.
+  if (!document.getElementById('page-prereqs').classList.contains('hidden')) {
+    loadPrereqs();
+  }
 }
 
 function openSudoersBootstrapModal() {
@@ -6703,7 +6709,11 @@ async function loadUsers() {
           <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">
             <button class="btn btn-ghost btn-sm" onclick="openEditUser('${esc(u.id)}')" title="Edit user" style="padding:6px 10px;">Edit</button>
             <span onclick="toggleUserMenu(event,${idx})" title="More actions" style="cursor:pointer;color:var(--text-2);font-size:20px;line-height:1;padding:2px 6px;user-select:none;">⋮</span>
-          </div>` : ''}</td>
+          </div>` : (u.id === currentUser.user_id ? `
+          <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">
+            <button class="btn btn-ghost btn-sm" onclick="openEditUser('${esc(u.id)}')" title="Change my password" style="padding:6px 10px;">Edit</button>
+            <button class="btn btn-ghost btn-sm" onclick="openSMBPasswordModal('${esc(u.username)}')" title="Change SMB password" style="padding:6px 10px;">SMB Password</button>
+          </div>` : '')}</td>
       </tr>`;
     }).join('');
   } catch {
@@ -6782,6 +6792,9 @@ function openEditUser(id) {
   if (!u) return;
   _editUserId = id;
 
+  const isAdmin = currentUser.role === 'admin';
+  const isSelf  = id === currentUser.user_id;
+
   document.getElementById('eu-username-label').textContent = u.username;
   document.getElementById('eu-email').value    = u.email || '';
   document.getElementById('eu-role').value     = u.role;
@@ -6789,6 +6802,12 @@ function openEditUser(id) {
   document.getElementById('eu-smb-home').checked = !!u.smb_home_folder;
   document.getElementById('edit-user-alert').classList.add('hidden');
   document.getElementById('edit-user-ok').classList.add('hidden');
+
+  // Non-admins editing their own account see only the password field + 2FA.
+  const selfOnly = !isAdmin && isSelf;
+  document.getElementById('eu-email').closest('.form-group').classList.toggle('hidden', selfOnly);
+  document.getElementById('eu-role').closest('.form-group').classList.toggle('hidden', selfOnly);
+  document.getElementById('eu-smb-home').parentElement.classList.toggle('hidden', selfOnly);
 
   // Populate standard permissions panel.
   const sp = u.standard_perms || {};
@@ -6805,14 +6824,16 @@ function openEditUser(id) {
   document.getElementById('ep-manage-interlink').checked    = !!sp.manage_interlink;
 
   // Prevent changing your own role (avoid accidental self-lockout).
-  const isSelf = id === currentUser.user_id;
   document.getElementById('eu-role').disabled = isSelf;
   document.getElementById('eu-role-self-hint').classList.toggle('hidden', !isSelf);
 
   onEditRoleChange();
+  // Force-hide capabilities panel after onEditRoleChange() — non-admins must not see it.
+  if (selfOnly) document.getElementById('eu-standard-perms').style.display = 'none';
   init2FASection(u);
   document.getElementById('modal-edit-user').classList.remove('hidden');
-  setTimeout(() => { document.getElementById('eu-email').focus(); _euCheckScroll(); }, 50);
+  const focusEl = selfOnly ? 'eu-password' : 'eu-email';
+  setTimeout(() => { document.getElementById(focusEl).focus(); _euCheckScroll(); }, 50);
 }
 
 function _euCheckScroll() {
@@ -6844,28 +6865,41 @@ async function submitEditUser() {
   alertEl.classList.add('hidden');
   okEl.classList.add('hidden');
 
-  const role = document.getElementById('eu-role').value;
-  const body = {
-    email:           document.getElementById('eu-email').value.trim(),
-    role,
-    smb_home_folder: document.getElementById('eu-smb-home').checked,
-  };
-  const pw = document.getElementById('eu-password').value;
-  if (pw && role !== 'smb-only') body.password = pw;
-  if (role === 'standard') {
-    body.standard_perms = {
-      terminal:            document.getElementById('ep-terminal').checked,
-      review_sudoers:      document.getElementById('ep-review-sudoers').checked,
-      browse_files:        document.getElementById('ep-browse-files').checked,
-      manage_pool_dataset: document.getElementById('ep-manage-pool-dataset').checked,
-      manage_smb:          document.getElementById('ep-manage-smb').checked,
-      manage_nfs:          document.getElementById('ep-manage-nfs').checked,
-      manage_iscsi:        document.getElementById('ep-manage-iscsi').checked,
-      manage_protection:   document.getElementById('ep-manage-protection').checked,
-      manage_snapshots:    document.getElementById('ep-manage-snapshots').checked,
-      edit_settings:       document.getElementById('ep-edit-settings').checked,
-      manage_interlink:    document.getElementById('ep-manage-interlink').checked,
+  const isAdmin = currentUser.role === 'admin';
+  const pw      = document.getElementById('eu-password').value;
+  let body;
+
+  if (!isAdmin) {
+    // Non-admins can only change their own password.
+    if (!pw) {
+      alertEl.textContent = 'Please enter a new password.';
+      alertEl.classList.remove('hidden');
+      return;
+    }
+    body = { password: pw };
+  } else {
+    const role = document.getElementById('eu-role').value;
+    body = {
+      email:           document.getElementById('eu-email').value.trim(),
+      role,
+      smb_home_folder: document.getElementById('eu-smb-home').checked,
     };
+    if (pw && role !== 'smb-only') body.password = pw;
+    if (role === 'standard') {
+      body.standard_perms = {
+        terminal:            document.getElementById('ep-terminal').checked,
+        review_sudoers:      document.getElementById('ep-review-sudoers').checked,
+        browse_files:        document.getElementById('ep-browse-files').checked,
+        manage_pool_dataset: document.getElementById('ep-manage-pool-dataset').checked,
+        manage_smb:          document.getElementById('ep-manage-smb').checked,
+        manage_nfs:          document.getElementById('ep-manage-nfs').checked,
+        manage_iscsi:        document.getElementById('ep-manage-iscsi').checked,
+        manage_protection:   document.getElementById('ep-manage-protection').checked,
+        manage_snapshots:    document.getElementById('ep-manage-snapshots').checked,
+        edit_settings:       document.getElementById('ep-edit-settings').checked,
+        manage_interlink:    document.getElementById('ep-manage-interlink').checked,
+      };
+    }
   }
 
   btn.disabled = true; btn.textContent = 'Saving…';
@@ -12099,7 +12133,7 @@ function renderSnapshots(el, snaps) {
     const body = Object.entries(grouped).map(([dataset, list]) => {
       // Use stable DOM ID derived from dataset name.
       const bodyId = 'snap-ds-body-' + dataset.replace(/[^a-zA-Z0-9]/g, '_');
-      const dsCollapsed = !!_snapDsCollapsed.get(dataset);
+      const dsCollapsed = _snapDsCollapsed.has(dataset) ? !!_snapDsCollapsed.get(dataset) : true;
       const chevRot = dsCollapsed ? 'rotate(-90deg)' : '';
       const bodyDisplay = dsCollapsed ? 'display:none;' : '';
       return `
@@ -12138,7 +12172,7 @@ function renderSnapshots(el, snaps) {
     }).join('');
 
     if (!multiPool) return body;
-    const poolCollapsed = !!_snapPoolCollapsed.get(poolName);
+    const poolCollapsed = _snapPoolCollapsed.has(poolName) ? !!_snapPoolCollapsed.get(poolName) : true;
     const poolChevRot   = poolCollapsed ? 'rotate(-90deg)' : '';
     const poolDisplay   = poolCollapsed ? 'display:none;' : '';
     return `
@@ -18109,6 +18143,7 @@ document.addEventListener('click', function(e) {
     'modal-install':          closeInstallModal,
     'modal-about':            closeAbout,
     'modal-sig-invalid-help': () => document.getElementById('modal-sig-invalid-help').classList.add('hidden'),
+    'modal-fb-edit':          closeFbEditModal,
   };
   const fn = closeFns[e.target.id];
   if (fn) fn();
@@ -20348,7 +20383,11 @@ function runReplicationTask(id, name) {
         method: 'POST',
         body: JSON.stringify({ server_id: serverId })
       });
-      window.location.href = res.redirect_url;
+      if (!res.user_exists) {
+        _showToast('Your account does not exist on that server.', 'warning');
+      } else {
+        window.location.href = res.redirect_url;
+      }
     } catch(e) {
       _showToast('Switch failed: ' + e.message, 'error');
     }
@@ -20960,7 +20999,7 @@ function showToast(msg, type = 'error') {
 </div>
 
 <!-- ── File Browser Modal ─────────────────────────────────────────────────── -->
-<div class="modal-backdrop hidden" id="modal-file-browser">
+<div class="modal-backdrop hidden" id="modal-file-browser" onclick="if(event.target===this)closeFileBrowser()">
   <div class="modal" style="max-width:960px;">
     <div class="modal-header">
       <h3>📂 Browse Files — <span id="fb-root-label"></span></h3>
@@ -20985,15 +21024,21 @@ function showToast(msg, type = 'error') {
   </div>
 </div>
 
-<!-- ── Change Ownership Modal ─────────────────────────────────────────────── -->
-<div class="modal-backdrop hidden" id="modal-fb-chown">
+<!-- ── Edit Ownership & Permissions Modal ─────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-fb-edit">
   <div class="modal" style="max-width:480px;">
     <div class="modal-header">
-      <h3>Change Ownership</h3>
-      <button class="modal-close" onclick="closeChownModal()">✕</button>
+      <h3>Edit Ownership &amp; Permissions</h3>
+      <button class="modal-close" onclick="closeFbEditModal()">✕</button>
     </div>
     <div class="modal-body">
-      <p id="fb-chown-path" class="fb-target-path"></p>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <p id="fb-edit-path" class="fb-target-path" style="margin:0;flex:1;"></p>
+        <button id="fb-edit-unhide-btn" class="btn btn-ghost btn-sm" onclick="toggleFbAllUsers()" style="white-space:nowrap;margin-left:12px;font-size:12px;">Unhide System Users</button>
+      </div>
+
+      <!-- Ownership section -->
+      <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin-bottom:8px;">Ownership</div>
       <div class="form-row">
         <label>Owner</label>
         <select id="fb-chown-owner"></select>
@@ -21002,28 +21047,15 @@ function showToast(msg, type = 'error') {
         <label>Group</label>
         <select id="fb-chown-group"></select>
       </div>
-      <label class="checkbox-label" id="fb-chown-recursive-wrap">
-        <input type="checkbox" id="fb-chown-recursive">
-        Apply recursively to all contents
-      </label>
-      <div class="alert alert-error hidden" id="fb-chown-err"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeChownModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="applyChown()">Apply Ownership</button>
-    </div>
-  </div>
-</div>
+      <div class="alert alert-error hidden" id="fb-chown-err" style="margin-top:8px;"></div>
+      <div style="text-align:right;margin-top:12px;margin-bottom:16px;">
+        <button class="btn btn-primary btn-sm" onclick="applyChown()">Apply Ownership</button>
+      </div>
 
-<!-- ── Change Permissions Modal ───────────────────────────────────────────── -->
-<div class="modal-backdrop hidden" id="modal-fb-chmod">
-  <div class="modal" style="max-width:440px;">
-    <div class="modal-header">
-      <h3>Change Permissions</h3>
-      <button class="modal-close" onclick="closeChmodModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <p id="fb-chmod-path" class="fb-target-path"></p>
+      <hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px;">
+
+      <!-- Permissions section -->
+      <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin-bottom:8px;">Permissions</div>
       <table class="tbl fb-chmod-table">
         <thead><tr><th></th><th>Read</th><th>Write</th><th>Execute</th></tr></thead>
         <tbody>
@@ -21045,15 +21077,19 @@ function showToast(msg, type = 'error') {
         <label>Octal</label>
         <input type="text" id="fb-chmod-octal" maxlength="3" style="width:60px;" oninput="syncChmodOctal()">
       </div>
-      <label class="checkbox-label" id="fb-chmod-recursive-wrap">
-        <input type="checkbox" id="fb-chmod-recursive">
+      <div class="alert alert-error hidden" id="fb-chmod-err" style="margin-bottom:8px;margin-top:8px;"></div>
+      <div style="text-align:right;margin-bottom:8px;">
+        <button class="btn btn-primary btn-sm" onclick="applyChmod()">Apply Permissions</button>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:0 0 12px;">
+      <label class="checkbox-label" id="fb-edit-recursive-wrap">
+        <input type="checkbox" id="fb-edit-recursive">
         Apply recursively to all contents
       </label>
-      <div class="alert alert-error hidden" id="fb-chmod-err"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeChmodModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="applyChmod()">Apply Permissions</button>
+      <button class="btn btn-ghost" onclick="closeFbEditModal()">Close</button>
     </div>
   </div>
 </div>
@@ -21155,7 +21191,8 @@ function renderFileBrowserBreadcrumb(subpath) {
   let html = '';
 
   if (parts.length > 0) {
-    html += `<a onclick="fileBrowserNavigate('')">← Back</a><span class="sep">|</span>`;
+    const parentPath = parts.slice(0, -1).join('/');
+    html += `<a onclick="fileBrowserNavigate('${esc(parentPath)}')">← Back</a><span class="sep">|</span>`;
   }
 
   html += `<a onclick="fileBrowserNavigate('')">/</a>`;
@@ -21173,47 +21210,6 @@ function renderFileBrowserBreadcrumb(subpath) {
   el.innerHTML = html;
 }
 
-async function openChownModalForCurrentDir() {
-  fileBrowserState.activeEntryIdx = -1;
-  const dirInfo = fileBrowserState.currentDirInfo;
-  const displayPath = '/' + (fileBrowserState.subpath || '');
-
-  document.getElementById('fb-chown-path').textContent = displayPath;
-  document.getElementById('fb-chown-recursive-wrap').style.display = '';  // always a dir
-  document.getElementById('fb-chown-recursive').checked = false;
-  document.getElementById('fb-chown-err').classList.add('hidden');
-
-  try {
-    const ug = await loadUsersGroups();
-    const ownerSel = document.getElementById('fb-chown-owner');
-    const groupSel = document.getElementById('fb-chown-group');
-    const curOwner = dirInfo ? dirInfo.owner : '';
-    const curGroup = dirInfo ? dirInfo.group : '';
-    ownerSel.innerHTML = ug.users.map(u => `<option${u===curOwner?' selected':''}>${esc(u)}</option>`).join('');
-    groupSel.innerHTML = ug.groups.map(g => `<option${g===curGroup?' selected':''}>${esc(g)}</option>`).join('');
-  } catch(err) {
-    document.getElementById('fb-chown-err').textContent = err.message;
-    document.getElementById('fb-chown-err').classList.remove('hidden');
-  }
-
-  document.getElementById('modal-fb-chown').classList.remove('hidden');
-}
-
-function openChmodModalForCurrentDir() {
-  fileBrowserState.activeEntryIdx = -1;
-  const dirInfo = fileBrowserState.currentDirInfo;
-  const displayPath = '/' + (fileBrowserState.subpath || '');
-  const octal = dirInfo ? dirInfo.mode_octal : '755';
-
-  document.getElementById('fb-chmod-path').textContent = displayPath + '   (current: ' + octal + ')';
-  document.getElementById('fb-chmod-recursive-wrap').style.display = '';  // always a dir
-  document.getElementById('fb-chmod-recursive').checked = false;
-  document.getElementById('fb-chmod-err').classList.add('hidden');
-  document.getElementById('fb-chmod-octal').value = octal;
-  _setChmodCheckboxes(octal);
-
-  document.getElementById('modal-fb-chmod').classList.remove('hidden');
-}
 
 function sortFileBrowser(col) {
   if (fileBrowserState.sortCol === col) {
@@ -21272,17 +21268,19 @@ function renderFileBrowserTable(entries) {
   const dirInfo = fileBrowserState.currentDirInfo;
   const dotDate = dirInfo ? new Date(dirInfo.modified_unix * 1000) : null;
   const dotModified = dotDate
-    ? dotDate.getFullYear() + '-' + String(dotDate.getMonth()+1).padStart(2,'0')
+    ? dotDate.getFullYear() + '-' + String(dotDate.getMonth()+1).padStart(2,'0') + '-' + String(dotDate.getDate()).padStart(2,'0')
     : '—';
   const dotMenuCell = isAdmin
-    ? `<td style="text-align:right;"><button class="row-menu-btn" onclick="toggleFileBrowserRowMenu(event,-1)" title="More actions">⋮</button></td>`
+    ? `<td style="text-align:right;"><button class="row-menu-btn" onclick="openFbEditModal(-1)" title="Edit ownership &amp; permissions" style="font-size:14px;">✏</button></td>`
     : '';
+  const ownerStr  = dirInfo ? `${esc(dirInfo.owner)} (${dirInfo.owner_uid})` : '—';
+  const groupStr  = dirInfo ? `${esc(dirInfo.group)} (${dirInfo.group_gid})` : '—';
   const dotRow = `<tr style="color:var(--text-2);">
     <td style="font-family:monospace;font-size:13px;">📁 .</td>
     <td style="font-family:monospace;font-size:12px;">—</td>
     <td style="font-family:monospace;font-size:12px;">${dirInfo ? esc(dirInfo.permissions) : '—'}</td>
-    <td style="font-size:12px;">${dirInfo ? esc(dirInfo.owner) : '—'}</td>
-    <td style="font-size:12px;">${dirInfo ? esc(dirInfo.group) : '—'}</td>
+    <td style="font-size:12px;">${ownerStr}</td>
+    <td style="font-size:12px;">${groupStr}</td>
     <td style="font-size:12px;">${dotModified}</td>
     ${dotMenuCell}
   </tr>`;
@@ -21297,95 +21295,113 @@ function renderFileBrowserTable(entries) {
     const icon = e.is_dir ? '📁' : '📄';
     const size = e.is_dir ? '—' : formatFileSize(e.size_bytes);
     const date = new Date(e.modified_unix * 1000);
-    const modified = date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0');
+    const modified = date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
     const subP = esc((fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + e.name);
     const nameCell = e.is_dir
       ? `<a class="fb-name-link" onclick="fileBrowserNavigate('${subP}')">${icon} ${esc(e.name)}</a>`
       : `${icon} ${esc(e.name)}`;
     const menuCell = isAdmin
-      ? `<td style="text-align:right;"><button class="row-menu-btn" onclick="toggleFileBrowserRowMenu(event,${origIdx})" title="More actions">⋮</button></td>`
+      ? `<td style="text-align:right;"><button class="row-menu-btn" onclick="openFbEditModal(${origIdx})" title="Edit ownership &amp; permissions" style="font-size:14px;">✏</button></td>`
       : '';
+    const ownerCell = `${esc(e.owner)} (${e.owner_uid})`;
+    const groupCell = `${esc(e.group)} (${e.group_gid})`;
     return `<tr>
       <td>${nameCell}</td>
       <td style="font-family:monospace;font-size:12px;">${esc(size)}</td>
       <td style="font-family:monospace;font-size:12px;">${esc(e.permissions)}</td>
-      <td style="font-size:12px;">${esc(e.owner)}</td>
-      <td style="font-size:12px;">${esc(e.group)}</td>
+      <td style="font-size:12px;">${ownerCell}</td>
+      <td style="font-size:12px;">${groupCell}</td>
       <td style="font-size:12px;">${esc(modified)}</td>
       ${menuCell}
     </tr>`;
   }).join('');
 }
 
-function toggleFileBrowserRowMenu(event, entryIdx) {
-  event.stopPropagation();
-  const btn = event.currentTarget;
-
-  if (_openShareMenu && _openShareMenu.btn === btn) {
-    closeShareMenus();
-    return;
-  }
-  closeShareMenus();
-
-  const dd = document.createElement('div');
-  dd.className = 'row-menu-dropdown';
-  dd.addEventListener('click', ev => ev.stopPropagation());
-
-  const chownBtn = document.createElement('button');
-  chownBtn.textContent = '🔑 Change Ownership…';
-  chownBtn.addEventListener('click', () => {
-    closeShareMenus();
-    if (entryIdx === -1) openChownModalForCurrentDir(); else openChownModal(entryIdx);
-  });
-  dd.appendChild(chownBtn);
-
-  const chmodBtn = document.createElement('button');
-  chmodBtn.textContent = '🔒 Change Permissions…';
-  chmodBtn.addEventListener('click', () => {
-    closeShareMenus();
-    if (entryIdx === -1) openChmodModalForCurrentDir(); else openChmodModal(entryIdx);
-  });
-  dd.appendChild(chmodBtn);
-
-  document.body.appendChild(dd);
-  const rect = btn.getBoundingClientRect();
-  dd.style.position = 'fixed';
-  dd.style.top  = (rect.bottom + 4) + 'px';
-  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
-  _openShareMenu = { btn, dropdown: dd };
-}
-
-async function loadUsersGroups() {
-  if (fileBrowserState.usersGroups) return fileBrowserState.usersGroups;
-  const resp = await fetch('/api/files/users-groups');
-  if (!resp.ok) throw new Error('Failed to load users/groups');
-  fileBrowserState.usersGroups = await resp.json();
-  return fileBrowserState.usersGroups;
-}
-
-async function openChownModal(entryIdx) {
+async function openFbEditModal(entryIdx) {
   fileBrowserState.activeEntryIdx = entryIdx;
-  const e = fileBrowserState.entries[entryIdx];
-  const relPath = (fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + e.name;
 
-  document.getElementById('fb-chown-path').textContent = '/' + relPath;
-  document.getElementById('fb-chown-recursive-wrap').style.display = e.is_dir ? '' : 'none';
-  document.getElementById('fb-chown-recursive').checked = false;
+  let displayPath, isDir, curOwner, curGroup, curOctal;
+  if (entryIdx === -1) {
+    const dirInfo = fileBrowserState.currentDirInfo;
+    displayPath = '/' + (fileBrowserState.subpath || '');
+    isDir       = true;
+    curOwner    = dirInfo ? dirInfo.owner : '';
+    curGroup    = dirInfo ? dirInfo.group : '';
+    curOctal    = dirInfo ? dirInfo.mode_octal : '755';
+  } else {
+    const e = fileBrowserState.entries[entryIdx];
+    displayPath = '/' + (fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + e.name;
+    isDir       = e.is_dir;
+    curOwner    = e.owner;
+    curGroup    = e.group;
+    curOctal    = e.mode_octal || '644';
+  }
+
+  document.getElementById('fb-edit-path').textContent = displayPath;
+  document.getElementById('fb-edit-recursive-wrap').style.display = isDir ? '' : 'none';
+  document.getElementById('fb-edit-recursive').checked = false;
   document.getElementById('fb-chown-err').classList.add('hidden');
+  document.getElementById('fb-chmod-err').classList.add('hidden');
 
+  // Reset the system-users toggle on every open.
+  _fbShowAllUsers = false;
+  const unhideBtn = document.getElementById('fb-edit-unhide-btn');
+  if (unhideBtn) unhideBtn.textContent = 'Unhide System Users';
+
+  // Populate ownership selects.
   try {
-    const ug = await loadUsersGroups();
-    const ownerSel = document.getElementById('fb-chown-owner');
-    const groupSel = document.getElementById('fb-chown-group');
-    ownerSel.innerHTML = ug.users.map(u => `<option${u===e.owner?' selected':''}>${esc(u)}</option>`).join('');
-    groupSel.innerHTML = ug.groups.map(g => `<option${g===e.group?' selected':''}>${esc(g)}</option>`).join('');
+    const ug = await loadUsersGroups(false);
+    document.getElementById('fb-chown-owner').innerHTML = ug.users.map(u => `<option${u===curOwner?' selected':''}>${esc(u)}</option>`).join('');
+    document.getElementById('fb-chown-group').innerHTML = ug.groups.map(g => `<option${g===curGroup?' selected':''}>${esc(g)}</option>`).join('');
   } catch(err) {
     document.getElementById('fb-chown-err').textContent = err.message;
     document.getElementById('fb-chown-err').classList.remove('hidden');
   }
 
-  document.getElementById('modal-fb-chown').classList.remove('hidden');
+  // Populate permissions.
+  document.getElementById('fb-chmod-octal').value = curOctal;
+  _setChmodCheckboxes(curOctal);
+
+  document.getElementById('modal-fb-edit').classList.remove('hidden');
 }
+
+function closeFbEditModal() {
+  document.getElementById('modal-fb-edit').classList.add('hidden');
+  _fbShowAllUsers = false;
+}
+
+let _fbShowAllUsers = false;
+
+async function loadUsersGroups(all) {
+  const key = all ? 'usersGroupsAll' : 'usersGroups';
+  if (fileBrowserState[key]) return fileBrowserState[key];
+  const url = all ? '/api/files/users-groups?all=true' : '/api/files/users-groups';
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('Failed to load users/groups');
+  fileBrowserState[key] = await resp.json();
+  return fileBrowserState[key];
+}
+
+async function toggleFbAllUsers() {
+  _fbShowAllUsers = !_fbShowAllUsers;
+  const btn = document.getElementById('fb-edit-unhide-btn');
+  if (btn) btn.textContent = _fbShowAllUsers ? 'Hide System Users' : 'Unhide System Users';
+  await _repopulateOwnershipSelects();
+}
+
+async function _repopulateOwnershipSelects() {
+  const errEl = document.getElementById('fb-chown-err');
+  try {
+    const ug = await loadUsersGroups(_fbShowAllUsers);
+    const curOwner = document.getElementById('fb-chown-owner').value;
+    const curGroup = document.getElementById('fb-chown-group').value;
+    document.getElementById('fb-chown-owner').innerHTML = ug.users.map(u => `<option${u===curOwner?' selected':''}>${esc(u)}</option>`).join('');
+    document.getElementById('fb-chown-group').innerHTML = ug.groups.map(g => `<option${g===curGroup?' selected':''}>${esc(g)}</option>`).join('');
+  } catch(err) {
+    if (errEl) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
+  }
+}
+
 
 async function applyChown() {
   const errEl = document.getElementById('fb-chown-err');
@@ -21403,12 +21419,11 @@ async function applyChown() {
         subpath,
         owner: document.getElementById('fb-chown-owner').value,
         group: document.getElementById('fb-chown-group').value,
-        recursive: document.getElementById('fb-chown-recursive').checked
+        recursive: document.getElementById('fb-edit-recursive').checked
       })
     });
     const data = await resp.json();
     if (!resp.ok) { errEl.textContent = data.error || 'Failed'; errEl.classList.remove('hidden'); return; }
-    closeChownModal();
     await fileBrowserNavigate(fileBrowserState.subpath);
   } catch(err) {
     errEl.textContent = err.message;
@@ -21416,23 +21431,6 @@ async function applyChown() {
   }
 }
 
-function openChmodModal(entryIdx) {
-  fileBrowserState.activeEntryIdx = entryIdx;
-  const e = fileBrowserState.entries[entryIdx];
-  const relPath = (fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + e.name;
-
-  document.getElementById('fb-chmod-path').textContent = '/' + relPath + '   (current: ' + e.mode_octal + ')';
-  document.getElementById('fb-chmod-recursive-wrap').style.display = e.is_dir ? '' : 'none';
-  document.getElementById('fb-chmod-recursive').checked = false;
-  document.getElementById('fb-chmod-err').classList.add('hidden');
-
-  // Set checkboxes from octal
-  const octal = e.mode_octal || '644';
-  document.getElementById('fb-chmod-octal').value = octal;
-  _setChmodCheckboxes(octal);
-
-  document.getElementById('modal-fb-chmod').classList.remove('hidden');
-}
 
 function _setChmodCheckboxes(octal) {
   const digits = octal.padStart(3, '0').split('').map(Number);
@@ -21492,12 +21490,11 @@ async function applyChmod() {
         root: fileBrowserState.root,
         subpath,
         mode,
-        recursive: document.getElementById('fb-chmod-recursive').checked
+        recursive: document.getElementById('fb-edit-recursive').checked
       })
     });
     const data = await resp.json();
     if (!resp.ok) { errEl.textContent = data.error || 'Failed'; errEl.classList.remove('hidden'); return; }
-    closeChmodModal();
     await fileBrowserNavigate(fileBrowserState.subpath);
   } catch(err) {
     errEl.textContent = err.message;
@@ -21509,13 +21506,6 @@ function closeFileBrowser() {
   document.getElementById('modal-file-browser').classList.add('hidden');
 }
 
-function closeChownModal() {
-  document.getElementById('modal-fb-chown').classList.add('hidden');
-}
-
-function closeChmodModal() {
-  document.getElementById('modal-fb-chmod').classList.add('hidden');
-}
 </script>
 
 </body>

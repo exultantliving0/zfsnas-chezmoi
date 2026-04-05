@@ -202,6 +202,32 @@ Cmnd_Alias ZFSNAS_UPS = \
 Cmnd_Alias ZFSNAS_SCAN = \
     /usr/bin/du -b -d 6 *
 
+# ── File Browser (v6.4.3+) ────────────────────────────────────────────────────
+# since v6.4.3 — chown/chmod on files and folders within dataset mountpoints via File Browser.
+# since v6.4.4 — find used for directory listing; paths scoped to /mnt/* (and any
+#   pool root mounted outside /mnt/) rather than the broad wildcard.
+# If a pool is mounted directly under / (e.g. /tank), the portal adds equivalent
+# entries for that path automatically when the sudoers file is applied.
+Cmnd_Alias ZFSNAS_FILES = \
+    /usr/bin/find /mnt/*, \
+    /usr/bin/chown * /mnt/*, \
+    /usr/bin/chown -R * /mnt/*, \
+    /usr/bin/chmod * /mnt/*, \
+    /usr/bin/chmod -R * /mnt/*
+
+# Example — pool mounted at /data instead of or in addition to /mnt:
+# Cmnd_Alias ZFSNAS_FILES = \
+#     /usr/bin/find /mnt/*, \
+#     /usr/bin/chown * /mnt/*, \
+#     /usr/bin/chown -R * /mnt/*, \
+#     /usr/bin/chmod * /mnt/*, \
+#     /usr/bin/chmod -R * /mnt/*, \
+#     /usr/bin/find /data/*, \
+#     /usr/bin/chown * /data/*, \
+#     /usr/bin/chown -R * /data/*, \
+#     /usr/bin/chmod * /data/*, \
+#     /usr/bin/chmod -R * /data/*
+
 # ── System management ─────────────────────────────────────────────────────────
 # since v1.0.0 — timezone setting, shutdown/reboot from power menu, ZFS kernel module load
 # since v3.0.0 — systemctl restart zfsnas ("Restart Portal" in the power menu)
@@ -227,45 +253,6 @@ Cmnd_Alias ZFSNAS_APT = \
     /usr/bin/systemctl daemon-reload, \
     /usr/bin/systemctl enable zfsnas
 
-# ── File Browser (v6.4.3+) ────────────────────────────────────────────────────
-# since v6.4.3 — chown/chmod on files and folders within dataset mountpoints,
-#   SMB share paths, and NFS share paths via the File Browser feature.
-# since v6.4.4 — find used to list directory contents so paths not owned by the
-#   zfsnas service account can still be browsed.
-# since v6.4.4 — all entries scoped to /mnt/* (standard ZFS mount base).
-#   If a pool is mounted directly under / (e.g. /tank), its path is added too.
-#   Exact entries are generated at sudoers-apply time based on current pools.
-#   The portal also validates the target path against known share/dataset roots
-#   before calling these commands; arbitrary paths cannot be targeted via the UI.
-#   mkdir -p and rmdir cover share/home directory creation and removal (moved
-#   from ZFSNAS_SMB in v6.3.27+ to enable path-scoping).
-#
-# Example (pool at /mnt/tank only):
-Cmnd_Alias ZFSNAS_FILES = \
-    /usr/bin/find /mnt/*, \
-    /usr/bin/chown * /mnt/*, \
-    /usr/bin/chown -R * /mnt/*, \
-    /usr/bin/chmod * /mnt/*, \
-    /usr/bin/chmod -R * /mnt/*, \
-    /usr/bin/mkdir -p /mnt/*, \
-    /usr/bin/rmdir /mnt/*
-#
-# Example (additional pool at /data):
-# Cmnd_Alias ZFSNAS_FILES = \
-#     /usr/bin/find /mnt/*, \
-#     /usr/bin/chown * /mnt/*, \
-#     /usr/bin/chown -R * /mnt/*, \
-#     /usr/bin/chmod * /mnt/*, \
-#     /usr/bin/chmod -R * /mnt/*, \
-#     /usr/bin/mkdir -p /mnt/*, \
-#     /usr/bin/rmdir /mnt/*, \
-#     /usr/bin/find /data/*, \
-#     /usr/bin/chown * /data/*, \
-#     /usr/bin/chown -R * /data/*, \
-#     /usr/bin/chmod * /data/*, \
-#     /usr/bin/chmod -R * /data/*, \
-#     /usr/bin/mkdir -p /data/*, \
-#     /usr/bin/rmdir /data/*
 
 # ── Sudoers self-management (Sudoers Hardening UI feature - optional) ───────────────────────
 # since v6.3.31 — lets the portal overwrite its own sudoers file when the
@@ -313,14 +300,13 @@ ExecStart=/opt/zfsnas/zfsnas
 - **`env DEBIAN_FRONTEND=noninteractive apt-get purge/remove`** — NUT uninstall wraps `apt-get` with the `env` command to suppress interactive prompts. The sudoers entry therefore targets `/usr/bin/env` (not `/usr/bin/apt-get` directly) and must match the exact argument sequence shown in `ZFSNAS_UPS`. The NUT *install* path (`apt-get install -y nut nut-client`) is already covered by the wildcard entry in `ZFSNAS_APT`.
 - **`tee /etc/sudoers.d/zfsnas`** — used by the Sudoers Hardening feature (v6.3.31+) to apply in-portal sudoers changes. Only the portal's own drop-in file is writable; the main `/etc/sudoers` file is never touched.
 - **`cat /etc/sudoers.d/zfsnas`** — used by the Sudoers Review diff (v6.3.32+) to read the portal's own sudoers file so the review always shows the accurate current state, including manual edits. Without this, the portal can only compare against the last content it wrote. If you do not use the Sudoers Hardening feature you can omit both entries and the `ZFSNAS_SECURITY` alias from the grant line.
-- **`find /mnt/*`, `chown * /mnt/*`, `chown -R * /mnt/*`, `chmod * /mnt/*`, `chmod -R * /mnt/*`, `mkdir -p /mnt/*`, `rmdir /mnt/*`** (in `ZFSNAS_FILES`) — used by the File Browser (v6.4.3+/v6.4.4+) for directory listing, chown, and chmod; and for creating/removing share and home directories (moved from `ZFSNAS_SMB` in v6.3.27). Scoped to `/mnt/*` (standard ZFS mount base) rather than the broad `*` wildcard. If a pool is mounted directly under `/` (e.g. `/tank`), equivalent entries for `/<poolname>/*` are added automatically at sudoers-apply time. The portal also validates the target path against known share/dataset roots before calling these commands.
+- **`find /mnt/*`, `chown * /mnt/*`, `chown -R * /mnt/*`, `chmod * /mnt/*`, `chmod -R * /mnt/*`** (in `ZFSNAS_FILES`) — used by the File Browser (v6.4.3+/v6.4.4+) for directory listing, ownership changes, and permission changes. All paths are scoped to `/mnt/*` (standard ZFS mount base) rather than the broad `*` wildcard. If a pool is mounted directly under `/` (e.g. `/tank`), equivalent entries for `/<poolname>/*` are added automatically at sudoers-apply time. The portal also validates the target path against known share/dataset roots before calling these commands.
 - **`tee /etc/modprobe.d/zfs.conf` and sysfs tee entries** — used by the ARC Level 1 tuning feature (v6.3.22+) to persist ZFS ARC size limits across reboots and to apply them immediately via kernel sysfs. These are write-only paths; the portal only ever pipes well-formed `options zfs ...` lines or numeric byte values through `tee`.
 - **`zfs send *` / `zfs recv *` / `zfs receive *`** — used by the remote replication feature (snapshot policies and standalone replication tasks) and the local dataset-to-dataset replication feature. `zfs send` streams a snapshot to stdout; `zfs recv`/`zfs receive` reads a stream from stdin. Both are required locally for local replication (`zfs send | zfs recv` piped on the same host). For remote replication and InterLink push, only `zfs send` is run locally — the remote side runs `zfs recv` via SSH under its own service account (no local sudo required for that side). Including both forms (`recv` and `receive`) is necessary because OpenZFS accepts either spelling.
 - **`zfs allow *`** — used by the InterLink push feature and scheduled replication via InterLink servers to delegate ZFS permissions (`snapshot,send,receive,create,mount`) to the service account on every pool. This is required so that `zfs send` / `zfs recv` can be invoked without sudo when the remote side accepts the SSH connection as the non-root service user. The portal always restricts delegation to the service account's own username and to the specific permission set shown above.
 - **`useradd *` / `groupadd *`** — broad wildcards are required because user creation accepts optional `--uid`, `--gid`, and `--no-user-group` flags (v3.0.0+ custom UID/GID feature). The original narrower forms (`useradd -M -s /usr/sbin/nologin *`, `groupadd --system sambashare`) are replaced to cover all combinations the portal may generate.
 - **`userdel -f *` / `groupdel *` / `gpasswd -d * sambashare`** — used when deleting a portal user: Samba password entry is removed, the user is removed from the `sambashare` group, the Linux account is deleted, and the primary group is cleaned up.
 - **`smbpasswd -x *`** — deletes the Samba password database entry for a user. The existing `smbpasswd -s -a *` entry covers creation/update; `-x` is needed for deletion.
-- **`mkdir -p /mnt/*` / `rmdir /mnt/*`** (in `ZFSNAS_FILES`) — used when creating or deleting SMB home folders (v6.3.21+) and share directories. Moved from `ZFSNAS_SMB` in v6.3.27 to enable path-scoping to dataset mount points rather than using broad wildcards.
 - **`udevadm control --reload-rules` / `udevadm trigger --subsystem-match=usb`** — run after writing a udev rule for UPS USB detection (v6.3.22+). These are distinct from `udevadm settle` (used in disk prep) and require their own sudoers entries.
 - **Command paths** — `sgdisk` lives at `/usr/sbin/sgdisk` on Debian 12 and at `/usr/bin/sgdisk` on some Ubuntu releases. The entries above use `/usr/sbin/sgdisk` (the Debian default). Verify the correct path with `which sgdisk` and adjust if needed. Other tools listed under `/usr/bin/` or `/usr/sbin/` follow the same rule — check with `which <command>` on your system.
 

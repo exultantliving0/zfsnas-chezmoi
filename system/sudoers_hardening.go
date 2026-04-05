@@ -87,14 +87,12 @@ func buildFilesAlias() string {
 
 	allPaths := append([]string{"/mnt"}, extraPaths...)
 
-	// For each mount base, emit seven entries:
-	//   find <base>/*             (file browser listing + SMB recycle-bin cleanup)
+	// For each mount base, emit five entries:
+	//   find <base>/*             (file browser listing)
 	//   chown * <base>/*          (non-recursive ownership change)
 	//   chown -R * <base>/*       (recursive)
-	//   chmod * <base>/*          (non-recursive mode change, covers 0777/0770/0700)
+	//   chmod * <base>/*          (non-recursive mode change)
 	//   chmod -R * <base>/*       (recursive)
-	//   mkdir -p <base>/*         (create share / home directories)
-	//   rmdir <base>/*            (remove home directories)
 	var entries []string
 	for _, p := range allPaths {
 		entries = append(entries,
@@ -103,8 +101,6 @@ func buildFilesAlias() string {
 			fmt.Sprintf("    /usr/bin/chown -R * %s/*", p),
 			fmt.Sprintf("    /usr/bin/chmod * %s/*", p),
 			fmt.Sprintf("    /usr/bin/chmod -R * %s/*", p),
-			fmt.Sprintf("    /usr/bin/mkdir -p %s/*", p),
-			fmt.Sprintf("    /usr/bin/rmdir %s/*", p),
 		)
 	}
 
@@ -119,6 +115,7 @@ func buildFilesAlias() string {
 	}
 	return sb.String()
 }
+
 
 // GetCurrentSudoersContent reads /etc/sudoers.d/zfsnas.
 // Returns ("", nil) when the file does not exist.
@@ -446,27 +443,6 @@ func lookupSudoersExplanation(cmd string) string {
 	if exp, ok := sudoersExplanations[cmd]; ok {
 		return exp
 	}
-	// Path-scoped commands generated dynamically by buildFilesAlias(), keyed by base binary.
-	// Covers: find, chown, chown -R, chmod, chmod -R, mkdir -p, rmdir — all scoped to /mnt/* etc.
-	if strings.HasPrefix(cmd, "/usr/bin/find /") {
-		return "File browser directory listing (v6.4.4+) and SMB recycle-bin cleanup (v6.0.0+). Scoped to ZFS dataset mount paths."
-	}
-	for _, prefix := range []string{"/usr/bin/chown * /", "/usr/bin/chown -R * /"} {
-		if strings.HasPrefix(cmd, prefix) {
-			return "Changes ownership of files, share directories, and home folders. Scoped to ZFS dataset mount paths (v6.4.3+)."
-		}
-	}
-	for _, prefix := range []string{"/usr/bin/chmod * /", "/usr/bin/chmod -R * /"} {
-		if strings.HasPrefix(cmd, prefix) {
-			return "Changes permissions of files, share directories (0770), home directories (0700), and NFS paths (0777). Scoped to ZFS dataset mount paths (v6.4.3+)."
-		}
-	}
-	if strings.HasPrefix(cmd, "/usr/bin/mkdir -p /") {
-		return "Creates share directories and SMB home folders. Scoped to ZFS dataset mount paths (v6.3.21+)."
-	}
-	if strings.HasPrefix(cmd, "/usr/bin/rmdir /") {
-		return "Removes home directories when a user is deleted. Scoped to ZFS dataset mount paths (v6.3.21+)."
-	}
 	// Wildcard prefix match for other patterns ending in " *".
 	for pattern, exp := range sudoersExplanations {
 		if strings.HasSuffix(pattern, " *") {
@@ -524,6 +500,11 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/tee /etc/nut/upsd.conf":                    "Writes the NUT daemon configuration (listen address, port).",
 	"/usr/bin/tee /etc/nut/upsd.users":                   "Writes the NUT user authentication file for upsmon.",
 	"/usr/bin/tee /etc/nut/upsmon.conf":                  "Writes the UPS monitor configuration.",
+	"/usr/bin/find /mnt/*":                               "File Browser: lists directory contents under /mnt (v6.4.4+). Path-scoped to dataset mount area; the portal validates the target before calling this command.",
+	"/usr/bin/chown * /mnt/*":                            "File Browser: non-recursive ownership change on files/folders under /mnt (v6.4.3+). Path-scoped; arbitrary paths cannot be targeted via the UI.",
+	"/usr/bin/chown -R * /mnt/*":                         "File Browser: recursive ownership change on a directory tree under /mnt (v6.4.3+). Path-scoped; arbitrary paths cannot be targeted via the UI.",
+	"/usr/bin/chmod * /mnt/*":                            "File Browser: non-recursive permission change on files/folders under /mnt (v6.4.3+). Path-scoped; arbitrary paths cannot be targeted via the UI.",
+	"/usr/bin/chmod -R * /mnt/*":                         "File Browser: recursive permission change on a directory tree under /mnt (v6.4.3+). Path-scoped; arbitrary paths cannot be targeted via the UI.",
 	"/usr/bin/wget -q -O /usr/local/bin/minio *":         "Downloads the MinIO binary during feature install.",
 	"/usr/bin/wget -q -O /usr/local/bin/mc *":            "Downloads the MinIO client (mc) binary during feature install.",
 	"/usr/bin/tee /etc/systemd/system/minio.service":     "Writes the MinIO systemd service unit file.",
@@ -550,10 +531,8 @@ Cmnd_Alias ZFSNAS_ZFS = \
 #                userdel -f / groupdel / gpasswd -d for user deletion
 # since v6.0.0 — find (recycle bin cleanup: delete files older than retention in .recycle/)
 # since v6.1.0 — smbstatus -S (active session listing on the SMB shares page)
-# since v6.3.21 — mkdir-p / chmod / chown / rmdir for home folders moved to ZFSNAS_FILES (path-scoped)
 # since v6.3.27 — chgrp/chmod 0770 replace chmod 777 for share path setup;
 #                 groupadd --system sambashare ensures the group exists
-#                 chmod / chown / mkdir / rmdir moved to ZFSNAS_FILES (path-scoped to /mnt/* etc.)
 Cmnd_Alias ZFSNAS_SMB = \
     /usr/bin/systemctl reload smbd, \
     /usr/bin/systemctl restart smbd, \
@@ -574,7 +553,7 @@ Cmnd_Alias ZFSNAS_SMB = \
 
 # ── NFS shares ────────────────────────────────────────────────────────────────
 # since v2.0.0 — NFS share management and export config write
-# since v6.3.22 — chmod 0777 on dataset path moved to ZFSNAS_FILES (path-scoped to /mnt/* etc.)
+# since v6.3.22 — chmod 0777 on dataset path no longer required
 Cmnd_Alias ZFSNAS_NFS = \
     /usr/sbin/exportfs -ra, \
     /usr/bin/systemctl start nfs-server, \
@@ -710,7 +689,6 @@ Cmnd_Alias ZFSNAS_SCAN = \
 #   The portal validates the target path against known share/dataset roots before
 #   calling these commands; arbitrary paths cannot be targeted via the UI.
 {{ZFSNAS_FILES}}
-
 # ── System management ─────────────────────────────────────────────────────────
 # since v1.0.0 — timezone setting, shutdown/reboot from power menu, ZFS kernel module load
 # since v3.0.0 — systemctl restart zfsnas ("Restart Portal" in the power menu)

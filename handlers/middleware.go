@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
+	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
 	"zfsnas/internal/session"
 )
@@ -45,6 +46,14 @@ func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess := MustSession(r)
 		if sess.Role != config.RoleAdmin {
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionForbidden,
+				Target:  r.Method + " " + r.URL.Path,
+				Result:  audit.ResultError,
+				Details: "admin access required",
+			})
 			jsonErr(w, http.StatusForbidden, "admin access required")
 			return
 		}
@@ -70,6 +79,17 @@ func RequirePermission(perm string) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r)
 					return
 				}
+			}
+			// Only log write attempts — GET/HEAD are background polls and would spam the log.
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				audit.Log(audit.Entry{
+					User:    sess.Username,
+					Role:    sess.Role,
+					Action:  audit.ActionForbidden,
+					Target:  r.Method + " " + r.URL.Path,
+					Result:  audit.ResultError,
+					Details: "permission denied: " + perm,
+				})
 			}
 			jsonErr(w, http.StatusForbidden, "permission denied")
 		})
@@ -98,6 +118,14 @@ func RequireWriteAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess := MustSession(r)
 		if sess.Role == config.RoleReadOnly || sess.Role == config.RoleSMBOnly {
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionForbidden,
+				Target:  r.Method + " " + r.URL.Path,
+				Result:  audit.ResultError,
+				Details: "write access required",
+			})
 			jsonErr(w, http.StatusForbidden, "write access required")
 			return
 		}

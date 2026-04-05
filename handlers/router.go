@@ -67,7 +67,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/users",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateUser)))).Methods("POST")
 	r.Handle("/api/users/{id}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdateUser)))).Methods("PUT")
+		RequireAuth(http.HandlerFunc(HandleUpdateUser))).Methods("PUT")
 	r.Handle("/api/users/{id}",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteUser)))).Methods("DELETE")
 	r.Handle("/api/users/{id}/totp",

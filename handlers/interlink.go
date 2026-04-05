@@ -745,7 +745,7 @@ func HandleInterlinkSwitch(appCfg *config.AppConfig) http.HandlerFunc {
 		if err != nil || !checkResp.Exists {
 			jsonOK(w, map[string]interface{}{
 				"user_exists":  false,
-				"redirect_url": ls.URL,
+				"redirect_url": "",
 			})
 			return
 		}
