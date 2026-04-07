@@ -292,6 +292,8 @@ func HandleCreateShare(w http.ResponseWriter, r *http.Request) {
 	_ = system.ChmodSharePath(req.Path)
 	// Apply (or skip) Windows ACL ZFS dataset properties.
 	_ = system.SetWindowsACLDatasetProps(req.Path, req.WindowsACL)
+	// Shadow Copy requires snapdir=visible so Samba can enumerate .zfs/snapshot/.
+	applySnaqdirForShare(req)
 
 	sess := MustSession(r)
 	audit.Log(audit.Entry{
@@ -354,6 +356,8 @@ func HandleUpdateShare(w http.ResponseWriter, r *http.Request) {
 	}
 	// Apply (or revert) Windows ACL ZFS dataset properties.
 	_ = system.SetWindowsACLDatasetProps(req.Path, req.WindowsACL)
+	// Shadow Copy requires snapdir=visible so Samba can enumerate .zfs/snapshot/.
+	applySnaqdirForShare(req)
 
 	sess := MustSession(r)
 	audit.Log(audit.Entry{
@@ -472,4 +476,90 @@ func HandleDeleteShare(w http.ResponseWriter, r *http.Request) {
 		"SMB share '"+name+"' was deleted by "+sess.Username+".",
 	)
 	jsonOK(w, map[string]string{"message": "share deleted"})
+}
+
+// applySnaqdirForShare sets snapdir=hidden on the backing ZFS dataset when
+// Shadow Copy is enabled. ZFS hides .zfs at the filesystem level so SMB users
+// never see it, while vfs_shadow_copy2 can still reach .zfs/snapshot/ by
+// direct path (it constructs the path itself, bypassing the readdir filter).
+// Non-fatal: errors are silently ignored (dataset may not exist yet, or path
+// may be a bind-mount rather than a ZFS dataset).
+func applySnaqdirForShare(s system.SMBShare) {
+	if !s.ShadowCopy {
+		return
+	}
+	dataset := strings.TrimPrefix(s.Path, "/")
+	if dataset == "" {
+		return
+	}
+	_ = system.SetDatasetProps(dataset, map[string]string{"snapdir": "hidden"})
+}
+
+// HandleCreateVSSSnapshot creates a ZFS snapshot named @GMT-YYYY.MM.DD-HH.MM.SS
+// for the dataset backing the named SMB share. This format is required by Samba's
+// vfs_shadow_copy2 module for Windows Previous Versions (VSS) support.
+// POST /api/smb/shares/vss-snapshot  Body: {"share_name":"sharename"}
+func HandleCreateVSSSnapshot(w http.ResponseWriter, r *http.Request) {
+	{
+		var req struct {
+			ShareName string `json:"share_name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.ShareName == "" {
+			jsonErr(w, http.StatusBadRequest, "share_name is required")
+			return
+		}
+
+		// Load shares from the JSON store (same as other SMB handlers).
+		shares, err := system.ListSMBShares(config.Dir())
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "load shares: "+err.Error())
+			return
+		}
+
+		// Find the share and confirm shadow copy is enabled.
+		var share *system.SMBShare
+		for i := range shares {
+			if shares[i].Name == req.ShareName {
+				share = &shares[i]
+				break
+			}
+		}
+		if share == nil {
+			jsonErr(w, http.StatusNotFound, "share not found")
+			return
+		}
+		if !share.ShadowCopy {
+			jsonErr(w, http.StatusBadRequest, "shadow copy is not enabled on this share")
+			return
+		}
+
+		// Convert mount path to dataset name (strip leading /).
+		dataset := strings.TrimPrefix(share.Path, "/")
+		if dataset == "" {
+			jsonErr(w, http.StatusBadRequest, "share has no backing path")
+			return
+		}
+
+		snapName, err := system.CreateShadowCopySnapshot(dataset, share.ShadowCopyFormat)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "create snapshot: "+err.Error())
+			return
+		}
+
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionCreateSnapshot,
+			Result:  audit.ResultOK,
+			Target:  snapName,
+			Details: "VSS GMT snapshot for shadow copy share: " + req.ShareName,
+		})
+
+		jsonOK(w, map[string]string{"snapshot": snapName})
+	}
 }

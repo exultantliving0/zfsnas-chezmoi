@@ -254,6 +254,27 @@ Cmnd_Alias ZFSNAS_APT = \
     /usr/bin/systemctl enable zfsnas
 
 
+# ── Disk Power Management (hdparm) ────────────────────────────────────────────
+# since v6.4.6 — APM level, spindown timeout, write cache, acoustic management
+#   applied immediately to all physical disks; persisted in /etc/hdparm.conf
+Cmnd_Alias ZFSNAS_DISKPOWER = \
+    /usr/sbin/hdparm *, \
+    /usr/bin/tee /etc/hdparm.conf
+
+# ── System/Platform Power Management ─────────────────────────────────────────
+# since v6.4.6 — CPU governor via sysfs (no extra package required); PCIe ASPM
+#   and USB autosuspend applied immediately via sysfs; all settings persist
+#   across reboots via /etc/rc.local (managed block written by the portal)
+Cmnd_Alias ZFSNAS_SYSPOWER = \
+    /usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor, \
+    /usr/bin/tee /sys/module/pcie_aspm/parameters/policy, \
+    /usr/bin/tee /sys/bus/usb/devices/*/power/autosuspend_delay_ms, \
+    /usr/bin/tee /sys/bus/usb/devices/*/power/control, \
+    /usr/bin/tee /etc/rc.local, \
+    /usr/bin/chmod +x /etc/rc.local, \
+    /usr/bin/systemctl enable rc-local, \
+    /usr/bin/systemctl start rc-local
+
 # ── Sudoers self-management (Sudoers Hardening UI feature - optional) ───────────────────────
 # since v6.3.31 — lets the portal overwrite its own sudoers file when the
 #   Sudoers Hardening feature is enabled in the Prerequisites tab.
@@ -265,7 +286,8 @@ Cmnd_Alias ZFSNAS_APT = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_APT, ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_APT, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER
+# To enable the optional Sudoers Hardening UI feature, also add: ZFSNAS_SECURITY
 ```
 
 ### 3 — Run the portal as the service account
@@ -284,7 +306,7 @@ ExecStart=/opt/zfsnas/zfsnas
 - **Web terminal** — the browser terminal runs a shell as the `zfsnas` user. With the restricted sudoers entry above, any `sudo` command typed in that terminal is still limited to the whitelist. If you do not use the web terminal feature you can remove the `/ws/terminal` route or simply accept that a logged-in admin can run a shell with the same restrictions.
 - **`chgrp sambashare *`** (in `ZFSNAS_SMB`) — sets group ownership of every newly created SMB share directory to `sambashare`. The path wildcard is required because share directories can live at any path within your ZFS mount hierarchy.
 - **`chmod * /mnt/*` / `chmod -R * /mnt/*`** (in `ZFSNAS_FILES`) — covers all permission changes: 0777 for NFS share paths, 0770 for SMB share directories, and 0700 for user home directories. Scoped to `/mnt/*` (and any additional pool roots) rather than the broad `*` wildcard.
-- **`tee` for config files** — write access is limited to the specific paths listed (`smb.conf`, `exports`, `zfsnas.service`, `zfs.conf`, and the two ARC sysfs paths). The wildcard form `tee *` is intentionally avoided.
+- **`tee` for config files** — write access is limited to the specific paths listed (`smb.conf`, `exports`, `zfsnas.service`, `zfs.conf`, ARC sysfs paths, `/etc/hdparm.conf`, `/etc/rc.local`, and the CPU/PCIe/USB sysfs paths). The wildcard form `tee *` is intentionally avoided.
 - **`dd` / `wipefs` / `sgdisk`** — used by the "Wipe Disk" feature before adding a disk to a pool. These are destructive by design; ensure only trusted admins have access to the portal.
 - **`zfs load-key` / `zfs unload-key`** — used for ZFS native encryption (v5.0.0+). Key files are stored in `config/keystore/` and are only readable by the `zfsnas` user.
 - **`systemctl restart zfsnas`** — used by the "Restart Portal" option in the power menu (v3.0.0+). Only available to admin-role users.

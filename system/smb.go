@@ -55,6 +55,10 @@ type SMBShare struct {
 	// Windows ACL compatibility (NFSv4 ACLs on ZFS + acl_xattr VFS module)
 	WindowsACL bool `json:"windows_acl"`
 
+	// Shadow Copy (VSS Previous Versions via vfs_shadow_copy2)
+	ShadowCopy       bool   `json:"shadow_copy"`
+	ShadowCopyFormat string `json:"shadow_copy_format,omitempty"` // strftime format for shadow:format; default auto-%Y%m%d-%H%M%S
+
 	// Host access control
 	AllowedHosts string `json:"allowed_hosts"` // space-separated IPs/hostnames/subnets
 	HostsDeny    string `json:"hosts_deny"`
@@ -300,24 +304,33 @@ func applySMBConf(shares []SMBShare) error {
 			sb.WriteString("   hosts deny = " + s.HostsDeny + "\n")
 		}
 
-		// VFS objects (combine as needed)
+		// VFS objects (combine as needed; shadow_copy2 must be first)
 		var vfsObjs []string
+		if s.ShadowCopy {
+			vfsObjs = append(vfsObjs, "shadow_copy2")
+		}
 		if s.AppleEncoding {
 			vfsObjs = append(vfsObjs, "catia")
 		}
 		if s.RecycleBin {
 			vfsObjs = append(vfsObjs, "recycle")
 		}
-		if s.TimeMachine {
-			vfsObjs = append(vfsObjs, "fruit", "streams_xattr")
-		}
-		if s.WindowsACL && !s.TimeMachine {
-			// fruit+streams_xattr needed for Windows exec support; avoid duplicates
-			// if TimeMachine already added them.
+		if s.TimeMachine || s.WindowsACL {
 			vfsObjs = append(vfsObjs, "fruit", "streams_xattr")
 		}
 		if len(vfsObjs) > 0 {
 			sb.WriteString("   vfs objects = " + strings.Join(vfsObjs, " ") + "\n")
+		}
+		// Shadow copy parameters
+		if s.ShadowCopy {
+			shadowFmt := s.ShadowCopyFormat
+			if shadowFmt == "" {
+				shadowFmt = "auto-%Y%m%d-%H%M%S"
+			}
+			sb.WriteString("   shadow:snapdir = .zfs/snapshot\n")
+			sb.WriteString("   shadow:sort = desc\n")
+			sb.WriteString("   shadow:format = " + shadowFmt + "\n")
+			sb.WriteString("   shadow:localtime = no\n")
 		}
 
 		// Windows ACL compatibility — ensures executables keep the execute bit.

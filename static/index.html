@@ -731,7 +731,7 @@
             <span id="prereq-minio-menu-wrap" class="hidden" onclick="_optFeatMenu(event,'minio')" title="Options" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;line-height:1;user-select:none;">⋮</span>
           </div>
           <!-- UPS Management optional feature -->
-          <div style="display:flex;align-items:center;gap:12px;padding:12px 0;">
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
             <div style="flex:1;">
               <span style="color:var(--text-1);font-size:14px;font-weight:500;">UPS battery monitoring &amp; protection</span>
               <i class="info-tip" style="cursor:pointer;" onclick="document.getElementById('modal-ups-info').classList.remove('hidden')"></i>
@@ -743,6 +743,17 @@
               <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>
             </button>
             <span id="prereq-ups-menu-wrap" class="hidden" onclick="_optFeatMenu(event,'ups')" title="Options" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;line-height:1;user-select:none;">⋮</span>
+          </div>
+          <!-- Disk Power Management optional feature -->
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
+            <div style="flex:1;">
+              <span style="color:var(--text-1);font-size:14px;font-weight:500;">Disk Power Management</span>
+              <i class="info-tip" data-tip="Enables APM (Advanced Power Management) level, spindown timeout, write cache, and acoustic management on physical disks via hdparm. Settings are applied immediately and persist across reboots via /etc/hdparm.conf.&#10;&#10;Access: Physical Disks page ▸ ⚡ Power Management button."></i>
+              <div style="font-size:12px;color:var(--text-3);margin-top:2px;">Package: hdparm</div>
+            </div>
+            <span id="prereq-diskpower-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
+            <button id="prereq-diskpower-btn" class="btn btn-ghost btn-sm" onclick="enableDiskPowerFeature()" style="font-size:12px;white-space:nowrap;">Enable Disk Power</button>
+            <span id="prereq-diskpower-menu-wrap" class="hidden" onclick="_optFeatMenu(event,'diskpower')" title="Options" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;line-height:1;user-select:none;">⋮</span>
           </div>
         </div>
       </div>
@@ -795,6 +806,7 @@
         <div class="page-header">
           <h2>Physical Disks</h2>
           <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" id="btn-disk-power-header" onclick="openDiskPowerModal()" style="display:none;">⚡ Power Management</button>
             <button class="btn btn-ghost btn-sm" onclick="scanDisks()"   id="btn-scan-disks">⬡ Scan for Disks</button>
             <button class="btn btn-ghost btn-sm" onclick="refreshDisks()" id="btn-refresh-disks">↻ Refresh SMART</button>
           </div>
@@ -1064,6 +1076,8 @@
       <div class="page hidden" id="page-updates">
         <div class="page-header">
           <h2>Updates</h2>
+          <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn btn-ghost btn-sm" onclick="openSysPowerModal()">⚡ Power Management</button>
           <div style="position:relative;" id="power-btn-wrap">
             <button class="btn btn-ghost btn-sm" style="display:flex;align-items:center;gap:6px;"
               onclick="togglePowerMenu()" id="btn-power">⏻ Power</button>
@@ -1091,6 +1105,7 @@
                 ⏻ Shutdown
               </button>
             </div>
+          </div>
           </div>
         </div>
 
@@ -1175,7 +1190,7 @@
 
         <!-- OS update live output log -->
         <div id="updates-log-wrap" class="card" style="display:none;">
-          <div style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:10px;">Output</div>
+          <div style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:10px;">Active/Recent OS Upgrade Output</div>
           <div id="updates-log"
             style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;
                    font-family:'SF Mono',monospace;font-size:12px;line-height:1.6;max-height:420px;overflow-y:auto;
@@ -2133,10 +2148,7 @@
   <div class="side-panel-body" id="ups-panel-body">
     <div style="color:var(--text-3);text-align:center;padding:32px;">Loading…</div>
   </div>
-  <div class="side-panel-footer hidden" id="ups-panel-footer">
-    <div id="ups-save-err" style="color:var(--accent-danger);font-size:12px;display:none;margin-bottom:8px;"></div>
-    <button class="btn btn-primary btn-sm" style="width:100%;" onclick="saveUPSConfig()">Save</button>
-  </div>
+  <div class="side-panel-footer hidden" id="ups-panel-footer"></div>
 </div>
 
 <!-- ===== UPS Feature Info Modal ===== -->
@@ -3823,6 +3835,26 @@
         </div>
       </div>
 
+      <!-- Shadow Copy -->
+      <div style="margin-bottom:12px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
+          <input type="checkbox" id="share-shadow-copy" style="width:15px;height:15px;accent-color:var(--accent-2);" onchange="toggleShareShadowCopy()">
+          <span>Shadow Copy (Previous Versions) <i class="info-tip tip-down" data-tip="Exposes ZFS snapshots as Windows Previous Versions via Samba's vfs_shadow_copy2 module. Use the ⋮ menu › 📸 VSS Snapshot to create correctly-named snapshots. Windows clients can then right-click a file › Properties › Previous Versions to restore."></i></span>
+        </label>
+        <div id="shadow-copy-extra" style="display:none;margin-top:8px;padding-left:23px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <label style="font-size:13px;color:var(--text-2);white-space:nowrap;">Snapshot format
+              <i class="info-tip tip-down" data-tip="strftime format Samba uses to match snapshots as Previous Versions (shadow:format). Must match the names of snapshots in .zfs/snapshot/. The 📸 VSS Snapshot action creates snapshots using this exact format."></i>
+            </label>
+            <input type="text" id="share-shadow-format" value="auto-%Y%m%d-%H%M%S"
+              style="font-family:monospace;font-size:12px;width:180px;">
+          </div>
+          <div style="font-size:11px;color:var(--text-3);">
+            Use <strong>⋮ › 📸 VSS Snapshot</strong> to create a snapshot matching this format.
+          </div>
+        </div>
+      </div>
+
       <!-- Recycle Bin -->
       <div style="margin-bottom:12px;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
@@ -4820,6 +4852,25 @@
   </div>
 </div>
 
+<div class="modal-backdrop hidden" id="modal-shadow-copy-restart">
+  <div class="modal" style="max-width:440px;border:1px solid var(--accent-warn);">
+    <div class="modal-header" style="background:rgba(255,159,10,0.08);border-bottom:1px solid var(--accent-warn);">
+      <h3 style="color:var(--accent-warn);">📸 Samba Restart Needed</h3>
+      <button class="modal-close" onclick="closeShadowCopyRestartModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">The share has been saved. <strong>Shadow Copy (Previous Versions)</strong> requires a full Samba restart to activate the <code>vfs_shadow_copy2</code> module.</p>
+      <p style="font-size:13px;color:var(--text-2);margin-bottom:6px;">Restarting will briefly disconnect all active SMB sessions. You can also apply the change at the next scheduled or manual restart.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeShadowCopyRestartModal()">Apply at Next Restart</button>
+      <button class="btn" id="btn-shadow-copy-restart-confirm"
+        style="background:var(--accent-warn);color:#fff;"
+        onclick="confirmShadowCopyRestart()">Restart Samba Now</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="modal-smb-workgroup-restart">
   <div class="modal" style="max-width:440px;border:1px solid var(--accent-danger);">
     <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
@@ -5686,7 +5737,7 @@ function showPage(name) {
   if (name === 'users')     { loadUsers(); if (currentUser.role === 'admin') { document.getElementById('api-keys-card').style.display = ''; loadAPIKeys(); } }
   if (name === 'activity')  loadAudit();
   if (name === 'prereqs')   loadPrereqs();
-  if (name === 'disks')     loadDisks();
+  if (name === 'disks')     { loadDisks(); _updateDiskPowerPrereqStatus(); }
   if (name === 'pool')      loadPool();
   if (name === 'datasets')  loadDatasets();
   if (name === 'snapshots') { loadSnapshots(); loadSchedules(); }
@@ -6168,10 +6219,11 @@ async function loadPrereqs() {
     }
   }
 
-  // Update optional feature row statuses.
+  // Update optional feature row statuses (async, non-blocking).
   _updateISCSIPrereqStatus();
   _updateMinIOPrereqStatus();
   _updateUPSPrereqStatus();
+  _updateDiskPowerPrereqStatus();
 }
 
 async function _updateISCSIPrereqStatus() {
@@ -12855,7 +12907,8 @@ function tempBadge(d) {
 
 // ===== SMB Shares =====
 let shareEditName = null;        // null = create mode, string = edit mode
-let _shareOrigWindowsACL = false; // windows_acl value when edit modal was opened
+let _shareOrigWindowsACL  = false; // windows_acl value when edit modal was opened
+let _shareOrigShadowCopy  = false; // shadow_copy value when edit modal was opened
 let _pendingShareBody = null;     // body held while waiting for winacl restart confirmation
 
 async function loadShares() {
@@ -12939,6 +12992,11 @@ function renderShares(el, shares, sessions = {}) {
         ${s.guest_ok ? '<span style="color:var(--accent-warn);">Guest OK</span>' : ''}
         ${(s.valid_users&&s.valid_users.length) ? esc(s.valid_users.map(u=>u.username).join(', ')) : (s.guest_ok ? '' : 'All users')}
       </td>
+      <td style="white-space:nowrap;">
+        ${s.time_machine ? '<span class="badge badge-info" title="Time Machine">TM</span> ' : ''}
+        ${s.recycle_bin  ? '<span class="badge badge-info" title="Recycle Bin">RB</span> ' : ''}
+        ${s.shadow_copy  ? '<span class="badge badge-info" title="Shadow Copy / Previous Versions">VSS</span>' : ''}
+      </td>
       ${sessions === null
         ? `<td data-sess-key="${esc(s.name)}"><span class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle;"></span></td>`
         : _renderShareClientCell(sessions[s.name] || [], s.name)}
@@ -12956,7 +13014,7 @@ function renderShares(el, shares, sessions = {}) {
       <table>
         <thead><tr>
           <th>Share Name</th><th>Path</th>${showComment ? '<th>Comment</th>' : ''}
-          <th>Access</th><th>Users</th><th>Sessions</th><th></th>
+          <th>Access</th><th>Users</th><th>Features</th><th>Sessions</th><th></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -13020,6 +13078,14 @@ function toggleShareMenu(evt, idx) {
     dd.appendChild(browseSmbBtn);
   }
 
+  if (s.shadow_copy) {
+    const vssBtn = document.createElement('button');
+    vssBtn.textContent = '📸 VSS Snapshot';
+    vssBtn.title = 'Create a @GMT-formatted ZFS snapshot visible as a Windows Previous Version';
+    vssBtn.addEventListener('click', () => { closeShareMenus(); createVSSSnapshot(s.name); });
+    dd.appendChild(vssBtn);
+  }
+
   const sep = document.createElement('hr');
   sep.className = 'menu-sep';
   dd.appendChild(sep);
@@ -13038,6 +13104,25 @@ function toggleShareMenu(evt, idx) {
   dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
 
   _openShareMenu = { btn, dropdown: dd };
+}
+
+async function createVSSSnapshot(shareName) {
+  const jid = 'vss-snap-' + shareName;
+  addActiveJob(jid, 'Creating VSS snapshot for ' + shareName + '…');
+  try {
+    const r = await fetch('/api/shares/vss-snapshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ share_name: shareName }),
+    });
+    const d = await r.json();
+    if (!r.ok) { showToast('VSS snapshot failed: ' + (d.error || 'unknown error'), 'error'); return; }
+    showToast('VSS snapshot created: ' + d.snapshot, 'success');
+  } catch (e) {
+    showToast('VSS snapshot error: ' + e.message, 'error');
+  } finally {
+    removeActiveJob(jid);
+  }
 }
 
 async function cleanShareRecycleBin(name) {
@@ -13066,6 +13151,9 @@ async function openCreateShare() {
   document.getElementById('share-readonly').checked = false;
   document.getElementById('share-guestok').checked = false;
   document.getElementById('share-windows-acl').checked = false;
+  document.getElementById('share-shadow-copy').checked = false;
+  document.getElementById('shadow-copy-extra').style.display = 'none';
+  document.getElementById('share-shadow-format').value = 'auto-%Y%m%d-%H%M%S';
   document.getElementById('share-timemachine').checked = false;
   document.getElementById('share-tm-quota').value = '0';
   document.getElementById('share-tm-quota-wrap').classList.add('hidden');
@@ -13115,6 +13203,11 @@ async function _openEditShareObj(s) {
   document.getElementById('share-guestok').checked = !!s.guest_ok;
   document.getElementById('share-windows-acl').checked = !!s.windows_acl;
   _shareOrigWindowsACL = !!s.windows_acl;
+  _shareOrigShadowCopy = !!s.shadow_copy;
+  const sc = document.getElementById('share-shadow-copy');
+  sc.checked = !!s.shadow_copy;
+  document.getElementById('shadow-copy-extra').style.display = sc.checked ? '' : 'none';
+  document.getElementById('share-shadow-format').value = s.shadow_copy_format || 'auto-%Y%m%d-%H%M%S';
   document.getElementById('share-timemachine').checked = !!s.time_machine;
   document.getElementById('share-tm-quota').value = s.tm_quota_gb || 0;
   document.getElementById('share-tm-quota-wrap').classList.toggle('hidden', !s.time_machine);
@@ -13229,6 +13322,13 @@ function toggleShareTM() {
 function toggleShareRecycle() {
   document.getElementById('share-recycle-days-wrap').classList.toggle('hidden', !document.getElementById('share-recycle').checked);
 }
+function toggleShareShadowCopy() {
+  const on = document.getElementById('share-shadow-copy').checked;
+  document.getElementById('shadow-copy-extra').style.display = on ? '' : 'none';
+  if (on && !document.getElementById('share-shadow-format').value.trim()) {
+    document.getElementById('share-shadow-format').value = 'auto-%Y%m%d-%H%M%S';
+  }
+}
 
 (function() {
   // Rotate the ▶ arrow when the Advanced Settings <details> opens/closes.
@@ -13248,6 +13348,18 @@ function closeShareModal() {
   const submitBtn = document.getElementById('share-submit-btn');
   submitBtn.disabled = false;
   submitBtn.textContent = 'Create Share';
+}
+
+function closeShadowCopyRestartModal() {
+  document.getElementById('modal-shadow-copy-restart').classList.add('hidden');
+}
+
+async function confirmShadowCopyRestart() {
+  const btn = document.getElementById('btn-shadow-copy-restart-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Restarting…';
+  closeShadowCopyRestartModal();
+  await controlSMB('restart');
 }
 
 function closeWinACLRestartModal() {
@@ -13299,6 +13411,7 @@ async function submitShare(e) {
   const readOnly    = document.getElementById('share-readonly').checked;
   const guestOK     = document.getElementById('share-guestok').checked;
   const windowsACL  = document.getElementById('share-windows-acl').checked;
+  const shadowCopy  = document.getElementById('share-shadow-copy').checked;
   const validUsers = [...document.querySelectorAll('#share-users-tbody tr')].map(tr => ({
     username: tr.dataset.username,
     read_only: tr.querySelector('.user-readonly-toggle').checked
@@ -13319,6 +13432,8 @@ async function submitShare(e) {
     durable_handles: durableHandles, apple_encoding: appleEncoding,
     allowed_hosts: allowedHosts, hosts_deny: hostsDeny,
     windows_acl: windowsACL,
+    shadow_copy: shadowCopy,
+    shadow_copy_format: document.getElementById('share-shadow-format')?.value.trim() || 'auto-%Y%m%d-%H%M%S',
   };
   const winACLChanged = isEdit && (windowsACL !== _shareOrigWindowsACL);
   if (winACLChanged) {
@@ -13350,6 +13465,14 @@ async function submitShare(e) {
   }
   closeShareModal();
   loadShares();
+  // Shadow Copy requires a full smbd restart to load vfs_shadow_copy2.
+  // Offer a restart prompt when shadow copy is newly enabled.
+  const shadowCopyJustEnabled = shadowCopy && (!isEdit || !_shareOrigShadowCopy);
+  if (shadowCopyJustEnabled) {
+    document.getElementById('btn-shadow-copy-restart-confirm').disabled = false;
+    document.getElementById('btn-shadow-copy-restart-confirm').textContent = 'Restart Samba Now';
+    document.getElementById('modal-shadow-copy-restart').classList.remove('hidden');
+  }
 }
 
 let _deleteSharePending = null; // {type:'smb'|'nfs', name, id}
@@ -15189,6 +15312,7 @@ function _renderOptFeatMenu(feature, installed, hidden) {
   if (feature === 'iscsi') { _optFeatMenuState._iscsi = { installed, hidden }; }
   else if (feature === 'minio') { _optFeatMenuState._minio = { installed, hidden }; }
   else if (feature === 'ups') { _optFeatMenuState._ups = { installed, hidden }; }
+  else if (feature === 'diskpower') { _optFeatMenuState._diskpower = { installed, hidden }; }
 }
 
 function _optFeatMenu(e, feature) {
@@ -15196,7 +15320,7 @@ function _optFeatMenu(e, feature) {
   const btn = e.currentTarget;
   if (_openOptFeatMenu) { _closeOptFeatMenus(); return; }
   const state = _optFeatMenuState['_' + feature] || { installed: false, hidden: false };
-  const pkg = feature === 'minio' ? 'minio' : feature === 'ups' ? 'nut' : 'targetcli-fb';
+  const pkg = feature === 'minio' ? 'minio' : feature === 'ups' ? 'nut' : feature === 'diskpower' ? 'hdparm' : 'targetcli-fb';
   const dd = document.createElement('div');
   dd.addEventListener('click', ev => ev.stopPropagation());
   dd.style.cssText = 'position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);min-width:170px;overflow:hidden;';
@@ -15230,6 +15354,8 @@ async function setFeatureNavVisibility(feature, hidden) {
     await _updateISCSIPrereqStatus();
     await _updateMinIOPrereqStatus();
     await _updateUPSPrereqStatus();
+    await _updateDiskPowerPrereqStatus();
+
     loadISCSINavStatus();
     loadS3NavStatus();
   } catch (e) {
@@ -15242,6 +15368,7 @@ const _uninstallDesc = {
   'targetcli-fb': 'The iSCSI service will be stopped and targetcli-fb will be removed from the system.',
   'minio':        'The MinIO service will be stopped and the minio and mc binaries will be removed from the system.',
   'nut':          'The NUT service will be stopped and nut / nut-client will be removed from the system.',
+  'hdparm':       'hdparm will be removed from the system. Disk power management settings will no longer apply on next boot.',
 };
 
 function uninstallFeature(pkg) {
@@ -15285,6 +15412,8 @@ async function _executeUninstallFeature() {
     await _updateISCSIPrereqStatus();
     await _updateMinIOPrereqStatus();
     await _updateUPSPrereqStatus();
+    await _updateDiskPowerPrereqStatus();
+
     loadISCSINavStatus();
     loadS3NavStatus();
   } catch (e) {
@@ -15436,6 +15565,68 @@ async function enableUPSFeature() {
       }
     }
   );
+}
+
+// ── Disk Power Management prereq ─────────────────────────────────────────────
+
+async function _updateDiskPowerPrereqStatus() {
+  const statusEl = document.getElementById('prereq-diskpower-status');
+  const btnEl    = document.getElementById('prereq-diskpower-btn');
+  const menuWrap = document.getElementById('prereq-diskpower-menu-wrap');
+  const headerBtn = document.getElementById('btn-disk-power-header');
+  if (!statusEl) return;
+  try {
+    const r = await fetch('/api/disks/power');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.hdparm_installed) {
+      statusEl.textContent = '✓ Installed';
+      statusEl.style.color = '#30d158';
+      statusEl.style.fontWeight = '600';
+      if (btnEl) btnEl.style.display = 'none';
+      if (headerBtn) headerBtn.style.display = '';
+      if (menuWrap) {
+        menuWrap.classList.remove('hidden');
+        _renderOptFeatMenu('diskpower', true, false);
+      }
+    } else {
+      statusEl.textContent = 'Not installed';
+      statusEl.style.color = 'var(--text-3)';
+      statusEl.style.fontWeight = '';
+      if (btnEl) { btnEl.style.display = ''; btnEl.disabled = false; btnEl.textContent = 'Enable Disk Power'; }
+      if (headerBtn) headerBtn.style.display = 'none';
+      if (menuWrap) menuWrap.classList.add('hidden');
+    }
+  } catch (_) {}
+}
+
+async function enableDiskPowerFeature() {
+  const btn = document.getElementById('prereq-diskpower-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+  try {
+    const r = await fetch('/api/prereqs/install', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ package: 'hdparm' }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Enable Disk Power'; }
+      showToast('Installation failed: ' + (d.error || JSON.stringify(d)), 'error');
+      return;
+    }
+    const statusEl = document.getElementById('prereq-diskpower-status');
+    if (statusEl) { statusEl.textContent = '✓ Installed'; statusEl.style.color = '#30d158'; statusEl.style.fontWeight = '600'; }
+    if (btn) btn.style.display = 'none';
+    const headerBtn = document.getElementById('btn-disk-power-header');
+    if (headerBtn) headerBtn.style.display = '';
+    const menuWrap = document.getElementById('prereq-diskpower-menu-wrap');
+    if (menuWrap) { menuWrap.classList.remove('hidden'); _renderOptFeatMenu('diskpower', true, false); }
+    showToast('hdparm installed — Disk Power Management is now available in the Physical Disks page.', 'success');
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Enable Disk Power'; }
+    showToast('Error: ' + e.message, 'error');
+  }
 }
 
 // ── UPS Re-Detect ─────────────────────────────────────────────────────────────
@@ -15636,9 +15827,6 @@ function renderUPSPanel(body, s, cfg) {
     }
   }
 
-  const footer = document.getElementById('ups-panel-footer');
-  if (footer) footer.classList.remove('hidden');
-
   if (!st) {
     body.innerHTML = `<div style="color:var(--text-3);text-align:center;padding:32px;">${s.error ? 'UPS error: ' + esc(s.error) : 'UPS not configured or not responding.'}</div>
     ${_upsShutdownForm(cfg.enabled, policy, trigType, pct, mins, cfg)}`;
@@ -15692,27 +15880,279 @@ function _upsShutdownForm(upsEnabled, policy, trigType, pct, mins, cfg) {
     <details style="margin-bottom:14px;">
       <summary style="cursor:pointer;font-size:12px;text-transform:uppercase;color:var(--text-3);user-select:none;padding:6px 0;border-top:1px solid var(--border);">Advanced</summary>
       <div style="margin-top:12px;display:flex;flex-direction:column;gap:12px;">
+        <!-- Mode selector -->
         <div class="form-group">
-          <label style="font-size:13px;">Pre-shutdown command (optional)
-            <i class="info-tip" data-tip="Shell command executed before shutdown begins. Max execution time: 30 seconds."></i>
+          <label style="font-size:13px;">Mode
+            <i class="info-tip" data-tip="Standalone: UPS connected directly to this server. Network Server: UPS connected here and shared with other hosts on the network. Network Client: this server monitors a UPS served by a remote NUT server."></i>
           </label>
-          <input type="text" id="ups-preshutdown" value="${esc(policy.pre_shutdown_cmd||'')}" placeholder="e.g. /usr/local/bin/snapshot.sh" style="width:100%;font-family:monospace;font-size:12px;">
+          <select id="ups-mode-select" onchange="upsModeSwitched()"
+            style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text-1);padding:6px 10px;font-size:13px;">
+            <option value="standalone"     ${(cfg.mode||'standalone')==='standalone'?'selected':''}>Standalone</option>
+            <option value="network_server" ${cfg.mode==='network_server'?'selected':''}>Network Server</option>
+            <option value="network_client" ${cfg.mode==='network_client'?'selected':''}>Network Client</option>
+          </select>
         </div>
-        <div class="form-group">
-          <label style="font-size:13px;">UPS Name (NUT identifier)</label>
-          <input type="text" id="ups-cfg-name" value="${esc(cfg.ups_name||'')}" placeholder="nutdev1">
+
+        <!-- Hardware panel: shown for Standalone + Network Server -->
+        <div id="ups-adv-hardware" style="${cfg.mode==='network_client'?'display:none':''}">
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div class="form-group">
+              <label style="font-size:13px;">Pre-shutdown command (optional)
+                <i class="info-tip" data-tip="Shell command executed before shutdown begins. Max execution time: 30 seconds."></i>
+              </label>
+              <input type="text" id="ups-preshutdown" value="${esc(policy.pre_shutdown_cmd||'')}" placeholder="e.g. /usr/local/bin/snapshot.sh" style="width:100%;font-family:monospace;font-size:12px;">
+            </div>
+            <div class="form-group">
+              <label style="font-size:13px;">UPS Name (NUT identifier)</label>
+              <input type="text" id="ups-cfg-name" value="${esc(cfg.ups_name||'')}" placeholder="nutdev1">
+            </div>
+            <div class="form-group">
+              <label style="font-size:13px;">Driver</label>
+              <input type="text" id="ups-cfg-driver" value="${esc(cfg.driver||'')}" placeholder="usbhid-ups">
+            </div>
+            <div class="form-group">
+              <label style="font-size:13px;">Port</label>
+              <input type="text" id="ups-cfg-port" value="${esc(cfg.port||'auto')}" placeholder="auto">
+            </div>
+          </div>
         </div>
-        <div class="form-group">
-          <label style="font-size:13px;">Driver</label>
-          <input type="text" id="ups-cfg-driver" value="${esc(cfg.driver||'')}" placeholder="usbhid-ups">
+
+        <!-- Server panel: shown only for Network Server -->
+        <div id="ups-adv-server" style="${cfg.mode==='network_server'?'':'display:none'}">
+          <div style="display:flex;flex-direction:column;gap:12px;padding-top:4px;border-top:1px solid var(--border);">
+            <div style="font-size:11px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-top:4px;">Network Server Settings</div>
+            <div style="background:rgba(0,122,255,0.07);border:1px solid rgba(0,122,255,0.2);border-radius:var(--radius-sm);padding:9px 13px;font-size:12px;color:var(--text-2);">
+              ℹ Remote NUT clients can monitor this UPS over the network. Remote users listed below will be written to <code style="font-size:11px;">/etc/nut/upsd.users</code>.
+            </div>
+            <div style="display:flex;gap:12px;">
+              <div class="form-group" style="flex:2;">
+                <label style="font-size:13px;">Listen IP
+                  <i class="info-tip" data-tip="IP address that upsd listens on for incoming NUT client connections. Use 0.0.0.0 to accept connections on all network interfaces, or specify an IP to restrict to one interface."></i>
+                </label>
+                <input type="text" id="ups-srv-listen-ip" value="${esc((cfg.nut_server||{}).listen_ip||'0.0.0.0')}" placeholder="0.0.0.0" style="width:100%;font-family:monospace;font-size:12px;">
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label style="font-size:13px;">Listen Port</label>
+                <input type="number" id="ups-srv-listen-port" value="${(cfg.nut_server||{}).listen_port||3493}" min="1" max="65535" style="width:100%;">
+              </div>
+            </div>
+
+            <!-- Allowed Clients -->
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <label style="font-size:13px;font-weight:500;">Allowed Clients
+                  <i class="info-tip" data-tip="IP addresses or CIDR ranges allowed to connect to upsd. Leave empty to allow all (rely on your firewall). Example: 192.168.1.0/24 or 10.0.0.5"></i>
+                </label>
+                <button class="btn btn-ghost btn-sm" onclick="_upsAddAllowedClient()" style="font-size:11px;">+ Add</button>
+              </div>
+              <div id="ups-srv-clients-list" style="display:flex;flex-direction:column;gap:4px;">
+                ${((cfg.nut_server||{}).allowed_clients||[]).map((c,i)=>`
+                  <div style="display:flex;gap:6px;align-items:center;" data-idx="${i}">
+                    <input type="text" value="${esc(c)}" placeholder="192.168.1.0/24" onchange="_upsClientChanged(this,${i})"
+                      style="flex:1;font-family:monospace;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text-1);">
+                    <button onclick="_upsRemoveAllowedClient(${i})" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:2px 4px;">×</button>
+                  </div>`).join('')}
+              </div>
+              ${((cfg.nut_server||{}).allowed_clients||[]).length===0?`<div style="font-size:11px;color:var(--text-3);">No restrictions — all clients can connect.</div>`:''}
+            </div>
+
+            <!-- Remote Users -->
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <label style="font-size:13px;font-weight:500;">Remote Users
+                  <i class="info-tip" data-tip="NUT user accounts for remote clients. Each user needs at minimum 'Monitoring' access to monitor UPS status. 'Admin' grants full control including issuing UPS commands."></i>
+                </label>
+                <button class="btn btn-ghost btn-sm" onclick="_upsAddRemoteUser()" style="font-size:11px;">+ Add User</button>
+              </div>
+              <div id="ups-srv-users-list" style="display:flex;flex-direction:column;gap:6px;">
+                ${((cfg.nut_server||{}).remote_users||[]).map((u,i)=>`
+                  <div style="display:flex;gap:6px;align-items:center;" data-idx="${i}">
+                    <input type="text"     value="${esc(u.username)}" placeholder="username"  onchange="_upsUserChanged(this,'username',${i})"
+                      style="flex:3;min-width:0;font-family:monospace;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text-1);">
+                    <input type="password" value="${esc(u.password)}" placeholder="password"  onchange="_upsUserChanged(this,'password',${i})"
+                      style="flex:3;min-width:0;font-family:monospace;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text-1);">
+                    <select onchange="_upsUserChanged(this,'role',${i})"
+                      style="flex:0 0 80px;width:80px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text-1);padding:5px 4px;font-size:12px;">
+                      <option value="monitor" ${u.role!=='admin'?'selected':''}>Monitor</option>
+                      <option value="admin"   ${u.role==='admin'?'selected':''}>Admin</option>
+                    </select>
+                    <button onclick="_upsRemoveRemoteUser(${i})" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:2px 4px;flex-shrink:0;">×</button>
+                  </div>`).join('')}
+              </div>
+              ${((cfg.nut_server||{}).remote_users||[]).length===0?`<div style="font-size:11px;color:var(--text-3);">No remote users defined. Remote NUT clients cannot authenticate.</div>`:''}
+            </div>
+          </div>
         </div>
-        <div class="form-group">
-          <label style="font-size:13px;">Port</label>
-          <input type="text" id="ups-cfg-port" value="${esc(cfg.port||'auto')}" placeholder="auto">
+
+        <!-- Client panel: shown only for Network Client -->
+        <div id="ups-adv-client" style="${cfg.mode==='network_client'?'':'display:none'}">
+          <div style="display:flex;flex-direction:column;gap:12px;padding-top:4px;border-top:1px solid var(--border);">
+            <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;color:var(--text-2);">
+              &#x2139; No local UPS driver is used in this mode. This machine monitors a UPS served by another NUT server.
+            </div>
+            <div class="form-group">
+              <label style="font-size:13px;">Remote Host</label>
+              <input type="text" id="ups-cli-host" value="${esc((cfg.nut_client||{}).host||'')}" placeholder="192.168.1.50" style="width:100%;font-family:monospace;font-size:12px;">
+            </div>
+            <div style="display:flex;gap:12px;">
+              <div class="form-group" style="flex:1;">
+                <label style="font-size:13px;">Port</label>
+                <input type="number" id="ups-cli-port" value="${(cfg.nut_client||{}).port||3493}" min="1" max="65535" style="width:100%;">
+              </div>
+              <div class="form-group" style="flex:2;">
+                <label style="font-size:13px;">UPS Name</label>
+                <input type="text" id="ups-cli-upsname" value="${esc((cfg.nut_client||{}).ups_name||'')}" placeholder="nutdev1" style="width:100%;font-family:monospace;font-size:12px;">
+              </div>
+            </div>
+            <div style="display:flex;gap:12px;">
+              <div class="form-group" style="flex:1;">
+                <label style="font-size:13px;">Username (optional)</label>
+                <input type="text" id="ups-cli-username" value="${esc((cfg.nut_client||{}).username||'')}" placeholder="upsmon" style="width:100%;font-family:monospace;font-size:12px;">
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label style="font-size:13px;">Password</label>
+                <input type="password" id="ups-cli-password" value="${esc((cfg.nut_client||{}).password||'')}" placeholder="••••••••" style="width:100%;font-family:monospace;font-size:12px;">
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <button class="btn btn-ghost btn-sm" id="btn-ups-test-client" onclick="upsTestNUTClient()">Test Connection</button>
+              <span id="ups-client-test-result" style="font-size:12px;"></span>
+            </div>
+          </div>
         </div>
       </div>
     </details>
+    <div style="position:sticky;bottom:0;background:var(--surface);padding:12px 0 32px;margin-top:8px;border-top:1px solid var(--border);">
+      <div id="ups-save-err" style="color:var(--accent-danger);font-size:12px;display:none;margin-bottom:8px;"></div>
+      <button class="btn btn-primary btn-sm" style="width:100%;" onclick="saveUPSConfig()">Save</button>
+    </div>
   `;
+}
+
+function upsModeSwitched() {
+  const mode = document.getElementById('ups-mode-select').value;
+  const hwDiv  = document.getElementById('ups-adv-hardware');
+  const srvDiv = document.getElementById('ups-adv-server');
+  const cliDiv = document.getElementById('ups-adv-client');
+  if (hwDiv)  hwDiv.style.display  = (mode === 'standalone' || mode === 'network_server') ? '' : 'none';
+  if (srvDiv) srvDiv.style.display = (mode === 'network_server') ? '' : 'none';
+  if (cliDiv) cliDiv.style.display = (mode === 'network_client') ? '' : 'none';
+}
+
+// ── UPS Network Server: Allowed Clients helpers ───────────────────────────────
+
+function _upsGetAllowedClients() {
+  const list = document.getElementById('ups-srv-clients-list');
+  if (!list) return [];
+  return [...list.querySelectorAll('input[type=text]')].map(i => i.value.trim()).filter(Boolean);
+}
+
+function _upsAddAllowedClient() {
+  const list = document.getElementById('ups-srv-clients-list');
+  if (!list) return;
+  const idx = list.children.length;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;';
+  row.dataset.idx = idx;
+  row.innerHTML = `
+    <input type="text" value="" placeholder="192.168.1.0/24"
+      style="flex:1;font-family:monospace;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text-1);">
+    <button onclick="this.closest('[data-idx]').remove()" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:2px 4px;">×</button>`;
+  list.appendChild(row);
+  row.querySelector('input').focus();
+}
+
+function _upsClientChanged(input, idx) { /* live editing — read on save */ }
+function _upsRemoveAllowedClient(idx) {
+  const list = document.getElementById('ups-srv-clients-list');
+  if (list) { const row = list.querySelector(`[data-idx="${idx}"]`); if (row) row.remove(); }
+}
+
+// ── UPS Network Server: Remote Users helpers ──────────────────────────────────
+
+function _upsGetRemoteUsers() {
+  const list = document.getElementById('ups-srv-users-list');
+  if (!list) return [];
+  return [...list.children].map(row => {
+    const inputs = row.querySelectorAll('input');
+    const select = row.querySelector('select');
+    return {
+      username: inputs[0]?.value.trim() || '',
+      password: inputs[1]?.value || '',
+      role:     select?.value || 'monitor',
+    };
+  }).filter(u => u.username);
+}
+
+function _upsAddRemoteUser() {
+  const list = document.getElementById('ups-srv-users-list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;';
+  row.innerHTML = `
+    <input type="text"     value="" placeholder="username"
+      style="flex:3;min-width:0;font-family:monospace;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text-1);">
+    <input type="password" value="" placeholder="password"
+      style="flex:3;min-width:0;font-family:monospace;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text-1);">
+    <select style="flex:0 0 80px;width:80px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--text-1);padding:5px 4px;font-size:12px;">
+      <option value="monitor" selected>Monitor</option>
+      <option value="admin">Admin</option>
+    </select>
+    <button onclick="this.closest('div').remove()" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:2px 4px;flex-shrink:0;">×</button>`;
+  list.appendChild(row);
+  row.querySelector('input').focus();
+}
+
+function _upsUserChanged(el, field, idx) { /* live editing — read on save */ }
+function _upsRemoveRemoteUser(idx) {
+  const list = document.getElementById('ups-srv-users-list');
+  if (list) { const row = list.querySelector(`[data-idx="${idx}"]`); if (row) row.remove(); }
+}
+
+async function upsTestNUTClient() {
+  const btn    = document.getElementById('btn-ups-test-client');
+  const result = document.getElementById('ups-client-test-result');
+  const host    = (document.getElementById('ups-cli-host')?.value    || '').trim();
+  const port    = parseInt(document.getElementById('ups-cli-port')?.value   || '3493') || 3493;
+  const upsName = (document.getElementById('ups-cli-upsname')?.value || '').trim();
+
+  if (!host || !upsName) {
+    result.textContent = 'Enter host and UPS name first.';
+    result.style.color = 'var(--accent-danger)';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  result.textContent = '';
+
+  try {
+    const r = await fetch('/api/ups/test-client', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        host,
+        port,
+        ups_name: upsName,
+        username: (document.getElementById('ups-cli-username')?.value || '').trim(),
+        password: document.getElementById('ups-cli-password')?.value  || '',
+      }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      result.textContent = '✓ Connection successful';
+      result.style.color = 'var(--accent-3)';
+    } else {
+      result.textContent = '✗ ' + (d.error || 'Connection failed');
+      result.style.color = 'var(--accent-danger)';
+    }
+  } catch (e) {
+    result.textContent = '✗ ' + e.message;
+    result.style.color = 'var(--accent-danger)';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test Connection';
+  }
 }
 
 function upsServiceMenu() {
@@ -15754,21 +16194,19 @@ async function upsNominalSave() {
 }
 
 async function saveUPSConfig() {
-  const enabled = document.getElementById('ups-sd-enabled')?.checked;
+  const saveBtn = document.querySelector('#ups-panel-body .btn-primary[onclick="saveUPSConfig()"]');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+  const enabled  = document.getElementById('ups-sd-enabled')?.checked;
   const trigType = document.querySelector('input[name="ups-trigger"]:checked')?.value || 'both';
   const pct  = parseInt(document.getElementById('ups-pct-thresh')?.value || '20');
   const mins = parseInt(document.getElementById('ups-time-thresh')?.value || '10');
   const pre  = document.getElementById('ups-preshutdown')?.value || '';
-  const name = document.getElementById('ups-cfg-name')?.value.trim() || '';
-  const driver = document.getElementById('ups-cfg-driver')?.value.trim() || '';
-  const port = document.getElementById('ups-cfg-port')?.value.trim() || 'auto';
+  const mode = document.getElementById('ups-mode-select')?.value || 'standalone';
   const errEl = document.getElementById('ups-save-err');
 
   const payload = {
     enabled: true,
-    ups_name: name,
-    driver,
-    port,
+    mode,
     shutdown_policy: {
       enabled,
       trigger_type: trigType,
@@ -15776,7 +16214,32 @@ async function saveUPSConfig() {
       runtime_threshold: mins * 60,
       pre_shutdown_cmd: pre,
     },
+    nut_server: null,
+    nut_client: null,
   };
+
+  if (mode === 'standalone' || mode === 'network_server') {
+    payload.ups_name = document.getElementById('ups-cfg-name')?.value.trim() || '';
+    payload.driver   = document.getElementById('ups-cfg-driver')?.value.trim() || '';
+    payload.port     = document.getElementById('ups-cfg-port')?.value.trim() || 'auto';
+  }
+  if (mode === 'network_server') {
+    payload.nut_server = {
+      listen_ip:       (document.getElementById('ups-srv-listen-ip')?.value || '0.0.0.0').trim(),
+      listen_port:     parseInt(document.getElementById('ups-srv-listen-port')?.value || '3493') || 3493,
+      allowed_clients: _upsGetAllowedClients(),
+      remote_users:    _upsGetRemoteUsers(),
+    };
+  }
+  if (mode === 'network_client') {
+    payload.nut_client = {
+      host:     (document.getElementById('ups-cli-host')?.value     || '').trim(),
+      port:     parseInt(document.getElementById('ups-cli-port')?.value || '3493') || 3493,
+      ups_name: (document.getElementById('ups-cli-upsname')?.value  || '').trim(),
+      username: (document.getElementById('ups-cli-username')?.value || '').trim() || undefined,
+      password: document.getElementById('ups-cli-password')?.value  || undefined,
+    };
+  }
 
   try {
     const r = await fetch('/api/ups/config', {
@@ -15787,13 +16250,25 @@ async function saveUPSConfig() {
     const d = await r.json();
     if (!r.ok) {
       if (errEl) { errEl.textContent = d.error || JSON.stringify(d); errEl.style.display = ''; }
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
       return;
     }
     if (errEl) errEl.style.display = 'none';
-    const jid = 'ups-save-' + Date.now(); addActiveJob(jid, 'UPS configuration saved.'); setTimeout(() => removeActiveJob(jid), 3000);
+    if (saveBtn) {
+      saveBtn.textContent = '✓ Saved';
+      saveBtn.style.background = '#30d158';
+      saveBtn.style.borderColor = '#30d158';
+      setTimeout(() => {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save';
+        saveBtn.style.background = '';
+        saveBtn.style.borderColor = '';
+      }, 2000);
+    }
     pollUPSTopbar();
   } catch (e) {
     if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
   }
 }
 
@@ -16139,9 +16614,6 @@ function _renderUpdatePackages(data) {
 }
 
 function initUpdatesPage() {
-  // Reset OS log but don't auto-check (apt-get update is slow).
-  document.getElementById('updates-log-wrap').style.display = 'none';
-  document.getElementById('updates-log').textContent = '';
   // Auto-check binary version (fast, just a GitHub API call).
   _autoBinaryVersionCheck();
   // Sync toggle state from appSettings.
@@ -16158,11 +16630,92 @@ function initUpdatesPage() {
     const el = document.getElementById('os-info-line');
     if (el) el.textContent = 'System packages via apt-get';
   });
-  // Populate table from persisted cache immediately (no apt-get call needed).
-  fetch('/api/updates/cache').then(r => r.ok ? r.json() : null).then(data => {
-    if (!data || data.count === 0) return;
-    _renderUpdatePackages(data);
-  }).catch(() => {});
+
+  // Check if an upgrade is already running in the background (user may have
+  // navigated away and come back).
+  fetch('/api/updates/upgrade-status').then(r => r.ok ? r.json() : null).then(st => {
+    if (!st) return;
+    if (st.running || (st.done && st.lines && st.lines.length > 0)) {
+      // Replay buffered output and (if still running) reconnect the WebSocket.
+      const logWrap = document.getElementById('updates-log-wrap');
+      const log     = document.getElementById('updates-log');
+      const btn     = document.getElementById('btn-apply-updates');
+      const status  = document.getElementById('updates-status');
+      const pkgList = document.getElementById('updates-pkg-list');
+      logWrap.style.display = '';
+      log.textContent = (st.lines || []).join('\n') + '\n';
+      log.scrollTop = log.scrollHeight;
+      if (status)  status.style.display  = 'none';
+      if (pkgList) pkgList.style.display = 'none';
+      if (st.done) {
+        // Already finished — show result banner.
+        _showUpgradeResult(st.success, log, btn, status, pkgList);
+      } else {
+        // Still running — reconnect and tail new lines.
+        if (btn) btn.disabled = true;
+        _attachUpgradeWS(log, btn, status, pkgList);
+      }
+      return;
+    }
+    // No active upgrade — reset log and load cache as before.
+    document.getElementById('updates-log-wrap').style.display = 'none';
+    document.getElementById('updates-log').textContent = '';
+    fetch('/api/updates/cache').then(r => r.ok ? r.json() : null).then(data => {
+      if (!data || data.count === 0) return;
+      _renderUpdatePackages(data);
+    }).catch(() => {});
+  }).catch(() => {
+    document.getElementById('updates-log-wrap').style.display = 'none';
+    document.getElementById('updates-log').textContent = '';
+    fetch('/api/updates/cache').then(r => r.ok ? r.json() : null).then(data => {
+      if (!data || data.count === 0) return;
+      _renderUpdatePackages(data);
+    }).catch(() => {});
+  });
+}
+
+function _showUpgradeResult(success, log, btn, status, pkgList) {
+  if (btn) btn.disabled = false;
+  if (status)  status.style.display  = '';
+  if (pkgList) pkgList.style.display = '';
+  log.textContent += '\n';
+  if (success) {
+    log.textContent += '══════════════════════════════════════════\n';
+    log.textContent += '  ✔  UPDATE INSTALL FINISHED             \n';
+    log.textContent += '══════════════════════════════════════════\n';
+    checkUpdates();
+  } else {
+    log.textContent += '══════════════════════════════════════════\n';
+    log.textContent += '  ✘  UPDATE FAILED — see output above     \n';
+    log.textContent += '══════════════════════════════════════════\n';
+  }
+  log.scrollTop = log.scrollHeight;
+}
+
+function _attachUpgradeWS(log, btn, status, pkgList) {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/ws/updates-apply');
+  const startLen = log.textContent.length; // don't re-render already shown lines
+  let serverSentCount = 0; // lines the server sends us (may overlap with buffered)
+
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.line !== undefined) {
+      serverSentCount++;
+      // The server fast-forwards from index 0, so skip lines we already rendered.
+      const logLines = log.textContent.split('\n').filter(l => l !== '').length;
+      if (serverSentCount > logLines) {
+        log.textContent += msg.line + '\n';
+        log.scrollTop = log.scrollHeight;
+      }
+    }
+    if (msg.done) {
+      ws.close();
+      _showUpgradeResult(msg.success, log, btn, status, pkgList);
+    }
+  };
+  ws.onerror = () => { log.textContent += '\n[WebSocket error — upgrade may still be running]\n'; if (btn) btn.disabled = false; };
+  ws.onclose = () => { /* normal close after done */ };
 }
 
 // ── Version cache (localStorage, max once per day) ──────────────────────────
@@ -16267,12 +16820,15 @@ async function checkUpdates() {
   try {
     const resp = await fetch('/api/updates/check');
     const data = await resp.json();
-    if (!resp.ok) { status.textContent = 'Error: ' + (data.error || 'unknown'); return; }
+    if (!resp.ok) {
+      status.innerHTML = '<span style="color:var(--accent-warn);">⚠ ' + esc(data.error || 'apt-get returned an error') + '</span>';
+      return;
+    }
 
     data.checked_at = data.checked_at || new Date().toISOString();
     _renderUpdatePackages(data);
   } catch(e) {
-    status.textContent = 'Error: ' + e.message;
+    status.innerHTML = '<span style="color:var(--accent-warn);">⚠ ' + esc(e.message) + '</span>';
   } finally {
     btn.disabled = false;
     btn.textContent = '↻ Check for Updates';
@@ -16305,36 +16861,22 @@ function applyUpdates() {
     }
     if (msg.done) {
       ws.close();
-      btn.disabled = false;
-      // Restore the collapsed card body elements.
-      if (status)  status.style.display  = '';
-      if (pkgList) pkgList.style.display = '';
-      if (msg.success) {
-        log.textContent += '\n';
-        log.textContent += '══════════════════════════════════════════\n';
-        log.textContent += '  ✔  UPDATE INSTALL FINISHED             \n';
-        log.textContent += '══════════════════════════════════════════\n';
-        log.scrollTop = log.scrollHeight;
-        // Refresh the package list after a successful upgrade.
-        checkUpdates();
-      } else {
-        log.textContent += '\n';
-        log.textContent += '══════════════════════════════════════════\n';
-        log.textContent += '  ✘  UPDATE FAILED — see output above     \n';
-        log.textContent += '══════════════════════════════════════════\n';
-        log.scrollTop = log.scrollHeight;
-      }
+      _showUpgradeResult(msg.success, log, btn, status, pkgList);
     }
   };
 
   ws.onerror = () => {
-    log.textContent += '\n[WebSocket error]\n';
-    btn.disabled = false;
+    log.textContent += '\n[WebSocket error — upgrade continues in background]\n';
+    if (btn) btn.disabled = false;
   };
 
   ws.onclose = () => {
-    if (btn.disabled) {
-      log.textContent += '\n[connection closed]\n';
+    // If the WS closed without a done message (e.g. user navigated away and
+    // came back, or the browser dropped the connection) the upgrade keeps
+    // running on the server.  Show a note but don't block the button.
+    if (btn && btn.disabled) {
+      log.textContent += '\n[Disconnected — upgrade is still running in background.\nNavigate back to this page to see progress.]\n';
+      log.scrollTop = log.scrollHeight;
       btn.disabled = false;
     }
   };
@@ -18115,6 +18657,8 @@ document.addEventListener('click', function(e) {
     'modal-create-apikey':    closeCreateAPIKey,
     'modal-delete-apikey':    closeDeleteAPIKeyModal,
     'modal-generic-confirm':  closeGenericConfirm,
+    'modal-disk-power':       closeDiskPowerModal,
+    'modal-sys-power':        closeSysPowerModal,
     'modal-create-user':      closeCreateUser,
     'modal-edit-user':        closeEditUser,
     'modal-smb-password':     closeSMBPasswordModal,
@@ -18129,6 +18673,7 @@ document.addEventListener('click', function(e) {
     'modal-schedule':         closeScheduleModal,
     'modal-snapshot':         closeSnapshotModal,
     'modal-winacl-restart':          closeWinACLRestartModal,
+    'modal-shadow-copy-restart':     closeShadowCopyRestartModal,
     'modal-smb-workgroup-restart':   closeSMBWorkgroupRestartModal,
     'modal-delete-share':     closeDeleteShareModal,
     'modal-share':            closeShareModal,
@@ -20983,6 +21528,32 @@ function showToast(msg, type = 'error') {
 
 </script>
 
+<!-- ── Disk Power Management Modal ───────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-disk-power" onclick="if(event.target===this)closeDiskPowerModal()">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <h3>Disk Power Management</h3>
+      <button class="modal-close" onclick="closeDiskPowerModal()">✕</button>
+    </div>
+    <div class="modal-body" id="disk-power-body">
+      <div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── System Power Management Modal ─────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-sys-power" onclick="if(event.target===this)closeSysPowerModal()">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <h3>System Power Management</h3>
+      <button class="modal-close" onclick="closeSysPowerModal()">✕</button>
+    </div>
+    <div class="modal-body" id="sys-power-body">
+      <div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
 <!-- Generic Confirm Modal -->
 <div class="modal-backdrop hidden" id="modal-generic-confirm" onclick="if(event.target===this)closeGenericConfirm()">
   <div class="modal" style="max-width:440px;">
@@ -21095,6 +21666,299 @@ function showToast(msg, type = 'error') {
 </div>
 
 <script>
+// ── Disk Power Management ─────────────────────────────────────────────────────
+
+async function openDiskPowerModal() {
+  document.getElementById('disk-power-body').innerHTML =
+    '<div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>';
+  document.getElementById('modal-disk-power').classList.remove('hidden');
+  try {
+    const r = await fetch('/api/disks/power');
+    const d = await r.json();
+    renderDiskPowerBody(d);
+  } catch(e) {
+    document.getElementById('disk-power-body').innerHTML =
+      `<div style="color:var(--accent-danger);padding:16px;">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+function closeDiskPowerModal() {
+  document.getElementById('modal-disk-power').classList.add('hidden');
+}
+
+function renderDiskPowerBody(d) {
+  const cfg = d.config || {};
+  const installed = d.hdparm_installed;
+  if (!installed) {
+    document.getElementById('disk-power-body').innerHTML = `
+      <div style="padding:16px;text-align:center;">
+        <p style="color:var(--text-2);margin-bottom:16px;">hdparm is not installed.</p>
+        <button class="btn btn-primary" onclick="installHdparm()">Install hdparm</button>
+      </div>`;
+    return;
+  }
+  const wc = cfg.write_cache;
+  const enabled = !!cfg.enabled;
+  document.getElementById('disk-power-body').innerHTML = `
+    <div style="margin-bottom:16px;">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;font-weight:500;">
+        <input type="checkbox" id="dp-enabled" ${enabled ? 'checked' : ''}
+          style="width:16px;height:16px;accent-color:var(--accent-2);flex-shrink:0;"
+          onchange="document.getElementById('dp-settings').style.display=this.checked?'':'none'">
+        Enable disk power management
+      </label>
+    </div>
+    <div id="dp-settings" style="${enabled ? '' : 'display:none'}">
+      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;color:var(--text-2);margin-bottom:14px;">
+        &#x2139; Settings apply to all physical SATA/SAS disks. SSDs and NVMe drives may ignore APM and spindown commands.
+      </div>
+      <div class="form-group">
+        <label style="font-size:13px;">APM Level
+          <i class="info-tip" data-tip="Advanced Power Management level. 1–127 allows the drive to spin down when idle; 128–254 prevents spindown. 255 disables APM (maximum performance, no power saving). Typical NAS value: 127. 0 = not configured."></i>
+        </label>
+        <input type="number" id="dp-apm" value="${cfg.apm_level||0}" min="0" max="255" style="width:100px;">
+        <span style="font-size:12px;color:var(--text-3);margin-left:8px;">0 = not configured, 1–127 = allow spindown, 128–254 = no spindown, 255 = disable APM</span>
+      </div>
+      <div class="form-group">
+        <label style="font-size:13px;">Spindown Timeout
+          <i class="info-tip" data-tip="Idle time before the disk spins down. 0 = disabled. Note: frequent spin-up/spin-down cycles can reduce disk lifespan on spinning rust drives."></i>
+        </label>
+        <input type="number" id="dp-spindown" value="${cfg.spindown_timeout||0}" min="0" max="251" style="width:100px;">
+        <span style="font-size:12px;color:var(--text-3);margin-left:8px;">0 = disabled</span>
+      </div>
+      <div class="form-group">
+        <label style="font-size:13px;">Write Cache
+          <i class="info-tip" data-tip="Enables the drive's internal write buffer. Disabling it reduces performance but eliminates data loss risk on sudden power failure (ZFS journaling protects data separately)."></i>
+        </label>
+        <div style="display:flex;gap:16px;align-items:center;">
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="dp-wc" value="enable" ${wc===true?'checked':''}>  Enable
+          </label>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="dp-wc" value="disable" ${wc===false?'checked':''}> Disable
+          </label>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="dp-wc" value="none" ${wc==null?'checked':''}> Don't set
+          </label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label style="font-size:13px;">Acoustic Management
+          <i class="info-tip" data-tip="Reduces drive seek noise by limiting seek speed. Quiet (128) = minimum noise; Fast (254) = maximum performance. Most modern drives ignore this setting."></i>
+        </label>
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="dp-am" value="-1" ${(cfg.acoustic_level==null||cfg.acoustic_level===-1)?'checked':''}> Not configured
+          </label>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="dp-am" value="0" ${cfg.acoustic_level===0?'checked':''}> Off
+          </label>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="dp-am" value="128" ${cfg.acoustic_level===128?'checked':''}> Quiet (128)
+          </label>
+          <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="radio" name="dp-am" value="254" ${cfg.acoustic_level===254?'checked':''}> Fast (254)
+          </label>
+        </div>
+      </div>
+      <div style="background:rgba(255,149,0,0.1);border:1px solid rgba(255,149,0,0.3);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;color:var(--text-2);margin-bottom:14px;">
+        &#x26A0; Changes apply immediately and persist across reboots via /etc/hdparm.conf.
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px;">
+      <button class="btn btn-primary" onclick="saveDiskPower()">Save &amp; Apply</button>
+      <button class="btn btn-ghost" onclick="closeDiskPowerModal()">Cancel</button>
+    </div>`;
+}
+
+async function installHdparm() {
+  try {
+    const r = await fetch('/api/disks/power/install', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) { showToast(d.error || 'Install failed', 'error'); return; }
+    showToast('hdparm installed', 'success');
+    openDiskPowerModal();
+  } catch(e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function saveDiskPower() {
+  const wcVal = document.querySelector('input[name="dp-wc"]:checked')?.value;
+  let writeCache = null;
+  if (wcVal === 'enable')  writeCache = true;
+  if (wcVal === 'disable') writeCache = false;
+
+  const amVal = parseInt(document.querySelector('input[name="dp-am"]:checked')?.value ?? '-1', 10);
+
+  const payload = {
+    enabled:          document.getElementById('dp-enabled').checked,
+    apm_level:        parseInt(document.getElementById('dp-apm').value||'0', 10),
+    spindown_timeout: parseInt(document.getElementById('dp-spindown').value||'0', 10),
+    write_cache:      writeCache,
+    acoustic_level:   isNaN(amVal) ? -1 : amVal,
+  };
+  try {
+    const r = await fetch('/api/disks/power', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) { showToast(d.error || 'Save failed', 'error'); return; }
+    showToast('Disk power settings saved', 'success');
+    closeDiskPowerModal();
+  } catch(e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+// ── System Power Management ───────────────────────────────────────────────────
+
+async function openSysPowerModal() {
+  document.getElementById('sys-power-body').innerHTML =
+    '<div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>';
+  document.getElementById('modal-sys-power').classList.remove('hidden');
+  try {
+    const r = await fetch('/api/system/power');
+    const d = await r.json();
+    renderSysPowerBody(d);
+  } catch(e) {
+    document.getElementById('sys-power-body').innerHTML =
+      `<div style="color:var(--accent-danger);padding:16px;">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+function closeSysPowerModal() {
+  document.getElementById('modal-sys-power').classList.add('hidden');
+}
+
+const _spGovDesc = {
+  '':             { label: 'Kernel default',  badge: '',               color: 'var(--text-3)',      text: 'No override — the kernel uses whichever governor it was compiled with. On modern Debian/Ubuntu this is typically powersave, which throttles the CPU and can hurt ZFS checksumming and network throughput.' },
+  'performance':  { label: 'Performance',     badge: '★ Recommended',  color: '#30d158',            text: 'CPU cores run at maximum frequency at all times. There is zero ramp-up delay, so ZFS parity calculations, encryption, and network transfers get full CPU speed immediately. This is the right choice for an always-on NAS — the power difference vs. schedutil is usually 2–5 W.' },
+  'powersave':    { label: 'Power Save',      badge: '⚠ Not for NAS',  color: 'var(--accent-warn)', text: 'CPU is locked to its lowest supported frequency. This cuts power draw but introduces visible latency on random I/O, slows ZFS scrubs, and can cause SMB/NFS throughput to drop under load. Avoid on a NAS.' },
+  'ondemand':     { label: 'On Demand',       badge: '',               color: 'var(--text-2)',      text: 'Frequency jumps to maximum the instant any CPU usage is detected, then steps back down during idle. There is a small (1–5 ms) ramp-up window that can cause a brief latency spike at the start of a burst — usually acceptable for a lightly loaded NAS.' },
+  'conservative': { label: 'Conservative',   badge: '',               color: 'var(--text-2)',      text: 'Frequency increases in steps rather than jumping straight to max. This is gentler on power but means the CPU lags behind sudden bursts (e.g. a large directory listing or ZFS dedup lookup). Not ideal for a busy NAS.' },
+  'schedutil':    { label: 'Schedutil',       badge: '✓ Good balance', color: 'var(--accent-2)',   text: 'Uses the kernel scheduler\'s per-task load signal to scale frequency precisely. Response is faster than ondemand and more accurate than conservative. A solid second choice if you want to save a few watts without meaningful latency impact on a lightly loaded NAS.' },
+};
+const _spAspmDesc = {
+  '':              { label: 'Unchanged',       badge: '',               color: 'var(--text-3)',      text: 'The ASPM policy is left exactly as the kernel set it at boot. Use this if you are unsure or if you have not observed any device wake-up issues.' },
+  'default':       { label: 'Default (BIOS)',  badge: '★ Recommended',  color: '#30d158',            text: 'The BIOS/UEFI firmware\'s per-device ASPM settings are respected. This is the safest option because the vendor already validated which link states are stable for your hardware combination (HBA, NIC, NVMe).' },
+  'performance':   { label: 'Performance',     badge: '⚡ Lowest latency', color: 'var(--accent-2)', text: 'All PCIe Active State Power Management transitions are disabled. The PCIe bus stays fully powered 100% of the time, so there is never a link wake-up delay. Adds ~1–3 W per PCIe device but gives the absolute best latency — useful if your HBA or NIC shows occasional timeout spikes.' },
+  'powersave':     { label: 'Power Save',      badge: '',               color: 'var(--text-2)',      text: 'Enables L0s (near-active, ~1 µs wake) and L1 (idle, ~10 µs wake) link states on any PCIe device that supports them. Saves 0.5–2 W per slot. The microsecond wake penalty is invisible for most NAS workloads but could cause isolated latency spikes on saturated links.' },
+  'powersupersave':{ label: 'Power Super Save', badge: '⚠ Stability risk', color: 'var(--accent-warn)', text: 'Forces all available ASPM substates (L1.1, L1.2, L2) on every PCIe device regardless of whether the firmware endorsed them. Maximum power saving (~3–6 W total) but known to cause link errors, SMART timeouts, or NIC resets on some HBA and 10GbE cards. Only use if you have tested stability at this level.' },
+};
+
+const _spDescMap = {};
+
+function _spSelectRow(id, label, descs, currentVal, disabled, unavailMsg) {
+  _spDescMap[id] = descs;
+  const keys = Object.keys(descs);
+  const opts = keys.map(k => `<option value="${k}" ${currentVal===k?'selected':''}>${descs[k].label}${descs[k].badge?' — '+descs[k].badge:''}</option>`).join('');
+  const info = descs[currentVal] || descs[''];
+  const disabledAttr = disabled ? `disabled title="${unavailMsg}"` : '';
+  return `
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px;${disabled?'opacity:0.55;':''}" id="${id}-wrap">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
+        <span style="font-size:13px;font-weight:600;color:var(--text-1);">${label}</span>
+        ${disabled ? `<span style="font-size:11px;color:var(--text-3);font-style:italic;">${unavailMsg}</span>` : ''}
+      </div>
+      <select id="${id}" ${disabledAttr}
+        onchange="_spUpdateDesc('${id}')"
+        style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text-1);padding:8px 10px;font-size:13px;margin-bottom:10px;">
+        ${opts}
+      </select>
+      <div id="${id}-desc" style="display:flex;align-items:flex-start;gap:8px;min-height:32px;">
+        <span id="${id}-badge" style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:10px;background:var(--surface);border:1px solid var(--border);color:${info.color};white-space:nowrap;flex-shrink:0;${info.badge?'':'display:none;'}">${info.badge}</span>
+        <span id="${id}-text" style="font-size:12px;color:var(--text-2);line-height:1.5;">${info.text}</span>
+      </div>
+    </div>`;
+}
+
+function _spUpdateDesc(id) {
+  const descs = _spDescMap[id];
+  if (!descs) return;
+  const val = document.getElementById(id)?.value ?? '';
+  const info = descs[val] || descs[''];
+  const badge = document.getElementById(id+'-badge');
+  const text  = document.getElementById(id+'-text');
+  if (badge) { badge.textContent = info.badge; badge.style.color = info.color; badge.style.display = info.badge ? '' : 'none'; }
+  if (text)  text.textContent = info.text;
+}
+
+function renderSysPowerBody(d) {
+  const cfg = d.current || {};
+  const usbEnabled = cfg.usb_autosuspend === true;
+
+  document.getElementById('sys-power-body').innerHTML = `
+    <div style="background:rgba(255,149,0,0.08);border:1px solid rgba(255,149,0,0.25);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text-2);margin-bottom:14px;display:flex;gap:8px;align-items:flex-start;">
+      <span style="flex-shrink:0;font-size:14px;">⚠</span>
+      <span>This NAS is designed to run 24/7. Aggressive power saving can introduce I/O latency, USB wake-up delays, and instability. The recommended settings are highlighted.</span>
+    </div>
+
+    ${_spSelectRow('sp-governor', 'CPU Governor', _spGovDesc, cfg.cpu_governor||'', !d.cpufreq_available, 'Not available on this system')}
+
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px;">
+      <span style="font-size:13px;font-weight:600;color:var(--text-1);display:block;margin-bottom:10px;">USB Autosuspend</span>
+      <div style="display:flex;gap:12px;margin-bottom:10px;">
+        <label style="flex:1;display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:6px;border:2px solid ${!usbEnabled?'var(--accent-2)':'var(--border)'};cursor:pointer;background:${!usbEnabled?'rgba(var(--accent-2-rgb,0,122,255),0.06)':'var(--surface)'};transition:all 0.15s;" id="sp-usb-dis-label" onclick="_spUsbSelect(false)">
+          <input type="radio" name="sp-usb" value="false" ${!usbEnabled?'checked':''} style="accent-color:var(--accent-2);">
+          <span>
+            <span style="font-size:13px;font-weight:600;color:var(--text-1);display:block;">Disabled <span style="font-size:11px;font-weight:500;color:#30d158;">★ NAS</span></span>
+            <span style="font-size:11px;color:var(--text-3);">USB devices always stay active</span>
+          </span>
+        </label>
+        <label style="flex:1;display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:6px;border:2px solid ${usbEnabled?'var(--accent-warn)':'var(--border)'};cursor:pointer;background:${usbEnabled?'rgba(255,149,0,0.06)':'var(--surface)'};transition:all 0.15s;" id="sp-usb-en-label" onclick="_spUsbSelect(true)">
+          <input type="radio" name="sp-usb" value="true" ${usbEnabled?'checked':''} style="accent-color:var(--accent-warn);">
+          <span>
+            <span style="font-size:13px;font-weight:600;color:var(--text-1);display:block;">Enabled <span style="font-size:11px;font-weight:400;color:var(--accent-warn);">⚠ Latency</span></span>
+            <span style="font-size:11px;color:var(--text-3);">Idle USB devices suspended after 2 s</span>
+          </span>
+        </label>
+      </div>
+      <div id="sp-usb-hint" style="font-size:12px;color:var(--text-2);line-height:1.5;">${usbEnabled
+        ? '⚠ USB-attached UPS adapters or storage may become temporarily unresponsive when suspended. Not recommended for NAS.'
+        : 'Keeps UPS dongles, USB-attached drives, and other USB devices permanently active. Safest for NAS.'
+      }</div>
+    </div>
+
+    ${_spSelectRow('sp-aspm', 'PCIe ASPM Policy', _spAspmDesc, cfg.pcie_aspm||'', !d.pcie_aspm_available, 'Not available on this system')}
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+      <button class="btn btn-primary" onclick="saveSysPower()">Save &amp; Apply</button>
+      <button class="btn btn-ghost" onclick="closeSysPowerModal()">Cancel</button>
+    </div>`;
+}
+
+function _spUsbSelect(enable) {
+  document.querySelectorAll('input[name="sp-usb"]').forEach(r => { r.checked = (r.value === String(enable)); });
+  const disLabel = document.getElementById('sp-usb-dis-label');
+  const enLabel  = document.getElementById('sp-usb-en-label');
+  const hint     = document.getElementById('sp-usb-hint');
+  if (disLabel) { disLabel.style.borderColor = !enable ? 'var(--accent-2)' : 'var(--border)'; disLabel.style.background = !enable ? 'rgba(var(--accent-2-rgb,0,122,255),0.06)' : 'var(--surface)'; }
+  if (enLabel)  { enLabel.style.borderColor  =  enable ? 'var(--accent-warn)' : 'var(--border)'; enLabel.style.background  =  enable ? 'rgba(255,149,0,0.06)' : 'var(--surface)'; }
+  if (hint) hint.textContent = enable
+    ? '⚠ USB-attached UPS adapters or storage may become temporarily unresponsive when suspended. Not recommended for NAS.'
+    : 'Keeps UPS dongles, USB-attached drives, and other USB devices permanently active. Safest for NAS.';
+}
+
+async function saveSysPower() {
+  const usbVal = document.querySelector('input[name="sp-usb"]:checked')?.value;
+  const payload = {
+    cpu_governor:    document.getElementById('sp-governor')?.value || '',
+
+    usb_autosuspend: usbVal === 'true' ? true : (usbVal === 'false' ? false : null),
+    pcie_aspm:       document.getElementById('sp-aspm')?.value     || '',
+  };
+  try {
+    const r = await fetch('/api/system/power', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) { showToast(d.error || 'Save failed', 'error'); return; }
+    showToast('System power settings saved', 'success');
+    closeSysPowerModal();
+  } catch(e) { showToast('Error: ' + e.message, 'error'); }
+}
+
 // ── File Browser ──────────────────────────────────────────────────────────────
 
 let fileBrowserState = {

@@ -1720,6 +1720,37 @@ func CreateSnapshot(dataset, label string) (string, error) {
 	return fullName, nil
 }
 
+// strftimeToGo converts a strftime format string to a Go time layout string.
+// Supports the subset used in SMB shadow:format: %Y %m %d %H %M %S.
+func strftimeToGo(f string) string {
+	r := strings.NewReplacer(
+		"%Y", "2006",
+		"%m", "01",
+		"%d", "02",
+		"%H", "15",
+		"%M", "04",
+		"%S", "05",
+	)
+	return r.Replace(f)
+}
+
+// CreateShadowCopySnapshot creates a snapshot whose name matches the given
+// strftime-style shadow:format string (e.g. "auto-%Y%m%d-%H%M%S").
+// Used by the VSS Snapshot action so the resulting snapshot is visible to
+// Samba's vfs_shadow_copy2 module as a Windows Previous Version.
+func CreateShadowCopySnapshot(dataset, shadowFormat string) (string, error) {
+	if shadowFormat == "" {
+		shadowFormat = "auto-%Y%m%d-%H%M%S"
+	}
+	snapName := time.Now().Format(strftimeToGo(shadowFormat))
+	fullName := fmt.Sprintf("%s@%s", dataset, snapName)
+	out, err := exec.Command("sudo", "zfs", "snapshot", fullName).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return fullName, nil
+}
+
 // RollbackSnapshot rolls a dataset back to a snapshot (-r destroys newer snapshots).
 func RollbackSnapshot(snapName string) error {
 	out, err := exec.Command("sudo", "zfs", "rollback", "-r", snapName).CombinedOutput()

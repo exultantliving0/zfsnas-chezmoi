@@ -173,6 +173,17 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "blkid", Match: "-o export", Name: "blkid -o export"},
 	// ── UPS udev rules reload — only checked when NUT is installed ───────────
 	{Binary: "udevadm", Match: "control", Name: "udevadm control", IfBinary: "upsc"},
+	// ── Disk Power Management (hdparm) — only checked when hdparm is installed
+	{Binary: "hdparm", Match: "*", Name: "hdparm *", IfBinary: "hdparm"},
+	{Binary: "tee", Match: "/etc/hdparm.conf", Name: "tee /etc/hdparm.conf", IfBinary: "hdparm"},
+	// ── System/Platform Power Management ─────────────────────────────────────
+	{Binary: "tee", Match: "/etc/rc.local", Name: "tee /etc/rc.local"},
+	{Binary: "chmod", Match: "+x /etc/rc.local", Name: "chmod +x /etc/rc.local"},
+	{Binary: "systemctl", Match: "enable rc-local", Name: "systemctl enable rc-local"},
+	{Binary: "systemctl", Match: "start rc-local", Name: "systemctl start rc-local"},
+	{Binary: "tee", Match: "/sys/module/pcie_aspm/parameters/policy", Name: "tee /sys/module/pcie_aspm/parameters/policy"},
+	{Binary: "tee", Match: "/sys/devices/system/cpu/cpu*", Name: "tee /sys/devices/system/cpu/cpu* (CPU governor)"},
+	{Binary: "tee", Match: "/sys/bus/usb/devices/*/power/", Name: "tee /sys/bus/usb/devices/*/power/ (USB autosuspend)"},
 }
 
 // CheckSudoAccess probes the effective sudo permissions of the running process.

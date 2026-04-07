@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
@@ -42,8 +43,8 @@ func HandleOSInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateCacheFile struct {
-	CheckedAt time.Time            `json:"checked_at"`
-	Packages  []map[string]string  `json:"packages"`
+	CheckedAt time.Time           `json:"checked_at"`
+	Packages  []map[string]string `json:"packages"`
 }
 
 // zfsnasPrefixes lists package name prefixes (or exact names) that belong to the
@@ -134,9 +135,23 @@ func HandleCheckUpdates(appCfg *config.AppConfig) http.HandlerFunc {
 		// Refresh package index.
 		exec.Command("sudo", "apt-get", "update", "-qq").Run()
 
-		out, err := exec.Command("apt-get", "--simulate", "upgrade").Output()
+		out, err := exec.Command("apt-get", "--simulate", "upgrade").CombinedOutput()
+
+		// Collect E: lines regardless of exit code — apt-get --simulate sometimes
+		// exits 0 even when dpkg is in a broken state (interrupted configure).
+		var aptErrors []string
+		for _, line := range strings.Split(string(out), "\n") {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, "E:") {
+				aptErrors = append(aptErrors, t)
+			}
+		}
+		if len(aptErrors) > 0 {
+			jsonErr(w, http.StatusInternalServerError, strings.Join(aptErrors, " "))
+			return
+		}
 		if err != nil {
-			jsonErr(w, http.StatusInternalServerError, "apt-get simulate failed: "+err.Error())
+			jsonErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
@@ -173,8 +188,84 @@ func HandleGetUpdateCache(appCfg *config.AppConfig) http.HandlerFunc {
 	}
 }
 
+// upgradeJob holds the state of the background OS upgrade so that it survives
+// WebSocket disconnects. Only one upgrade can run at a time.
+type upgradeJob struct {
+	mu      sync.Mutex
+	running bool
+	lines   []string
+	done    bool
+	success bool
+	message string
+}
+
+// start marks the job as running and resets all state.
+// Returns true if the caller should start a new upgrade; false if one is already running.
+func (j *upgradeJob) start() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.running {
+		return false
+	}
+	j.running = true
+	j.lines = nil
+	j.done = false
+	j.success = false
+	j.message = ""
+	return true
+}
+
+func (j *upgradeJob) addLine(line string) {
+	j.mu.Lock()
+	j.lines = append(j.lines, line)
+	j.mu.Unlock()
+}
+
+func (j *upgradeJob) finish(success bool, msg string) {
+	j.mu.Lock()
+	j.running = false
+	j.done = true
+	j.success = success
+	j.message = msg
+	j.mu.Unlock()
+}
+
+// snapshot returns a copy of all buffered lines plus current status flags.
+func (j *upgradeJob) snapshot() (lines []string, running bool, done bool, success bool, message string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	cp := make([]string, len(j.lines))
+	copy(cp, j.lines)
+	return cp, j.running, j.done, j.success, j.message
+}
+
+// activeUpgradeJob is the singleton background upgrade state.
+var activeUpgradeJob upgradeJob
+
+// HandleUpgradeStatus returns the current background upgrade state so the
+// frontend can detect an in-progress upgrade after the user navigates away.
+// GET /api/updates/upgrade-status
+func HandleUpgradeStatus(w http.ResponseWriter, r *http.Request) {
+	lines, running, done, success, message := activeUpgradeJob.snapshot()
+	if lines == nil {
+		lines = []string{}
+	}
+	jsonOK(w, map[string]interface{}{
+		"running": running,
+		"done":    done,
+		"success": success,
+		"message": message,
+		"lines":   lines,
+	})
+}
+
 // HandleApplyUpdates upgrades the HTTP connection to WebSocket and streams
 // the output of `sudo apt-get upgrade -y`.
+//
+// The upgrade runs in a detached goroutine so that closing the WebSocket
+// (e.g. the user navigates away) does not interrupt it.  A reconnecting
+// client is fast-forwarded through the buffered output and then receives
+// new lines live until the job finishes.
 func HandleApplyUpdates(w http.ResponseWriter, r *http.Request) {
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -182,12 +273,12 @@ func HandleApplyUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	send := func(line string) {
-		conn.WriteMessage(websocket.TextMessage, mustJSON(map[string]interface{}{
+	send := func(line string) bool {
+		return conn.WriteMessage(websocket.TextMessage, mustJSON(map[string]interface{}{
 			"line": line,
-		}))
+		})) == nil
 	}
-	done := func(success bool, msg string) {
+	sendDone := func(success bool, msg string) {
 		conn.WriteMessage(websocket.TextMessage, mustJSON(map[string]interface{}{
 			"done":    true,
 			"success": success,
@@ -195,68 +286,102 @@ func HandleApplyUpdates(w http.ResponseWriter, r *http.Request) {
 		}))
 	}
 
-	send("Running: sudo apt-get upgrade -y")
-	send("─────────────────────────────────────────")
+	sess := MustSession(r)
 
-	cmd := exec.Command("sudo", "apt-get", "upgrade", "-y",
-		"-o", "Dpkg::Use-Pty=0",
-		"-o", "Dpkg::Options::=--force-confold")
+	// Try to claim a new job. Returns false if one is already running (reconnect case).
+	isNewJob := activeUpgradeJob.start()
 
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		done(false, "failed to create pipe")
-		return
-	}
-	cmd.Stdout = pw
-	cmd.Stderr = pw
+	if isNewJob {
+		go func() {
+			addLine := activeUpgradeJob.addLine
+			addLine("Running: sudo apt-get upgrade -y")
+			addLine("─────────────────────────────────────────")
 
-	if err := cmd.Start(); err != nil {
-		pw.Close()
-		pr.Close()
-		done(false, err.Error())
-		return
-	}
-	pw.Close()
+			cmd := exec.Command("sudo", "apt-get", "upgrade", "-y",
+				"-o", "Dpkg::Use-Pty=0",
+				"-o", "Dpkg::Options::=--force-confold")
 
-	buf := make([]byte, 4096)
-	for {
-		n, readErr := pr.Read(buf)
-		if n > 0 {
-			lines := strings.Split(string(buf[:n]), "\n")
-			for _, l := range lines {
-				if strings.TrimSpace(l) != "" {
-					send(l)
+			pr, pw, err := os.Pipe()
+			if err != nil {
+				activeUpgradeJob.finish(false, "failed to create pipe")
+				return
+			}
+			cmd.Stdout = pw
+			cmd.Stderr = pw
+
+			if err := cmd.Start(); err != nil {
+				pw.Close()
+				pr.Close()
+				activeUpgradeJob.finish(false, err.Error())
+				return
+			}
+			pw.Close()
+
+			buf := make([]byte, 4096)
+			for {
+				n, readErr := pr.Read(buf)
+				if n > 0 {
+					for _, l := range strings.Split(string(buf[:n]), "\n") {
+						if strings.TrimSpace(l) != "" {
+							addLine(l)
+						}
+					}
+				}
+				if readErr != nil {
+					break
 				}
 			}
-		}
-		if readErr != nil {
-			break
-		}
+
+			cmdErr := cmd.Wait()
+			addLine("─────────────────────────────────────────")
+
+			if cmdErr != nil {
+				addLine("Upgrade failed: " + cmdErr.Error())
+				audit.Log(audit.Entry{
+					User:    sess.Username,
+					Role:    sess.Role,
+					Action:  audit.ActionApplyUpdates,
+					Result:  audit.ResultError,
+					Details: cmdErr.Error(),
+				})
+				activeUpgradeJob.finish(false, cmdErr.Error())
+			} else {
+				addLine("System upgraded successfully.")
+				audit.Log(audit.Entry{
+					User:   sess.Username,
+					Role:   sess.Role,
+					Action: audit.ActionApplyUpdates,
+					Result: audit.ResultOK,
+				})
+				activeUpgradeJob.finish(true, "upgrade complete")
+			}
+		}()
 	}
 
-	cmdErr := cmd.Wait()
-	send("─────────────────────────────────────────")
+	// Attach to the running job: stream buffered lines then tail new ones.
+	sent := 0
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(2 * time.Hour)
+	defer deadline.Stop()
 
-	sess := MustSession(r)
-	if cmdErr != nil {
-		send("Upgrade failed: " + cmdErr.Error())
-		audit.Log(audit.Entry{
-			User:    sess.Username,
-			Role:    sess.Role,
-			Action:  audit.ActionApplyUpdates,
-			Result:  audit.ResultError,
-			Details: cmdErr.Error(),
-		})
-		done(false, cmdErr.Error())
-		return
+	for {
+		select {
+		case <-deadline.C:
+			send("[upgrade timed out — check system logs]")
+			return
+		case <-ticker.C:
+			lines, _, isDone, success, message := activeUpgradeJob.snapshot()
+			for sent < len(lines) {
+				if !send(lines[sent]) {
+					return // client disconnected — upgrade keeps running
+				}
+				sent++
+			}
+			if isDone {
+				sendDone(success, message)
+				return
+			}
+		}
 	}
-
-	send("System upgraded successfully.")
-	audit.Log(audit.Entry{
-		User:   sess.Username,
-		Role:   sess.Role,
-		Action: audit.ActionApplyUpdates,
-		Result: audit.ResultOK,
-	})
-	done(true, "upgrade complete")
 }

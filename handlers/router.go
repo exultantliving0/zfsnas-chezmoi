@@ -186,6 +186,12 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleRefreshDisks)))).Methods("POST")
 	r.Handle("/api/disks/wipe",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleWipeDisk)))).Methods("POST")
+	r.Handle("/api/disks/power",
+		RequireAuth(RequireAdmin(HandleGetDiskPower(appCfg)))).Methods("GET")
+	r.Handle("/api/disks/power",
+		RequireAuth(RequireAdmin(HandleUpdateDiskPower(appCfg)))).Methods("PUT")
+	r.Handle("/api/disks/power/install",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallHdparm)))).Methods("POST")
 
 	// --- SMB Shares ---
 	r.Handle("/api/smb/global-config",
@@ -210,6 +216,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleDeleteShare)))).Methods("DELETE")
 	r.Handle("/api/shares/{name}/clean-recycle",
 		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleCleanShareRecycleBin)))).Methods("POST")
+	r.Handle("/api/shares/vss-snapshot",
+		RequireAuth(RequirePermission("manage_smb")(http.HandlerFunc(HandleCreateVSSSnapshot)))).Methods("POST")
 
 	// --- Prerequisites & systemd service (admin only) ---
 	r.Handle("/api/prereqs",
@@ -244,6 +252,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(HandleCheckUpdates(appCfg)))).Methods("GET")
 	r.Handle("/api/updates/cache",
 		RequireAuth(RequireAdmin(HandleGetUpdateCache(appCfg)))).Methods("GET")
+	r.Handle("/api/updates/upgrade-status",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpgradeStatus)))).Methods("GET")
 	r.Handle("/ws/updates-apply",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleApplyUpdates)))).Methods("GET")
 
@@ -462,6 +472,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleShutdown)))).Methods("POST")
 	r.Handle("/api/system/restart-portal",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleRestartPortal)))).Methods("POST")
+	r.Handle("/api/system/power",
+		RequireAuth(RequireAdmin(HandleGetSystemPower(appCfg)))).Methods("GET")
+	r.Handle("/api/system/power",
+		RequireAuth(RequireAdmin(HandleUpdateSystemPower(appCfg)))).Methods("PUT")
 
 	// --- Binary self-update (admin only) ---
 	r.Handle("/api/binary-update/check",
@@ -488,6 +502,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleUPSPerfData))).Methods("GET")
 	r.Handle("/api/ups/perf/oldest",
 		RequireAuth(http.HandlerFunc(HandleUPSPerfOldest))).Methods("GET")
+	r.Handle("/api/ups/test-client",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleTestNUTClient)))).Methods("POST")
 
 	// --- Certificate Management ---
 	r.Handle("/api/certs",

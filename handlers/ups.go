@@ -19,11 +19,26 @@ func HandleGetUPSStatus(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonOK(w, map[string]interface{}{"installed": false})
 			return
 		}
-		if !appCfg.UPS.Enabled || appCfg.UPS.UPSName == "" {
+		mode := appCfg.UPS.Mode
+		if mode == "" {
+			mode = "standalone"
+		}
+		noDevice := appCfg.UPS.UPSName == "" && (mode == "standalone" || mode == "network_server")
+		noRemote := mode == "network_client" && (appCfg.UPS.NUTClient == nil || appCfg.UPS.NUTClient.Host == "")
+		if !appCfg.UPS.Enabled || noDevice || noRemote {
 			jsonOK(w, map[string]interface{}{"installed": true, "enabled": false})
 			return
 		}
-		status, err := system.QueryUPS(appCfg.UPS.UPSName)
+		var status *system.UPSStatus
+		var err error
+		switch mode {
+		case "network_client":
+			if appCfg.UPS.NUTClient != nil {
+				status, err = system.QueryUPSClient(appCfg.UPS.NUTClient)
+			}
+		default:
+			status, err = system.QueryUPS(appCfg.UPS.UPSName)
+		}
 		if err != nil {
 			jsonOK(w, map[string]interface{}{
 				"installed": true,
@@ -89,19 +104,86 @@ func HandleUpdateUPSConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			cfg.Port = appCfg.UPS.Port
 		}
 
-		// Rewrite upsmon.conf and restart NUT whenever the user saves.
-		// Shutdown is managed by StartUPSShutdownWatcher — upsmon always uses /bin/true.
-		if cfg.UPSName == "" {
-			jsonErr(w, http.StatusBadRequest, "UPS name is required — run Re-scan to detect your UPS first")
+		// Validate required fields per mode and rewrite NUT config files.
+		mode := cfg.Mode
+		if mode == "" {
+			mode = "standalone"
+		}
+		switch mode {
+		case "standalone", "network_server":
+			if cfg.UPSName == "" {
+				jsonErr(w, http.StatusBadRequest, "UPS name is required — run Re-scan to detect your UPS first")
+				return
+			}
+			if cfg.MonitorPassword == "" {
+				jsonErr(w, http.StatusBadRequest, "monitor password missing — run Re-scan to regenerate NUT config")
+				return
+			}
+		case "network_client":
+			if cfg.NUTClient == nil || cfg.NUTClient.Host == "" {
+				jsonErr(w, http.StatusBadRequest, "remote host is required for network client mode")
+				return
+			}
+			if cfg.NUTClient.UPSName == "" {
+				jsonErr(w, http.StatusBadRequest, "remote UPS name is required for network client mode")
+				return
+			}
+		default:
+			jsonErr(w, http.StatusBadRequest, "mode must be standalone, network_server, or network_client")
 			return
 		}
-		if cfg.MonitorPassword == "" {
-			jsonErr(w, http.StatusBadRequest, "monitor password missing — run Re-scan to regenerate NUT config")
+
+		// Map our mode names to NUT's MODE values
+		nutModeMap := map[string]string{
+			"standalone":     "standalone",
+			"network_server": "netserver",
+			"network_client": "netclient",
+		}
+		nutMode := nutModeMap[mode]
+		if err := system.ApplyNUTConf(nutMode); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "apply nut.conf: "+err.Error())
 			return
 		}
-		if err := system.ApplyUPSMonConfig(cfg.UPSName, cfg.MonitorPassword); err != nil {
-			jsonErr(w, http.StatusInternalServerError, "apply upsmon config: "+err.Error())
-			return
+
+		switch mode {
+		case "standalone":
+			// Lock upsd back to localhost — prevents remote access if switching from network_server.
+			localhostSrv := &config.NUTServerConfig{ListenIP: "127.0.0.1", ListenPort: 3493}
+			if err := system.ApplyNUTUpsdConf(localhostSrv); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "apply upsd.conf: "+err.Error())
+				return
+			}
+			// Restore upsd.users to local-only (removes any remote user entries).
+			if err := system.ApplyNUTUpsdUsers(cfg.MonitorPassword, nil); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "apply upsd.users: "+err.Error())
+				return
+			}
+			if err := system.ApplyUPSMonConfig(cfg.UPSName, cfg.MonitorPassword); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "apply upsmon.conf: "+err.Error())
+				return
+			}
+		case "network_server":
+			if cfg.NUTServer != nil {
+				if err := system.ApplyNUTUpsdConf(cfg.NUTServer); err != nil {
+					jsonErr(w, http.StatusInternalServerError, "apply upsd.conf: "+err.Error())
+					return
+				}
+				if err := system.ApplyNUTUpsdUsers(cfg.MonitorPassword, cfg.NUTServer.RemoteUsers); err != nil {
+					jsonErr(w, http.StatusInternalServerError, "apply upsd.users: "+err.Error())
+					return
+				}
+			}
+			if err := system.ApplyUPSMonConfig(cfg.UPSName, cfg.MonitorPassword); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "apply upsmon.conf: "+err.Error())
+				return
+			}
+		case "network_client":
+			if cfg.NUTClient != nil && cfg.NUTClient.Host != "" {
+				if err := system.ApplyUPSMonConfigClient(cfg.NUTClient); err != nil {
+					jsonErr(w, http.StatusInternalServerError, "apply upsmon.conf: "+err.Error())
+					return
+				}
+			}
 		}
 
 		system.RestartNUTServices()
@@ -273,6 +355,29 @@ func HandleUPSService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// HandleTestNUTClient tests connectivity to a remote NUT server.
+// POST /api/ups/test-client
+func HandleTestNUTClient(w http.ResponseWriter, r *http.Request) {
+	var req config.NUTClientConfig
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Host == "" || req.UPSName == "" {
+		jsonErr(w, http.StatusBadRequest, "host and ups_name are required")
+		return
+	}
+	if req.Port == 0 {
+		req.Port = 3493
+	}
+	status, err := system.QueryUPSClient(&req)
+	if err != nil {
+		jsonOK(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonOK(w, map[string]interface{}{"ok": true, "status": status})
 }
 
 

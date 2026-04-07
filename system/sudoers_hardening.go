@@ -509,6 +509,16 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/wget -q -O /usr/local/bin/mc *":            "Downloads the MinIO client (mc) binary during feature install.",
 	"/usr/bin/tee /etc/systemd/system/minio.service":     "Writes the MinIO systemd service unit file.",
 	"/usr/bin/tee /etc/default/minio":                    "Writes the MinIO environment configuration file.",
+	"/usr/sbin/hdparm *":                                 "Disk Power Management: applies APM, spindown, write-cache, and acoustic settings immediately to SATA/SAS drives (optional feature, v6.3.22+).",
+	"/usr/bin/tee /etc/hdparm.conf":                      "Disk Power Management: persists hdparm settings across reboots via /etc/hdparm.conf (optional feature, v6.3.22+).",
+	"/usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor": "System Power Management: sets the CPU frequency scaling governor immediately on all CPU cores (v6.3.22+). Persistence is handled via /etc/rc.local.",
+	"/usr/bin/tee /sys/module/pcie_aspm/parameters/policy":               "System Power Management: sets the PCIe Active State Power Management policy immediately (v6.3.22+). Persistence is handled via /etc/rc.local.",
+	"/usr/bin/tee /sys/bus/usb/devices/*/power/autosuspend_delay_ms":     "System Power Management: sets USB autosuspend delay per device immediately (v6.3.22+).",
+	"/usr/bin/tee /sys/bus/usb/devices/*/power/control":                  "System Power Management: enables or disables USB autosuspend per device immediately (v6.3.22+).",
+	"/usr/bin/tee /etc/rc.local":                                          "System Power Management: writes the persistence block in /etc/rc.local so CPU governor, PCIe ASPM, and USB autosuspend settings survive reboot (v6.3.22+).",
+	"/usr/bin/chmod +x /etc/rc.local":                                     "System Power Management: ensures /etc/rc.local is executable after writing the persistence block (v6.3.22+).",
+	"/usr/bin/systemctl enable rc-local":                                   "System Power Management: enables the rc-local systemd service so /etc/rc.local runs at boot. Only called once when the file is first created (v6.3.22+).",
+	"/usr/bin/systemctl start rc-local":                                    "System Power Management: starts rc-local immediately after creation so power settings take effect without a reboot (v6.3.22+).",
 }
 
 // requiredSudoersTemplate is the canonical sudoers file content for ZFS NAS Portal.
@@ -674,6 +684,28 @@ Cmnd_Alias ZFSNAS_UPS = \
     /usr/bin/rm -rf /etc/systemd/system/nut-driver@.service.d, \
     /usr/bin/rm -rf /etc/systemd/system/nut-driver@*
 
+# ── Disk Power Management (hdparm) ────────────────────────────────────────────
+# since v6.3.22 — optional hdparm feature; APM level, spindown timeout,
+#   write-cache, and acoustic management applied immediately to SATA/SAS drives;
+#   persisted in /etc/hdparm.conf. Only relevant when hdparm is installed.
+Cmnd_Alias ZFSNAS_DISKPOWER = \
+    /usr/sbin/hdparm *, \
+    /usr/bin/tee /etc/hdparm.conf
+
+# ── System Power Management (CPU governor, PCIe ASPM, USB autosuspend) ────────
+# since v6.3.22 — CPU frequency governor applied immediately to all cores and
+#   persisted via /etc/rc.local managed block; PCIe ASPM policy and USB
+#   autosuspend likewise applied live and persisted in the same rc.local block.
+Cmnd_Alias ZFSNAS_SYSPOWER = \
+    /usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor, \
+    /usr/bin/tee /sys/module/pcie_aspm/parameters/policy, \
+    /usr/bin/tee /sys/bus/usb/devices/*/power/autosuspend_delay_ms, \
+    /usr/bin/tee /sys/bus/usb/devices/*/power/control, \
+    /usr/bin/tee /etc/rc.local, \
+    /usr/bin/chmod +x /etc/rc.local, \
+    /usr/bin/systemctl enable rc-local, \
+    /usr/bin/systemctl start rc-local
+
 # ── Folder usage scanning ─────────────────────────────────────────────────────
 # since v6.0.0 — Folder TreeMap feature; scans dataset mount points for per-folder sizes
 Cmnd_Alias ZFSNAS_SCAN = \
@@ -724,5 +756,5 @@ Cmnd_Alias ZFSNAS_SECURITY = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_APT, ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_APT, ZFSNAS_SECURITY
 `

@@ -129,9 +129,45 @@ type UPSShutdownPolicy struct {
 	PreShutdownCmd    string `json:"pre_shutdown_cmd,omitempty"`
 }
 
+// NUTServerConfig holds settings for running this machine as a NUT network server
+// (MODE=netserver). Remote NUT clients can query this host for UPS data.
+type NUTServerConfig struct {
+	// ListenIP is the IP address upsd binds to. Default "0.0.0.0" (all interfaces).
+	ListenIP string `json:"listen_ip"`
+	// ListenPort is the NUT protocol port. Default 3493.
+	ListenPort int `json:"listen_port"`
+	// AllowedClients is a list of IP addresses or CIDR ranges allowed to connect.
+	AllowedClients []string `json:"allowed_clients,omitempty"`
+	// RemoteUsers is the list of NUT user accounts written to upsd.users for
+	// remote clients. Each user needs at minimum upsmon slave access.
+	RemoteUsers []NUTRemoteUser `json:"remote_users,omitempty"`
+}
+
+// NUTRemoteUser represents a user entry in /etc/nut/upsd.users for remote access.
+type NUTRemoteUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	// Role: "upsmon" (monitoring only) | "admin" (full control)
+	Role string `json:"role"`
+}
+
+// NUTClientConfig holds connectivity settings for connecting to a remote NUT server
+// (MODE=netclient). The local UPS driver is not started in this mode.
+type NUTClientConfig struct {
+	Host     string `json:"host"`               // hostname or IP of remote NUT server
+	Port     int    `json:"port"`               // NUT port, default 3493
+	UPSName  string `json:"ups_name"`           // UPS name on the remote server
+	Username string `json:"username,omitempty"` // NUT username for upsmon slave
+	Password string `json:"password,omitempty"` // NUT password
+}
+
 // UPSConfig holds all persistent UPS / NUT settings.
 type UPSConfig struct {
 	Enabled         bool              `json:"enabled"`
+	// Mode: "standalone" | "network_server" | "network_client"
+	// Default (empty) = "standalone" for backward compatibility.
+	Mode            string            `json:"mode,omitempty"`
+	// --- Standalone / Network Server fields (local hardware) ---
 	UPSName         string            `json:"ups_name"`
 	Driver          string            `json:"driver"`
 	Port            string            `json:"port"`
@@ -139,6 +175,38 @@ type UPSConfig struct {
 	RawUPSConf      string            `json:"raw_ups_conf,omitempty"` // original nut-scanner output, base for ups.conf
 	ShutdownPolicy  UPSShutdownPolicy `json:"shutdown_policy"`
 	NominalPowerW   *int              `json:"nominal_power_w,omitempty"` // user-overridable nominal VA/W rating
+	// --- Network Server extra fields ---
+	NUTServer       *NUTServerConfig  `json:"nut_server,omitempty"`
+	// --- Network Client fields ---
+	NUTClient       *NUTClientConfig  `json:"nut_client,omitempty"`
+}
+
+// DiskPowerConfig holds hdparm-based power management settings applied to all
+// physical (non-ZFS-metadata) block devices via /etc/hdparm.conf on boot.
+type DiskPowerConfig struct {
+	Enabled bool `json:"enabled"`
+	// APMLevel: 1-127 (spindown allowed), 128-254 (no spindown), 255 (disable APM). 0 = not configured.
+	APMLevel int `json:"apm_level"`
+	// SpindownTimeout: 0=disabled, 1-240=multiples of 5s, 241-251=multiples of 30min. Passed to hdparm -S.
+	SpindownTimeout int `json:"spindown_timeout"`
+	// WriteCache: nil=don't set, true=enable (-W1), false=disable (-W0).
+	WriteCache *bool `json:"write_cache,omitempty"`
+	// AcousticLevel: -1=not configured, 0=disabled/vendor default, 128=quiet, 254=fast.
+	AcousticLevel int `json:"acoustic_level"`
+}
+
+// SystemPowerConfig holds platform-level power management settings.
+// These are intended for always-on NAS systems — the UI warns users about
+// the trade-offs of aggressive power saving on a server.
+type SystemPowerConfig struct {
+	// CPUGovernor: "performance"|"powersave"|"ondemand"|"conservative"|"schedutil"|""
+	CPUGovernor string `json:"cpu_governor,omitempty"`
+	// PowerProfile: "performance"|"balanced"|"power-saver"|""
+	PowerProfile string `json:"power_profile,omitempty"`
+	// USBAutosuspend: nil=don't change, true=enable (2s delay), false=disable.
+	USBAutosuspend *bool `json:"usb_autosuspend,omitempty"`
+	// PCIeASPM: "default"|"performance"|"powersave"|"powersupersave"|""
+	PCIeASPM string `json:"pcie_aspm,omitempty"`
 }
 
 // LinkedServer represents a remote ZNAS instance trusted for single-click SSO switching.
@@ -175,6 +243,8 @@ type AppConfig struct {
 	ISCSI              ISCSIConfig      `json:"iscsi,omitempty"`
 	MinIO              MinIOConfig      `json:"minio,omitempty"`
 	UPS                UPSConfig        `json:"ups,omitempty"`
+	DiskPower          DiskPowerConfig  `json:"disk_power,omitempty"`
+	SystemPower        SystemPowerConfig `json:"system_power,omitempty"`
 	ActiveCertName          string   `json:"active_cert_name,omitempty"`
 	PendingCertRestart      bool     `json:"pending_cert_restart,omitempty"`
 	SudoersHardeningEnabled  bool     `json:"sudoers_hardening_enabled,omitempty"`

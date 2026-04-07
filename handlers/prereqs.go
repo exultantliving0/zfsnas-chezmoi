@@ -289,6 +289,7 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 			"targetcli-fb": true,
 			"minio":        true,
 			"nut":          true,
+			"hdparm":       true,
 		}
 		if !allowlist[req.Package] {
 			jsonErr(w, http.StatusBadRequest, "package not in allowlist")
@@ -470,6 +471,19 @@ func HandleUninstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 				Action:  audit.ActionInstallPrereqs,
 				Result:  audit.ResultOK,
 				Details: "uninstalled: nut, nut-client; /etc/nut removed",
+			})
+		case "hdparm":
+			out, err := exec.Command("sudo", "apt-get", "remove", "-y", "hdparm").CombinedOutput()
+			if err != nil {
+				jsonErr(w, http.StatusInternalServerError, string(out))
+				return
+			}
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionInstallPrereqs,
+				Result:  audit.ResultOK,
+				Details: "uninstalled: hdparm",
 			})
 		default:
 			jsonErr(w, http.StatusBadRequest, "package not in allowlist")

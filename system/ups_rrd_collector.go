@@ -40,13 +40,32 @@ func StartUPSRRDCollector(configDir string, appCfg *config.AppConfig) {
 
 func sampleUPSRRD(db *capacityrrd.DB, appCfg *config.AppConfig, now time.Time) {
 	ups := appCfg.UPS
-	if !ups.Enabled || ups.UPSName == "" {
+	if !ups.Enabled {
 		return
 	}
 	if !UPSPrereqsInstalled() {
 		return
 	}
-	status, err := QueryUPS(ups.UPSName)
+
+	mode := ups.Mode
+	if mode == "" {
+		mode = "standalone"
+	}
+
+	var status *UPSStatus
+	var err error
+	switch mode {
+	case "network_client":
+		if ups.NUTClient == nil || ups.NUTClient.Host == "" {
+			return
+		}
+		status, err = QueryUPSClient(ups.NUTClient)
+	default: // standalone or network_server
+		if ups.UPSName == "" {
+			return
+		}
+		status, err = QueryUPS(ups.UPSName)
+	}
 	if err != nil {
 		return
 	}
