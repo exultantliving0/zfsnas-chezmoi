@@ -173,6 +173,39 @@ body.dusk {
 }
 body.dusk .badge-smbonly { background: rgba(232,160,32,0.15); color: #e8a020; }
 
+/* ===== Dawn theme (warm light brown — soft morning feel) ===== */
+body.dawn {
+  --bg:          #eee8dc;
+  --surface:     #f5f0e8;
+  --surface2:    #e4ddd0;
+  --border:      rgba(90, 68, 38, 0.13);
+  --border-focus: rgba(72, 120, 200, 0.55);
+  --accent-1:    #9060c0;
+  --accent-2:    #4878c8;
+  --accent-3:    #3a9850;
+  --accent-4:    #38a855;
+  --accent-warn: #c87800;
+  --accent-danger:#cc2828;
+  --zvol-color:  #4878c8;
+  --gradient:    linear-gradient(135deg, #9060c0, #4878c8);
+  --gradient-full: linear-gradient(135deg, #9060c0, #4878c8, #3a9850);
+  --text:        #2c2010;
+  --text-2:      #5a4832;
+  --text-3:      #8a7258;
+  --shadow:      0 4px 24px rgba(80, 58, 20, 0.12);
+  --shadow-lg:   0 8px 40px rgba(80, 58, 20, 0.20);
+}
+body.dawn a { color: #4878c8; }
+body.dawn .logo {
+  background: linear-gradient(135deg, #9060c0, #4878c8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: none;
+}
+body.dawn .badge-smbonly { background: rgba(200,120,0,0.12); color: #c87800; }
+body.dawn .iscsi-icon { filter: none; }
+
 /* ===== Theme picker dropdown ===== */
 .theme-picker-wrap {
   position: relative;
