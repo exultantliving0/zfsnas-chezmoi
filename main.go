@@ -144,6 +144,9 @@ func main() {
 	// ===== Disk I/O poller (5-second samples for live charts) =====
 	system.StartDiskIOPoller()
 
+	// ===== Per-process CPU poller (3-second samples for top-bar gauge) =====
+	system.StartCpuProcsPoller()
+
 	// ===== Metrics collector (5-minute samples for 24h RRD charts) =====
 	system.StartMetricsCollector(absConfig)
 

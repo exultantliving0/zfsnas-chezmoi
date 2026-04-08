@@ -421,6 +421,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/sysinfo/diskio",
 		RequireAuth(http.HandlerFunc(HandleGetDiskIO))).Methods("GET")
 
+	// --- Per-process CPU metrics ---
+	r.Handle("/api/sysinfo/cpu-procs",
+		RequireAuth(http.HandlerFunc(HandleGetCpuProcs))).Methods("GET")
+
 	// --- Hardware info ---
 	r.Handle("/api/sysinfo/hardware",
 		RequireAuth(http.HandlerFunc(HandleGetHardwareInfo))).Methods("GET")

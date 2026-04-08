@@ -286,6 +286,27 @@
   <!-- ===== MAIN CONTENT ===== -->
   <div class="main-content">
 
+    <!-- CPU gauge + topbar + IO bar wrapper -->
+    <div id="topbar-io-wrapper">
+
+    <!-- CPU process vertical gauge -->
+    <div id="cpu-gauge-panel">
+      <div class="cpu-gauge-title">CPU</div>
+      <div class="cpu-gauge-bar" id="cpu-gauge-bar">
+        <!-- segments stack bottom-up via flex-direction:column-reverse -->
+        <div class="cpu-gauge-seg" id="cpu-seg-other" style="background:#6b7280;height:0%"></div>
+        <div class="cpu-gauge-seg" id="cpu-seg-minio" style="background:#f59e0b;height:0%"></div>
+        <div class="cpu-gauge-seg" id="cpu-seg-iscsi" style="background:#06b6d4;height:0%"></div>
+        <div class="cpu-gauge-seg" id="cpu-seg-zfs"   style="background:#a78bfa;height:0%"></div>
+        <div class="cpu-gauge-seg" id="cpu-seg-nfs"   style="background:#60a5fa;height:0%"></div>
+        <div class="cpu-gauge-seg" id="cpu-seg-smb"   style="background:#fb923c;height:0%"></div>
+      </div>
+    </div>
+    <div id="cpu-gauge-tooltip"></div>
+
+    <!-- Right side: topbar + io-bar -->
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
+
     <!-- Top bar: pool capacity -->
     <div class="topbar">
       <div class="topbar-inner">
@@ -384,6 +405,9 @@
         <canvas id="io-chart-busy"></canvas>
       </div>
     </div>
+
+    </div><!-- end topbar+io-bar right column -->
+    </div><!-- end #topbar-io-wrapper -->
 
     <!-- Scrollable pages area -->
     <div class="pages-container">
@@ -17466,9 +17490,100 @@ async function _fetchDiskIO() {
 
 function startIOPoller() {
   if (_ioPollTimer) return;
-  _fetchDiskIO(); // immediate first fetch
-  _ioPollTimer = setInterval(_fetchDiskIO, 3000);
+  _fetchDiskIO();    // immediate first fetch
+  _fetchCpuProcs();  // immediate first fetch
+  _ioPollTimer = setInterval(() => { _fetchDiskIO(); _fetchCpuProcs(); }, 3000);
 }
+
+// ===== CPU Process Gauge =====
+let _cpuProcsData = null;
+const CPU_CAT_COLORS = { smb:'#fb923c', nfs:'#60a5fa', zfs:'#a78bfa', minio:'#f59e0b', iscsi:'#06b6d4', other:'#6b7280' };
+
+function _updateCpuGauge(data) {
+  if (!data) return;
+  _cpuProcsData = data;
+  function setH(id, pct) {
+    const el = document.getElementById(id);
+    if (el) el.style.height = Math.min(100, Math.max(0, pct || 0)).toFixed(2) + '%';
+  }
+  setH('cpu-seg-smb',   data.smb_pct);
+  setH('cpu-seg-nfs',   data.nfs_pct);
+  setH('cpu-seg-zfs',   data.zfs_pct);
+  setH('cpu-seg-minio', data.minio_pct);
+  setH('cpu-seg-iscsi', data.iscsi_pct);
+  setH('cpu-seg-other', data.other_pct);
+}
+
+async function _fetchCpuProcs() {
+  try {
+    const resp = await fetch('/api/sysinfo/cpu-procs');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    _updateCpuGauge(data);
+  } catch (_) {}
+}
+
+// CPU gauge hover tooltip
+(function() {
+  function initCpuGaugeTooltip() {
+    const panel = document.getElementById('cpu-gauge-panel');
+    const tt    = document.getElementById('cpu-gauge-tooltip');
+    if (!panel || !tt) return;
+
+    panel.addEventListener('mousemove', (e) => {
+      const data = _cpuProcsData;
+      const total = data
+        ? ((data.smb_pct||0)+(data.nfs_pct||0)+(data.zfs_pct||0)+(data.minio_pct||0)+(data.other_pct||0))
+        : 0;
+
+      let html = `<div style="font-weight:600;margin-bottom:8px;color:var(--text-2);font-size:13px;">CPU ${total.toFixed(1)}% total</div>`;
+      html += `<div style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;">`;
+      if (data) {
+        [['smb','SMB'],['nfs','NFS'],['zfs','ZFS'],['minio','MinIO'],['iscsi','iSCSI'],['other','Other']].forEach(([k,label]) => {
+          const pct = data[k+'_pct'] || 0;
+          if (pct >= 0.05) {
+            html += `<span style="color:${CPU_CAT_COLORS[k]};">■ ${label} ${pct.toFixed(1)}%</span>`;
+          }
+        });
+      }
+      html += `</div>`;
+
+      if (data && data.top_procs && data.top_procs.length > 0) {
+        html += `<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px;">`;
+        html += `<div style="color:var(--text-3);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Top Processes</div>`;
+        data.top_procs.forEach(p => {
+          const color = CPU_CAT_COLORS[p.category] || CPU_CAT_COLORS.other;
+          const displayCmd = p.cmd || p.name;
+          html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+            <span style="color:${color};font-size:10px;flex-shrink:0;">■</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:12px;font-family:monospace;" title="${esc(displayCmd)}">${esc(displayCmd)}</span>
+            <span style="color:var(--text-2);font-size:11px;flex-shrink:0;">${p.cpu_pct.toFixed(1)}%</span>
+          </div>`;
+        });
+        html += `</div>`;
+      } else {
+        html += `<div style="color:var(--text-3);font-size:12px;">No active CPU load</div>`;
+      }
+
+      tt.innerHTML = html;
+      tt.style.display = 'block';
+      const tw = tt.offsetWidth || 440;
+      const th = tt.offsetHeight || 120;
+      const x = Math.min(e.clientX + 14, window.innerWidth  - tw - 10);
+      const y = Math.max(10, Math.min(e.clientY - 10, window.innerHeight - th - 10));
+      tt.style.left = x + 'px';
+      tt.style.top  = y + 'px';
+    });
+
+    panel.addEventListener('mouseleave', () => { tt.style.display = 'none'; });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initCpuGaugeTooltip);
+  } else {
+    initCpuGaugeTooltip();
+  }
+})();
 
 // ===== Dashboard 24h RRD Charts =====
 async function loadDashboard() {
