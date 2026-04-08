@@ -149,6 +149,30 @@ body.purple .card, body.purple .card-sm { box-shadow: 0 0 0 1px rgba(180,0,255,0
 body.purple .btn { box-shadow: 0 0 8px rgba(180,0,255,0.2); }
 body.purple .badge-smbonly { background: rgba(180,0,255,0.15); color: #d400ff; }
 
+/* ===== Dusk theme (midtone — between dark and light) ===== */
+body.dusk {
+  --bg:          #2a2a38;
+  --surface:     #34344a;
+  --surface2:    #3e3e56;
+  --border:      rgba(190, 190, 220, 0.14);
+  --border-focus: rgba(100, 160, 255, 0.6);
+  --accent-1:    #c06ef0;
+  --accent-2:    #5b9cf6;
+  --accent-3:    #3ec96b;
+  --accent-4:    #36d45a;
+  --accent-warn: #e8a020;
+  --accent-danger:#e84040;
+  --zvol-color:  #70c8f8;
+  --gradient:    linear-gradient(135deg, #c06ef0, #5b9cf6);
+  --gradient-full: linear-gradient(135deg, #c06ef0, #5b9cf6, #3ec96b);
+  --text:        #eaeaf4;
+  --text-2:      #a8a8c8;
+  --text-3:      #6868a0;
+  --shadow:      0 4px 24px rgba(0, 0, 0, 0.28);
+  --shadow-lg:   0 8px 40px rgba(0, 0, 0, 0.40);
+}
+body.dusk .badge-smbonly { background: rgba(232,160,32,0.15); color: #e8a020; }
+
 /* ===== Theme picker dropdown ===== */
 .theme-picker-wrap {
   position: relative;
