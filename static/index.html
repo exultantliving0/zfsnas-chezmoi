@@ -12806,7 +12806,7 @@ function renderDisks(el, disks) {
 function diskTableHeader(withActions) {
   return `<thead><tr>
     <th>Device</th><th>Vendor / Model</th><th>Serial</th><th>Size</th>
-    <th>Type</th>
+    <th>Type</th><th>Speed</th>
     <th>Wearout <i class="info-tip tip-left tip-down" data-tip="Drive endurance consumed (% of rated P/E cycles or TBW used). From SMART attribute 177 (SSD wear levelling) or 231 (SSD life left). N/A for HDDs without an endurance rating."></i></th>
     <th>Temp <i class="info-tip tip-left tip-down" data-tip="Current drive temperature from SMART data. Read from smartctl JSON (temperature.current field for ATA/NVMe, or attribute IDs 194/190 for older drives). Updated on each SMART refresh."></i></th>
     <th>SMART <i class="info-tip tip-left tip-down" data-tip="Overall drive health from smartctl self-assessment. PASSED: drive reports no critical errors. FAILED: one or more SMART thresholds exceeded — consider replacing the drive. Unknown: SMART data not yet collected (click ↻ Refresh SMART)."></i></th>
@@ -12817,12 +12817,23 @@ function diskTableHeader(withActions) {
 function diskTableHeaderWithPool() {
   return `<thead><tr>
     <th>Device</th><th>Vendor / Model</th><th>Serial</th><th>Size</th>
-    <th>Type</th>
+    <th>Type</th><th>Speed</th>
     <th>Wearout <i class="info-tip tip-left tip-down" data-tip="Drive endurance consumed (% of rated P/E cycles or TBW used). From SMART attribute 177 (SSD wear levelling) or 231 (SSD life left). N/A for HDDs without an endurance rating."></i></th>
     <th>Temp <i class="info-tip tip-left tip-down" data-tip="Current drive temperature from SMART data. Read from smartctl JSON (temperature.current field for ATA/NVMe, or attribute IDs 194/190 for older drives). Updated on each SMART refresh."></i></th>
     <th>SMART <i class="info-tip tip-left tip-down" data-tip="Overall drive health from smartctl self-assessment. PASSED: drive reports no critical errors. FAILED: one or more SMART thresholds exceeded — consider replacing the drive. Unknown: SMART data not yet collected (click ↻ Refresh SMART)."></i></th>
     <th>Pool</th>
   </tr></thead>`;
+}
+
+function diskSpeedCell(d, dimmed) {
+  const label = d.speed_label || '';
+  if (!label) return `<td style="color:var(--text-3);font-size:12px;">—</td>`;
+  const tc = dimmed ? 'var(--text-3)' : 'var(--text-2)';
+  // Highlight NVMe speed in accent colour for visual distinction.
+  const color = (!dimmed && d.disk_type === 'NVMe') ? 'var(--accent-1)'
+              : (!dimmed && d.disk_type === 'SSD')  ? 'var(--accent-2)'
+              : tc;
+  return `<td style="font-size:12px;white-space:nowrap;color:${color};">${esc(label)}</td>`;
 }
 
 function diskRow(d, dimmed, withActions) {
@@ -12840,6 +12851,7 @@ function diskRow(d, dimmed, withActions) {
     <td style="font-family:monospace;font-size:12px;${tc}">${d.serial ? esc(d.serial) : '<span style="color:var(--text-3);">—</span>'}</td>
     <td style="font-family:monospace;${tc}">${d.size_bytes ? fmtBytesInt(d.size_bytes) : esc(d.size)}</td>
     <td>${diskTypeBadge(d.disk_type, dimmed)}</td>
+    ${diskSpeedCell(d, dimmed)}
     <td>${wearoutBar(d, dimmed)}</td>
     <td id="disk-temp-${ck}">${tempBadge(d)}</td>
     <td id="disk-smart-${ck}">${smartBadge(d)}</td>
@@ -12855,6 +12867,7 @@ function diskRowWithPool(d, poolName) {
     <td style="font-family:monospace;font-size:12px;">${d.serial ? esc(d.serial) : '<span style="color:var(--text-3);">—</span>'}</td>
     <td style="font-family:monospace;">${d.size_bytes ? fmtBytesInt(d.size_bytes) : esc(d.size)}</td>
     <td>${diskTypeBadge(d.disk_type, false)}</td>
+    ${diskSpeedCell(d, false)}
     <td>${wearoutBar(d, false)}</td>
     <td id="disk-temp-${ck}">${tempBadge(d)}</td>
     <td id="disk-smart-${ck}">${smartBadge(d)}</td>

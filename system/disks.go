@@ -32,6 +32,8 @@ type DiskInfo struct {
 	Transport  string      `json:"transport"`
 	DiskType   string      `json:"disk_type"` // HDD, SSD, NVMe
 	Rotational bool        `json:"rotational"`
+	RPM        int         `json:"rpm"`         // 0 = unknown/SSD
+	SpeedLabel string      `json:"speed_label"` // human-readable speed
 	WearoutPct *int        `json:"wearout_pct"` // nil = N/A
 	TempC      *int        `json:"temp_c"`      // nil = not available
 	SmartOK    bool        `json:"smart_ok"`
@@ -140,7 +142,14 @@ func ListDisks(configDir string) ([]DiskInfo, error) {
 			info.SmartAttrs = c.SmartAttrs
 			info.Serial     = c.Serial
 			info.UpdatedAt  = c.UpdatedAt
+			info.RPM        = c.RPM
 		}
+		// If HDD but RPM not in cache yet (first run after feature was added),
+		// fetch it quickly via smartctl -i (identity only, no full SMART scan).
+		if info.DiskType == "HDD" && info.RPM == 0 {
+			info.RPM = fetchRPMQuick(info.Device)
+		}
+		info.SpeedLabel = computeSpeedLabel(info)
 
 		debugLog("  → adding disk %s (type=%s in_use=%v)", info.Device, info.DiskType, info.InUse)
 		disks = append(disks, info)
@@ -211,6 +220,10 @@ func querySMARTATA(info *DiskInfo) {
 	}
 
 	info.Serial = s.SerialNumber
+	// rotation_rate > 1 means an actual RPM value; 1 = solid-state indicator.
+	if s.RotationRate > 1 {
+		info.RPM = s.RotationRate
+	}
 
 	// If SMART is not supported by the device (common on VMs), report N/A.
 	if !s.SmartSupport.Available {
@@ -371,6 +384,7 @@ func readSysfs(path string) string {
 
 type smartctlOutput struct {
 	SerialNumber string `json:"serial_number"`
+	RotationRate int    `json:"rotation_rate"` // >1 = RPM; 1 = SSD (ATA spec)
 	SmartSupport struct {
 		Available bool `json:"available"`
 		Enabled   bool `json:"enabled"`
@@ -626,4 +640,164 @@ func RescanDisks() error {
 	// Give udev time to create device nodes for any newly detected disks.
 	exec.Command("udevadm", "settle", "--timeout=5").Run() //nolint
 	return nil
+}
+
+// ---- Speed label ----
+
+// computeSpeedLabel returns a human-readable speed string for a disk.
+// For HDDs it shows RPM; for SSDs/NVMe it shows the interface and expected bandwidth.
+func computeSpeedLabel(d DiskInfo) string {
+	switch d.DiskType {
+	case "HDD":
+		if d.RPM > 0 {
+			return fmt.Sprintf("%d RPM", d.RPM)
+		}
+		return "Unknown RPM"
+	case "SSD":
+		tran := strings.ToLower(d.Transport)
+		switch {
+		case tran == "sas":
+			return sasSpdLabel(d.Name)
+		case tran == "usb":
+			return usbSpdLabel(d.Name)
+		default:
+			return "SATA3 (600 MB/s)"
+		}
+	case "NVMe":
+		return nvmeSpdLabel(d.Name)
+	}
+	return ""
+}
+
+// nvmeSpdLabel reads PCIe link speed/width from sysfs for an NVMe disk.
+// diskName is the kernel name, e.g. "nvme0n1".
+func nvmeSpdLabel(diskName string) string {
+	// Strip namespace suffix: "nvme0n1" → "nvme0"
+	ctrl := diskName
+	for i := len("nvme"); i < len(diskName); i++ {
+		if diskName[i] < '0' || diskName[i] > '9' {
+			ctrl = diskName[:i]
+			break
+		}
+	}
+
+	base := "/sys/class/nvme/" + ctrl + "/device"
+	speedRaw, err1 := os.ReadFile(base + "/max_link_speed")
+	widthRaw, err2 := os.ReadFile(base + "/max_link_width")
+	if err1 != nil {
+		return "NVMe"
+	}
+
+	gen, bwPerLane := parseGTsSpeed(strings.TrimSpace(string(speedRaw)))
+	if gen == "" {
+		return "NVMe"
+	}
+
+	lanes := 4 // assume x4 if width unreadable
+	if err2 == nil {
+		if w, err := strconv.Atoi(strings.TrimSpace(string(widthRaw))); err == nil && w > 0 {
+			lanes = w
+		}
+	}
+
+	totalGB := bwPerLane * float64(lanes)
+	return fmt.Sprintf("PCIe %s x%d (%s)", gen, lanes, fmtBW(totalGB))
+}
+
+// parseGTsSpeed converts a sysfs max_link_speed string like "16.0 GT/s PCIe"
+// into a generation label ("Gen4") and per-lane bandwidth in GB/s.
+func parseGTsSpeed(s string) (gen string, bwPerLane float64) {
+	// Extract the GT/s number.
+	re := regexp.MustCompile(`([\d.]+)\s*GT/s`)
+	m := re.FindStringSubmatch(s)
+	if m == nil {
+		return "", 0
+	}
+	gts, _ := strconv.ParseFloat(m[1], 64)
+	switch {
+	case gts >= 60:
+		return "Gen6", 8.0
+	case gts >= 28:
+		return "Gen5", 4.0
+	case gts >= 14:
+		return "Gen4", 2.0
+	case gts >= 7:
+		return "Gen3", 1.0
+	case gts >= 4:
+		return "Gen2", 0.5
+	default:
+		return "Gen1", 0.25
+	}
+}
+
+// sasSpdLabel tries to read the SAS negotiated link rate from sysfs.
+func sasSpdLabel(diskName string) string {
+	// Try /sys/class/sas_device/ or /sys/block/<name>/device/sas_address
+	// Fall back to common SAS speeds.
+	negFile := "/sys/class/sas_device/" + diskName + "/negotiated_linkrate"
+	if data, err := os.ReadFile(negFile); err == nil {
+		rate := strings.TrimSpace(string(data))
+		switch {
+		case strings.Contains(rate, "22.5"):
+			return "SAS 22.5G (2.25 GB/s)"
+		case strings.Contains(rate, "12.0") || strings.Contains(rate, "12G"):
+			return "SAS 12G (1.2 GB/s)"
+		case strings.Contains(rate, "6.0") || strings.Contains(rate, "6G"):
+			return "SAS 6G (0.6 GB/s)"
+		case strings.Contains(rate, "3.0") || strings.Contains(rate, "3G"):
+			return "SAS 3G (0.3 GB/s)"
+		}
+	}
+	return "SAS"
+}
+
+// usbSpdLabel tries to detect the USB version/speed from sysfs.
+func usbSpdLabel(diskName string) string {
+	// /sys/block/<name>/device/../speed contains the USB speed in Mbit/s.
+	speedFile := "/sys/block/" + diskName + "/device/../speed"
+	if data, err := os.ReadFile(speedFile); err == nil {
+		mbps, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+		switch {
+		case mbps >= 20000:
+			return "USB 3.2 Gen 2×2 (2.5 GB/s)"
+		case mbps >= 10000:
+			return "USB 3.2 Gen 2 (1.25 GB/s)"
+		case mbps >= 5000:
+			return "USB 3.2 Gen 1 (0.6 GB/s)"
+		case mbps >= 480:
+			return "USB 2.0 (60 MB/s)"
+		case mbps >= 12:
+			return "USB 1.1 (1.5 MB/s)"
+		}
+	}
+	return "USB"
+}
+
+// fmtBW formats a bandwidth value in GB/s, choosing the right unit.
+func fmtBW(gbps float64) string {
+	if gbps >= 1 {
+		if gbps == float64(int(gbps)) {
+			return fmt.Sprintf("%d GB/s", int(gbps))
+		}
+		return fmt.Sprintf("%.1f GB/s", gbps)
+	}
+	mbps := gbps * 1000
+	return fmt.Sprintf("%d MB/s", int(mbps))
+}
+
+// fetchRPMQuick calls "sudo smartctl -j -i <device>" to get only the rotation
+// rate without running a full SMART attribute scan. Returns 0 on any error.
+func fetchRPMQuick(device string) int {
+	out, err := exec.Command("sudo", "smartctl", "-j", "-i", device).Output()
+	if err != nil && len(out) == 0 {
+		return 0
+	}
+	var s smartctlOutput
+	if err := json.Unmarshal(out, &s); err != nil {
+		return 0
+	}
+	if s.RotationRate > 1 {
+		return s.RotationRate
+	}
+	return 0
 }
