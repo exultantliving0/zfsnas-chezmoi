@@ -5697,13 +5697,29 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
       document.getElementById('btn-scan-disks').style.display = 'none';
       document.getElementById('btn-refresh-disks').style.display = 'none';
     }
-    // Restore activity bar collapsed state from user preferences.
-    if (currentUser.preferences && currentUser.preferences.activity_bar_collapsed) {
-      abExpanded = false;
+    // Restore activity bar state from user preferences.
+    {
       const bar = document.getElementById('activity-bar');
-      bar.classList.remove('expanded');
-      bar.classList.add('collapsed');
-      document.getElementById('ab-chevron').style.transform = '';
+      if (currentUser.preferences && currentUser.preferences.activity_bar_collapsed) {
+        abExpanded = false;
+        bar.classList.remove('expanded');
+        bar.classList.add('collapsed');
+        bar.style.height = ''; // clear any inline height so the collapsed class takes effect
+        document.getElementById('ab-chevron').style.transform = '';
+      } else {
+        // Expanded: restore the saved custom height if any (inline style was already set
+        // by the resize-handle IIFE, but may not have set the expanded class yet).
+        const savedH = localStorage.getItem('activity-bar-height');
+        if (savedH) {
+          const h = parseInt(savedH, 10);
+          if (h > 42) {
+            bar.style.height = h + 'px';
+            bar.classList.remove('collapsed');
+            bar.classList.add('expanded');
+            document.getElementById('ab-chevron').style.transform = 'rotate(180deg)';
+          }
+        }
+      }
     }
   } catch { window.location.href = '/login'; return; }
 
@@ -17088,14 +17104,10 @@ function applyUpdates() {
         window.abExpanded = true;
       }
     },
-    onRestore: h => {
-      if (h <= AB_MIN + 4) return; // collapsed — don't override class state
-      const bar = document.getElementById('activity-bar');
-      if (bar) {
-        bar.classList.remove('collapsed');
-        bar.classList.add('expanded');
-        document.getElementById('ab-chevron').style.transform = 'rotate(180deg)';
-      }
+    onRestore: () => {
+      // Height is already applied by initResizeHandle. Class state is handled
+      // by the prefs init (which runs after this IIFE and has the authoritative
+      // collapsed/expanded state from the server).
     },
   });
 })();
