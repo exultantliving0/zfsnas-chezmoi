@@ -772,6 +772,32 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 }
 
 /* ===== Terminal Panel ===== */
+/* ===== Vertical resize handle (activity bar + terminal) ===== */
+.panel-resize-handle {
+  height: 6px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+  position: relative;
+  z-index: 1;
+}
+.panel-resize-handle::before {
+  content: '';
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background .15s, width .15s;
+}
+.panel-resize-handle:hover::before,
+.panel-resize-handle.dragging::before {
+  background: var(--text-3);
+  width: 52px;
+}
+
 .term-panel {
   flex-shrink: 0;
   display: flex;

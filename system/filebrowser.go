@@ -239,65 +239,67 @@ func ListDir(root, subpath, rootLabel string) (*FileBrowserResult, error) {
 
 // ── GetSystemUsersGroups ──────────────────────────────────────────────────────
 
-// GetSystemUsersGroups reads /etc/passwd and /etc/group and returns name lists.
-// Only root (UID/GID 0) and accounts with UID/GID ≥ 1000 are included.
-// The "sambashare" group is always included regardless of its GID.
+// UserEntry holds a system user's name and numeric UID.
+type UserEntry struct {
+	Name string `json:"name"`
+	UID  int    `json:"uid"`
+}
+
+// GroupEntry holds a system group's name and numeric GID.
+type GroupEntry struct {
+	Name string `json:"name"`
+	GID  int    `json:"gid"`
+}
+
+// GetSystemUsersGroups reads /etc/passwd and /etc/group and returns entries
+// with UIDs/GIDs. Only root (UID/GID 0) and accounts with UID/GID ≥ 1000 are
+// included. The "sambashare" group is always included regardless of its GID.
 // root is always listed first; the rest are sorted alphabetically.
-func GetSystemUsersGroups() (users, groups []string, err error) {
-	users, groups, err = getAllSystemUsersGroups()
+func GetSystemUsersGroups() (users []UserEntry, groups []GroupEntry, err error) {
+	all, allGroups, err := getAllSystemUsersGroupsWithIDs()
 	if err != nil {
 		return
 	}
-	// Filter users: keep root (uid 0) and uid ≥ 1000.
-	var filteredUsers []string
-	for _, u := range users {
-		if u == "root" {
-			filteredUsers = append([]string{"root"}, filteredUsers...)
+	for _, u := range all {
+		if u.Name == "root" || u.UID >= 1000 {
+			users = append(users, u)
 		}
 	}
-	var regularUsers []string
-	for _, u := range users {
-		if u != "root" {
-			if uid, ok := nameUID(u); ok && uid >= 1000 {
-				regularUsers = append(regularUsers, u)
-			}
+	// root first
+	sort.Slice(users, func(i, j int) bool {
+		if users[i].Name == "root" {
+			return true
+		}
+		if users[j].Name == "root" {
+			return false
+		}
+		return users[i].Name < users[j].Name
+	})
+	for _, g := range allGroups {
+		if g.Name == "root" || g.GID >= 1000 || g.Name == "sambashare" {
+			groups = append(groups, g)
 		}
 	}
-	sort.Strings(regularUsers)
-	filteredUsers = append(filteredUsers, regularUsers...)
-
-	// Filter groups: keep root (gid 0), gid ≥ 1000, and always "sambashare".
-	var filteredGroups []string
-	for _, g := range groups {
-		if g == "root" {
-			filteredGroups = append([]string{"root"}, filteredGroups...)
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].Name == "root" {
+			return true
 		}
-	}
-	var regularGroups []string
-	inFiltered := map[string]bool{"root": true}
-	for _, g := range groups {
-		if g == "root" {
-			continue
+		if groups[j].Name == "root" {
+			return false
 		}
-		if gid, ok := nameGID(g); ok && (gid >= 1000 || g == "sambashare") {
-			regularGroups = append(regularGroups, g)
-			inFiltered[g] = true
-		}
-	}
-	sort.Strings(regularGroups)
-	filteredGroups = append(filteredGroups, regularGroups...)
-
-	return filteredUsers, filteredGroups, nil
+		return groups[i].Name < groups[j].Name
+	})
+	return
 }
 
 // GetAllSystemUsersGroups returns all users and groups with no filtering.
-func GetAllSystemUsersGroups() (users, groups []string, err error) {
-	return getAllSystemUsersGroups()
+func GetAllSystemUsersGroups() (users []UserEntry, groups []GroupEntry, err error) {
+	return getAllSystemUsersGroupsWithIDs()
 }
 
-// getAllSystemUsersGroups reads all entries from /etc/passwd and /etc/group.
-// root first, rest sorted alphabetically.
-func getAllSystemUsersGroups() (users, groups []string, err error) {
+// getAllSystemUsersGroupsWithIDs reads all entries from /etc/passwd and /etc/group,
+// returning name + numeric ID for each. root first, rest sorted alphabetically.
+func getAllSystemUsersGroupsWithIDs() (users []UserEntry, groups []GroupEntry, err error) {
 	{
 		f, ferr := os.Open("/etc/passwd")
 		if ferr != nil {
@@ -305,20 +307,27 @@ func getAllSystemUsersGroups() (users, groups []string, err error) {
 		}
 		defer f.Close()
 		sc := bufio.NewScanner(f)
-		var regular []string
+		var regular []UserEntry
+		var rootEntry *UserEntry
 		for sc.Scan() {
 			parts := strings.Split(sc.Text(), ":")
-			if len(parts) < 1 || parts[0] == "" {
+			if len(parts) < 3 || parts[0] == "" {
 				continue
 			}
+			uid, _ := strconv.Atoi(parts[2])
+			e := UserEntry{Name: parts[0], UID: uid}
 			if parts[0] == "root" {
-				users = append([]string{"root"}, users...)
+				rootEntry = &e
 			} else {
-				regular = append(regular, parts[0])
+				regular = append(regular, e)
 			}
 		}
-		sort.Strings(regular)
-		users = append(users, regular...)
+		sort.Slice(regular, func(i, j int) bool { return regular[i].Name < regular[j].Name })
+		if rootEntry != nil {
+			users = append([]UserEntry{*rootEntry}, regular...)
+		} else {
+			users = regular
+		}
 	}
 	{
 		f, ferr := os.Open("/etc/group")
@@ -327,61 +336,31 @@ func getAllSystemUsersGroups() (users, groups []string, err error) {
 		}
 		defer f.Close()
 		sc := bufio.NewScanner(f)
-		var regular []string
+		var regular []GroupEntry
+		var rootEntry *GroupEntry
 		for sc.Scan() {
 			parts := strings.Split(sc.Text(), ":")
-			if len(parts) < 1 || parts[0] == "" {
+			if len(parts) < 3 || parts[0] == "" {
 				continue
 			}
+			gid, _ := strconv.Atoi(parts[2])
+			e := GroupEntry{Name: parts[0], GID: gid}
 			if parts[0] == "root" {
-				groups = append([]string{"root"}, groups...)
+				rootEntry = &e
 			} else {
-				regular = append(regular, parts[0])
+				regular = append(regular, e)
 			}
 		}
-		sort.Strings(regular)
-		groups = append(groups, regular...)
+		sort.Slice(regular, func(i, j int) bool { return regular[i].Name < regular[j].Name })
+		if rootEntry != nil {
+			groups = append([]GroupEntry{*rootEntry}, regular...)
+		} else {
+			groups = regular
+		}
 	}
 	return users, groups, nil
 }
 
-// nameUID looks up the numeric UID for a username from /etc/passwd.
-func nameUID(name string) (int, bool) {
-	f, err := os.Open("/etc/passwd")
-	if err != nil {
-		return 0, false
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		parts := strings.Split(sc.Text(), ":")
-		if len(parts) >= 3 && parts[0] == name {
-			if id, err := strconv.Atoi(parts[2]); err == nil {
-				return id, true
-			}
-		}
-	}
-	return 0, false
-}
-
-// nameGID looks up the numeric GID for a group name from /etc/group.
-func nameGID(name string) (int, bool) {
-	f, err := os.Open("/etc/group")
-	if err != nil {
-		return 0, false
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		parts := strings.Split(sc.Text(), ":")
-		if len(parts) >= 3 && parts[0] == name {
-			if id, err := strconv.Atoi(parts[2]); err == nil {
-				return id, true
-			}
-		}
-	}
-	return 0, false
-}
 
 // ── userGroupExists ───────────────────────────────────────────────────────────
 

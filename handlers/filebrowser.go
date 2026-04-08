@@ -41,7 +41,8 @@ func HandleFileBrowserList(w http.ResponseWriter, r *http.Request) {
 // GET /api/files/users-groups          — filtered (root + uid/gid ≥ 1000 + sambashare)
 // GET /api/files/users-groups?all=true — all entries unfiltered
 func HandleFileBrowserUsersGroups(w http.ResponseWriter, r *http.Request) {
-	var users, groups []string
+	var users []system.UserEntry
+	var groups []system.GroupEntry
 	var err error
 	if r.URL.Query().Get("all") == "true" {
 		users, groups, err = system.GetAllSystemUsersGroups()

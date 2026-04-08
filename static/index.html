@@ -1639,6 +1639,7 @@
 
     <!-- ===== TERMINAL PANEL ===== -->
     <div id="term-panel" class="term-panel hidden">
+      <div class="panel-resize-handle" id="term-resize-handle"></div>
       <div class="term-panel-header">
         <span style="font-size:13px;">⌨</span>
         <span style="font-size:12px;font-weight:600;color:var(--text-2);">Terminal</span>
@@ -1654,6 +1655,7 @@
 
     <!-- ===== BOTTOM ACTIVITY BAR ===== -->
     <div class="activity-bar expanded" id="activity-bar">
+      <div class="panel-resize-handle" id="activity-resize-handle"></div>
       <div class="activity-bar-header" onclick="toggleActivityBar()">
         <span style="font-size:13px;">📋</span>
         <span class="activity-bar-title">Activity &amp; Events</span>
@@ -5787,7 +5789,11 @@ function showPage(name) {
   if (name !== 'dashboard') { clearInterval(_dashRefreshTimer); _dashRefreshTimer = null; }
   if (name === 'dashboard') loadDashboard();
   if (name !== 'iscsi') { clearInterval(_iscsiRefreshTimer); _iscsiRefreshTimer = null; }
-  if (name === 'iscsi') _iscsiRefreshTimer = setInterval(loadISCSIShares, 20000);
+  if (name === 'iscsi') _iscsiRefreshTimer = setInterval(refreshISCSISessions, 30000);
+  if (name !== 'shares') { clearInterval(_smbSessionsTimer); _smbSessionsTimer = null; }
+  if (name === 'shares') _smbSessionsTimer = setInterval(refreshSMBSessions, 30000);
+  if (name !== 'nfs') { clearInterval(_nfsSessionsTimer); _nfsSessionsTimer = null; }
+  if (name === 'nfs') _nfsSessionsTimer = setInterval(refreshNFSSessions, 30000);
   if (name === 'capacity')  loadCapacityPage();
   if (name === 'replication') loadReplicationPage();
 }
@@ -5829,6 +5835,14 @@ function toggleActivityBar() {
   const bar = document.getElementById('activity-bar');
   bar.classList.toggle('expanded', abExpanded);
   bar.classList.toggle('collapsed', !abExpanded);
+  // Clear any inline height set by the resize handle so CSS classes take over.
+  if (!abExpanded) {
+    bar.style.height = '';
+  } else {
+    // Restore saved resize height if available.
+    const saved = localStorage.getItem('activity-bar-height');
+    if (saved) bar.style.height = saved + 'px';
+  }
   document.getElementById('ab-chevron').style.transform = abExpanded ? 'rotate(180deg)' : '';
   if (abExpanded) refreshActivityBar();
   // Persist preference (fire-and-forget).
@@ -13898,6 +13912,8 @@ function toggleNFSMenu(evt, idx) {
 
 // ===== iSCSI =====
 let _iscsiRefreshTimer = null;
+let _smbSessionsTimer  = null;
+let _nfsSessionsTimer  = null;
 let _iscsiHostsEditMode = false;
 let _iscsiEditHostsEditMode = false;
 let _iscsiHostsCache = [];
@@ -14028,7 +14044,7 @@ async function loadISCSIShares() {
     tbody.innerHTML = sr.map(share => {
       const isAdmin = hasPerm('manage_iscsi');
       const shareSessions = sessions[share.iqn] || [];
-      const sessionCell = _renderISCSISessionCell(shareSessions);
+      const sessionCell = _renderISCSISessionCell(shareSessions, share.iqn);
       if (share.orphaned) {
         return `<tr style="background:rgba(255,160,40,.06);">
           <td style="font-family:monospace;font-size:12px;">${esc(share.iqn)}
@@ -14066,14 +14082,15 @@ async function loadISCSIShares() {
   } catch (_) {}
 }
 
-function _renderISCSISessionCell(initiators) {
+function _renderISCSISessionCell(initiators, iqn) {
+  const iqnAttr = iqn != null ? ` data-iscsi-sess-iqn="${esc(iqn)}"` : '';
   if (!initiators || initiators.length === 0) {
-    return `<td style="color:var(--text-3);font-size:12px;">—</td>`;
+    return `<td${iqnAttr} style="color:var(--text-3);font-size:12px;">—</td>`;
   }
   const tip = initiators.length === 1
     ? initiators[0]
     : initiators.map((i, n) => `${n + 1}. ${i}`).join('\n');
-  return `<td>
+  return `<td${iqnAttr}>
     <span class="sess-tip" data-tip="${esc(tip)}" style="display:inline-flex;align-items:center;gap:5px;">
       <span style="width:7px;height:7px;border-radius:50%;background:#30d158;display:inline-block;flex-shrink:0;"></span>
       <span style="font-size:12px;color:#30d158;font-weight:600;">${initiators.length}</span>
@@ -14125,6 +14142,41 @@ function patchNFSShareSessions(shares, sessions) {
     tmp.innerHTML = `<tr>${_renderShareClientCell(sessions[s.path] || [], s.path, 'nfs')}</tr>`;
     cell.replaceWith(tmp.querySelector('td'));
   }
+}
+
+async function refreshSMBSessions() {
+  const cells = document.querySelectorAll('td[data-sess-key]');
+  if (!cells.length) return;
+  cells.forEach(cell => {
+    cell.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle;"></span>';
+  });
+  const sessions = await fetch('/api/shares/sessions').then(r => r.ok ? r.json() : {}).catch(() => ({}));
+  patchShareSessions(_sharesCache, sessions);
+}
+
+async function refreshNFSSessions() {
+  const cells = document.querySelectorAll('td[data-nfs-sess-key]');
+  if (!cells.length) return;
+  cells.forEach(cell => {
+    cell.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle;"></span>';
+  });
+  const sessions = await fetch('/api/nfs/sessions').then(r => r.ok ? r.json() : {}).catch(() => ({}));
+  patchNFSShareSessions(_nfsSharesCache, sessions);
+}
+
+async function refreshISCSISessions() {
+  const cells = document.querySelectorAll('td[data-iscsi-sess-iqn]');
+  if (!cells.length) return;
+  cells.forEach(cell => {
+    cell.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle;"></span>';
+  });
+  const sessions = await fetch('/api/iscsi/sessions').then(r => r.ok ? r.json() : {}).catch(() => ({}));
+  document.querySelectorAll('td[data-iscsi-sess-iqn]').forEach(cell => {
+    const iqn = cell.dataset.iscsiSessIqn;
+    const tmp = document.createElement('table');
+    tmp.innerHTML = `<tr>${_renderISCSISessionCell(sessions[iqn] || [], iqn)}</tr>`;
+    cell.replaceWith(tmp.querySelector('td'));
+  });
 }
 
 function toggleISCSIServiceMenu() {
@@ -16918,6 +16970,111 @@ function applyUpdates() {
   };
 }
 
+// ===== Panel resize handles =====
+(function() {
+  const TERM_MIN = 150, TERM_MAX = 900, TERM_KEY = 'term-panel-height';
+  const AB_MIN   = 38,  AB_MAX   = 600, AB_KEY  = 'activity-bar-height';
+
+  function initResizeHandle(handleId, targetId, opts) {
+    const handle = document.getElementById(handleId);
+    const target = document.getElementById(targetId);
+    if (!handle || !target) return;
+    let startY, startH;
+
+    handle.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      startY = e.clientY;
+      startH = target.getBoundingClientRect().height;
+      target.style.transition = 'none';
+      handle.classList.add('dragging');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'ns-resize';
+
+      function onMove(e) {
+        const delta = startY - e.clientY;
+        const newH = Math.min(opts.max, Math.max(opts.min, startH + delta));
+        target.style.height = newH + 'px';
+        if (opts.onDrag) opts.onDrag(newH);
+      }
+
+      function onUp() {
+        target.style.transition = '';
+        handle.classList.remove('dragging');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        const finalH = target.getBoundingClientRect().height;
+        if (opts.onDone) opts.onDone(finalH);
+      }
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    // Restore saved height.
+    const saved = localStorage.getItem(opts.key);
+    if (saved) {
+      const h = parseInt(saved, 10);
+      if (h >= opts.min && h <= opts.max) {
+        target.style.height = h + 'px';
+        if (opts.onRestore) opts.onRestore(h);
+      }
+    }
+  }
+
+  // Terminal resize — callbacks reference _termFit lazily at call time.
+  initResizeHandle('term-resize-handle', 'term-panel', {
+    min: TERM_MIN, max: TERM_MAX, key: TERM_KEY,
+    onDrag: () => { if (_termFit) _termFit.fit(); },
+    onDone: h => { localStorage.setItem(TERM_KEY, h); if (_termFit) _termFit.fit(); },
+  });
+
+  // Activity bar resize.
+  initResizeHandle('activity-resize-handle', 'activity-bar', {
+    min: AB_MIN, max: AB_MAX, key: AB_KEY,
+    onDrag: newH => {
+      if (newH > AB_MIN) {
+        const bar = document.getElementById('activity-bar');
+        if (!bar.classList.contains('expanded')) {
+          bar.classList.remove('collapsed');
+          bar.classList.add('expanded');
+          document.getElementById('ab-chevron').style.transform = 'rotate(180deg)';
+          window.abExpanded = true;
+          refreshActivityBar();
+        }
+      }
+    },
+    onDone: h => {
+      localStorage.setItem(AB_KEY, h);
+      // Sync collapsed/expanded state.
+      const bar = document.getElementById('activity-bar');
+      if (h <= AB_MIN + 4) {
+        bar.classList.remove('expanded');
+        bar.classList.add('collapsed');
+        document.getElementById('ab-chevron').style.transform = '';
+        window.abExpanded = false;
+      } else {
+        bar.classList.remove('collapsed');
+        bar.classList.add('expanded');
+        document.getElementById('ab-chevron').style.transform = 'rotate(180deg)';
+        window.abExpanded = true;
+      }
+    },
+    onRestore: h => {
+      if (h <= AB_MIN + 4) return; // collapsed — don't override class state
+      const bar = document.getElementById('activity-bar');
+      if (bar) {
+        bar.classList.remove('collapsed');
+        bar.classList.add('expanded');
+        document.getElementById('ab-chevron').style.transform = 'rotate(180deg)';
+      }
+    },
+  });
+})();
+
 // ===== Terminal =====
 let _term = null;
 let _termWs = null;
@@ -16938,6 +17095,7 @@ function toggleTermPanel() {
     if (ab && !ab.classList.contains('collapsed')) {
       ab.classList.remove('expanded');
       ab.classList.add('collapsed');
+      ab.style.height = ''; // clear inline resize height so CSS class takes over
       const chevron = document.getElementById('ab-chevron');
       if (chevron) chevron.style.transform = '';
     }
@@ -22280,8 +22438,8 @@ async function openFbEditModal(entryIdx) {
   // Populate ownership selects.
   try {
     const ug = await loadUsersGroups(false);
-    document.getElementById('fb-chown-owner').innerHTML = ug.users.map(u => `<option${u===curOwner?' selected':''}>${esc(u)}</option>`).join('');
-    document.getElementById('fb-chown-group').innerHTML = ug.groups.map(g => `<option${g===curGroup?' selected':''}>${esc(g)}</option>`).join('');
+    document.getElementById('fb-chown-owner').innerHTML = ug.users.map(u => `<option value="${esc(u.name)}"${u.name===curOwner?' selected':''}>${esc(u.name)} (${u.uid})</option>`).join('');
+    document.getElementById('fb-chown-group').innerHTML = ug.groups.map(g => `<option value="${esc(g.name)}"${g.name===curGroup?' selected':''}>${esc(g.name)} (${g.gid})</option>`).join('');
   } catch(err) {
     document.getElementById('fb-chown-err').textContent = err.message;
     document.getElementById('fb-chown-err').classList.remove('hidden');
@@ -22324,8 +22482,8 @@ async function _repopulateOwnershipSelects() {
     const ug = await loadUsersGroups(_fbShowAllUsers);
     const curOwner = document.getElementById('fb-chown-owner').value;
     const curGroup = document.getElementById('fb-chown-group').value;
-    document.getElementById('fb-chown-owner').innerHTML = ug.users.map(u => `<option${u===curOwner?' selected':''}>${esc(u)}</option>`).join('');
-    document.getElementById('fb-chown-group').innerHTML = ug.groups.map(g => `<option${g===curGroup?' selected':''}>${esc(g)}</option>`).join('');
+    document.getElementById('fb-chown-owner').innerHTML = ug.users.map(u => `<option value="${esc(u.name)}"${u.name===curOwner?' selected':''}>${esc(u.name)} (${u.uid})</option>`).join('');
+    document.getElementById('fb-chown-group').innerHTML = ug.groups.map(g => `<option value="${esc(g.name)}"${g.name===curGroup?' selected':''}>${esc(g.name)} (${g.gid})</option>`).join('');
   } catch(err) {
     if (errEl) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
   }
