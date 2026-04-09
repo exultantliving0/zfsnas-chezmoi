@@ -6644,15 +6644,34 @@ function renderSudoersDiff(diff) {
   extra.forEach(d       => { _sudoersRowState[d.line] = 'new';      _sudoersInitialState[d.line] = 'new'; });
   silencedAll.forEach(d => { _sudoersRowState[d.line] = 'silenced'; _sudoersInitialState[d.line] = 'silenced'; });
 
-  // Flat table: forced first (always on top), then approved, pending, silenced.
+  // Collect all lines tagged with render type, then group by section in template order.
+  const _allTagged = [
+    ...forcedLines.map(d => ({...d, _renderType:'forced'})),
+    ...matched.map(d     => ({...d, _renderType:'matched'})),
+    ...missing.map(d     => ({...d, _renderType:'missing'})),
+    ...extra.map(d       => ({...d, _renderType:'extra'})),
+    ...silencedAll.map(d => ({...d, _renderType:d._type})),
+  ];
+  const _sectionGroups = {};
+  SUDOERS_SECTION_ORDER.forEach(s => _sectionGroups[s] = []);
+  for (const d of _allTagged) {
+    const s = d.section || '';
+    (_sectionGroups[s] !== undefined ? _sectionGroups[s] : _sectionGroups['']).push(d);
+  }
+
   const tbody = document.getElementById('sudoers-review-tbody');
-  tbody.innerHTML = [
-    ...forcedLines.map(d => sudoersRowTR(d, 'forced')),
-    ...matched.map(d     => sudoersRowTR(d, 'matched')),
-    ...missing.map(d     => sudoersRowTR(d, 'missing')),
-    ...extra.map(d       => sudoersRowTR(d, 'extra')),
-    ...silencedAll.map(d => sudoersRowTR(d, d._type)),
-  ].join('');
+  const html = [];
+  for (const sec of SUDOERS_SECTION_ORDER) {
+    const lines = _sectionGroups[sec];
+    if (!lines || !lines.length) continue;
+    const first  = lines.find(l => l.section_label) || lines[0];
+    const label  = sec === '' ? 'Custom / Extra Commands' : (first.section_label || sec);
+    const optional = first.section_optional || false;
+    const allForcedSec = lines.every(d => d._renderType === 'forced');
+    html.push(sudoersSectionHeaderTR(sec, label, optional, allForcedSec));
+    for (const d of lines) html.push(sudoersRowTR(d, d._renderType));
+  }
+  tbody.innerHTML = html.join('');
 
   // Apply initial visual state to all rows.
   [...forcedLines, ...matched, ...missing, ...extra, ...silencedAll].forEach(d => _sudoersUpdateRow(d.line));
@@ -6669,11 +6688,60 @@ function approveAllSudoers() {
   updateSudoersApplyButton();
 }
 
+const SUDOERS_SECTION_ORDER = [
+  'ZFSNAS_ZFS','ZFSNAS_SMB','ZFSNAS_NFS','ZFSNAS_ISCSI',
+  'ZFSNAS_MINIO','ZFSNAS_UPS','ZFSNAS_DISKPOWER','ZFSNAS_SYSPOWER',
+  'ZFSNAS_SMART','ZFSNAS_DISK','ZFSNAS_SCAN','ZFSNAS_FILES',
+  'ZFSNAS_SYSTEM','ZFSNAS_APT','ZFSNAS_SECURITY',''
+];
+
+function sudoersSectionHeaderTR(sec, label, optional, allForced) {
+  const optBadge = optional
+    ? `<span style="font-size:10px;padding:1px 6px;border-radius:9px;background:color-mix(in srgb,#f0b429 15%,transparent);color:#f0b429;border:1px solid color-mix(in srgb,#f0b429 30%,transparent);">Optional</span>`
+    : '';
+  const secAttr = esc(sec);
+  const btns = allForced ? '' : `
+    <button onclick="approveSectionSudoers('${secAttr}')" class="btn btn-sm" style="font-size:11px;padding:2px 8px;">✓ Approve</button>
+    <button onclick="refuseSectionSudoers('${secAttr}')" class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:color-mix(in srgb,var(--accent-danger) 8%,transparent);border-color:color-mix(in srgb,var(--accent-danger) 30%,var(--border));color:var(--accent-danger);">✗ Refuse</button>`;
+  return `<tr class="sudoers-section-hdr" style="background:var(--bg-2);border-top:2px solid var(--border);">
+    <td colspan="4" style="padding:7px 12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:12px;font-weight:600;color:var(--text);">${esc(label)}</span>
+          ${optBadge}
+        </div>
+        <div style="display:flex;gap:5px;">${btns}</div>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function approveSectionSudoers(sec) {
+  document.querySelectorAll(`#sudoers-review-tbody .sudoers-tr[data-section="${sec}"]`).forEach(row => {
+    const line = row.dataset.line;
+    if (!line || _sudoersRowState[line] === 'forced') return;
+    _sudoersRowState[line] = 'approved';
+    _sudoersUpdateRow(line);
+  });
+  updateSudoersApplyButton();
+}
+
+function refuseSectionSudoers(sec) {
+  document.querySelectorAll(`#sudoers-review-tbody .sudoers-tr[data-section="${sec}"]`).forEach(row => {
+    const line = row.dataset.line;
+    if (!line || _sudoersRowState[line] === 'forced') return;
+    _sudoersRowState[line] = 'silenced';
+    _sudoersUpdateRow(line);
+  });
+  updateSudoersApplyButton();
+}
+
 function sudoersRowTR(d, type) {
+  const sec = d.section || '';
   // Forced lines are always-approved and cannot be changed by the user.
   if (type === 'forced') {
     const lineId = 'sdr-' + btoa(d.line).replace(/=/g,'');
-    return `<tr class="sudoers-tr" id="${lineId}" data-line="${esc(d.line)}" data-type="forced"
+    return `<tr class="sudoers-tr" id="${lineId}" data-line="${esc(d.line)}" data-type="forced" data-section="${esc(sec)}"
         style="background:color-mix(in srgb,var(--accent-3) 10%,transparent);opacity:0.85;">
       <td style="padding:6px 12px;vertical-align:top;">
         <code style="display:block;font-size:.78rem;font-family:monospace;word-break:break-all;color:var(--text);">${esc(d.line)}</code>
@@ -6687,7 +6755,7 @@ function sudoersRowTR(d, type) {
   // data-type drives apply logic: matched → 'missing' (silenced = remove from template)
   const dataType = type === 'matched' ? 'missing' : type;
   const lineId   = 'sdr-' + btoa(d.line).replace(/=/g,'');
-  return `<tr class="sudoers-tr" id="${lineId}" data-line="${esc(d.line)}" data-type="${dataType}">
+  return `<tr class="sudoers-tr" id="${lineId}" data-line="${esc(d.line)}" data-type="${dataType}" data-section="${esc(sec)}">
     <td style="padding:6px 12px;vertical-align:top;">
       <code style="display:block;font-size:.78rem;font-family:monospace;word-break:break-all;color:var(--text);">${esc(d.line)}</code>
       <span style="font-size:.72rem;color:var(--text-3);line-height:1.4;">${esc(d.explanation||'')}</span>

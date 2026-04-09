@@ -20,10 +20,61 @@ type SudoersDiff struct {
 
 // SudoersLineDiff describes a single logical sudoers command entry that differs.
 type SudoersLineDiff struct {
-	Line        string `json:"line"`
-	Explanation string `json:"explanation"`
-	Silenced    bool   `json:"silenced"`
-	Forced      bool   `json:"forced,omitempty"` // always required; cannot be silenced or removed
+	Line            string `json:"line"`
+	Explanation     string `json:"explanation"`
+	Section         string `json:"section"`          // Cmnd_Alias name, e.g. "ZFSNAS_SMB"
+	SectionLabel    string `json:"section_label"`    // human-readable label
+	SectionOptional bool   `json:"section_optional"` // true = optional feature
+	Silenced        bool   `json:"silenced"`
+	Forced          bool   `json:"forced,omitempty"` // always required; cannot be silenced or removed
+}
+
+type sudoersSectionInfo struct {
+	Label    string
+	Optional bool
+}
+
+var sudoersSectionInfoMap = map[string]sudoersSectionInfo{
+	"ZFSNAS_ZFS":       {Label: "ZFS Pool & Dataset Management"},
+	"ZFSNAS_SMB":       {Label: "Samba (SMB Shares)"},
+	"ZFSNAS_NFS":       {Label: "NFS Shares"},
+	"ZFSNAS_ISCSI":     {Label: "iSCSI Sharing", Optional: true},
+	"ZFSNAS_MINIO":     {Label: "S3 Object Server (MinIO)", Optional: true},
+	"ZFSNAS_UPS":       {Label: "UPS Management (NUT)", Optional: true},
+	"ZFSNAS_DISKPOWER": {Label: "Disk Power Management", Optional: true},
+	"ZFSNAS_SYSPOWER":  {Label: "System Power Management", Optional: true},
+	"ZFSNAS_SMART":     {Label: "SMART & Hardware Monitoring"},
+	"ZFSNAS_DISK":      {Label: "Disk Preparation & Wipe"},
+	"ZFSNAS_SCAN":      {Label: "Folder Usage Scanning"},
+	"ZFSNAS_FILES":     {Label: "File Browser"},
+	"ZFSNAS_SYSTEM":    {Label: "System Management"},
+	"ZFSNAS_APT":       {Label: "OS Updates & Installation"},
+	"ZFSNAS_SECURITY":  {Label: "Sudoers Self-Management"},
+}
+
+// buildCommandToSectionMap parses the required sudoers template and returns
+// a map of normalized command → Cmnd_Alias name (e.g. "/usr/bin/tee /etc/exports" → "ZFSNAS_NFS").
+func buildCommandToSectionMap() map[string]string {
+	required := RequiredSudoersContent()
+	m := make(map[string]string)
+	currentAlias := ""
+	for _, line := range strings.Split(required, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Cmnd_Alias ") {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 {
+				currentAlias = parts[1]
+			}
+			continue
+		}
+		if currentAlias != "" && strings.HasPrefix(trimmed, "/") {
+			cmd := normalizeSudoLine(trimmed)
+			if cmd != "" {
+				m[cmd] = currentAlias
+			}
+		}
+	}
+	return m
 }
 
 // forcedSudoersLines are commands that must always be present when the Sudoers
@@ -151,6 +202,8 @@ func ComputeSudoersDiff(current, required string, silenced []string) SudoersDiff
 		silencedSet[s] = true
 	}
 
+	cmdSections := buildCommandToSectionMap()
+
 	reqCmds := extractSudoCommands(required)
 	curCmds := extractSudoCommands(current)
 
@@ -163,31 +216,32 @@ func ComputeSudoersDiff(current, required string, silenced []string) SudoersDiff
 		reqSet[c] = true
 	}
 
+	makeDiff := func(cmd string, silenced, forced bool) SudoersLineDiff {
+		sec := cmdSections[cmd]
+		info := sudoersSectionInfoMap[sec]
+		return SudoersLineDiff{
+			Line:            cmd,
+			Explanation:     lookupSudoersExplanation(cmd),
+			Section:         sec,
+			SectionLabel:    info.Label,
+			SectionOptional: info.Optional,
+			Silenced:        silenced,
+			Forced:          forced,
+		}
+	}
+
 	var matched, missing, extra []SudoersLineDiff
 
 	for _, c := range reqCmds {
 		if curSet[c] {
-			matched = append(matched, SudoersLineDiff{
-				Line:        c,
-				Explanation: lookupSudoersExplanation(c),
-				Forced:      forcedSudoersLines[c],
-			})
+			matched = append(matched, makeDiff(c, false, forcedSudoersLines[c]))
 		} else {
-			missing = append(missing, SudoersLineDiff{
-				Line:        c,
-				Explanation: lookupSudoersExplanation(c),
-				Silenced:    silencedSet[c] && !forcedSudoersLines[c],
-				Forced:      forcedSudoersLines[c],
-			})
+			missing = append(missing, makeDiff(c, silencedSet[c] && !forcedSudoersLines[c], forcedSudoersLines[c]))
 		}
 	}
 	for _, c := range curCmds {
 		if !reqSet[c] {
-			extra = append(extra, SudoersLineDiff{
-				Line:        c,
-				Explanation: lookupSudoersExplanation(c),
-				Silenced:    silencedSet[c],
-			})
+			extra = append(extra, makeDiff(c, silencedSet[c], false))
 		}
 	}
 
@@ -607,8 +661,9 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/systemctl stop nmbd":    "Stops the Samba NetBIOS name daemon.",
 
 	// ── NFS service control ───────────────────────────────────────────────────
-	"/usr/bin/systemctl start nfs-server": "Starts the Linux NFS kernel server.",
-	"/usr/bin/systemctl stop nfs-server":  "Stops the Linux NFS kernel server.",
+	"/usr/bin/systemctl start nfs-server":   "Starts the Linux NFS kernel server.",
+	"/usr/bin/systemctl stop nfs-server":    "Stops the Linux NFS kernel server.",
+	"/usr/bin/systemctl restart nfs-server": "Restarts the Linux NFS kernel server.",
 
 	// ── iSCSI service control (three backend variants) ────────────────────────
 	"/usr/bin/systemctl start rtslib-fb-targetctl":   "Starts the LIO iSCSI target service (rtslib-fb-targetctl).",
@@ -793,6 +848,7 @@ Cmnd_Alias ZFSNAS_NFS = \
     /usr/sbin/exportfs -ra, \
     /usr/bin/systemctl start nfs-server, \
     /usr/bin/systemctl stop nfs-server, \
+    /usr/bin/systemctl restart nfs-server, \
     /usr/bin/tee /etc/exports
 
 # ── SMART & hardware monitoring ───────────────────────────────────────────────
