@@ -23,6 +23,15 @@ type SudoersLineDiff struct {
 	Line        string `json:"line"`
 	Explanation string `json:"explanation"`
 	Silenced    bool   `json:"silenced"`
+	Forced      bool   `json:"forced,omitempty"` // always required; cannot be silenced or removed
+}
+
+// forcedSudoersLines are commands that must always be present when the Sudoers
+// Hardening UI is active — they are needed for the UI itself to read and write
+// the sudoers file. The user cannot silence or reject them.
+var forcedSudoersLines = map[string]bool{
+	"/usr/bin/tee /etc/sudoers.d/zfsnas": true,
+	"/usr/bin/cat /etc/sudoers.d/zfsnas": true,
 }
 
 // CanManageSudoers returns true when the current process can overwrite
@@ -161,12 +170,14 @@ func ComputeSudoersDiff(current, required string, silenced []string) SudoersDiff
 			matched = append(matched, SudoersLineDiff{
 				Line:        c,
 				Explanation: lookupSudoersExplanation(c),
+				Forced:      forcedSudoersLines[c],
 			})
 		} else {
 			missing = append(missing, SudoersLineDiff{
 				Line:        c,
 				Explanation: lookupSudoersExplanation(c),
-				Silenced:    silencedSet[c],
+				Silenced:    silencedSet[c] && !forcedSudoersLines[c],
+				Forced:      forcedSudoersLines[c],
 			})
 		}
 	}
@@ -306,6 +317,21 @@ func RemoveSudoersWriteAccess() error {
 	return nil
 }
 
+// FilterForcedLines removes any forced (always-required) lines from a list of
+// silenced/pending command strings, so they can never be excluded from the file.
+func FilterForcedLines(lines []string) []string {
+	out := lines[:0:0]
+	for _, l := range lines {
+		if !forcedSudoersLines[l] {
+			out = append(out, l)
+		}
+	}
+	if out == nil {
+		out = []string{}
+	}
+	return out
+}
+
 // BuildSudoersContent is the exported version of buildSudoersContent.
 func BuildSudoersContent(required string, silencedMissing, silencedExtra []string) string {
 	return buildSudoersContent(required, silencedMissing, silencedExtra)
@@ -388,6 +414,15 @@ func buildSudoersContent(required string, silencedMissing, silencedExtra []strin
 		}
 	}
 
+	// Remove Cmnd_Alias blocks that have become empty (all their commands were
+	// silenced).  An alias is empty when its header line is not followed by any
+	// command line ("/…") before the next non-blank, non-comment line.
+	// Also collect the alias names so they can be removed from the grant line.
+	kept, emptyAliases := removeEmptyCmndAliases(kept)
+	if len(emptyAliases) > 0 {
+		kept = removeAliasesFromGrant(kept, emptyAliases)
+	}
+
 	content := strings.Join(kept, "\n")
 
 	// Append silenced-extra lines as a preserved section.
@@ -408,6 +443,113 @@ func buildSudoersContent(required string, silencedMissing, silencedExtra []strin
 	}
 
 	return content
+}
+
+// removeEmptyCmndAliases scans lines for Cmnd_Alias blocks that contain no
+// command entries (i.e. all their "/…" lines were removed by silencing).
+// It removes the alias header and its immediately-preceding comment block from
+// lines, and returns the cleaned slice plus the list of removed alias names.
+func removeEmptyCmndAliases(lines []string) ([]string, []string) {
+	type emptyAlias struct {
+		name         string
+		headerIdx    int
+		commentStart int // first index of the preceding comment block to remove
+	}
+
+	var found []emptyAlias
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Cmnd_Alias ") {
+			continue
+		}
+		parts := strings.Fields(trimmed)
+		if len(parts) < 3 {
+			continue
+		}
+		aliasName := parts[1]
+
+		// Check whether any command ("/…") follows before the next structural line.
+		hasCmd := false
+		for j := i + 1; j < len(lines); j++ {
+			t := strings.TrimSpace(lines[j])
+			if t == "" || strings.HasPrefix(t, "#") {
+				continue
+			}
+			hasCmd = strings.HasPrefix(t, "/")
+			break
+		}
+		if hasCmd {
+			continue
+		}
+
+		// Walk backwards to find the start of the preceding comment block.
+		commentStart := i
+		for k := i - 1; k >= 0; k-- {
+			t := strings.TrimSpace(lines[k])
+			if t == "" || strings.HasPrefix(t, "#") {
+				commentStart = k
+			} else {
+				break
+			}
+		}
+
+		found = append(found, emptyAlias{
+			name:         aliasName,
+			headerIdx:    i,
+			commentStart: commentStart,
+		})
+	}
+
+	if len(found) == 0 {
+		return lines, nil
+	}
+
+	removeIdx := make(map[int]bool)
+	names := make([]string, 0, len(found))
+	for _, ea := range found {
+		names = append(names, ea.name)
+		for k := ea.commentStart; k <= ea.headerIdx; k++ {
+			removeIdx[k] = true
+		}
+	}
+
+	result := make([]string, 0, len(lines)-len(removeIdx))
+	for i, l := range lines {
+		if !removeIdx[i] {
+			result = append(result, l)
+		}
+	}
+	return result, names
+}
+
+// removeAliasesFromGrant removes the given alias names from the NOPASSWD grant
+// line(s) at the end of the sudoers file.  It handles both ", NAME" and "NAME, "
+// patterns so the comma/space bookkeeping stays correct.
+func removeAliasesFromGrant(lines []string, aliasNames []string) []string {
+	result := make([]string, len(lines))
+	copy(result, lines)
+
+	for i, line := range result {
+		if !strings.Contains(line, "ZFSNAS_") {
+			continue
+		}
+		for _, name := range aliasNames {
+			// Try to remove as a non-first item first: ", NAME"
+			if strings.Contains(line, ", "+name) {
+				line = strings.ReplaceAll(line, ", "+name, "")
+			} else if strings.Contains(line, name+", ") {
+				// First item followed by another: "NAME, "
+				line = strings.ReplaceAll(line, name+", ", "")
+			} else {
+				line = strings.ReplaceAll(line, name, "")
+			}
+		}
+		// Clean up any double spaces or orphaned commas left behind.
+		line = strings.ReplaceAll(line, ",  ", ", ")
+		line = strings.TrimRight(line, ", ")
+		result[i] = line
+	}
+	return result
 }
 
 // extractSudoCommands extracts and normalizes individual command paths from
@@ -456,6 +598,89 @@ func lookupSudoersExplanation(cmd string) string {
 }
 
 var sudoersExplanations = map[string]string{
+	// ── Samba service control ─────────────────────────────────────────────────
+	"/usr/bin/systemctl reload smbd":  "Reloads Samba configuration without dropping active connections.",
+	"/usr/bin/systemctl restart smbd": "Restarts the Samba SMB daemon.",
+	"/usr/bin/systemctl start smbd":   "Starts the Samba SMB daemon.",
+	"/usr/bin/systemctl stop smbd":    "Stops the Samba SMB daemon.",
+	"/usr/bin/systemctl start nmbd":   "Starts the Samba NetBIOS name daemon.",
+	"/usr/bin/systemctl stop nmbd":    "Stops the Samba NetBIOS name daemon.",
+
+	// ── NFS service control ───────────────────────────────────────────────────
+	"/usr/bin/systemctl start nfs-server": "Starts the Linux NFS kernel server.",
+	"/usr/bin/systemctl stop nfs-server":  "Stops the Linux NFS kernel server.",
+
+	// ── iSCSI service control (three backend variants) ────────────────────────
+	"/usr/bin/systemctl start rtslib-fb-targetctl":   "Starts the LIO iSCSI target service (rtslib-fb-targetctl).",
+	"/usr/bin/systemctl stop rtslib-fb-targetctl":    "Stops the LIO iSCSI target service.",
+	"/usr/bin/systemctl restart rtslib-fb-targetctl": "Restarts the LIO iSCSI target service.",
+	"/usr/bin/systemctl start targetclid":            "Starts the targetcli persistent daemon.",
+	"/usr/bin/systemctl stop targetclid":             "Stops the targetcli persistent daemon.",
+	"/usr/bin/systemctl restart targetclid":          "Restarts the targetcli persistent daemon.",
+	"/usr/bin/systemctl start tgt":                   "Starts the SCSI target framework daemon (tgt).",
+	"/usr/bin/systemctl stop tgt":                    "Stops the SCSI target framework daemon (tgt).",
+	"/usr/bin/systemctl restart tgt":                 "Restarts the SCSI target framework daemon (tgt).",
+
+	// ── MinIO install / setup ─────────────────────────────────────────────────
+	"/usr/bin/chmod +x /usr/local/bin/minio":                               "Makes the downloaded MinIO server binary executable.",
+	"/usr/bin/chmod +x /usr/local/bin/mc":                                  "Makes the downloaded MinIO client (mc) binary executable.",
+	"/usr/bin/mkdir -p /var/lib/minio":                                     "Creates the MinIO data directory.",
+	"/usr/bin/mkdir -p /var/lib/minio/.minio/certs":                        "Creates the MinIO TLS certificate directory.",
+	"/usr/bin/mkdir -p *":                                                   "Creates a required directory during feature setup.",
+	"/usr/bin/chown minio-user\\:minio-user /var/lib/minio":                "Transfers ownership of the MinIO data directory to the minio-user account.",
+	"/usr/bin/chown -R minio-user\\:minio-user /var/lib/minio/.minio/certs": "Transfers ownership of the MinIO TLS certificate directory to minio-user.",
+	"/usr/bin/chown -R minio-user\\:minio-user *":                          "Transfers ownership of MinIO data directories to the minio-user account.",
+	"/usr/bin/chown root\\:minio-user /etc/default/minio":                  "Sets MinIO environment file ownership so minio-user can read it.",
+	"/usr/bin/chmod 640 /etc/default/minio":                                "Restricts the MinIO environment file to root and minio-user.",
+	"/usr/bin/chmod 640 /var/lib/minio/.minio/certs/private.key":           "Protects the MinIO TLS private key from world-read access.",
+	"/usr/bin/cp * /var/lib/minio/.minio/certs/public.crt":                 "Installs the TLS public certificate for MinIO.",
+	"/usr/bin/cp * /var/lib/minio/.minio/certs/private.key":                "Installs the TLS private key for MinIO.",
+	"/usr/bin/rm -f /var/lib/minio/.minio/certs/public.crt":                "Removes the MinIO TLS certificate when TLS is disabled.",
+	"/usr/bin/rm -f /var/lib/minio/.minio/certs/private.key":               "Removes the MinIO TLS private key when TLS is disabled.",
+	"/usr/bin/systemctl enable minio":   "Enables MinIO to start automatically at boot.",
+	"/usr/bin/systemctl disable minio":  "Prevents MinIO from starting automatically at boot.",
+	"/usr/bin/systemctl start minio":    "Starts the MinIO S3 object server.",
+	"/usr/bin/systemctl stop minio":     "Stops the MinIO S3 object server.",
+	"/usr/bin/systemctl restart minio":  "Restarts the MinIO S3 object server.",
+
+	// ── UPS / NUT install, config, service control ────────────────────────────
+	"/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get purge -y nut nut-client nut-server": "Removes all NUT UPS packages during feature uninstall.",
+	"/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get remove -y nut nut-client":           "Removes NUT client packages during partial feature removal.",
+	"/usr/bin/udevadm control --reload-rules":        "Reloads udev rules after writing USB rules for UPS device detection.",
+	"/usr/bin/udevadm trigger --subsystem-match=usb": "Re-applies udev USB rules so the UPS device is recognised immediately.",
+	"/usr/bin/systemctl enable nut-server":   "Enables the NUT UPS server daemon at boot.",
+	"/usr/bin/systemctl disable nut-server":  "Prevents the NUT UPS server from starting at boot.",
+	"/usr/bin/systemctl start nut-server":    "Starts the NUT UPS server daemon (upsd).",
+	"/usr/bin/systemctl stop nut-server":     "Stops the NUT UPS server daemon.",
+	"/usr/bin/systemctl restart nut-server":  "Restarts the NUT UPS server daemon.",
+	"/usr/bin/systemctl enable nut-client":   "Enables the NUT UPS monitoring client at boot.",
+	"/usr/bin/systemctl disable nut-client":  "Prevents the NUT UPS client from starting at boot.",
+	"/usr/bin/systemctl start nut-client":    "Starts the NUT UPS monitoring client (upsmon).",
+	"/usr/bin/systemctl stop nut-client":     "Stops the NUT UPS monitoring client.",
+	"/usr/bin/systemctl enable nut-monitor":  "Enables the NUT monitor service at boot.",
+	"/usr/bin/systemctl start nut-monitor":   "Starts the NUT monitor service.",
+	"/usr/bin/systemctl reset-failed":        "Clears systemd failed-unit state so services can be restarted cleanly.",
+	"/usr/bin/chown root\\:nut /etc/nut":         "Sets group ownership of /etc/nut to the nut group.",
+	"/usr/bin/chmod 750 /etc/nut":                "Restricts /etc/nut to root and nut group; prevents world access.",
+	"/usr/bin/chown root\\:nut /etc/nut/nut.conf":    "Sets nut-group ownership on the NUT mode configuration file.",
+	"/usr/bin/chown root\\:nut /etc/nut/ups.conf":    "Sets nut-group ownership on the UPS device configuration file.",
+	"/usr/bin/chown root\\:nut /etc/nut/upsd.conf":   "Sets nut-group ownership on the NUT daemon listen configuration.",
+	"/usr/bin/chown root\\:nut /etc/nut/upsd.users":  "Sets nut-group ownership on the NUT user authentication file.",
+	"/usr/bin/chown root\\:nut /etc/nut/upsmon.conf": "Sets nut-group ownership on the UPS monitor configuration.",
+	"/usr/bin/chmod 640 /etc/nut/nut.conf":    "Restricts the NUT mode config to root and nut group.",
+	"/usr/bin/chmod 640 /etc/nut/ups.conf":    "Restricts the UPS device config to root and nut group.",
+	"/usr/bin/chmod 640 /etc/nut/upsd.conf":   "Restricts the NUT daemon config to root and nut group.",
+	"/usr/bin/chmod 640 /etc/nut/upsd.users":  "Restricts the NUT user auth file to root and nut group.",
+	"/usr/bin/chmod 640 /etc/nut/upsmon.conf": "Restricts the UPS monitor config to root and nut group.",
+	"/usr/bin/rm -rf /etc/nut":                                    "Removes the NUT configuration directory during feature uninstall.",
+	"/usr/bin/rm -rf /etc/systemd/system/nut-driver.target.wants": "Removes NUT driver target symlinks during uninstall.",
+	"/usr/bin/rm -rf /etc/systemd/system/nut-driver@.service.d":   "Removes the NUT driver service drop-in directory during uninstall.",
+	"/usr/bin/rm -rf /etc/systemd/system/nut-driver@*":            "Removes all NUT driver service instance files during uninstall.",
+
+	// ── Service registration (APT / systemd setup) ────────────────────────────
+	"/usr/bin/systemctl daemon-reload": "Reloads systemd unit files after writing the zfsnas service file.",
+	"/usr/bin/systemctl enable zfsnas": "Enables the ZNAS portal to start automatically at boot.",
+
 	"/usr/sbin/zpool *":                                  "All ZFS pool operations: create, import, export, scrub, status, offline/online (v1.0.0+). Covers Pool Fixer Wizard clear/replace actions (v6.3.21+).",
 	"/usr/sbin/zfs *":                                    "All ZFS dataset operations: create, destroy, set, get, snapshot, rollback, load-key/unload-key (encryption v5.0.0+), send/recv (replication v6.1.0+), allow (delegation v6.3.26+).",
 	"/usr/sbin/smartctl *":                               "SMART disk health data for SAS/SATA drives. Required for the Disk Health and SMART detail pages.",

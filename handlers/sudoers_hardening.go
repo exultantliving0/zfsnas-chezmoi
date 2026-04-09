@@ -130,14 +130,33 @@ func HandleEnableSudoersHardening(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 
+		action := "enabled"
+		details := "sudoers hardening: enabled"
+
+		if req.Enabled {
+			// On first enable, write the complete required template with all lines
+			// approved so the Review UI opens showing everything as matched rather
+			// than pending. Clear any previously silenced lines.
+			required := system.RequiredSudoersContent()
+			if err := system.ApplySudoers(required, nil, nil); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "could not apply sudoers: "+err.Error())
+				return
+			}
+			content := system.BuildSudoersContent(required, nil, nil)
+			appCfg.SudoersAppliedHash    = system.SudoersContentHash(content)
+			appCfg.SudoersAppliedContent = content
+			appCfg.SudoersSilencedMissing = []string{}
+			appCfg.SudoersSilencedExtra   = []string{}
+			appCfg.SudoersSilencedLines   = []string{}
+			details = "sudoers hardening: enabled; full template applied (all lines approved)"
+		}
+
 		appCfg.SudoersHardeningEnabled = req.Enabled
 		if err := config.SaveAppConfig(appCfg); err != nil {
 			jsonErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
-		action := "enabled"
-		details := "sudoers hardening: enabled"
 		if !req.Enabled {
 			if req.RemoveWriteAccess {
 				if err := system.RemoveSudoersWriteAccess(); err != nil {
@@ -226,6 +245,11 @@ func HandleApplySudoers(appCfg *config.AppConfig) http.HandlerFunc {
 		if req.PendingExtra == nil {
 			req.PendingExtra = []string{}
 		}
+
+		// Forced lines (needed by the Sudoers UI itself) can never be excluded —
+		// silently drop them from any exclusion list the client may have sent.
+		req.SilencedMissing = system.FilterForcedLines(req.SilencedMissing)
+		req.PendingMissing  = system.FilterForcedLines(req.PendingMissing)
 
 		required := system.RequiredSudoersContent()
 
