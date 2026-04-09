@@ -6523,12 +6523,15 @@ function renderSudoersHardeningBtns(el, s) {
 
   // Enabled — single Review button (green = no pending, yellow = pending New lines).
   const disableBtn = `<button class="btn btn-ghost btn-sm" onclick="openSudoersDisableModal()" style="font-size:11px;opacity:0.5;padding:2px 7px;" title="Disable Sudoers Hardening">Disable</button>`;
-  const silLabel = s.silenced_count > 0 ? ` (${s.silenced_count} silenced)` : '';
   const pendingN = (s.missing_count || 0) + (s.extra_count || 0);
+  const parts = [];
+  if (pendingN > 0)            parts.push(`${pendingN} pending`);
+  if (s.silenced_count > 0)    parts.push(`${s.silenced_count} silenced`);
+  const labelSuffix = parts.length ? ` (${parts.join(', ')})` : '';
   if (pendingN === 0) {
-    el.innerHTML = `<button class="btn btn-sm" onclick="openSudoersReviewModal()" style="font-size:12px;background:color-mix(in srgb,var(--accent-3) 12%,transparent);border-color:var(--accent-3);color:var(--accent-3);">🔒 Review Sudoers${silLabel}</button> ${disableBtn}`;
+    el.innerHTML = `<button class="btn btn-sm" onclick="openSudoersReviewModal()" style="font-size:12px;background:color-mix(in srgb,var(--accent-3) 12%,transparent);border-color:var(--accent-3);color:var(--accent-3);">🔒 Review Sudoers${labelSuffix}</button> ${disableBtn}`;
   } else {
-    el.innerHTML = `<button class="btn btn-sm" onclick="openSudoersReviewModal()" style="font-size:12px;background:#f0b4290d;border-color:#f0b429;color:#f0b429;">🔒 Review Sudoers${silLabel}</button> ${disableBtn}`;
+    el.innerHTML = `<button class="btn btn-sm" onclick="openSudoersReviewModal()" style="font-size:12px;background:#f0b4290d;border-color:#f0b429;color:#f0b429;">🔒 Review Sudoers${labelSuffix}</button> ${disableBtn}`;
   }
 
   // Yellow dot only when there are unreviewed "New"-state lines.
