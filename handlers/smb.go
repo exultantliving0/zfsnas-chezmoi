@@ -26,6 +26,7 @@ func HandleGetSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			"clean_defaults":     appCfg.SMBCleanDefaults,
 			"workgroup":          wg,
 			"custom_global":      appCfg.SMBCustomGlobal,
+			"socket_options":     appCfg.SMBSocketOptions,
 		})
 	}
 }
@@ -39,6 +40,8 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			CleanDefaults    *bool   `json:"clean_defaults"`
 			Workgroup        *string `json:"workgroup"`
 			CustomGlobal     *string `json:"custom_global"`
+			SocketOptions    *bool   `json:"socket_options"`
+			RestartNow       *bool   `json:"restart_now"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -48,6 +51,7 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 		changed := false
 		homeDatasetChanged := false
 		workgroupChanged := false
+		socketOptionsChanged := false
 		prevHomeDataset := appCfg.SMBHomeDataset
 		if req.MaxSmbdProcesses != nil {
 			if *req.MaxSmbdProcesses < 1 || *req.MaxSmbdProcesses > 10000 {
@@ -92,6 +96,13 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			appCfg.SMBCustomGlobal = *req.CustomGlobal
 			changed = true
 		}
+		if req.SocketOptions != nil {
+			if *req.SocketOptions != appCfg.SMBSocketOptions {
+				socketOptionsChanged = true
+			}
+			appCfg.SMBSocketOptions = *req.SocketOptions
+			changed = true
+		}
 
 		if !changed {
 			jsonOK(w, map[string]string{"message": "no changes"})
@@ -130,11 +141,12 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 				}
 			}
 		}
+		restartNow := req.RestartNow != nil && *req.RestartNow
 		if system.IsSambaInstalled() {
-			if err := system.ApplySmbGlobal(config.Dir(), appCfg.MaxSmbdProcesses, appCfg.SMBWorkgroup, appCfg.SMBCustomGlobal, appCfg.SMBHomeDataset, smbHomeUsernames(), appCfg.SMBCleanDefaults); err != nil {
+			if err := system.ApplySmbGlobal(config.Dir(), appCfg.MaxSmbdProcesses, appCfg.SMBWorkgroup, appCfg.SMBCustomGlobal, appCfg.SMBHomeDataset, smbHomeUsernames(), appCfg.SMBCleanDefaults, appCfg.SMBSocketOptions); err != nil {
 				log.Printf("smb global config: ApplySmbGlobal: %v", err)
-			} else if workgroupChanged || homeDatasetChanged {
-				// Workgroup and [homes] changes require a full restart to take effect.
+			} else if workgroupChanged || homeDatasetChanged || (socketOptionsChanged && restartNow) {
+				// Workgroup, [homes], and socket options (when user chose restart now) require a full restart.
 				if err := system.RestartSamba(); err != nil {
 					log.Printf("smb global config: RestartSamba: %v", err)
 				}
@@ -150,7 +162,11 @@ func HandleUpdateSMBGlobalConfig(appCfg *config.AppConfig) http.HandlerFunc {
 			Result:  audit.ResultOK,
 			Details: "SMB global config updated",
 		})
-		jsonOK(w, map[string]string{"message": "SMB global settings saved"})
+		jsonOK(w, map[string]interface{}{
+			"message":               "SMB global settings saved",
+			"socket_options_changed": socketOptionsChanged,
+			"restarted":             workgroupChanged || homeDatasetChanged || (socketOptionsChanged && restartNow),
+		})
 	}
 }
 

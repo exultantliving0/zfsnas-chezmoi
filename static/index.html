@@ -420,6 +420,7 @@
         <canvas id="io-chart-busy"></canvas>
       </div>
     </div>
+    <div id="io-chart-tooltip"></div>
 
     </div><!-- end topbar+io-bar right column -->
     </div><!-- end #topbar-io-wrapper -->
@@ -3017,6 +3018,14 @@
       </div>
       <div class="form-group" style="margin-bottom:0;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
+          <input type="checkbox" id="smb-cfg-socket-options" style="width:15px;height:15px;accent-color:var(--accent-2);flex-shrink:0;">
+          Enable TCP throughput socket options
+          <i class="info-tip tip-down" data-tip="Adds the following line to the [global] section:&#10;&#10;  socket options = TCP_NODELAY IPTOS_THROUGHPUT SO_RCVBUF=131072 SO_SNDBUF=131072&#10;&#10;• TCP_NODELAY — disables Nagle's algorithm for lower latency on small writes.&#10;• IPTOS_THROUGHPUT — hints the OS to prioritise throughput over latency.&#10;• SO_RCVBUF / SO_SNDBUF — increases the kernel socket buffer to 128 KB (default ~4–8 KB), reducing CPU overhead on large sequential transfers.&#10;&#10;Best for Gigabit+ networks with mostly large file transfers. On slow links or with many small random writes, TCP_NODELAY can increase CPU load.&#10;&#10;Requires a Samba restart to take effect on existing connections."></i>
+        </label>
+        <div class="text-3 text-sm" style="margin-top:4px;">Optimises TCP socket buffers for throughput. Requires a Samba restart for existing connections.</div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal;">
           <input type="checkbox" id="smb-cfg-clean-defaults" style="width:15px;height:15px;accent-color:var(--accent-2);flex-shrink:0;">
           Remove distro default sections from smb.conf
           <i class="info-tip tip-down" data-tip="When enabled, the [printers], [print$], and [homes] sections written by the Samba package installer are commented out in smb.conf.&#10;&#10;This prevents those sections from conflicting with your settings. The [homes] section is replaced by the one ZFS NAS manages when a Home Folder Dataset is configured.&#10;&#10;Recommended for most NAS setups where printing is not needed."></i>
@@ -4975,6 +4984,24 @@
       <button class="btn" id="btn-shadow-copy-restart-confirm"
         style="background:var(--accent-warn);color:#fff;"
         onclick="confirmShadowCopyRestart()">Restart Samba Now</button>
+    </div>
+  </div>
+</div>
+
+<!-- SMB Socket Options Restart Confirmation Modal -->
+<div class="modal-backdrop hidden" id="modal-smb-socket-restart">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header" style="border-bottom:1px solid var(--border);">
+      <h3>Samba Restart Recommended</h3>
+      <button class="modal-close" onclick="closeSMBSocketRestartModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--text-1);margin-bottom:10px;">The <strong>socket options</strong> setting was changed. Samba must be restarted for the new TCP socket parameters to apply to existing connections.</p>
+      <p style="font-size:13px;color:var(--text-3);">New connections will pick up the setting immediately. Choose <em>Restart Now</em> to apply to all connections, or <em>Apply on Next Restart</em> to leave running connections unaffected.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="smbSocketRestartLater()">Apply on Next Restart</button>
+      <button class="btn btn-primary" id="btn-smb-socket-restart-now" onclick="smbSocketRestartNow()">Restart Samba Now</button>
     </div>
   </div>
 </div>
@@ -7694,6 +7721,7 @@ async function saveSettings() {
 
 // ===== SMB Configure Modal =====
 let _smbCfgOrigWorkgroup = 'WORKGROUP';
+let _smbCfgOrigSocketOptions = false;
 let _pendingSMBGlobalBody = null;
 
 function toggleSMBAdvanced() {
@@ -7743,6 +7771,9 @@ async function openSMBConfigureModal() {
         cdEl.closest('label').style.opacity = '0.5';
         cdEl.closest('label').style.cursor = 'not-allowed';
       }
+      const soEl = document.getElementById('smb-cfg-socket-options');
+      soEl.checked = !!cfg.socket_options;
+      _smbCfgOrigSocketOptions = !!cfg.socket_options;
     }
   } catch (_) {}
 
@@ -7766,12 +7797,13 @@ async function saveSMBGlobalConfig() {
     alertEl.classList.remove('hidden');
     return;
   }
-  const homeDataset   = document.getElementById('smb-cfg-home-dataset').value;
-  const cleanDefaults = document.getElementById('smb-cfg-clean-defaults').checked;
-  const workgroup     = (document.getElementById('smb-cfg-workgroup').value || 'WORKGROUP').trim().toUpperCase();
-  const customGlobal  = document.getElementById('smb-cfg-custom-global').value;
+  const homeDataset    = document.getElementById('smb-cfg-home-dataset').value;
+  const cleanDefaults  = document.getElementById('smb-cfg-clean-defaults').checked;
+  const workgroup      = (document.getElementById('smb-cfg-workgroup').value || 'WORKGROUP').trim().toUpperCase();
+  const customGlobal   = document.getElementById('smb-cfg-custom-global').value;
+  const socketOptions  = document.getElementById('smb-cfg-socket-options').checked;
 
-  const body = { max_smbd_processes: maxVal, home_dataset: homeDataset, clean_defaults: cleanDefaults, workgroup, custom_global: customGlobal };
+  const body = { max_smbd_processes: maxVal, home_dataset: homeDataset, clean_defaults: cleanDefaults, workgroup, custom_global: customGlobal, socket_options: socketOptions };
 
   // If workgroup changed and shares exist, require a Samba restart confirmation.
   const workgroupChanged = workgroup !== _smbCfgOrigWorkgroup;
@@ -7785,6 +7817,14 @@ async function saveSMBGlobalConfig() {
       document.getElementById('modal-smb-workgroup-restart').classList.remove('hidden');
       return;
     }
+  }
+
+  // If socket options changed, ask user to restart now or wait.
+  const socketOptionsChanged = socketOptions !== _smbCfgOrigSocketOptions;
+  if (socketOptionsChanged && !workgroupChanged) {
+    _pendingSMBGlobalBody = body;
+    document.getElementById('modal-smb-socket-restart').classList.remove('hidden');
+    return;
   }
 
   await _doSaveSMBGlobalConfig(body, btn, alertEl, okEl);
@@ -7809,6 +7849,7 @@ async function _doSaveSMBGlobalConfig(body, btn, alertEl, okEl) {
   } else {
     appSettings.max_smbd_processes = body.max_smbd_processes;
     _smbCfgOrigWorkgroup = body.workgroup || 'WORKGROUP';
+    if (body.socket_options !== undefined) _smbCfgOrigSocketOptions = !!body.socket_options;
     // Re-fetch config so the textarea reflects any params migrated from the
     // distro-written [global] section that were folded into SMBCustomGlobal.
     try {
@@ -7823,6 +7864,27 @@ async function _doSaveSMBGlobalConfig(body, btn, alertEl, okEl) {
     okEl.classList.remove('hidden');
     setTimeout(closeSMBConfigureModal, 1200);
   }
+}
+
+function closeSMBSocketRestartModal() {
+  document.getElementById('modal-smb-socket-restart').classList.add('hidden');
+  _pendingSMBGlobalBody = null;
+}
+
+async function smbSocketRestartNow() {
+  const btn = document.getElementById('btn-smb-socket-restart-now');
+  btn.disabled = true; btn.textContent = 'Restarting…';
+  const body = Object.assign({}, _pendingSMBGlobalBody, { restart_now: true });
+  document.getElementById('modal-smb-socket-restart').classList.add('hidden');
+  _pendingSMBGlobalBody = null;
+  await _doSaveSMBGlobalConfig(body, null, null, null);
+}
+
+async function smbSocketRestartLater() {
+  const body = Object.assign({}, _pendingSMBGlobalBody, { restart_now: false });
+  document.getElementById('modal-smb-socket-restart').classList.add('hidden');
+  _pendingSMBGlobalBody = null;
+  await _doSaveSMBGlobalConfig(body, null, null, null);
 }
 
 function closeSMBWorkgroupRestartModal() {
@@ -17481,6 +17543,44 @@ function _ioMakeDataset(label, color, buf, idx) {
   };
 }
 
+// External tooltip for IO charts — renders into a fixed-position div so it can
+// overflow the 70 px canvas without being clipped.
+function _ioExternalTooltip(context) {
+  const tt = document.getElementById('io-chart-tooltip');
+  if (!tt) return;
+  const { chart, tooltip } = context;
+  if (tooltip.opacity === 0 || !tooltip.dataPoints || !tooltip.dataPoints.length) {
+    tt.style.display = 'none';
+    return;
+  }
+  const yLabel = chart._ioYLabel || '';
+  const title  = tooltip.title && tooltip.title[0] ? tooltip.title[0] : '';
+  let html = '';
+  if (title) html += `<div style="font-weight:600;margin-bottom:6px;color:var(--text-2);font-size:12px;">${esc(title)}</div>`;
+  tooltip.dataPoints.forEach(dp => {
+    const color = dp.dataset.borderColor || '#888';
+    const val   = typeof dp.parsed.y === 'number' ? dp.parsed.y.toFixed(2) : '—';
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${color};flex-shrink:0;"></span>
+      <span style="flex:1;color:var(--text);font-size:12px;">${esc(dp.dataset.label || '')}</span>
+      <span style="color:var(--text-2);font-size:12px;font-weight:600;">${val} ${yLabel}</span>
+    </div>`;
+  });
+  tt.innerHTML = html;
+  tt.style.display = 'block';
+
+  // Position relative to the canvas bounding rect + tooltip caret position.
+  const rect = chart.canvas.getBoundingClientRect();
+  const caretX = rect.left + tooltip.caretX;
+  const caretY = rect.top  + tooltip.caretY;
+  const tw = tt.offsetWidth  || 220;
+  const th = tt.offsetHeight || 80;
+  const x = Math.min(caretX + 14, window.innerWidth  - tw - 10);
+  const y = Math.max(10, Math.min(caretY - 10, window.innerHeight - th - 10));
+  tt.style.left = x + 'px';
+  tt.style.top  = y + 'px';
+}
+
 function _ioChartOptions(yLabel) {
   const isLight = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickCol = getComputedStyle(document.body).getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#6b7280');
@@ -17494,9 +17594,8 @@ function _ioChartOptions(yLabel) {
     plugins: {
       legend: { display: false },
       tooltip: {
-        callbacks: {
-          label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} ${yLabel}`,
-        },
+        enabled: false,
+        external: _ioExternalTooltip,
       },
     },
     scales: {
@@ -17539,11 +17638,13 @@ function initIOCharts() {
   function makeChart(id, yLabel) {
     const canvas = document.getElementById(id);
     if (!canvas) return null;
-    return new Chart(canvas, {
+    const chart = new Chart(canvas, {
       type: 'line',
       data: { labels, datasets: [] },
       options: _ioChartOptions(yLabel),
     });
+    chart._ioYLabel = yLabel;
+    return chart;
   }
 
   _ioCharts = {
@@ -17551,6 +17652,15 @@ function initIOCharts() {
     write: makeChart('io-chart-write', 'MB/s'),
     busy:  makeChart('io-chart-busy',  '%'),
   };
+
+  // Hide the external tooltip when the cursor leaves any of the three canvases.
+  ['io-chart-read','io-chart-write','io-chart-busy'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('mouseleave', () => {
+      const tt = document.getElementById('io-chart-tooltip');
+      if (tt) tt.style.display = 'none';
+    });
+  });
 }
 
 function _ioEnsureDevice(dev, idx) {
@@ -19270,6 +19380,7 @@ document.addEventListener('click', function(e) {
     'modal-snapshot':         closeSnapshotModal,
     'modal-winacl-restart':          closeWinACLRestartModal,
     'modal-shadow-copy-restart':     closeShadowCopyRestartModal,
+    'modal-smb-socket-restart':      closeSMBSocketRestartModal,
     'modal-smb-workgroup-restart':   closeSMBWorkgroupRestartModal,
     'modal-delete-share':     closeDeleteShareModal,
     'modal-share':            closeShareModal,

@@ -674,6 +674,21 @@ input::placeholder { color: var(--text-3); }
   pointer-events: none;
 }
 
+#io-chart-tooltip {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  min-width: 200px;
+  z-index: 10000;
+  display: none;
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 /* Top bar with pool chart — border-bottom only when io-bar is hidden */
 .topbar {
   background: var(--surface);

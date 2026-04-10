@@ -403,13 +403,17 @@ func applySMBConf(shares []SMBShare) error {
 // is safe alongside the distro-written [global].
 // When cleanDefaults is true the distro-default [homes], [printers], and
 // [print$] sections outside the managed block are commented out.
-func ApplySmbGlobal(configDir string, maxSmbdProcesses int, workgroup string, customGlobal string, homeDataset string, homeUsers []string, cleanDefaults bool) error {
+func ApplySmbGlobal(configDir string, maxSmbdProcesses int, workgroup string, customGlobal string, homeDataset string, homeUsers []string, cleanDefaults bool, socketOptions bool) error {
 	if workgroup == "" {
 		workgroup = "WORKGROUP"
 	}
 	var sb strings.Builder
 	sb.WriteString(smbGlobalBeginMarker + "\n")
 	sb.WriteString(fmt.Sprintf("[global]\n   max smbd processes = %d\n   workgroup = %s\n", maxSmbdProcesses, workgroup))
+
+	if socketOptions {
+		sb.WriteString("   socket options = TCP_NODELAY IPTOS_THROUGHPUT SO_RCVBUF=131072 SO_SNDBUF=131072\n")
+	}
 
 	// Append expert-supplied custom lines, filtering out section headers to prevent
 	// injection of new sections inside our managed block.
