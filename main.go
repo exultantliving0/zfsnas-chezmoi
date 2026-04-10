@@ -147,6 +147,9 @@ func main() {
 	// ===== Per-process CPU poller (3-second samples for top-bar gauge) =====
 	system.StartCpuProcsPoller()
 
+	// ===== Per-process memory poller (5-second samples for top-bar MEM gauge) =====
+	system.StartMemProcsPoller()
+
 	// ===== Metrics collector (5-minute samples for 24h RRD charts) =====
 	system.StartMetricsCollector(absConfig)
 

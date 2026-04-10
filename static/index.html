@@ -304,6 +304,21 @@
     </div>
     <div id="cpu-gauge-tooltip"></div>
 
+    <!-- MEM process vertical gauge -->
+    <div id="mem-gauge-panel">
+      <div class="cpu-gauge-title">MEM</div>
+      <div class="cpu-gauge-bar" id="mem-gauge-bar">
+        <!-- segments stack bottom-up via flex-direction:column-reverse -->
+        <div class="cpu-gauge-seg" id="mem-seg-other" style="background:#6b7280;height:0%"></div>
+        <div class="cpu-gauge-seg" id="mem-seg-minio" style="background:#f59e0b;height:0%"></div>
+        <div class="cpu-gauge-seg" id="mem-seg-iscsi" style="background:#06b6d4;height:0%"></div>
+        <div class="cpu-gauge-seg" id="mem-seg-zfs"   style="background:#a78bfa;height:0%"></div>
+        <div class="cpu-gauge-seg" id="mem-seg-nfs"   style="background:#60a5fa;height:0%"></div>
+        <div class="cpu-gauge-seg" id="mem-seg-smb"   style="background:#fb923c;height:0%"></div>
+      </div>
+    </div>
+    <div id="mem-gauge-tooltip"></div>
+
     <!-- Right side: topbar + io-bar -->
     <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
 
@@ -17628,7 +17643,9 @@ function startIOPoller() {
   if (_ioPollTimer) return;
   _fetchDiskIO();    // immediate first fetch
   _fetchCpuProcs();  // immediate first fetch
+  _fetchMemProcs();  // immediate first fetch
   _ioPollTimer = setInterval(() => { _fetchDiskIO(); _fetchCpuProcs(); }, 3000);
+  setInterval(() => { _fetchMemProcs(); }, 5000);
 }
 
 // ===== CPU Process Gauge =====
@@ -17718,6 +17735,103 @@ async function _fetchCpuProcs() {
     document.addEventListener('DOMContentLoaded', initCpuGaugeTooltip);
   } else {
     initCpuGaugeTooltip();
+  }
+})();
+
+// ===== MEM Process Gauge =====
+let _memProcsData = null;
+
+function _updateMemGauge(data) {
+  if (!data) return;
+  _memProcsData = data;
+  function setH(id, pct) {
+    const el = document.getElementById(id);
+    if (el) el.style.height = Math.min(100, Math.max(0, pct || 0)).toFixed(2) + '%';
+  }
+  setH('mem-seg-smb',   data.smb_pct);
+  setH('mem-seg-nfs',   data.nfs_pct);
+  setH('mem-seg-zfs',   data.zfs_pct);
+  setH('mem-seg-minio', data.minio_pct);
+  setH('mem-seg-iscsi', data.iscsi_pct);
+  setH('mem-seg-other', data.other_pct);
+}
+
+async function _fetchMemProcs() {
+  try {
+    const resp = await fetch('/api/sysinfo/mem-procs');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    _updateMemGauge(data);
+  } catch (_) {}
+}
+
+// MEM gauge hover tooltip
+(function() {
+  function initMemGaugeTooltip() {
+    const panel = document.getElementById('mem-gauge-panel');
+    const tt    = document.getElementById('mem-gauge-tooltip');
+    if (!panel || !tt) return;
+
+    panel.addEventListener('mousemove', (e) => {
+      const data = _memProcsData;
+      const usedPct = data && data.total_mb > 0
+        ? ((data.used_mb / data.total_mb) * 100)
+        : 0;
+      const usedGB  = data ? (data.used_mb / 1024).toFixed(1) : '—';
+      const totalGB = data ? (data.total_mb / 1024).toFixed(1) : '—';
+      const arcGB   = data ? (data.arc_mb  / 1024).toFixed(2) : '—';
+
+      let html = `<div style="font-weight:600;margin-bottom:8px;color:var(--text-2);font-size:13px;">MEM ${usedPct.toFixed(1)}% &mdash; ${usedGB} / ${totalGB} GB</div>`;
+      html += `<div style="margin-bottom:4px;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;">`;
+      if (data) {
+        [['smb','SMB'],['nfs','NFS'],['zfs','ZFS (incl. ARC)'],['minio','MinIO'],['iscsi','iSCSI'],['other','Other']].forEach(([k,label]) => {
+          const pct = data[k+'_pct'] || 0;
+          if (pct >= 0.05) {
+            html += `<span style="color:${CPU_CAT_COLORS[k]};">■ ${label} ${pct.toFixed(1)}%</span>`;
+          }
+        });
+      }
+      html += `</div>`;
+      if (data && data.arc_mb > 0) {
+        html += `<div style="font-size:10px;color:var(--text-3);margin-bottom:6px;">ZFS ARC cache: ${arcGB} GB</div>`;
+      }
+
+      if (data && data.top_procs && data.top_procs.length > 0) {
+        html += `<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px;">`;
+        html += `<div style="color:var(--text-3);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Top 10 Memory Processes</div>`;
+        data.top_procs.forEach(p => {
+          const color = CPU_CAT_COLORS[p.category] || CPU_CAT_COLORS.other;
+          const displayCmd = p.cmd || p.name;
+          const mb = p.mem_mb != null ? p.mem_mb.toFixed(0) + ' MB' : '';
+          html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+            <span style="color:${color};font-size:10px;flex-shrink:0;">■</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:12px;font-family:monospace;" title="${esc(displayCmd)}">${esc(displayCmd)}</span>
+            <span style="color:var(--text-3);font-size:10px;flex-shrink:0;">${mb}</span>
+            <span style="color:var(--text-2);font-size:11px;flex-shrink:0;min-width:36px;text-align:right;">${p.mem_pct.toFixed(1)}%</span>
+          </div>`;
+        });
+        html += `</div>`;
+      } else {
+        html += `<div style="color:var(--text-3);font-size:12px;">No memory data yet</div>`;
+      }
+
+      tt.innerHTML = html;
+      tt.style.display = 'block';
+      const tw = tt.offsetWidth || 440;
+      const th = tt.offsetHeight || 120;
+      const x = Math.min(e.clientX + 14, window.innerWidth  - tw - 10);
+      const y = Math.max(10, Math.min(e.clientY - 10, window.innerHeight - th - 10));
+      tt.style.left = x + 'px';
+      tt.style.top  = y + 'px';
+    });
+
+    panel.addEventListener('mouseleave', () => { tt.style.display = 'none'; });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initMemGaugeTooltip);
+  } else {
+    initMemGaugeTooltip();
   }
 })();
 

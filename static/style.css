@@ -605,6 +605,36 @@ input::placeholder { color: var(--text-3); }
   cursor: default;
   user-select: none;
 }
+
+/* MEM process gauge panel — same layout as CPU */
+#mem-gauge-panel {
+  width: 36px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 4px 8px;
+  gap: 4px;
+  cursor: default;
+  user-select: none;
+}
+
+#mem-gauge-tooltip {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  min-width: 420px;
+  z-index: 10000;
+  display: none;
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  pointer-events: none;
+}
 .cpu-gauge-title {
   font-size: 9px;
   font-weight: 700;

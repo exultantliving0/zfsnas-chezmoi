@@ -425,6 +425,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/sysinfo/cpu-procs",
 		RequireAuth(http.HandlerFunc(HandleGetCpuProcs))).Methods("GET")
 
+	// --- Per-process memory metrics ---
+	r.Handle("/api/sysinfo/mem-procs",
+		RequireAuth(http.HandlerFunc(HandleGetMemProcs))).Methods("GET")
+
 	// --- Hardware info ---
 	r.Handle("/api/sysinfo/hardware",
 		RequireAuth(http.HandlerFunc(HandleGetHardwareInfo))).Methods("GET")
