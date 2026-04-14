@@ -1615,6 +1615,16 @@ func UnloadDatasetKey(name string, force bool, configDir string) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
+	// Last resort: if the dataset is still busy after 10 s, stop smbd
+	// entirely so it releases all file handles, force-unmount and unload the
+	// key, then bring smbd back up before restoring the share config.
+	if lockErr != nil {
+		_ = ControlSamba("stop")
+		time.Sleep(500 * time.Millisecond)
+		lockErr = tryUnmountAndUnloadKey(name)
+		_ = ControlSamba("start")
+	}
+
 	// Re-enable all affected shares regardless of lock outcome.
 	for _, smbName := range disabledSMB {
 		_ = SetSMBShareDisabled(configDir, smbName, false)
