@@ -1,5 +1,8 @@
 /* ===== ZFS NAS Portal — Global Design System ===== */
 
+/* Tron theme fonts — loaded only when the browser renders the Tron theme */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800&family=Share+Tech+Mono&display=swap');
+
 :root {
   --bg:          #0d0d0f;
   --surface:     #1c1c1e;
@@ -48,6 +51,7 @@ body.light {
 body.light .badge-smbonly { background: rgba(212,160,23,0.15); color: #d4a017; }
 
 /* ===== Tron theme ===== */
+/* ===== Tron theme (classic — normal fonts) ===== */
 body.tron {
   --bg:          #000d1a;
   --surface:     #001428;
@@ -80,6 +84,84 @@ body.tron .logo {
 body.tron .card, body.tron .card-sm { box-shadow: 0 0 0 1px rgba(0,210,255,0.15), inset 0 0 30px rgba(0,210,255,0.03); }
 body.tron .btn { box-shadow: 0 0 8px rgba(0,210,255,0.2); }
 body.tron .badge-smbonly { background: rgba(0,210,255,0.15); color: #00d2ff; }
+
+/* ===== Tron Legacy theme (Orbitron fonts + bright neon) ===== */
+body.tron-legacy {
+  --bg:          #000d1a;
+  --surface:     #001428;
+  --surface2:    #002040;
+  --border:      rgba(0, 210, 255, 0.22);
+  --border-focus: rgba(0, 210, 255, 0.8);
+  --accent-1:    #00d2ff;
+  --accent-2:    #00b4d8;
+  --accent-3:    #00f0ff;
+  --accent-4:    #00e0ff;
+  --accent-warn: #ffe600;
+  --accent-danger:#ff2d55;
+  --zvol-color:  #00d2ff;
+  --gradient:    linear-gradient(135deg, #005f80, #00d2ff);
+  --gradient-full: linear-gradient(135deg, #005f80, #00d2ff, #00f0ff);
+  --text:        #d8f6ff;
+  --text-2:      #00d2ff;
+  --text-3:      #00b0d8;
+  --shadow:      0 4px 24px rgba(0, 210, 255, 0.18);
+  --shadow-lg:   0 8px 40px rgba(0, 210, 255, 0.30);
+}
+/* Tron Legacy — futuristic typography */
+body.tron-legacy,
+body.tron-legacy input,
+body.tron-legacy select,
+body.tron-legacy textarea,
+body.tron-legacy button {
+  font-family: 'Orbitron', 'Segoe UI', sans-serif;
+  letter-spacing: 0.03em;
+}
+body.tron-legacy code,
+body.tron-legacy pre,
+body.tron-legacy .font-mono,
+body.tron-legacy [style*="font-family:monospace"],
+body.tron-legacy [style*="font-family: monospace"] {
+  font-family: 'Share Tech Mono', 'Courier New', monospace !important;
+  letter-spacing: 0.04em;
+  color: #00f0ff;
+  text-shadow: 0 0 6px rgba(0, 240, 255, 0.5);
+}
+body.tron-legacy .nav-item,
+body.tron-legacy .nav-label,
+body.tron-legacy h1, body.tron-legacy h2, body.tron-legacy h3, body.tron-legacy h4 {
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(0, 210, 255, 0.55), 0 0 20px rgba(0, 210, 255, 0.2);
+}
+body.tron-legacy .sidebar-section {
+  color: #00d2ff;
+  text-shadow: 0 0 10px rgba(0, 210, 255, 0.65), 0 0 24px rgba(0, 210, 255, 0.25);
+}
+body.tron-legacy .nav-item.active {
+  color: #00f0ff;
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.7), 0 0 24px rgba(0, 240, 255, 0.3);
+}
+body.tron-legacy .stat-label,
+body.tron-legacy .text-xs {
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.08em;
+  color: #00d2ff;
+  text-shadow: 0 0 6px rgba(0, 210, 255, 0.45);
+}
+body.tron-legacy a { color: #00d2ff; text-shadow: 0 0 6px rgba(0, 210, 255, 0.4); }
+body.tron-legacy .logo {
+  background: linear-gradient(135deg, #00d2ff, #00f0ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 14px rgba(0, 210, 255, 0.75));
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.1em;
+}
+body.tron-legacy .card, body.tron-legacy .card-sm { box-shadow: 0 0 0 1px rgba(0,210,255,0.18), inset 0 0 30px rgba(0,210,255,0.04); }
+body.tron-legacy .btn { box-shadow: 0 0 10px rgba(0,210,255,0.25); font-family: 'Orbitron', sans-serif; letter-spacing: 0.05em; }
+body.tron-legacy .badge-smbonly { background: rgba(0,210,255,0.15); color: #00d2ff; }
 
 /* ===== Matrix theme ===== */
 body.matrix {
