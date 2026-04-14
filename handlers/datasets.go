@@ -7,6 +7,7 @@ import (
 	"strings"
 	"zfsnas/internal/alerts"
 	"zfsnas/internal/audit"
+	"zfsnas/internal/config"
 	"zfsnas/internal/keystore"
 	"zfsnas/system"
 
@@ -43,6 +44,7 @@ func HandleCreateDataset(w http.ResponseWriter, r *http.Request) {
 		RecordSize      string `json:"record_size"`
 		Comment         string `json:"comment"`
 		KeyID           string `json:"key_id"`
+		ClientKeyHex    string `json:"client_key_hex"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -60,6 +62,12 @@ func HandleCreateDataset(w http.ResponseWriter, r *http.Request) {
 		req.Compression = "inherit"
 	}
 
+	// Validate: only one of key_id or client_key_hex may be set.
+	if req.KeyID != "" && req.ClientKeyHex != "" {
+		jsonErr(w, http.StatusBadRequest, "only one of key_id or client_key_hex may be set")
+		return
+	}
+
 	var keyFilePath string
 	if req.KeyID != "" {
 		if !keystore.Exists(req.KeyID) {
@@ -67,6 +75,13 @@ func HandleCreateDataset(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		keyFilePath = keystore.KeyFilePath(req.KeyID)
+	}
+
+	// Validate client key hex: must be exactly 64 hex chars (32 bytes).
+	clientKeyHex := strings.TrimSpace(req.ClientKeyHex)
+	if clientKeyHex != "" && len(clientKeyHex) != 64 {
+		jsonErr(w, http.StatusBadRequest, "client_key_hex must be exactly 64 hex characters (32 bytes)")
+		return
 	}
 
 	opts := system.DatasetCreateOptions{
@@ -80,6 +95,7 @@ func HandleCreateDataset(w http.ResponseWriter, r *http.Request) {
 		RecordSize:      req.RecordSize,
 		Comment:         strings.TrimSpace(req.Comment),
 		KeyFilePath:     keyFilePath,
+		ClientKeyHex:    clientKeyHex,
 	}
 	if err := system.CreateDataset(req.Name, opts); err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
@@ -277,4 +293,188 @@ func HandleLoadDatasetKey(w http.ResponseWriter, r *http.Request) {
 		Result: audit.ResultOK,
 	})
 	jsonOK(w, map[string]string{"message": "key loaded and dataset mounted"})
+}
+
+// HandleUnloadDatasetKey unmounts a dataset and unloads its encryption key (locks it).
+// Body (optional): {"force": true} — force-disconnects active clients (e.g. SMB sessions).
+func HandleUnloadDatasetKey(w http.ResponseWriter, r *http.Request) {
+	path := mux.Vars(r)["path"]
+	if path == "" {
+		jsonErr(w, http.StatusBadRequest, "dataset path required")
+		return
+	}
+	var req struct {
+		Force bool `json:"force"`
+	}
+	// Body is optional; ignore decode errors.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if err := system.UnloadDatasetKey(path, req.Force, config.Dir()); err != nil {
+		// Return 409 Conflict when the dataset is busy so the UI can offer a force option.
+		if strings.Contains(err.Error(), "dataset is busy") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": err.Error(),
+				"code":  "busy",
+			})
+			return
+		}
+		jsonErr(w, http.StatusInternalServerError, "failed to lock dataset: "+err.Error())
+		return
+	}
+	details := ""
+	if req.Force {
+		details = "force"
+	}
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionLockDataset,
+		Target:  path,
+		Result:  audit.ResultOK,
+		Details: details,
+	})
+	jsonOK(w, map[string]string{"message": "dataset locked"})
+}
+
+// HandleUnlockDatasetPassphrase loads a dataset encryption key supplied as a
+// passphrase/hex string in the request body. The passphrase is piped directly
+// to zfs load-key via stdin and is never stored or logged.
+// Body: {"passphrase": "..."}
+func HandleUnlockDatasetPassphrase(w http.ResponseWriter, r *http.Request) {
+	path := mux.Vars(r)["path"]
+	if path == "" {
+		jsonErr(w, http.StatusBadRequest, "dataset path required")
+		return
+	}
+	var req struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Passphrase) == "" {
+		jsonErr(w, http.StatusBadRequest, "passphrase is required")
+		return
+	}
+	if err := system.LoadDatasetKeyPassphrase(path, strings.TrimSpace(req.Passphrase)); err != nil {
+		jsonErr(w, http.StatusInternalServerError, "failed to unlock dataset: "+err.Error())
+		return
+	}
+	if err := system.MountDataset(path); err != nil {
+		jsonErr(w, http.StatusInternalServerError, "key loaded but mount failed: "+err.Error())
+		return
+	}
+	system.MountUnlockedChildren(path)
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:   sess.Username,
+		Role:   sess.Role,
+		Action: audit.ActionUnlockDataset,
+		Target: path,
+		Result: audit.ResultOK,
+	})
+	jsonOK(w, map[string]string{"message": "dataset unlocked and mounted"})
+}
+
+// HandleGetDatasetKeyInfo returns the keylocation and key_locked status for a dataset.
+func HandleGetDatasetKeyInfo(w http.ResponseWriter, r *http.Request) {
+	path := mux.Vars(r)["path"]
+	if path == "" {
+		jsonErr(w, http.StatusBadRequest, "dataset path required")
+		return
+	}
+	loc := system.GetKeyLocation(path)
+	status := system.GetKeyStatus(path)
+	jsonOK(w, map[string]interface{}{
+		"keylocation": loc,
+		"key_locked":  status == "unavailable",
+	})
+}
+
+// HandleSetDatasetKeySource changes the keylocation for an encrypted dataset.
+// Body: {"key_source": "stored", "key_id": "<uuid>"} or {"key_source": "prompt"}
+func HandleSetDatasetKeySource(w http.ResponseWriter, r *http.Request) {
+	path := mux.Vars(r)["path"]
+	if path == "" {
+		jsonErr(w, http.StatusBadRequest, "dataset path required")
+		return
+	}
+	var req struct {
+		KeySource string `json:"key_source"`
+		KeyID     string `json:"key_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	switch req.KeySource {
+	case "stored":
+		if req.KeyID == "" {
+			jsonErr(w, http.StatusBadRequest, "key_id is required for stored key source")
+			return
+		}
+		if !keystore.Exists(req.KeyID) {
+			jsonErr(w, http.StatusBadRequest, "key not found")
+			return
+		}
+		keyPath := keystore.KeyFilePath(req.KeyID)
+		props := map[string]string{
+			"keylocation": "file://" + keyPath,
+			"canmount":    "on",
+		}
+		if err := system.SetDatasetProps(path, props); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to set key source: "+err.Error())
+			return
+		}
+		sess := MustSession(r)
+		// Look up key name for audit detail.
+		keyName := req.KeyID
+		if keys, err := loadEncryptionKeyByID(req.KeyID); err == nil {
+			keyName = keys
+		}
+		audit.Log(audit.Entry{
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionChangeKeySource,
+			Target:  path,
+			Result:  audit.ResultOK,
+			Details: "stored:" + keyName,
+		})
+	case "prompt":
+		props := map[string]string{
+			"keylocation": "prompt",
+			"canmount":    "noauto",
+		}
+		if err := system.SetDatasetProps(path, props); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to set key source: "+err.Error())
+			return
+		}
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:   sess.Username,
+			Role:   sess.Role,
+			Action: audit.ActionChangeKeySource,
+			Target: path,
+			Result: audit.ResultOK,
+			Details: "prompt",
+		})
+	default:
+		jsonErr(w, http.StatusBadRequest, "key_source must be 'stored' or 'prompt'")
+		return
+	}
+	jsonOK(w, map[string]string{"message": "key source updated"})
+}
+
+// loadEncryptionKeyByID returns the friendly name for a key ID, or the ID itself on error.
+func loadEncryptionKeyByID(id string) (string, error) {
+	keys, err := config.LoadEncryptionKeys()
+	if err != nil {
+		return id, err
+	}
+	for _, k := range keys {
+		if k.ID == id {
+			return k.Name, nil
+		}
+	}
+	return id, nil
 }

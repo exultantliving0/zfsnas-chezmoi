@@ -26,6 +26,9 @@ type NFSShare struct {
 	NoSubtreeCheck bool   `json:"no_subtree_check"`
 	NoRootSquash   bool   `json:"no_root_squash"`
 	Comment        string `json:"comment"`
+	// Disabled = true omits the share from /etc/exports so it is not accessible,
+	// without deleting its configuration.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 func nfsSharesPath(configDir string) string {
@@ -67,6 +70,9 @@ func applyExports(shares []NFSShare) error {
 	var sb strings.Builder
 	sb.WriteString(nfsBeginMarker + "\n")
 	for _, s := range shares {
+		if s.Disabled {
+			continue // omit from /etc/exports; keeps config but makes share inaccessible
+		}
 		if s.Comment != "" {
 			sb.WriteString("# " + s.Comment + "\n")
 		}
@@ -295,6 +301,23 @@ func ControlNFS(action string) error {
 		return fmt.Errorf("systemctl %s nfs-server: %s", action, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// SetNFSShareDisabled marks an NFS share as disabled or enabled in the JSON
+// config and rewrites /etc/exports. The caller is responsible for calling
+// ExportFS() after all desired share changes have been applied.
+func SetNFSShareDisabled(configDir, id string, disabled bool) error {
+	shares, err := ListNFSShares(configDir)
+	if err != nil {
+		return err
+	}
+	for i := range shares {
+		if shares[i].ID == id {
+			shares[i].Disabled = disabled
+			return SaveNFSShares(configDir, shares)
+		}
+	}
+	return fmt.Errorf("NFS share not found: %s", id)
 }
 
 // ChmodNFSPath sets permissions 0777 on the given path so that NFS clients

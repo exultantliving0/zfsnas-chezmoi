@@ -139,6 +139,8 @@
       #activity-bar { display: none !important; }
       #pool-legend { display: none !important; }
     }
+    .pool-cards-grid { display:grid; grid-template-columns:1fr 0.7fr 1fr; gap:20px; }
+    @media (max-width:900px) { .pool-cards-grid { grid-template-columns:1fr; } }
     .io-chart-wrap {
       flex: 1;
       display: flex;
@@ -1765,6 +1767,121 @@
 </div>
 
 <!-- Force Disk Offline Modal -->
+<!-- Add Spare Disk Modal -->
+<div class="modal-backdrop hidden" id="modal-add-spare" onclick="if(event.target===this)closeAddSpareModal()">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h3>Add Spare Disk</h3>
+      <button class="modal-close" onclick="closeAddSpareModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+      <div class="alert alert-error hidden" id="add-spare-alert"></div>
+      <div style="font-size:13px;color:var(--text-2);background:var(--surface2);border-radius:var(--radius-sm);padding:12px 14px;line-height:1.6;">
+        A <strong>hot spare</strong> sits idle until a pool disk fails. ZFS will then automatically use it to resilver a replacement, keeping the pool protected without manual intervention.
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Available Disk</label>
+        <select id="add-spare-disk-select" style="width:100%;"></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeAddSpareModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-add-spare-confirm" onclick="submitAddSpare()" style="background:rgba(240,180,41,0.18);border-color:rgba(240,180,41,0.5);color:#f0b429;">Add Spare</button>
+    </div>
+  </div>
+</div>
+
+<!-- Remove Spare Disk Modal -->
+<div class="modal-backdrop hidden" id="modal-remove-spare" onclick="if(event.target===this)closeRemoveSpareModal()">
+  <div class="modal" style="max-width:420px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">Remove Spare Disk</h3>
+      <button class="modal-close" onclick="closeRemoveSpareModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+      <div class="alert alert-error hidden" id="remove-spare-alert"></div>
+      <p style="font-size:14px;">Remove spare <strong id="remove-spare-name" style="font-family:monospace;color:var(--text-1);"></strong> from pool <strong id="remove-spare-pool" style="font-family:monospace;color:var(--text-1);"></strong>?</p>
+      <div style="font-size:13px;color:var(--text-2);background:var(--surface2);border-radius:var(--radius-sm);padding:12px 14px;line-height:1.6;">
+        The disk will be unassigned from the pool and become available again. This will fail if the spare is currently being used to replace a failed disk.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeRemoveSpareModal()">Cancel</button>
+      <button class="btn" id="btn-remove-spare-confirm" onclick="confirmRemoveSpare()" style="background:var(--accent-danger);color:#fff;font-weight:600;">Remove Spare</button>
+    </div>
+  </div>
+</div>
+
+<!-- Attach Mirror Disk Modal -->
+<div class="modal-backdrop hidden" id="modal-attach-disk" onclick="if(event.target===this)closeAttachDiskModal()">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h3>Attach Mirror Disk</h3>
+      <button class="modal-close" onclick="closeAttachDiskModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+      <div class="alert alert-error hidden" id="attach-disk-alert"></div>
+      <p style="font-size:14px;">Attach a new mirror partner to <strong id="attach-disk-existing-name" style="font-family:monospace;color:var(--text-1);"></strong> in pool <strong id="attach-disk-pool" style="font-family:monospace;color:var(--text-1);"></strong>.</p>
+      <div style="font-size:13px;color:var(--text-2);background:var(--surface2);border-radius:var(--radius-sm);padding:12px 14px;line-height:1.6;">
+        ZFS will immediately start mirroring (resilver) the selected disk. The pool stays online during the process. Use this to restore or create a mirror after a disk was detached.
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>New Mirror Disk</label>
+        <select id="attach-disk-select" style="width:100%;"></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeAttachDiskModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-attach-disk-confirm" onclick="confirmAttachDisk()">Attach &amp; Mirror</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detach Disk Modal -->
+<div class="modal-backdrop hidden" id="modal-detach-disk" onclick="if(event.target===this)closeDetachDiskModal()">
+  <div class="modal" style="max-width:420px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);">Detach Disk</h3>
+      <button class="modal-close" onclick="closeDetachDiskModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+      <div class="alert alert-error hidden" id="detach-disk-alert"></div>
+      <p style="font-size:14px;">Detach <strong id="detach-disk-name" style="font-family:monospace;color:var(--text-1);"></strong> from pool <strong id="detach-disk-pool" style="font-family:monospace;color:var(--text-1);"></strong>?</p>
+      <div style="font-size:13px;color:var(--text-2);background:var(--surface2);border-radius:var(--radius-sm);padding:12px 14px;line-height:1.6;">
+        This permanently removes the disk from the pool. Only possible when the disk is a mirror member and the pool will remain intact after removal.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeDetachDiskModal()">Cancel</button>
+      <button class="btn" id="btn-detach-disk-confirm" onclick="confirmDetachDisk()" style="background:var(--accent-danger);color:#fff;font-weight:600;">Detach Disk</button>
+    </div>
+  </div>
+</div>
+
+<!-- Replace Disk Modal -->
+<div class="modal-backdrop hidden" id="modal-replace-disk" onclick="if(event.target===this)closeReplaceDiskModal()">
+  <div class="modal" style="max-width:500px;border:1px solid var(--accent-warn);">
+    <div class="modal-header" style="background:rgba(255,159,10,0.08);border-bottom:1px solid var(--accent-warn);">
+      <h3 style="color:var(--accent-warn);">Replace Disk</h3>
+      <button class="modal-close" onclick="closeReplaceDiskModal()">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+      <div class="alert alert-error hidden" id="replace-disk-alert"></div>
+      <p style="font-size:14px;margin:0;">Replace <strong id="replace-disk-old-name" style="font-family:monospace;color:var(--text-1);"></strong> in pool <strong id="replace-disk-pool" style="font-family:monospace;color:var(--text-1);"></strong> with:</p>
+      <div id="replace-disk-list" style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;max-height:300px;overflow-y:auto;">
+        <div style="padding:16px;color:var(--text-3);text-align:center;">Loading…</div>
+      </div>
+      <div style="font-size:12px;color:var(--text-3);background:var(--surface2);border-radius:var(--radius-sm);padding:10px 12px;line-height:1.6;">
+        ZFS will immediately start a resilver on the new disk. The pool remains accessible during the process.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeReplaceDiskModal()">Cancel</button>
+      <button class="btn" id="btn-replace-disk-confirm" onclick="confirmReplaceDisk()" style="background:var(--accent-warn);color:#fff;font-weight:600;">Replace &amp; Resilver</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="modal-disk-offline">
   <div class="modal" style="max-width:460px;border:1px solid var(--accent-warn);">
     <div class="modal-header" style="background:rgba(255,159,10,0.08);border-bottom:1px solid var(--accent-warn);">
@@ -3219,13 +3336,30 @@
             </select>
           </div>
           <div id="cds-enc-key-row" style="display:none;" class="form-group" style="margin-bottom:0;">
-            <label>Encryption Key</label>
+            <label>Encryption Key (Stored Keys)</label>
             <div style="display:flex;gap:8px;align-items:center;">
-              <select id="cds-enc-key" style="flex:1;">
+              <select id="cds-enc-key" onchange="onCDSKeyChange()" style="flex:1;">
                 <option value="">— select a key —</option>
+                <option value="__client__">✦ Generate Client Key (you keep it)</option>
               </select>
-              <button type="button" class="btn btn-ghost btn-sm" onclick="openKeyMgmtModal('cds')" style="white-space:nowrap;">Manage Keys</button>
+              <button type="button" id="cds-enc-manage-btn" class="btn btn-ghost btn-sm" onclick="openKeyMgmtModal('cds')" style="white-space:nowrap;">Manage Keys</button>
             </div>
+          </div>
+          <!-- Client key panel — shown when "Generate Client Key" is selected -->
+          <div id="cds-client-key-panel" style="display:none;margin-top:10px;border:1px solid var(--accent-warn,#f0b429);border-radius:6px;padding:12px;background:rgba(240,180,41,0.07);">
+            <div style="font-weight:600;color:var(--accent-warn,#f0b429);margin-bottom:8px;font-size:13px;">⚠ Your Responsibility — Read Before Continuing</div>
+            <p style="font-size:13px;margin:0 0 12px 0;line-height:1.5;">
+              ZNAS will <strong>not store this key</strong>. If you lose it, your data will be <strong>permanently inaccessible</strong> with no recovery possible. Save this key in a password manager or secure vault <em>before</em> clicking Create.
+            </p>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+              <code id="cds-generated-key" style="flex:1;font-size:11px;word-break:break-all;background:var(--surface2);padding:6px 8px;border-radius:4px;border:1px solid var(--border);user-select:all;letter-spacing:0.04em;"></code>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="copyCDSGeneratedKey()" title="Copy key to clipboard">Copy</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="regenerateCDSClientKey()" title="Generate a new key">↻</button>
+            </div>
+            <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;line-height:1.4;">
+              <input type="checkbox" id="cds-key-saved-cb" onchange="updateCDSSubmitState()" style="margin-top:2px;flex-shrink:0;">
+              <span>I have saved this key securely. I understand ZNAS cannot recover it — losing this key means permanent data loss.</span>
+            </label>
           </div>
         </div>
       </div>
@@ -3238,6 +3372,94 @@
         <button type="submit" class="btn btn-primary" style="flex:1;">Create</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Lock Dataset Confirm Modal -->
+<div class="modal-backdrop hidden" id="modal-lock-dataset" onclick="if(event.target===this)closeLockDatasetModal()">
+  <div class="modal" style="max-width:460px;border:1px solid var(--accent-warn,#f0b429);">
+    <div class="modal-header" style="background:rgba(240,180,41,0.08);border-bottom:1px solid var(--accent-warn,#f0b429);">
+      <h3 style="color:var(--accent-warn,#f0b429);">🔒 Lock Dataset</h3>
+      <button class="modal-close" onclick="closeLockDatasetModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-family:monospace;font-size:12px;color:var(--text-3);margin-bottom:14px;" id="lock-ds-name"></div>
+      <p style="font-size:13px;line-height:1.6;margin:0 0 8px 0;">
+        The dataset will be <strong>unmounted</strong> and its encryption key will be <strong>unloaded from memory</strong>.
+      </p>
+      <p style="font-size:13px;line-height:1.6;margin:0;color:var(--text-2);">
+        All data will be inaccessible until you unlock it again. Make sure no applications are actively using this dataset.
+      </p>
+      <!-- Retrying status — shown while force-lock is polling -->
+      <div id="lock-ds-retry-section" style="display:none;margin-top:14px;padding:10px 14px;background:rgba(240,180,41,0.08);border:1px solid var(--accent-warn,#f0b429);border-radius:6px;">
+        <div style="display:flex;align-items:center;gap:10px;font-size:13px;">
+          <span class="spinner" style="flex-shrink:0;"></span>
+          <span id="lock-ds-retry-msg" style="color:var(--text-2);">Disconnecting clients and retrying…</span>
+        </div>
+      </div>
+      <!-- Busy error — shown when active clients (e.g. SMB) are connected -->
+      <div id="lock-ds-busy-section" style="display:none;margin-top:14px;border:1px solid var(--accent-danger);border-radius:6px;overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(255,59,48,0.08);">
+          <span style="font-size:15px;">⚠</span>
+          <span style="font-weight:600;color:var(--accent-danger);font-size:13px;">Dataset is busy — active clients connected</span>
+        </div>
+        <div style="padding:10px 12px;font-size:13px;line-height:1.5;border-top:1px solid rgba(255,59,48,0.2);">
+          <div id="lock-ds-busy-msg" style="color:var(--text-2);margin-bottom:10px;"></div>
+          One or more SMB or NFS clients are currently connected to this dataset. You can force-disconnect all active clients and lock the dataset immediately — <strong>this will interrupt any ongoing file transfers</strong>.
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer" style="flex-wrap:wrap;gap:8px;">
+      <button class="btn btn-ghost" onclick="closeLockDatasetModal()">Cancel</button>
+      <button class="btn" id="btn-lock-ds-confirm" style="background:var(--accent-warn,#f0b429);color:#000;font-weight:600;" onclick="doLockDataset(false)">Lock Dataset</button>
+      <button class="btn" id="btn-lock-ds-force" style="display:none;background:var(--accent-danger);color:#fff;font-weight:600;" onclick="doLockDataset(true)">Force Disconnect &amp; Lock</button>
+    </div>
+  </div>
+</div>
+
+<!-- Unlock Dataset Modal -->
+<div class="modal-backdrop hidden" id="modal-unlock-dataset" onclick="if(event.target===this)closeUnlockDatasetModal()">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <div>
+        <h3>🔓 Unlock Dataset</h3>
+        <div id="unlock-ds-name" style="font-family:monospace;font-size:12px;color:var(--text-3);margin-top:2px;"></div>
+      </div>
+      <button class="modal-close" onclick="closeUnlockDatasetModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="unlock-ds-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+      <!-- Stored key section (keylocation=file://) -->
+      <div id="unlock-ds-stored-section">
+        <p style="font-size:13px;color:var(--text-2);margin:0 0 12px 0;">Select the stored key for this dataset.</p>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Encryption Key</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select id="unlock-ds-key-select" style="flex:1;">
+              <option value="">— select a key —</option>
+            </select>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="openKeyMgmtModal('unlock-ds')" style="white-space:nowrap;">Manage Keys</button>
+          </div>
+        </div>
+      </div>
+      <!-- Passphrase section (keylocation=prompt) -->
+      <div id="unlock-ds-passphrase-section" style="display:none;">
+        <div style="border:1px solid var(--accent-warn,#f0b429);border-radius:6px;padding:10px 12px;background:rgba(240,180,41,0.07);margin-bottom:14px;font-size:13px;line-height:1.5;">
+          This dataset uses a client key that is <strong>not stored on ZNAS</strong>. Type or paste the key you saved when this dataset was created. It will be used once and discarded immediately — never written to disk or logs.
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>Key / Passphrase</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="password" id="unlock-ds-passphrase" style="flex:1;" placeholder="Paste your key here…" autocomplete="off" onkeydown="if(event.key==='Enter')doUnlockDataset()">
+            <button type="button" class="btn btn-ghost btn-sm" id="unlock-ds-pass-toggle" onclick="toggleUnlockPassVisibility()" style="padding:6px 10px;" title="Show/hide key">👁</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeUnlockDatasetModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-unlock-ds" onclick="doUnlockDataset()">Unlock &amp; Mount</button>
+    </div>
   </div>
 </div>
 
@@ -3341,6 +3563,25 @@
               <button type="button" class="btn btn-ghost btn-sm" onclick="openKeyMgmtModal('eds')" style="white-space:nowrap;">Manage Keys</button>
             </div>
           </div>
+        </div>
+      </div>
+      <!-- Advanced Security — key source management (shown when dataset is encrypted and unlocked) -->
+      <div id="eds-adv-sec" style="display:none;margin-top:12px;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);cursor:pointer;" onclick="toggleEDSAdvSec()">
+          <span>🔒</span>
+          <span style="font-weight:600;flex:1;">Advanced Security</span>
+          <span id="eds-advsec-chevron" style="font-size:0.8em;color:var(--text-3);">▶</span>
+        </div>
+        <div id="eds-advsec-body" style="display:none;padding:12px;border-top:1px solid var(--border);">
+          <div class="form-group" style="margin-bottom:8px;">
+            <label>Encryption Key Source <i class="info-tip tip-down" data-tip="Choose how this dataset's key is provided at unlock time.&#10;&#10;Stored Key: ZNAS holds a key file and loads it automatically at boot.&#10;Ask User: No key is stored on ZNAS. You must unlock manually each time after a reboot by entering your key in the 'Unlock Dataset' action."></i></label>
+            <select id="eds-key-source" onchange="onEDSKeySourceChange()" style="width:100%;">
+              <option value="prompt">Ask User — enter key at unlock (not stored on ZNAS)</option>
+            </select>
+          </div>
+          <div id="eds-key-source-note" style="display:none;border-radius:5px;padding:8px 10px;font-size:12px;margin-bottom:10px;line-height:1.5;"></div>
+          <div id="eds-advsec-alert" class="alert alert-error hidden" style="margin-bottom:8px;"></div>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-eds-apply-keysource" onclick="saveEDSKeySource()">Apply</button>
         </div>
       </div>
       <div class="form-group" style="margin-top:12px;">
@@ -3860,7 +4101,16 @@
 <div class="modal-backdrop hidden" id="modal-share">
   <div class="modal" style="max-width:680px;max-height:90vh;display:flex;flex-direction:column;">
     <div class="modal-header" style="flex-shrink:0;">
-      <h3 id="share-modal-title">New Share</h3>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <h3 id="share-modal-title">New Share</h3>
+        <span id="share-enabled-wrap" style="display:none;align-items:center;gap:6px;cursor:pointer;" title="Enable / disable this share">
+          <span class="share-toggle-track" id="share-toggle-track" onclick="toggleShareEnabled()">
+            <span class="share-toggle-thumb" id="share-toggle-thumb"></span>
+          </span>
+          <span id="share-enabled-label" style="font-size:12px;font-weight:600;color:var(--text-3);user-select:none;"></span>
+          <input type="checkbox" id="share-enabled" checked style="display:none;">
+        </span>
+      </div>
       <button class="modal-close" onclick="closeShareModal()">✕</button>
     </div>
     <div style="overflow-y:auto;overflow-x:hidden;flex:1;min-height:0;">
@@ -4013,7 +4263,16 @@
 <div class="modal-backdrop hidden" id="modal-nfs-share">
   <div class="modal" style="max-width:500px;">
     <div class="modal-header">
-      <h3 id="nfs-modal-title">New NFS Share</h3>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <h3 id="nfs-modal-title">New NFS Share</h3>
+        <span id="nfs-enabled-wrap" style="display:none;align-items:center;gap:6px;cursor:pointer;" title="Enable / disable this export">
+          <span class="share-toggle-track" id="nfs-toggle-track" onclick="toggleNFSEnabled()">
+            <span class="share-toggle-thumb" id="nfs-toggle-thumb"></span>
+          </span>
+          <span id="nfs-enabled-label" style="font-size:12px;font-weight:600;color:var(--text-3);user-select:none;"></span>
+          <input type="checkbox" id="nfs-enabled" checked style="display:none;">
+        </span>
+      </div>
       <button class="modal-close" onclick="closeNFSShareModal()">✕</button>
     </div>
     <div id="nfs-share-alert" class="alert alert-error hidden"></div>
@@ -5892,7 +6151,7 @@ function showPage(name) {
   if (name === 'pool')      loadPool();
   if (name === 'datasets')  loadDatasets();
   if (name === 'snapshots') { loadSnapshots(); loadSchedules(); }
-  if (name !== 'pool')      _clearPoolStatusInterval();
+  if (name !== 'pool')      { _clearPoolStatusInterval(); _clearPhysicalDisksInterval(); }
   if (name === 'shares')    loadShares();
   if (name === 'nfs')       loadNFSShares();
   if (name === 'iscsi')     loadISCSIPage();
@@ -8456,6 +8715,7 @@ async function loadPool() {
   }
 
   _clearPoolStatusInterval();
+  _clearPhysicalDisksInterval();
 
   // Resolve selectedPoolName: restore from pref when null or pool removed.
   if (allPoolsData.length > 0) {
@@ -8475,6 +8735,7 @@ async function loadPool() {
   if (pool) {
     renderPoolExists(el, pool);
     _startPoolStatusRefresh();
+    _startPhysicalDisksRefresh();
   } else {
     renderPoolCreate(el);
   }
@@ -8655,6 +8916,7 @@ function switchPoolTab(name) {
   savePoolPrefs();
   const el = document.getElementById('pool-content');
   _clearPoolStatusInterval();
+  _clearPhysicalDisksInterval();
   el.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:32px;">Loading…</div>';
   fetch('/api/pools').then(r => r.json()).then(pools => {
     allPoolsData = pools || [];
@@ -8662,6 +8924,7 @@ function switchPoolTab(name) {
     if (pool) {
       renderPoolExists(el, pool);
       _startPoolStatusRefresh();
+      _startPhysicalDisksRefresh();
     }
     _renderPoolTabTitle();
   }).catch(() => {});
@@ -8702,6 +8965,7 @@ function _updatePoolInCache(pool) {
 function openNewPool() {
   const el = document.getElementById('pool-content');
   _clearPoolStatusInterval();
+  _clearPhysicalDisksInterval();
   renderPoolCreate(el, { backPoolName: selectedPoolName });
   // Propose next available incremental pool name (tank → tank2 → tank3 …)
   const existingNames = new Set((allPoolsData || []).map(p => p.name));
@@ -8713,6 +8977,304 @@ function openNewPool() {
   }
   const nameInput = document.getElementById('cp-name');
   if (nameInput) nameInput.value = proposed;
+}
+
+// ── Physical-disk rendering helpers (module-level so _buildPhysicalDisksCard can use them) ────
+function _diskEntry(rawPath, devPath, roleLabel, roleColor, diskState, poolName) {
+  const uuid = rawPath.includes('/by-partuuid/') ? rawPath.split('/').pop() : null;
+  const showUuid = uuid && uuid !== devPath;
+  const sn = _diskSerialMap[devPath] || _diskSerialMap[stripPart(devPath)] || '';
+  const isOffline = diskState === 'OFFLINE';
+  const stateColor = diskState === 'ONLINE' ? '' : diskState === 'OFFLINE' ? 'color:var(--text-3);' : 'color:var(--accent-danger);';
+  const stateLabel = diskState && diskState !== 'ONLINE' ? ` <span style="font-size:10px;font-weight:600;${stateColor}">${esc(diskState)}</span>` : '';
+  const menuId = 'disk-menu-' + Math.random().toString(36).slice(2);
+  const isAdmin = hasPerm('manage_pool_dataset');
+  const burgerMenu = isAdmin && poolName ? `
+    <div style="position:relative;flex-shrink:0;">
+      <button onclick="toggleDiskMenu('${menuId}')" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;" title="Disk actions">⋮</button>
+      <div id="${menuId}" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);min-width:180px;overflow:hidden;">
+        ${!isOffline ? `<button class="disk-menu-item" onclick="closeDiskMenus();openDiskOfflineModal('${esc(poolName)}','${esc(rawPath)}','${esc(devPath)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-warn);">⏻ Force Disk Offline</button>` : ''}
+        ${isOffline  ? `<button class="disk-menu-item" onclick="closeDiskMenus();submitDiskOnline('${esc(poolName)}','${esc(rawPath)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-3);">▶ Force Disk Online</button>` : ''}
+        <button class="disk-menu-item" onclick="closeDiskMenus();openAttachDiskModal('${esc(poolName)}','${esc(rawPath)}','${esc(devPath)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;">⊕ Attach Mirror Disk</button>
+        <button class="disk-menu-item" onclick="closeDiskMenus();openReplaceDiskModal('${esc(poolName)}','${esc(rawPath)}','${esc(devPath)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-warn);">↺ Replace Disk</button>
+        ${diskState !== 'ONLINE' ? `<button class="disk-menu-item" onclick="closeDiskMenus();openDetachDiskModal('${esc(poolName)}','${esc(rawPath)}','${esc(devPath)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-danger);">✕ Detach Disk</button>` : ''}
+      </div>
+    </div>` : '';
+  return `
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+      <span style="${isOffline ? 'opacity:.4;' : ''}">${diskSVG(18)}</span>
+      <div style="min-width:0;">
+        <div style="font-family:monospace;font-size:13px;font-weight:600;">${esc(devPath)}${stateLabel}${sn ? ` <span style="font-weight:400;color:var(--text-3);font-size:11px;">(${esc(sn)})</span>` : ''}</div>
+        ${showUuid ? `<div style="font-family:monospace;font-size:10px;color:var(--text-3);margin-top:2px;">${esc(uuid)}</div>` : ''}
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+      <span style="font-size:11px;font-weight:600;white-space:nowrap;color:${roleColor};">${roleLabel}</span>
+      ${burgerMenu}
+    </div>
+  </div>`;
+}
+function _vdevStatusBadge(s) {
+  const c = s==='ONLINE'?'var(--accent-3)':s==='AVAIL'?'var(--accent-4)':s==='INUSE'?'var(--accent-warn)':'var(--accent-danger)';
+  return `<span style="font-size:10px;font-weight:700;color:${c};letter-spacing:.04em;">${esc(s)}</span>`;
+}
+const _vdevLabel = type => ({mirror:'Mirror',raidz1:'RAIDZ-1',raidz2:'RAIDZ-2',raidz3:'RAIDZ-3',stripe:'Stripe',replacing:'Replacing',spare:'Spare'}[type]||type.toUpperCase());
+const _vdevColor = type => type==='mirror'?'var(--accent-2)':type.startsWith('raidz')?'#bf5af2':type==='replacing'?'var(--accent-warn)':type==='spare'?'var(--accent-4)':'var(--text-3)';
+const _partuuid = raw => {
+  if (!raw) return '';
+  const m = raw.match(/by-partuuid\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+  if (m) return m[1];
+  if (/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(raw)) return raw;
+  return '';
+};
+function _treeDiskRow(raw, dev, status, poolName, indent, canDetach, allowOnlineDetach) {
+  const isOffline = status !== 'ONLINE' && status !== 'AVAIL' && status !== 'INUSE';
+  const sn = _diskSerialMap[dev] || _diskSerialMap[stripPart(dev)] || '';
+  const puuid = _partuuid(raw);
+  const stateLabel = (status && status !== 'ONLINE') ? ` <span style="font-size:10px;font-weight:700;color:${status==='AVAIL'?'var(--accent-4)':status==='INUSE'?'var(--accent-warn)':'var(--accent-danger)'};margin-left:4px;">${esc(status)}</span>` : '';
+  const menuId = 'disk-menu-' + Math.random().toString(36).slice(2);
+  const isAdmin = hasPerm('manage_pool_dataset');
+  const burgerMenu = isAdmin && poolName ? `
+    <div style="position:relative;flex-shrink:0;">
+      <button onclick="toggleDiskMenu('${menuId}')" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;" title="Disk actions">⋮</button>
+      <div id="${menuId}" style="display:none;position:absolute;right:0;top:100%;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);min-width:200px;overflow:hidden;">
+        ${canDetach ? `<button class="disk-menu-item" onclick="closeDiskMenus();openAttachDiskModal('${esc(poolName)}','${esc(raw)}','${esc(dev)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;">⊕ Attach Mirror Disk</button>` : ''}
+        <button class="disk-menu-item" onclick="closeDiskMenus();openReplaceDiskModal('${esc(poolName)}','${esc(raw)}','${esc(dev)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-warn);">↺ Replace Disk</button>
+        ${!isOffline ? `<button class="disk-menu-item" onclick="closeDiskMenus();openDiskOfflineModal('${esc(poolName)}','${esc(raw)}','${esc(dev)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-warn);">⏻ Force Disk Offline</button>` : ''}
+        ${isOffline ? `<button class="disk-menu-item" onclick="closeDiskMenus();submitDiskOnline('${esc(poolName)}','${esc(raw)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-3);">▶ Force Disk Online</button>` : ''}
+        ${(isOffline || allowOnlineDetach) && canDetach ? `<button class="disk-menu-item" onclick="closeDiskMenus();openDetachDiskModal('${esc(poolName)}','${esc(raw)}','${esc(dev)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-danger);">✕ Detach Disk</button>` : ''}
+      </div>
+    </div>` : '';
+  return `
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0 7px ${indent}px;border-bottom:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+      <span style="color:var(--border);font-size:12px;flex-shrink:0;">├─</span>
+      <span style="${isOffline?'opacity:.45;':''}">${diskSVG(16)}</span>
+      <div style="min-width:0;">
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+          <span style="font-family:monospace;font-size:12px;font-weight:600;${isOffline?'color:var(--text-3);':''}">${esc(dev||raw)}${stateLabel}</span>
+          ${sn?`<span style="font-family:monospace;font-size:10px;color:var(--text-3);">(${esc(sn)})</span>`:''}
+        </div>
+        ${puuid?`<div style="font-family:monospace;font-size:10px;color:var(--text-3);margin-top:1px;">${esc(puuid)}</div>`:''}
+      </div>
+    </div>
+    <div style="flex-shrink:0;">${burgerMenu}</div>
+  </div>`;
+}
+function _vdevGroupBlock(vg, poolName) {
+  const isAdmin = hasPerm('manage_pool_dataset');
+  const canAttach = vg.type === 'mirror' || vg.type === 'stripe';
+  const firstRaw = vg.disks && vg.disks[0] ? vg.disks[0].raw : '';
+  const firstDev = vg.disks && vg.disks[0] ? vg.disks[0].device : '';
+
+  if (vg.type === 'stripe' && vg.disks && vg.disks.length === 1) {
+    const d = vg.disks[0];
+    const sn = _diskSerialMap[d.device] || _diskSerialMap[stripPart(d.device)] || '';
+    const puuid = _partuuid(d.raw);
+    const isOffline = d.status !== 'ONLINE';
+    const stateLabel = isOffline ? ` <span style="font-size:10px;font-weight:700;color:var(--accent-danger);margin-left:4px;">${esc(d.status)}</span>` : '';
+    const menuId = 'disk-menu-' + Math.random().toString(36).slice(2);
+    const burgerMenu = isAdmin && poolName ? `
+      <div style="position:relative;flex-shrink:0;">
+        <button onclick="toggleDiskMenu('${menuId}')" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;">⋮</button>
+        <div id="${menuId}" style="display:none;position:absolute;right:0;top:100%;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);min-width:200px;overflow:hidden;">
+          <button class="disk-menu-item" onclick="closeDiskMenus();openAttachDiskModal('${esc(poolName)}','${esc(d.raw)}','${esc(d.device)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;">⊕ Attach Mirror Disk</button>
+          <button class="disk-menu-item" onclick="closeDiskMenus();openReplaceDiskModal('${esc(poolName)}','${esc(d.raw)}','${esc(d.device)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-warn);">↺ Replace Disk</button>
+          ${!isOffline?`<button class="disk-menu-item" onclick="closeDiskMenus();openDiskOfflineModal('${esc(poolName)}','${esc(d.raw)}','${esc(d.device)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-warn);">⏻ Force Disk Offline</button>`:''}
+          ${isOffline?`<button class="disk-menu-item" onclick="closeDiskMenus();submitDiskOnline('${esc(poolName)}','${esc(d.raw)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-3);">▶ Force Disk Online</button>`:''}
+          ${isOffline?`<button class="disk-menu-item" onclick="closeDiskMenus();openDetachDiskModal('${esc(poolName)}','${esc(d.raw)}','${esc(d.device)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-danger);">✕ Detach Disk</button>`:''}
+        </div>
+      </div>` : '';
+    return `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+        ${diskSVG(16)}
+        <div>
+          <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+            <span style="font-family:monospace;font-size:12px;font-weight:600;${isOffline?'color:var(--text-3);':''}">${esc(d.device||d.raw)}${stateLabel}</span>
+            ${sn?`<span style="font-family:monospace;font-size:10px;color:var(--text-3);">(${esc(sn)})</span>`:''}
+          </div>
+          ${puuid?`<div style="font-family:monospace;font-size:10px;color:var(--text-3);margin-top:1px;">${esc(puuid)}</div>`:''}
+        </div>
+        <span style="font-size:10px;font-weight:600;color:var(--text-3);">Stripe</span>
+      </div>
+      <div style="flex-shrink:0;">${burgerMenu}</div>
+    </div>`;
+  }
+
+  const _topCanDetach = vg.type === 'mirror' || vg.type === 'replacing' || vg.type === 'spare';
+  const _directDisks = (vg.disks||[]).filter(d => !d.sub_vdev_name);
+  const _subVdevMap  = {};
+  (vg.disks||[]).filter(d => d.sub_vdev_name).forEach(d => {
+    if (!_subVdevMap[d.sub_vdev_name]) _subVdevMap[d.sub_vdev_name] = {type: d.sub_vdev_type, name: d.sub_vdev_name, disks: []};
+    _subVdevMap[d.sub_vdev_name].disks.push(d);
+  });
+  const _directRows = _directDisks.map(d => _treeDiskRow(d.raw, d.device, d.status, poolName, 16, _topCanDetach, false)).join('');
+  const _subVdevRows = Object.values(_subVdevMap).map(sv => {
+    const svColor = _vdevColor(sv.type);
+    const allOnline = sv.disks.every(d => d.status === 'ONLINE');
+    const resilverHint = sv.type === 'spare' && sv.disks.length >= 2 && allOnline ? `
+      <div style="margin:4px 0 2px 4px;padding:6px 10px;background:color-mix(in srgb,var(--accent-3) 10%,transparent);border:1px solid color-mix(in srgb,var(--accent-3) 30%,transparent);border-radius:5px;font-size:11px;color:var(--text-2);">
+        ✓ Resilver complete — detach the original disk to finalize the replacement.
+      </div>` : '';
+    const svDiskRows = sv.disks.map(d => {
+      const canDetach = d.sub_vdev_type === 'spare' || d.sub_vdev_type === 'mirror' || d.sub_vdev_type === 'replacing';
+      const allowOnlineDetach = d.sub_vdev_type === 'spare';
+      return _treeDiskRow(d.raw, d.device, d.status, poolName, 32, canDetach, allowOnlineDetach);
+    }).join('');
+    return `
+    <div style="margin:4px 0 2px 8px;">
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0 3px 0;">
+        <span style="color:var(--border);font-size:11px;flex-shrink:0;">└─</span>
+        <span style="font-size:10px;font-weight:700;color:${svColor};background:${svColor}22;padding:1px 6px;border-radius:4px;border:1px solid ${svColor}44;">${_vdevLabel(sv.type)}</span>
+        <span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(sv.name)}</span>
+        <span style="font-size:11px;color:var(--text-3);">${sv.disks.length} disk${sv.disks.length!==1?'s':''}</span>
+      </div>
+      <div style="border-left:2px solid var(--border);margin-left:14px;padding-left:4px;">
+        ${resilverHint}
+        ${svDiskRows}
+      </div>
+    </div>`;
+  }).join('');
+  const diskRows = _directRows + _subVdevRows;
+  const addBtn = isAdmin && canAttach && poolName ? `
+    <div style="padding:6px 0 4px 28px;">
+      <button onclick="openAttachDiskModal('${esc(poolName)}','${esc(firstRaw)}','${esc(firstDev)}')"
+        style="background:none;border:1px dashed var(--border);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--text-3);cursor:pointer;width:100%;">
+        ⊕ Add Disk to this ${_vdevLabel(vg.type)}
+      </button>
+    </div>` : '';
+  const spareResilvered = vg.type === 'spare' && (vg.disks||[]).length >= 2 && (vg.disks||[]).every(d => d.status === 'ONLINE');
+  const spareHint = spareResilvered ? `
+    <div style="margin:6px 0 2px 4px;padding:7px 10px;background:color-mix(in srgb,var(--accent-3) 10%,transparent);border:1px solid color-mix(in srgb,var(--accent-3) 30%,transparent);border-radius:6px;font-size:12px;color:var(--text-2);line-height:1.5;">
+      ✓ Resilver complete — detach the original disk to finalize the replacement.
+    </div>` : '';
+  return `
+  <div style="margin-bottom:4px;">
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 0 4px 0;">
+      <span style="font-size:10px;font-weight:700;color:${_vdevColor(vg.type)};background:${_vdevColor(vg.type)}22;padding:2px 7px;border-radius:4px;border:1px solid ${_vdevColor(vg.type)}44;">${_vdevLabel(vg.type)}</span>
+      ${vg.name ? `<span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(vg.name)}</span>` : ''}
+      ${_vdevStatusBadge(vg.status)}
+      <span style="font-size:11px;color:var(--text-3);">${(vg.disks||[]).length} disk${(vg.disks||[]).length!==1?'s':''}</span>
+    </div>
+    <div style="border-left:2px solid var(--border);margin-left:8px;padding-left:4px;">
+      ${spareHint}
+      ${diskRows}
+      ${addBtn}
+    </div>
+  </div>`;
+}
+
+function _buildPhysicalDisksCard(pool) {
+  const vdevs = pool.vdevs || [];
+  const vdevTreeHtml = vdevs.length === 0
+    ? (pool.members||[]).map((m,i) => {
+        const dev = (pool.member_devices&&pool.member_devices[i])||m;
+        const status = (pool.member_statuses&&pool.member_statuses[i])||'ONLINE';
+        return _treeDiskRow(m, dev, status, pool.name, 0, false, false);
+      }).join('')
+    : vdevs.map(vg => _vdevGroupBlock(vg, pool.name)).join('');
+
+  const cacheRowsHtml = (pool.cache_devs||[]).map((m,i) => {
+    const dev = (pool.cache_devices&&pool.cache_devices[i])||m;
+    return _diskEntry(m, dev, 'L2ARC Cache', '#bf5af2', 'ONLINE', null);
+  }).join('');
+
+  const spareBlock = (() => {
+    const spares = pool.spare_devs || [];
+    if (!spares.length) return '';
+    const isAdmin = hasPerm('manage_pool_dataset');
+    const color = 'var(--accent-4)';
+    const diskRows = spares.map((m, i) => {
+      const dev    = (pool.spare_devices&&pool.spare_devices[i])||m;
+      const status = (pool.spare_statuses&&pool.spare_statuses[i])||'AVAIL';
+      const sn     = _diskSerialMap[dev]||_diskSerialMap[stripPart(dev)]||'';
+      const puuid  = _partuuid(m);
+      const stateColor = status==='AVAIL'?'var(--accent-4)':status==='INUSE'?'var(--accent-warn)':'var(--accent-danger)';
+      const menuId = 'disk-menu-spare-'+i+'-'+Math.random().toString(36).slice(2);
+      const spareMenu = isAdmin ? `
+        <div style="position:relative;flex-shrink:0;">
+          <button onclick="toggleDiskMenu('${menuId}')" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;">⋮</button>
+          <div id="${menuId}" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);min-width:170px;overflow:hidden;">
+            <button class="disk-menu-item" onclick="closeDiskMenus();openRemoveSpareModal('${esc(pool.name)}','${esc(m)}','${esc(dev)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-danger);">✕ Remove Spare</button>
+          </div>
+        </div>` : '';
+      return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+          <span style="color:var(--border);font-size:12px;flex-shrink:0;">├─</span>
+          ${diskSVG(16)}
+          <div style="min-width:0;">
+            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+              <span style="font-family:monospace;font-size:12px;font-weight:600;">${esc(dev||m)}</span>
+              ${sn?`<span style="font-family:monospace;font-size:10px;color:var(--text-3);">(${esc(sn)})</span>`:''}
+              <span style="font-size:10px;font-weight:700;color:${stateColor};">${esc(status)}</span>
+            </div>
+            ${puuid?`<div style="font-family:monospace;font-size:10px;color:var(--text-3);margin-top:1px;">${esc(puuid)}</div>`:''}
+          </div>
+        </div>
+        ${spareMenu}
+      </div>`;
+    }).join('');
+    return `
+    <div style="margin-bottom:4px;margin-top:4px;">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 0 4px 0;">
+        <span style="font-size:10px;font-weight:700;color:${color};background:${color}22;padding:2px 7px;border-radius:4px;border:1px solid ${color}44;">Spare</span>
+        <span style="font-family:monospace;font-size:11px;color:var(--text-3);">spares</span>
+        <span style="font-size:11px;color:var(--text-3);">${spares.length} disk${spares.length!==1?'s':''}</span>
+      </div>
+      <div style="border-left:2px solid var(--border);margin-left:8px;padding-left:4px;">
+        ${diskRows}
+      </div>
+    </div>`;
+  })();
+
+  const sectionsHtml = [
+    cacheRowsHtml ? `<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:#bf5af2;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px;">L2ARC Cache</div>${cacheRowsHtml}</div>` : '',
+    spareBlock,
+  ].join('');
+
+  const totalDisks = (pool.vdevs||[]).reduce((s,g)=>s+(g.disks||[]).length,0) + (pool.cache_devs||[]).length + (pool.spare_devs||[]).length;
+  const membersHtml = (vdevTreeHtml||sectionsHtml)
+    ? vdevTreeHtml + sectionsHtml
+    : '<div class="text-3 text-sm" style="padding:10px 0;">No device info available (run SMART refresh)</div>';
+  const addDiskBtn = hasPerm('manage_pool_dataset')
+    ? `<button class="btn btn-sm" style="margin-top:14px;width:100%;background:rgba(48,209,88,0.15);border:1.5px solid rgba(48,209,88,0.45);color:#30d158;font-weight:600;" onclick="openAddDisksModal('${esc(pool.name)}')">+ Add Capacity</button>
+       <button class="btn btn-sm" style="margin-top:8px;width:100%;background:rgba(240,180,41,0.12);border:1.5px solid rgba(240,180,41,0.4);color:#f0b429;font-weight:600;" onclick="openAddSpareModal('${esc(pool.name)}')">+ Add Spare Disk</button>`
+    : '';
+  return {totalDisks, contentHtml: membersHtml + addDiskBtn};
+}
+
+// ── Physical Disks auto-refresh (10-second interval, mirrors pool status refresh) ────
+let _physicalDisksInterval = null;
+function _clearPhysicalDisksInterval() {
+  if (_physicalDisksInterval) { clearInterval(_physicalDisksInterval); _physicalDisksInterval = null; }
+}
+function _startPhysicalDisksRefresh() {
+  _physicalDisksInterval = setInterval(_fetchPhysicalDisks, 10000);
+}
+async function _fetchPhysicalDisks() {
+  const body = document.getElementById('physical-disks-body');
+  if (!body) { _clearPhysicalDisksInterval(); return; }
+  try {
+    const resp = await fetch('/api/pools');
+    if (!resp.ok) return;
+    const pools = await resp.json() || [];
+    // Merge fresh data into allPoolsData cache
+    for (const p of pools) {
+      const idx = allPoolsData.findIndex(x => x.name === p.name);
+      if (idx >= 0) allPoolsData[idx] = p; else allPoolsData.push(p);
+    }
+    const pool = pools.find(p => p.name === selectedPoolName);
+    if (!pool) return;
+    const {totalDisks, contentHtml} = _buildPhysicalDisksCard(pool);
+    body.innerHTML = contentHtml;
+    const countEl = document.getElementById('physical-disks-count');
+    if (countEl) countEl.textContent = totalDisks;
+    const tick = document.getElementById('physical-disks-tick');
+    if (tick) tick.textContent = 'Updated ' + new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  } catch { /* ignore */ }
 }
 
 function renderPoolExists(el, pool) {
@@ -8760,60 +9322,8 @@ function renderPoolExists(el, pool) {
     </div>
   ` : `${fixerBtn}`;
 
-  // Member disks section (data members + cache devices).
-  const _diskEntry = (rawPath, devPath, roleLabel, roleColor, diskState, poolName) => {
-    const uuid = rawPath.includes('/by-partuuid/') ? rawPath.split('/').pop() : null;
-    const showUuid = uuid && uuid !== devPath;
-    const sn = _diskSerialMap[devPath] || _diskSerialMap[stripPart(devPath)] || '';
-    const isOffline = diskState === 'OFFLINE';
-    const stateColor = diskState === 'ONLINE' ? '' : diskState === 'OFFLINE' ? 'color:var(--text-3);' : 'color:var(--accent-danger);';
-    const stateLabel = diskState && diskState !== 'ONLINE' ? ` <span style="font-size:10px;font-weight:600;${stateColor}">${esc(diskState)}</span>` : '';
-    const menuId = 'disk-menu-' + Math.random().toString(36).slice(2);
-    const isAdmin = hasPerm('manage_pool_dataset');
-    const burgerMenu = isAdmin && poolName ? `
-      <div style="position:relative;flex-shrink:0;">
-        <button onclick="toggleDiskMenu('${menuId}')" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;line-height:1;padding:2px 6px;border-radius:4px;" title="Disk actions">⋮</button>
-        <div id="${menuId}" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);min-width:170px;overflow:hidden;">
-          ${!isOffline ? `<button class="disk-menu-item" onclick="closeDiskMenus();openDiskOfflineModal('${esc(poolName)}','${esc(rawPath)}','${esc(devPath)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-warn);">⏻ Force Disk Offline</button>` : ''}
-          ${isOffline  ? `<button class="disk-menu-item" onclick="closeDiskMenus();submitDiskOnline('${esc(poolName)}','${esc(rawPath)}')" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-3);">▶ Force Disk Online</button>` : ''}
-        </div>
-      </div>` : '';
-    return `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
-      <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-        <span style="${isOffline ? 'opacity:.4;' : ''}">${diskSVG(18)}</span>
-        <div style="min-width:0;">
-          <div style="font-family:monospace;font-size:13px;font-weight:600;">${esc(devPath)}${stateLabel}${sn ? ` <span style="font-weight:400;color:var(--text-3);font-size:11px;">(${esc(sn)})</span>` : ''}</div>
-          ${showUuid ? `<div style="font-family:monospace;font-size:10px;color:var(--text-3);margin-top:2px;">${esc(uuid)}</div>` : ''}
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-        <span style="font-size:11px;font-weight:600;white-space:nowrap;color:${roleColor};">${roleLabel}</span>
-        ${burgerMenu}
-      </div>
-    </div>`;
-  };
-
-  const memberRows = (pool.members || []).map((m, i) => {
-    const dev    = (pool.member_devices  && pool.member_devices[i])  || m;
-    const role   = (pool.member_roles    && pool.member_roles[i])    || 'data';
-    const status = (pool.member_statuses && pool.member_statuses[i]) || 'ONLINE';
-    const roleLabel = {stripe:'Stripe', mirror:'Mirror', raidz1:'RAIDZ-1', raidz2:'RAIDZ-2'}[role] || role.toUpperCase();
-    return _diskEntry(m, dev, roleLabel, 'var(--accent-2)', status, pool.name);
-  });
-  const cacheRows = (pool.cache_devs || []).map((m, i) => {
-    const dev = (pool.cache_devices && pool.cache_devices[i]) || m;
-    return _diskEntry(m, dev, 'L2ARC Cache', '#bf5af2', 'ONLINE', null);
-  });
-
-  const allRows = [...memberRows, ...cacheRows];
-  const membersHtml = allRows.length
-    ? allRows.join('')
-    : '<div class="text-3 text-sm" style="padding:10px 0;">No device info available (run SMART refresh)</div>';
-
-  const addDiskBtn = hasPerm('manage_pool_dataset')
-    ? `<button class="btn btn-sm" style="margin-top:14px;width:100%;background:rgba(48,209,88,0.15);border:1.5px solid rgba(48,209,88,0.45);color:#30d158;font-weight:600;" onclick="openAddDisksModal()">+ Add Capacity</button>`
-    : '';
+  // Member disks section — built by the module-level _buildPhysicalDisksCard helper
+  const {totalDisks, contentHtml: _physDiskContentHtml} = _buildPhysicalDisksCard(pool);
 
   el.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(4,minmax(min-content,1fr));gap:16px;margin-bottom:24px;">
@@ -8835,7 +9345,7 @@ function renderPoolExists(el, pool) {
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;">
+    <div class="pool-cards-grid">
       <div class="card" style="min-width:0;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
           <h3 style="margin:0;">zpool status</h3>
@@ -8857,11 +9367,13 @@ function renderPoolExists(el, pool) {
         <div class="stat-row"><span class="stat-label">Access time</span><span class="stat-value">${esc(pool.atime||'—')}</span></div>
         <div class="stat-row"><span class="stat-label">Encryption</span><span class="stat-value">${pool.encrypted ? `${esc(pool.encryption_algorithm||'on')} ${pool.key_locked ? '<span style="color:#ff9f0a;font-size:11px;">🔓 key not loaded</span>' : '<span style="color:var(--accent-3);font-size:11px;">🔒 unlocked</span>'}` : '<span style="color:var(--text-3);">off</span>'}</span></div>
       </div>
-      <div class="card" style="min-width:0;">
-        <h3 style="margin-bottom:4px;">Physical Disks (${(pool.members||[]).length + (pool.cache_devs||[]).length})</h3>
+      <div class="card" style="min-width:0;" id="physical-disks-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <h3 style="margin:0;">Physical Disks (<span id="physical-disks-count">${totalDisks}</span>)</h3>
+          <span id="physical-disks-tick" style="font-size:11px;color:var(--text-3);">Refreshing every 10s</span>
+        </div>
         <div class="text-3 text-xs" style="margin-bottom:12px;">Devices that make up this pool</div>
-        ${membersHtml}
-        ${addDiskBtn}
+        <div id="physical-disks-body">${_physDiskContentHtml}</div>
       </div>
     </div>
 
@@ -9504,7 +10016,10 @@ function openScrubScheduleHelp() {
 }
 
 // ===== Add Disks to Pool =====
-async function openAddDisksModal() {
+let _addDisksPoolName = null;  // pool for which Add Disks modal was opened
+
+async function openAddDisksModal(poolName) {
+  _addDisksPoolName = poolName || selectedPoolName || (poolData && poolData.name) || null;
   document.getElementById('add-disks-alert').classList.add('hidden');
   document.getElementById('add-disks-mode-section').style.display = 'none';
   document.getElementById('add-disks-mode-btns').innerHTML = '';
@@ -9557,15 +10072,20 @@ function updateAddDisksMode() {
   if (count === 0) { section.style.display = 'none'; return; }
   section.style.display = 'block';
 
-  const vdevType  = poolData && poolData.vdev_type || 'stripe';
+  // Resolve the pool being expanded — prefer the pool the modal was opened for.
+  const _expandPool = (_addDisksPoolName && allPoolsData.find(p => p.name === _addDisksPoolName))
+    || poolData || null;
+  const vdevType  = _expandPool && _expandPool.vdev_type || 'stripe';
   const isRaidz   = vdevType === 'raidz1' || vdevType === 'raidz2';
-  const canExpand = count === 1 && isRaidz && _addDisksVer && _addDisksVer.raidz_expand;
+  // Show RAIDZ Expansion when: exactly 1 disk, raidz pool, and either ZFS ≥2.2 confirmed or version unknown.
+  const canExpand = count === 1 && isRaidz && (!_addDisksVer || _addDisksVer.raidz_expand);
 
   // Build available options from most to least protective.
   const opts = [];
   if (canExpand) opts.push({
-    mode: 'expand', label: 'RAIDZ Expansion', badge: 'ZFS 2.2+', badgeColor: '#30d158',
-    desc: 'Attaches this disk directly to the existing RAIDZ vdev, expanding its capacity in-place. No new vdev is created.',
+    mode: 'expand', label: 'RAIDZ Expansion',
+    badge: (_addDisksVer ? `ZFS ${_addDisksVer.version}` : 'ZFS 2.2+ required'), badgeColor: '#30d158',
+    desc: 'Attaches this disk directly to the existing RAIDZ vdev, expanding its capacity in-place. No new vdev is created — the pool\'s fault tolerance is preserved.',
   });
   if (count >= 4) opts.push({
     mode: 'raidz2', label: 'RAIDZ-2', badge: 'RAID6', badgeColor: '#bf5af2',
@@ -9618,8 +10138,9 @@ function selectAddDisksMode(mode) {
 
 function closeAddDisksModal() {
   document.getElementById('modal-add-disks').classList.add('hidden');
-  _addDisksVer  = null;
-  _addDisksMode = null;
+  _addDisksVer      = null;
+  _addDisksMode     = null;
+  _addDisksPoolName = null;
 }
 
 async function submitAddDisks() {
@@ -9643,7 +10164,7 @@ async function submitAddDisks() {
 
   const resp = await fetch('/api/pool/grow', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ devices: checked, mode: _addDisksMode, pool: selectedPoolName }),
+    body: JSON.stringify({ devices: checked, mode: _addDisksMode, pool: _addDisksPoolName || selectedPoolName }),
   });
   const data = await resp.json();
   btn.disabled = false; btn.textContent = 'Add to Pool';
@@ -10332,6 +10853,321 @@ document.addEventListener('click', e => {
   if (!e.target.closest('#pool-actions-menu') && !e.target.closest('#pool-actions-burger'))
     closePoolActionsMenu();
 });
+
+// ── Spare disk management ──────────────────────────────────────────────────
+
+let _addSparePool = '';
+async function openAddSpareModal(poolName) {
+  _addSparePool = poolName || (poolData && poolData.name) || '';
+  document.getElementById('add-spare-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-add-spare-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Add Spare';
+
+  const sel = document.getElementById('add-spare-disk-select');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  document.getElementById('modal-add-spare').classList.remove('hidden');
+
+  try {
+    const disksResp = await fetch('/api/disks');
+    const disks = await disksResp.json() || [];
+
+    // Build exclusion set from the already-loaded pool data (same approach as openAddDisksModal).
+    const poolDevices = new Set();
+    if (poolData) {
+      (poolData.members        || []).forEach(m => poolDevices.add(stripPart(m)));
+      (poolData.member_devices || []).forEach(m => poolDevices.add(m));
+      (poolData.cache_devs     || []).forEach(m => poolDevices.add(stripPart(m)));
+      (poolData.cache_devices  || []).forEach(m => poolDevices.add(m));
+      (poolData.spare_devs     || []).forEach(m => poolDevices.add(stripPart(m)));
+      (poolData.spare_devices  || []).forEach(m => poolDevices.add(m));
+    }
+
+    const isPoolDisk = d => {
+      const dev = d.device || ('/dev/' + d.name);
+      return poolDevices.has(dev) || poolDevices.has(d.device) || poolDevices.has('/dev/' + d.name);
+    };
+    const hasIdentity = d => !!(d.vendor || d.model);
+    const avail = disks.filter(d => !isPoolDisk(d) && !d.in_use && hasIdentity(d));
+
+    if (!avail.length) {
+      sel.innerHTML = '<option value="">No available disks</option>';
+    } else {
+      sel.innerHTML = avail.map(d => {
+        const dev   = d.device || ('/dev/' + d.name);
+        const label = dev + (d.size_bytes ? ' — ' + fmtBytes(d.size_bytes) : '') + (d.model ? ' (' + esc(d.model) + ')' : '');
+        return `<option value="${esc(dev)}">${esc(label)}</option>`;
+      }).join('');
+    }
+  } catch(e) {
+    sel.innerHTML = '<option value="">Failed to load disks</option>';
+  }
+}
+function closeAddSpareModal() {
+  document.getElementById('modal-add-spare').classList.add('hidden');
+}
+async function submitAddSpare() {
+  const disk = document.getElementById('add-spare-disk-select').value;
+  if (!disk) return;
+  const alertEl = document.getElementById('add-spare-alert');
+  alertEl.classList.add('hidden');
+  const btn = document.getElementById('btn-add-spare-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Adding…';
+  const resp = await fetch('/api/pool/spare', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pool: _addSparePool, device: disk}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  btn.disabled = false;
+  btn.textContent = 'Add Spare';
+  if (!resp.ok) {
+    alertEl.textContent = data.error || 'Failed to add spare.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  closeAddSpareModal();
+  showToast('Spare disk added.', 'success');
+  loadPool();
+}
+
+let _removeSpare = {pool: '', device: ''};
+function openRemoveSpareModal(poolName, device, displayDevice) {
+  _removeSpare = {pool: poolName, device};
+  document.getElementById('remove-spare-name').textContent = displayDevice || device;
+  document.getElementById('remove-spare-pool').textContent = poolName;
+  document.getElementById('remove-spare-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-remove-spare-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Remove Spare';
+  document.getElementById('modal-remove-spare').classList.remove('hidden');
+}
+function closeRemoveSpareModal() {
+  document.getElementById('modal-remove-spare').classList.add('hidden');
+}
+async function confirmRemoveSpare() {
+  const alertEl = document.getElementById('remove-spare-alert');
+  alertEl.classList.add('hidden');
+  const btn = document.getElementById('btn-remove-spare-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Removing…';
+  const resp = await fetch('/api/pool/spare', {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pool: _removeSpare.pool, device: _removeSpare.device}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  btn.disabled = false;
+  btn.textContent = 'Remove Spare';
+  if (!resp.ok) {
+    alertEl.textContent = data.error || 'Failed to remove spare.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  closeRemoveSpareModal();
+  showToast('Spare disk removed.', 'success');
+  loadPool();
+}
+
+let _detachDiskPending = null;
+function openDetachDiskModal(poolName, rawPath, devPath) {
+  _detachDiskPending = {pool: poolName, device: rawPath, display: devPath || rawPath};
+  document.getElementById('detach-disk-name').textContent = devPath || rawPath;
+  document.getElementById('detach-disk-pool').textContent = poolName;
+  document.getElementById('detach-disk-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-detach-disk-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Detach Disk';
+  document.getElementById('modal-detach-disk').classList.remove('hidden');
+}
+function closeDetachDiskModal() {
+  document.getElementById('modal-detach-disk').classList.add('hidden');
+}
+async function confirmDetachDisk() {
+  const alertEl = document.getElementById('detach-disk-alert');
+  alertEl.classList.add('hidden');
+  const btn = document.getElementById('btn-detach-disk-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Detaching…';
+  const resp = await fetch('/api/pool/detach-disk', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pool: _detachDiskPending.pool, device: _detachDiskPending.device}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  btn.disabled = false;
+  btn.textContent = 'Detach Disk';
+  if (!resp.ok) {
+    alertEl.textContent = data.error || 'Failed to detach disk.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  closeDetachDiskModal();
+  showToast('Disk detached from pool.', 'success');
+  loadPool();
+}
+
+let _replaceDiskPending = null;
+async function openReplaceDiskModal(poolName, rawPath, devPath) {
+  _replaceDiskPending = {pool: poolName, oldDevice: rawPath, display: devPath || rawPath};
+  document.getElementById('replace-disk-old-name').textContent = devPath || rawPath;
+  document.getElementById('replace-disk-pool').textContent = poolName;
+  document.getElementById('replace-disk-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-replace-disk-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Replace & Resilver';
+  const listEl = document.getElementById('replace-disk-list');
+  listEl.innerHTML = '<div style="padding:16px;color:var(--text-3);text-align:center;">Loading available disks…</div>';
+  document.getElementById('modal-replace-disk').classList.remove('hidden');
+  try {
+    const resp = await fetch('/api/disks');
+    const disks = resp.ok ? await resp.json() : [];
+    const available = (disks || []).filter(d => !d.in_use && d.device);
+
+    // Find which disks are already spares for this pool.
+    const pool = allPoolsData.find(p => p.name === poolName);
+    const spareBaseDevs = new Set(
+      (pool && pool.spare_devices || []).map(d => stripPart(d))
+    );
+    const isSpare = d => spareBaseDevs.has(d.device) || spareBaseDevs.has(stripPart(d.device||''));
+
+    const spares = available.filter(isSpare);
+    const others = available.filter(d => !isSpare(d));
+
+    if (!available.length) {
+      listEl.innerHTML = '<div style="padding:16px;color:var(--text-3);text-align:center;">No available disks found.</div>';
+      return;
+    }
+
+    const mkRow = (d, spare, checked) => {
+      const gb   = d.size_bytes ? (d.size_bytes / 1e9).toFixed(1) + ' GB' : '';
+      const sn   = d.serial || '';
+      const dev  = d.device || ('/dev/' + d.name);
+      return `
+      <label style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--border);cursor:pointer;${checked?'background:color-mix(in srgb,var(--accent-warn) 6%,transparent);':''}">
+        <input type="radio" name="replace-disk-choice" value="${esc(dev)}" ${checked?'checked':''}
+          style="width:15px;height:15px;accent-color:var(--accent-warn);flex-shrink:0;" onchange="this.closest('label').parentElement.querySelectorAll('label').forEach(l=>l.style.background='');this.closest('label').style.background='color-mix(in srgb,var(--accent-warn) 6%,transparent)'">
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-family:monospace;font-size:13px;font-weight:600;">${esc(dev)}</span>
+            ${sn ? `<span style="font-family:monospace;font-size:11px;color:var(--text-3);">(${esc(sn)})</span>` : ''}
+            ${spare ? `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:10px;background:color-mix(in srgb,var(--accent-3) 15%,transparent);color:var(--accent-3);border:1px solid color-mix(in srgb,var(--accent-3) 30%,transparent);">★ Pool spare</span>` : ''}
+          </div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:2px;">${esc(d.model||d.vendor||'Unknown')}${gb?' — '+gb:''}</div>
+          ${spare ? `<div style="font-size:11px;color:var(--text-3);margin-top:1px;">Existing partition reused — disk will not be wiped</div>` : ''}
+        </div>
+      </label>`;
+    };
+
+    let html = '';
+    if (spares.length) {
+      html += `<div style="padding:6px 12px 4px;font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;background:var(--surface2);">Pool spares</div>`;
+      html += spares.map((d, i) => mkRow(d, true, i === 0 && !others.length || i === 0)).join('');
+    }
+    if (others.length) {
+      html += `<div style="padding:6px 12px 4px;font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;background:var(--surface2);">Other disks — will be wiped &amp; repartitioned</div>`;
+      html += others.map((d, i) => mkRow(d, false, !spares.length && i === 0)).join('');
+    }
+    listEl.innerHTML = html;
+  } catch(e) {
+    listEl.innerHTML = `<div style="padding:16px;color:var(--accent-danger);">Failed to load disks: ${esc(e.message)}</div>`;
+  }
+}
+function closeReplaceDiskModal() {
+  document.getElementById('modal-replace-disk').classList.add('hidden');
+}
+async function confirmReplaceDisk() {
+  const checked = document.querySelector('input[name="replace-disk-choice"]:checked');
+  const newDevice = checked ? checked.value : '';
+  const alertEl = document.getElementById('replace-disk-alert');
+  alertEl.classList.add('hidden');
+  if (!newDevice) {
+    alertEl.textContent = 'Please select a replacement disk.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  const btn = document.getElementById('btn-replace-disk-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Replacing…';
+  const resp = await fetch('/api/pool/replace-disk', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pool: _replaceDiskPending.pool, old_device: _replaceDiskPending.oldDevice, new_device: newDevice}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  btn.disabled = false;
+  btn.textContent = 'Replace & Resilver';
+  if (!resp.ok) {
+    alertEl.textContent = data.error || 'Failed to replace disk.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  closeReplaceDiskModal();
+  showToast('Disk replacement started — resilver in progress.', 'success');
+  loadPool();
+}
+
+let _attachDiskPending = null;
+async function openAttachDiskModal(poolName, rawPath, devPath) {
+  _attachDiskPending = {pool: poolName, existingDevice: rawPath, display: devPath || rawPath};
+  document.getElementById('attach-disk-existing-name').textContent = devPath || rawPath;
+  document.getElementById('attach-disk-pool').textContent = poolName;
+  document.getElementById('attach-disk-alert').classList.add('hidden');
+  const btn = document.getElementById('btn-attach-disk-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Attach & Mirror';
+  const sel = document.getElementById('attach-disk-select');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  document.getElementById('modal-attach-disk').classList.remove('hidden');
+  try {
+    const resp = await fetch('/api/disks');
+    const disks = resp.ok ? await resp.json() : [];
+    const available = (disks || []).filter(d => !d.in_use && d.device);
+    sel.innerHTML = available.length === 0
+      ? '<option value="">No available disks</option>'
+      : available.map(d => {
+          const gb = d.size_bytes ? ' — ' + (d.size_bytes / 1e9).toFixed(0) + ' GB' : '';
+          const label = (d.model ? d.model + ' ' : '') + (d.name || d.device) + gb;
+          return `<option value="${esc(d.device)}">${esc(label)}</option>`;
+        }).join('');
+  } catch(e) {
+    sel.innerHTML = '<option value="">Error loading disks</option>';
+  }
+}
+function closeAttachDiskModal() {
+  document.getElementById('modal-attach-disk').classList.add('hidden');
+}
+async function confirmAttachDisk() {
+  const sel = document.getElementById('attach-disk-select');
+  const newDevice = sel.value;
+  const alertEl = document.getElementById('attach-disk-alert');
+  alertEl.classList.add('hidden');
+  if (!newDevice) {
+    alertEl.textContent = 'Please select a disk to attach.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  const btn = document.getElementById('btn-attach-disk-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Attaching…';
+  const resp = await fetch('/api/pool/attach-disk', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pool: _attachDiskPending.pool, existing_device: _attachDiskPending.existingDevice, new_device: newDevice}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  btn.disabled = false;
+  btn.textContent = 'Attach & Mirror';
+  if (!resp.ok) {
+    alertEl.textContent = data.error || 'Failed to attach disk.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  closeAttachDiskModal();
+  showToast('Mirror disk attached — resilver started.', 'success');
+  loadPool();
+}
 
 let _diskOfflinePending = null;
 function openDiskOfflineModal(poolName, device, displayDevice) {
@@ -11620,6 +12456,12 @@ function openCreateDataset() {
   document.getElementById('cds-enc-chevron').textContent = '▶';
   document.getElementById('cds-enc-enable').value = 'inherit';
   document.getElementById('cds-enc-key-row').style.display = 'none';
+  document.getElementById('cds-client-key-panel').style.display = 'none';
+  document.getElementById('cds-generated-key').textContent = '';
+  document.getElementById('cds-key-saved-cb').checked = false;
+  document.getElementById('cds-enc-manage-btn').style.display = '';
+  const submitBtn = document.querySelector('#modal-create-dataset button[type=submit]');
+  if (submitBtn) submitBtn.disabled = false;
 
   _updateCDSEncVisibility();
 }
@@ -11655,6 +12497,12 @@ function toggleCDSEncryption() {
 function onCDSEncChange() {
   const enabled = document.getElementById('cds-enc-enable').value === 'enabled';
   document.getElementById('cds-enc-key-row').style.display = enabled ? 'block' : 'none';
+  if (!enabled) {
+    document.getElementById('cds-client-key-panel').style.display = 'none';
+    document.getElementById('cds-enc-manage-btn').style.display = '';
+    const submitBtn = document.querySelector('#modal-create-dataset button[type=submit]');
+    if (submitBtn) submitBtn.disabled = false;
+  }
 }
 
 async function refreshCDSKeyDropdown() {
@@ -11662,6 +12510,7 @@ async function refreshCDSKeyDropdown() {
   try {
     const r = await fetch('/api/encryption/keys'); const keys = await r.json();
     sel.innerHTML = '<option value="">— select a key —</option>' +
+      '<option value="__client__">✦ Generate Client Key (you keep it)</option>' +
       (keys||[]).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
   } catch(e) {}
 }
@@ -11685,10 +12534,15 @@ async function submitCreateDataset(e) {
   const casesens      = document.getElementById('cds-casesensitivity').value;
   const comment       = document.getElementById('cds-comment').value.trim();
   const encEnabled    = document.getElementById('cds-enc-enable').value === 'enabled';
-  const keyID         = encEnabled ? document.getElementById('cds-enc-key').value : '';
+  const rawKeyVal     = encEnabled ? document.getElementById('cds-enc-key').value : '';
+  const isClientKey   = rawKeyVal === '__client__';
+  const keyID         = (encEnabled && !isClientKey) ? rawKeyVal : '';
+  const clientKeyHex  = (encEnabled && isClientKey) ? document.getElementById('cds-generated-key').textContent : '';
 
   if (!name) { alertEl.textContent = 'Dataset name is required.'; alertEl.classList.remove('hidden'); return; }
-  if (encEnabled && !keyID) { alertEl.textContent = 'Please select an encryption key.'; alertEl.classList.remove('hidden'); return; }
+  if (encEnabled && !keyID && !isClientKey) { alertEl.textContent = 'Please select an encryption key.'; alertEl.classList.remove('hidden'); return; }
+  if (encEnabled && isClientKey && !clientKeyHex) { alertEl.textContent = 'Client key not generated yet.'; alertEl.classList.remove('hidden'); return; }
+  if (encEnabled && isClientKey && !document.getElementById('cds-key-saved-cb').checked) { alertEl.textContent = 'Please confirm you have saved the key.'; alertEl.classList.remove('hidden'); return; }
 
   const fullName        = parent + '/' + name;
   const unitMap         = {'MB':1024**2,'GB':1024**3,'TB':1024**4};
@@ -11707,6 +12561,7 @@ async function submitCreateDataset(e) {
       compression: comp, record_size: recordsize,
       sync, dedup, case_sensitivity: casesens, comment,
       key_id: keyID || undefined,
+      client_key_hex: clientKeyHex || undefined,
     }),
   });
   const data = await resp.json();
@@ -11813,17 +12668,337 @@ function openEditDataset(name) {
   // Show encryption key section only when the dataset itself has a locked key
   // AND the pool is not the one carrying the encryption (pool-level enc is handled in pool settings).
   const encSection = document.getElementById('eds-enc-section');
+  const advSecSection = document.getElementById('eds-adv-sec');
   const poolName = name.split('/')[0];
   const poolEncrypted = (allPoolsData || []).some(p => p.name === poolName && p.encrypted);
   if (d.encrypted && d.key_locked && !poolEncrypted) {
     encSection.style.display = '';
+    advSecSection.style.display = 'none';
     refreshEDSKeyDropdown();
+  } else if (d.encrypted && !d.key_locked) {
+    encSection.style.display = 'none';
+    document.getElementById('eds-enc-key').value = '';
+    advSecSection.style.display = '';
+    // Reset collapse state.
+    document.getElementById('eds-advsec-body').style.display = 'none';
+    document.getElementById('eds-advsec-chevron').textContent = '▶';
+    openEDSAdvSec(name);
   } else {
     encSection.style.display = 'none';
+    advSecSection.style.display = 'none';
     document.getElementById('eds-enc-key').value = '';
   }
 }
 function closeEditDataset() { document.getElementById('modal-edit-dataset').classList.add('hidden'); }
+
+// ── Dataset Lock / Unlock ──────────────────────────────────────────────────
+
+let _lockDsName = '';
+
+function lockDataset(name) {
+  _lockDsName = name;
+  document.getElementById('lock-ds-name').textContent = name;
+  document.getElementById('lock-ds-busy-section').style.display = 'none';
+  document.getElementById('lock-ds-busy-msg').textContent = '';
+  document.getElementById('btn-lock-ds-force').style.display = 'none';
+  const btn = document.getElementById('btn-lock-ds-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Lock Dataset';
+  btn.style.display = '';
+  document.getElementById('modal-lock-dataset').classList.remove('hidden');
+}
+
+function closeLockDatasetModal() {
+  document.getElementById('modal-lock-dataset').classList.add('hidden');
+  _lockDsName = '';
+}
+
+async function doLockDataset(force) {
+  const confirmBtn    = document.getElementById('btn-lock-ds-confirm');
+  const forceBtn      = document.getElementById('btn-lock-ds-force');
+  const busySection   = document.getElementById('lock-ds-busy-section');
+  const retrySection  = document.getElementById('lock-ds-retry-section');
+  const retryMsg      = document.getElementById('lock-ds-retry-msg');
+
+  confirmBtn.disabled = true;
+  forceBtn.disabled   = true;
+  busySection.style.display = 'none';
+
+  if (force) {
+    retrySection.style.display = '';
+    retryMsg.textContent = 'Disconnecting active clients and retrying for up to 10 s…';
+  } else {
+    retrySection.style.display = 'none';
+    confirmBtn.innerHTML = '<span class="spinner"></span> Locking…';
+  }
+
+  const resp = await fetch('/api/datasets/' + encodeURIComponent(_lockDsName) + '/unload-key', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({force: !!force}),
+  });
+  const data = await resp.json().catch(() => ({}));
+
+  retrySection.style.display = 'none';
+  confirmBtn.disabled = false;
+  forceBtn.disabled   = false;
+  confirmBtn.textContent = 'Lock Dataset';
+  forceBtn.innerHTML = 'Force Disconnect &amp; Lock';
+
+  if (!resp.ok) {
+    if (resp.status === 409 || data.code === 'busy') {
+      busySection.style.display = '';
+      document.getElementById('lock-ds-busy-msg').textContent = data.error || '';
+      forceBtn.style.display = '';
+    } else {
+      busySection.style.display = '';
+      busySection.querySelector('[style*="font-weight:600"]').textContent = 'Lock failed';
+      document.getElementById('lock-ds-busy-msg').textContent = data.error || 'An unexpected error occurred.';
+      forceBtn.style.display = 'none';
+    }
+    return;
+  }
+  closeLockDatasetModal();
+  showToast('Dataset locked.', 'success');
+  loadDatasets();
+}
+
+let _unlockDsName = '';
+
+async function openUnlockDatasetModal(name) {
+  _unlockDsName = name;
+  document.getElementById('unlock-ds-name').textContent = name;
+  document.getElementById('unlock-ds-alert').classList.add('hidden');
+  document.getElementById('unlock-ds-passphrase').value = '';
+  document.getElementById('unlock-ds-pass-toggle').textContent = '👁';
+  document.getElementById('unlock-ds-passphrase').type = 'password';
+  document.getElementById('btn-unlock-ds').disabled = false;
+  document.getElementById('btn-unlock-ds').textContent = 'Unlock & Mount';
+
+  // Detect keylocation to decide which section to show.
+  document.getElementById('unlock-ds-stored-section').style.display = 'none';
+  document.getElementById('unlock-ds-passphrase-section').style.display = 'none';
+  document.getElementById('modal-unlock-dataset').classList.remove('hidden');
+
+  try {
+    const r = await fetch('/api/datasets/' + encodeURIComponent(name) + '/key-info');
+    const info = await r.json();
+    if (info.keylocation && info.keylocation !== 'prompt') {
+      document.getElementById('unlock-ds-stored-section').style.display = '';
+      await refreshUnlockDsKeyDropdown();
+    } else {
+      document.getElementById('unlock-ds-passphrase-section').style.display = '';
+    }
+  } catch(e) {
+    // Fallback to passphrase mode on error.
+    document.getElementById('unlock-ds-passphrase-section').style.display = '';
+  }
+}
+
+async function refreshUnlockDsKeyDropdown() {
+  const sel = document.getElementById('unlock-ds-key-select');
+  try {
+    const r = await fetch('/api/encryption/keys');
+    const keys = await r.json();
+    sel.innerHTML = '<option value="">— select a key —</option>' +
+      (keys || []).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
+  } catch(e) {}
+}
+
+function closeUnlockDatasetModal() {
+  document.getElementById('modal-unlock-dataset').classList.add('hidden');
+  _unlockDsName = '';
+}
+
+function toggleUnlockPassVisibility() {
+  const inp = document.getElementById('unlock-ds-passphrase');
+  const btn = document.getElementById('unlock-ds-pass-toggle');
+  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = '🙈'; }
+  else { inp.type = 'password'; btn.textContent = '👁'; }
+}
+
+async function doUnlockDataset() {
+  const alertEl = document.getElementById('unlock-ds-alert');
+  alertEl.classList.add('hidden');
+  const btn = document.getElementById('btn-unlock-ds');
+  const passphraseSection = document.getElementById('unlock-ds-passphrase-section');
+  const storedSection = document.getElementById('unlock-ds-stored-section');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Unlocking…';
+
+  let resp;
+  if (storedSection.style.display !== 'none') {
+    const keyID = document.getElementById('unlock-ds-key-select').value;
+    if (!keyID) {
+      alertEl.textContent = 'Please select an encryption key.';
+      alertEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Unlock & Mount';
+      return;
+    }
+    resp = await fetch('/api/datasets/' + encodeURIComponent(_unlockDsName) + '/load-key', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({key_id: keyID}),
+    });
+  } else {
+    const pass = document.getElementById('unlock-ds-passphrase').value;
+    if (!pass.trim()) {
+      alertEl.textContent = 'Please enter your key.';
+      alertEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Unlock & Mount';
+      return;
+    }
+    resp = await fetch('/api/datasets/' + encodeURIComponent(_unlockDsName) + '/unlock-passphrase', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({passphrase: pass}),
+    });
+  }
+
+  const data = await resp.json().catch(() => ({}));
+  btn.disabled = false; btn.textContent = 'Unlock & Mount';
+  if (!resp.ok) {
+    alertEl.textContent = data.error || 'Failed to unlock dataset.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  closeUnlockDatasetModal();
+  showToast('Dataset unlocked and mounted.', 'success');
+  loadDatasets();
+}
+
+// ── Edit Dataset: Advanced Security section ────────────────────────────────
+
+function toggleEDSAdvSec() {
+  const body = document.getElementById('eds-advsec-body');
+  const chev = document.getElementById('eds-advsec-chevron');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  chev.textContent = open ? '▶' : '▼';
+}
+
+async function openEDSAdvSec(dsName) {
+  const sel = document.getElementById('eds-key-source');
+  const note = document.getElementById('eds-key-source-note');
+  note.style.display = 'none';
+  document.getElementById('eds-advsec-alert').classList.add('hidden');
+
+  // Populate stored keys.
+  try {
+    const r = await fetch('/api/encryption/keys');
+    const keys = await r.json();
+    sel.innerHTML = '<option value="prompt">Ask User — enter key at unlock (not stored on ZNAS)</option>' +
+      (keys || []).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
+  } catch(e) {}
+
+  // Pre-select current keylocation.
+  try {
+    const r = await fetch('/api/datasets/' + encodeURIComponent(dsName) + '/key-info');
+    const info = await r.json();
+    if (info.keylocation && info.keylocation !== 'prompt' && info.keylocation.startsWith('file://')) {
+      // Extract key ID from file path: config/keys/<id>.key
+      const base = info.keylocation.replace('file://', '').split('/').pop().replace('.key', '');
+      if (sel.querySelector(`option[value="${base}"]`)) sel.value = base;
+      else sel.value = 'prompt';
+    } else {
+      sel.value = 'prompt';
+    }
+  } catch(e) {}
+  onEDSKeySourceChange();
+}
+
+function onEDSKeySourceChange() {
+  const val = document.getElementById('eds-key-source').value;
+  const note = document.getElementById('eds-key-source-note');
+  if (val === 'prompt') {
+    note.style.display = 'block';
+    note.style.background = 'rgba(240,180,41,0.1)';
+    note.style.border = '1px solid var(--accent-warn,#f0b429)';
+    note.style.color = 'var(--text-1)';
+    note.innerHTML = '⚠ The dataset will <strong>not auto-mount at boot</strong>. You must unlock it manually via the "🔓 Unlock Dataset" action each time after a reboot.';
+  } else {
+    note.style.display = 'block';
+    note.style.background = 'rgba(48,209,88,0.08)';
+    note.style.border = '1px solid rgba(48,209,88,0.35)';
+    note.style.color = 'var(--text-1)';
+    note.innerHTML = '✓ ZNAS will load this key automatically at boot and mount the dataset.';
+  }
+}
+
+async function saveEDSKeySource() {
+  const alertEl = document.getElementById('eds-advsec-alert');
+  alertEl.classList.add('hidden');
+  const btn = document.getElementById('btn-eds-apply-keysource');
+  const name = document.getElementById('eds-name').dataset.name;
+  const val = document.getElementById('eds-key-source').value;
+
+  btn.disabled = true; btn.textContent = 'Applying…';
+  const body = val === 'prompt'
+    ? {key_source: 'prompt'}
+    : {key_source: 'stored', key_id: val};
+
+  const resp = await fetch('/api/datasets/' + encodeURIComponent(name) + '/key-source', {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  btn.disabled = false; btn.textContent = 'Apply';
+  if (!resp.ok) {
+    alertEl.textContent = data.error || 'Failed to apply key source.';
+    alertEl.classList.remove('hidden');
+    return;
+  }
+  showToast('Key source updated.', 'success');
+  // Collapse section.
+  document.getElementById('eds-advsec-body').style.display = 'none';
+  document.getElementById('eds-advsec-chevron').textContent = '▶';
+  loadDatasets();
+}
+
+// ── Create Dataset: client key generation ─────────────────────────────────
+
+function onCDSKeyChange() {
+  const val = document.getElementById('cds-enc-key').value;
+  const panel = document.getElementById('cds-client-key-panel');
+  const manageBtn = document.getElementById('cds-enc-manage-btn');
+  if (val === '__client__') {
+    panel.style.display = 'block';
+    manageBtn.style.display = 'none';
+    if (!document.getElementById('cds-generated-key').textContent) {
+      regenerateCDSClientKey();
+    }
+  } else {
+    panel.style.display = 'none';
+    manageBtn.style.display = '';
+  }
+  updateCDSSubmitState();
+}
+
+function regenerateCDSClientKey() {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  const hex = Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+  document.getElementById('cds-generated-key').textContent = hex;
+  document.getElementById('cds-key-saved-cb').checked = false;
+  updateCDSSubmitState();
+}
+
+function copyCDSGeneratedKey() {
+  const key = document.getElementById('cds-generated-key').textContent;
+  navigator.clipboard.writeText(key).then(() => showToast('Key copied to clipboard.', 'success'))
+    .catch(() => showToast('Copy failed — select the key manually.', 'error'));
+}
+
+function updateCDSSubmitState() {
+  const val = document.getElementById('cds-enc-key').value;
+  const submitBtn = document.querySelector('#modal-create-dataset button[type=submit]');
+  if (!submitBtn) return;
+  if (val === '__client__') {
+    const saved = document.getElementById('cds-key-saved-cb').checked;
+    submitBtn.disabled = !saved;
+  } else {
+    submitBtn.disabled = false;
+  }
+}
 
 async function refreshEDSKeyDropdown() {
   const sel = document.getElementById('eds-enc-key');
@@ -13471,6 +14646,7 @@ async function openCreateShare() {
   document.getElementById('share-allowed-hosts').value = '';
   document.getElementById('share-hosts-deny').value = '';
   document.getElementById('share-alert').classList.add('hidden');
+  document.getElementById('share-enabled-wrap').style.display = 'none';
   await loadShareFormData([]);
   document.getElementById('modal-share').classList.remove('hidden');
   document.getElementById('share-name').focus();
@@ -13524,6 +14700,8 @@ async function _openEditShareObj(s) {
   document.getElementById('share-apple-enc').checked = !!s.apple_encoding;
   document.getElementById('share-allowed-hosts').value = s.allowed_hosts || '';
   document.getElementById('share-hosts-deny').value = s.hosts_deny || '';
+  setShareToggle('share', !s.disabled);
+  document.getElementById('share-enabled-wrap').style.display = 'flex';
   document.getElementById('share-alert').classList.add('hidden');
   await loadShareFormData(s.valid_users || []);
   document.getElementById('modal-share').classList.remove('hidden');
@@ -13636,6 +14814,31 @@ function toggleShareShadowCopy() {
   }
 }
 
+// ── Share availability toggle helpers ──────────────────────────────────────
+// prefix is 'share' or 'nfs'
+function setShareToggle(prefix, enabled) {
+  document.getElementById(prefix + '-enabled').checked = enabled;
+  const track = document.getElementById(prefix + '-toggle-track');
+  const label = document.getElementById(prefix + '-enabled-label');
+  if (enabled) {
+    track.classList.add('on');
+    label.textContent = 'Enabled';
+    label.style.color = 'var(--accent-4)';
+  } else {
+    track.classList.remove('on');
+    label.textContent = 'Disabled';
+    label.style.color = 'var(--text-3)';
+  }
+}
+function toggleShareEnabled() {
+  const cb = document.getElementById('share-enabled');
+  setShareToggle('share', !cb.checked);
+}
+function toggleNFSEnabled() {
+  const cb = document.getElementById('nfs-enabled');
+  setShareToggle('nfs', !cb.checked);
+}
+
 (function() {
   // Rotate the ▶ arrow when the Advanced Settings <details> opens/closes.
   document.addEventListener('DOMContentLoaded', () => {
@@ -13731,6 +14934,8 @@ async function submitShare(e) {
   const allowedHosts   = document.getElementById('share-allowed-hosts').value.trim();
   const hostsDeny      = document.getElementById('share-hosts-deny').value.trim();
 
+  const enabledEl = document.getElementById('share-enabled');
+  const disabled = isEdit ? !enabledEl.checked : false;
   const body = {
     name, path, comment, browseable, read_only: readOnly, guest_ok: guestOK, valid_users: validUsers,
     time_machine: timeMachine, tm_quota_gb: tmQuotaGB,
@@ -13740,6 +14945,7 @@ async function submitShare(e) {
     windows_acl: windowsACL,
     shadow_copy: shadowCopy,
     shadow_copy_format: document.getElementById('share-shadow-format')?.value.trim() || 'auto-%Y%m%d-%H%M%S',
+    disabled,
   };
   const winACLChanged = isEdit && (windowsACL !== _shareOrigWindowsACL);
   if (winACLChanged) {
@@ -13945,6 +15151,7 @@ async function openCreateNFSShare() {
   document.getElementById('nfs-sync').checked             = true;
   document.getElementById('nfs-nosubtree').checked        = true;
   document.getElementById('nfs-norootsquash').checked     = false;
+  document.getElementById('nfs-enabled-wrap').style.display = 'none';
   document.getElementById('nfs-share-alert').classList.add('hidden');
   await loadNFSDatasetDropdown('');
   document.getElementById('modal-nfs-share').classList.remove('hidden');
@@ -13964,6 +15171,8 @@ function openEditNFSShare(i) {
   document.getElementById('nfs-sync').checked             = !!s.sync;
   document.getElementById('nfs-nosubtree').checked        = !!s.no_subtree_check;
   document.getElementById('nfs-norootsquash').checked     = !!s.no_root_squash;
+  setShareToggle('nfs', !s.disabled);
+  document.getElementById('nfs-enabled-wrap').style.display = 'flex';
   document.getElementById('nfs-share-alert').classList.add('hidden');
   loadNFSDatasetDropdown(s.path);
   document.getElementById('modal-nfs-share').classList.remove('hidden');
@@ -13991,6 +15200,7 @@ async function submitNFSShare(e) {
   e.preventDefault();
   const alertEl = document.getElementById('nfs-share-alert');
   alertEl.classList.add('hidden');
+  const nfsEnabledEl = document.getElementById('nfs-enabled');
   const body = {
     path:             document.getElementById('nfs-path').value.trim(),
     client:           document.getElementById('nfs-client').value.trim() || '*',
@@ -13999,6 +15209,7 @@ async function submitNFSShare(e) {
     sync:             document.getElementById('nfs-sync').checked,
     no_subtree_check: document.getElementById('nfs-nosubtree').checked,
     no_root_squash:   document.getElementById('nfs-norootsquash').checked,
+    disabled:         nfsEditId ? !nfsEnabledEl.checked : false,
   };
   if (!body.path) {
     alertEl.textContent = 'Path is required.';
@@ -14099,6 +15310,26 @@ function toggleDsMenu(evt) {
   browseBtn.textContent = '📂 Browse Files';
   browseBtn.addEventListener('click', () => { closeShareMenus(); openFileBrowser('dataset', dsName); });
   dd.appendChild(browseBtn);
+
+  // Lock / Unlock actions for encrypted datasets.
+  const dsObj = (datasetCache || []).find(x => x.name === dsName);
+  if (dsObj && dsObj.encrypted) {
+    const encSep = document.createElement('hr');
+    encSep.className = 'menu-sep';
+    dd.appendChild(encSep);
+
+    if (!dsObj.key_locked) {
+      const lockBtn = document.createElement('button');
+      lockBtn.textContent = '🔒 Lock Dataset';
+      lockBtn.addEventListener('click', () => { closeShareMenus(); lockDataset(dsName); });
+      dd.appendChild(lockBtn);
+    } else {
+      const unlockBtn = document.createElement('button');
+      unlockBtn.textContent = '🔓 Unlock Dataset';
+      unlockBtn.addEventListener('click', () => { closeShareMenus(); openUnlockDatasetModal(dsName); });
+      dd.appendChild(unlockBtn);
+    }
+  }
 
   const sep = document.createElement('hr');
   sep.className = 'menu-sep';
@@ -19343,6 +20574,11 @@ document.addEventListener('click', function(e) {
   const closeFns = {
     'modal-pool-settings':    closePoolSettingsModal,
     'modal-add-disks':        closeAddDisksModal,
+    'modal-add-spare':        closeAddSpareModal,
+    'modal-remove-spare':     closeRemoveSpareModal,
+    'modal-attach-disk':      closeAttachDiskModal,
+    'modal-detach-disk':      closeDetachDiskModal,
+    'modal-replace-disk':     closeReplaceDiskModal,
     'modal-confirm-create-pool':  closeCreatePoolConfirm,
     'modal-add-capacity-guide':   closeAddCapacityGuide,
     'modal-disk-offline':     closeDiskOfflineModal,

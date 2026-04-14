@@ -106,6 +106,16 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleAddPoolCache)))).Methods("POST")
 	r.Handle("/api/pool/cache",
 		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleRemovePoolCache)))).Methods("DELETE")
+	r.Handle("/api/pool/spare",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleAddPoolSpare)))).Methods("POST")
+	r.Handle("/api/pool/spare",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleRemovePoolSpare)))).Methods("DELETE")
+	r.Handle("/api/pool/attach-disk",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleAttachPoolDisk)))).Methods("POST")
+	r.Handle("/api/pool/detach-disk",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleDetachPoolDisk)))).Methods("POST")
+	r.Handle("/api/pool/replace-disk",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleReplacePoolDisk)))).Methods("POST")
 	r.Handle("/api/pool/clear",
 		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleClearPool)))).Methods("POST")
 	r.Handle("/api/pool/fixer/online",
@@ -158,6 +168,14 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleCreateDataset)))).Methods("POST")
 	r.Handle("/api/datasets/{path:.+}/load-key",
 		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleLoadDatasetKey)))).Methods("POST")
+	r.Handle("/api/datasets/{path:.+}/unload-key",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleUnloadDatasetKey)))).Methods("POST")
+	r.Handle("/api/datasets/{path:.+}/unlock-passphrase",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleUnlockDatasetPassphrase)))).Methods("POST")
+	r.Handle("/api/datasets/{path:.+}/key-info",
+		RequireAuth(http.HandlerFunc(HandleGetDatasetKeyInfo))).Methods("GET")
+	r.Handle("/api/datasets/{path:.+}/key-source",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleSetDatasetKeySource)))).Methods("PUT")
 	r.Handle("/api/datasets/{path:.+}",
 		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleUpdateDataset)))).Methods("PUT")
 	r.Handle("/api/datasets/{path:.+}",

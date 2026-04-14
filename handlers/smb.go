@@ -349,8 +349,10 @@ func HandleUpdateShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found := false
+	availabilityChanged := false
 	for i, s := range shares {
 		if strings.EqualFold(s.Name, name) {
+			availabilityChanged = s.Disabled != req.Disabled
 			shares[i] = req
 			found = true
 			break
@@ -365,7 +367,9 @@ func HandleUpdateShare(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if r.URL.Query().Get("restart") == "true" {
+	if r.URL.Query().Get("restart") == "true" || availabilityChanged {
+		// A full restart is required when the available flag changes because Samba
+		// does not reliably pick up availability changes on a mere reload.
 		_ = system.RestartSamba()
 	} else {
 		_ = system.ReloadSamba()

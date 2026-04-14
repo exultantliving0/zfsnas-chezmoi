@@ -62,6 +62,10 @@ type SMBShare struct {
 	// Host access control
 	AllowedHosts string `json:"allowed_hosts"` // space-separated IPs/hostnames/subnets
 	HostsDeny    string `json:"hosts_deny"`
+
+	// Availability — when true, the share is written with "available = no" in smb.conf
+	// so Samba refuses connections but the service keeps running for other shares.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // UnmarshalJSON for SMBShare handles migration from the old []string valid_users
@@ -258,6 +262,14 @@ func applySMBConf(shares []SMBShare) error {
 	sb.WriteString(smbBeginMarker + "\n")
 	for _, s := range shares {
 		sb.WriteString(fmt.Sprintf("\n[%s]\n", s.Name))
+		// Always write the available line so the value is explicit in the file.
+		// Samba needs an explicit "available = yes" (not just absence of "no")
+		// to reliably un-hide a share that was previously marked unavailable.
+		if s.Disabled {
+			sb.WriteString("   available = no\n")
+		} else {
+			sb.WriteString("   available = yes\n")
+		}
 		if s.Comment != "" {
 			sb.WriteString("   comment = " + s.Comment + "\n")
 		}
@@ -676,6 +688,23 @@ func RemoveSMBHomeDirIfEmpty(dataset, username string) error {
 }
 
 // ReloadSamba reloads the Samba configuration without dropping connections.
+// SetSMBShareDisabled marks a share as disabled or enabled in the JSON config
+// and rewrites smb.conf. The caller is responsible for calling ReloadSamba()
+// after all desired share changes have been applied.
+func SetSMBShareDisabled(configDir, name string, disabled bool) error {
+	shares, err := ListSMBShares(configDir)
+	if err != nil {
+		return err
+	}
+	for i := range shares {
+		if shares[i].Name == name {
+			shares[i].Disabled = disabled
+			return SaveSMBShares(configDir, shares)
+		}
+	}
+	return fmt.Errorf("SMB share not found: %s", name)
+}
+
 func ReloadSamba() error {
 	out, err := exec.Command("sudo", "systemctl", "reload", "smbd").CombinedOutput()
 	if err != nil {

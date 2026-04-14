@@ -118,6 +118,10 @@ const (
 	// File Browser.
 	ActionFileBrowserChown = "filebrowser_chown"
 	ActionFileBrowserChmod = "filebrowser_chmod"
+	// Dataset encryption actions.
+	ActionLockDataset    = "lock_dataset"
+	ActionUnlockDataset  = "unlock_dataset"
+	ActionChangeKeySource = "change_key_source"
 	// Access control.
 	ActionForbidden = "forbidden_access"
 )

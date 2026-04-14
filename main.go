@@ -189,6 +189,20 @@ func main() {
 		log.Printf("WARNING: smb.conf deduplication: %v", err)
 	}
 
+	// ===== Reapply smb.conf and /etc/exports from JSON on startup =====
+	// This keeps the config files in sync with the JSON store even if a
+	// previous write was interrupted or the binary was updated.
+	if shares, err := system.ListSMBShares(absConfig); err == nil {
+		if err := system.SaveSMBShares(absConfig, shares); err != nil {
+			log.Printf("WARNING: startup smb.conf reapply: %v", err)
+		}
+	}
+	if nfsShares, err := system.ListNFSShares(absConfig); err == nil {
+		if err := system.SaveNFSShares(absConfig, nfsShares); err != nil {
+			log.Printf("WARNING: startup /etc/exports reapply: %v", err)
+		}
+	}
+
 	// ===== UPS RRD collector (5-min battery/runtime/load samples) =====
 	system.StartUPSRRDCollector(absConfig, appCfg)
 

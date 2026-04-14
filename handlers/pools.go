@@ -555,6 +555,230 @@ func HandleRemovePoolCache(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, updated)
 }
 
+func HandleAddPoolSpare(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pool   string `json:"pool"`
+		Device string `json:"device"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Device = strings.TrimSpace(req.Device)
+	if req.Device == "" {
+		jsonErr(w, http.StatusBadRequest, "device is required")
+		return
+	}
+	req.Pool = strings.TrimSpace(req.Pool)
+	var pool *system.Pool
+	var err error
+	if req.Pool != "" {
+		pool, err = system.GetPoolByName(req.Pool)
+	} else {
+		pool, err = system.GetPool()
+	}
+	if err != nil || pool == nil {
+		jsonErr(w, http.StatusBadRequest, "no pool available")
+		return
+	}
+	if err := system.AddPoolSpare(pool.Name, req.Device); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	diskCacheStale = true
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionGrowPool,
+		Target:  pool.Name,
+		Result:  audit.ResultOK,
+		Details: "add spare " + req.Device,
+	})
+	updated, _ := system.GetPoolByName(pool.Name)
+	jsonOK(w, updated)
+}
+
+func HandleRemovePoolSpare(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pool   string `json:"pool"`
+		Device string `json:"device"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Device = strings.TrimSpace(req.Device)
+	if req.Device == "" {
+		jsonErr(w, http.StatusBadRequest, "device is required")
+		return
+	}
+	req.Pool = strings.TrimSpace(req.Pool)
+	var pool *system.Pool
+	var err error
+	if req.Pool != "" {
+		pool, err = system.GetPoolByName(req.Pool)
+	} else {
+		pool, err = system.GetPool()
+	}
+	if err != nil || pool == nil {
+		jsonErr(w, http.StatusBadRequest, "no pool available")
+		return
+	}
+	if err := system.RemovePoolSpare(pool.Name, req.Device); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	diskCacheStale = true
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionGrowPool,
+		Target:  pool.Name,
+		Result:  audit.ResultOK,
+		Details: "remove spare " + req.Device,
+	})
+	updated, _ := system.GetPoolByName(pool.Name)
+	jsonOK(w, updated)
+}
+
+func HandleAttachPoolDisk(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pool           string `json:"pool"`
+		ExistingDevice string `json:"existing_device"`
+		NewDevice      string `json:"new_device"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.ExistingDevice = strings.TrimSpace(req.ExistingDevice)
+	req.NewDevice = strings.TrimSpace(req.NewDevice)
+	req.Pool = strings.TrimSpace(req.Pool)
+	if req.ExistingDevice == "" || req.NewDevice == "" {
+		jsonErr(w, http.StatusBadRequest, "existing_device and new_device are required")
+		return
+	}
+	var pool *system.Pool
+	var err error
+	if req.Pool != "" {
+		pool, err = system.GetPoolByName(req.Pool)
+	} else {
+		pool, err = system.GetPool()
+	}
+	if err != nil || pool == nil {
+		jsonErr(w, http.StatusBadRequest, "no pool available")
+		return
+	}
+	if err := system.AttachPoolDisk(pool.Name, req.ExistingDevice, req.NewDevice); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	diskCacheStale = true
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionGrowPool,
+		Target:  pool.Name,
+		Result:  audit.ResultOK,
+		Details: "attach mirror disk " + req.NewDevice + " to " + req.ExistingDevice,
+	})
+	updated, _ := system.GetPoolByName(pool.Name)
+	jsonOK(w, updated)
+}
+
+func HandleDetachPoolDisk(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pool   string `json:"pool"`
+		Device string `json:"device"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Device = strings.TrimSpace(req.Device)
+	req.Pool = strings.TrimSpace(req.Pool)
+	if req.Device == "" {
+		jsonErr(w, http.StatusBadRequest, "device is required")
+		return
+	}
+	var pool *system.Pool
+	var err error
+	if req.Pool != "" {
+		pool, err = system.GetPoolByName(req.Pool)
+	} else {
+		pool, err = system.GetPool()
+	}
+	if err != nil || pool == nil {
+		jsonErr(w, http.StatusBadRequest, "no pool available")
+		return
+	}
+	if err := system.DetachPoolDisk(pool.Name, req.Device); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	diskCacheStale = true
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionGrowPool,
+		Target:  pool.Name,
+		Result:  audit.ResultOK,
+		Details: "detach disk " + req.Device,
+	})
+	updated, _ := system.GetPoolByName(pool.Name)
+	jsonOK(w, updated)
+}
+
+func HandleReplacePoolDisk(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pool      string `json:"pool"`
+		OldDevice string `json:"old_device"`
+		NewDevice string `json:"new_device"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.OldDevice = strings.TrimSpace(req.OldDevice)
+	req.NewDevice = strings.TrimSpace(req.NewDevice)
+	req.Pool = strings.TrimSpace(req.Pool)
+	if req.OldDevice == "" || req.NewDevice == "" {
+		jsonErr(w, http.StatusBadRequest, "old_device and new_device are required")
+		return
+	}
+	var pool *system.Pool
+	var err error
+	if req.Pool != "" {
+		pool, err = system.GetPoolByName(req.Pool)
+	} else {
+		pool, err = system.GetPool()
+	}
+	if err != nil || pool == nil {
+		jsonErr(w, http.StatusBadRequest, "no pool available")
+		return
+	}
+	if err := system.ReplacePoolDisk(pool.Name, req.OldDevice, req.NewDevice); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	diskCacheStale = true
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionGrowPool,
+		Target:  pool.Name,
+		Result:  audit.ResultOK,
+		Details: "replace disk " + req.OldDevice + " with " + req.NewDevice,
+	})
+	updated, _ := system.GetPoolByName(pool.Name)
+	jsonOK(w, updated)
+}
+
 func HandleDetectPools(w http.ResponseWriter, r *http.Request) {
 	pools, err := system.DetectImportablePools()
 	if err != nil {
