@@ -163,6 +163,133 @@ body.tron-legacy .card, body.tron-legacy .card-sm { box-shadow: 0 0 0 1px rgba(0
 body.tron-legacy .btn { box-shadow: 0 0 10px rgba(0,210,255,0.25); font-family: 'Orbitron', sans-serif; letter-spacing: 0.05em; }
 body.tron-legacy .badge-smbonly { background: rgba(0,210,255,0.15); color: #00d2ff; }
 
+/* Tron Legacy — light-cycle sidebar divider animation
+ *
+ * Gradient is 3× the element height with hard color stops:
+ *   0–33%  = neon blue
+ *   33–66% = red
+ *   66–100%= neon blue
+ *
+ * background-position animates 100%→0% (REVERSE) so the visible
+ * window travels UP through the gradient — this puts the color front
+ * at the TOP of the line first, sweeping downward:
+ *
+ *   0–15%:   hold all-blue              (pos 100%)
+ *   15–48%:  red front sweeps top→bot   (pos 100%→50%)
+ *   48–62%:  hold all-red               (pos 50%)
+ *   62–95%:  blue front sweeps top→bot  (pos 50%→0%)
+ *   95–100%: hold all-blue              (pos 0%)
+ *   loop → jump pos 0%→100%: no visual cut (both are all-blue)
+ */
+@keyframes tron-legacy-divider {
+  0%   {
+    background-position: 0 100%;
+    box-shadow: 0 0 4px 0 #00f0ff, 0 0 14px 3px rgba(0, 240, 255, 0.55), 0 0 32px 6px rgba(0, 240, 255, 0.2);
+  }
+  15%  {
+    background-position: 0 100%;
+    box-shadow: 0 0 4px 0 #00f0ff, 0 0 14px 3px rgba(0, 240, 255, 0.55), 0 0 32px 6px rgba(0, 240, 255, 0.2);
+  }
+  48%  {
+    background-position: 0 50%;
+    box-shadow: 0 0 4px 0 #ff3030, 0 0 14px 3px rgba(255, 48,  48, 0.6),  0 0 32px 6px rgba(255, 48, 48,  0.25);
+  }
+  62%  {
+    background-position: 0 50%;
+    box-shadow: 0 0 4px 0 #ff3030, 0 0 14px 3px rgba(255, 48,  48, 0.6),  0 0 32px 6px rgba(255, 48, 48,  0.25);
+  }
+  95%  {
+    background-position: 0 0%;
+    box-shadow: 0 0 4px 0 #00f0ff, 0 0 14px 3px rgba(0, 240, 255, 0.55), 0 0 32px 6px rgba(0, 240, 255, 0.2);
+  }
+  100% {
+    background-position: 0 0%;
+    box-shadow: 0 0 4px 0 #00f0ff, 0 0 14px 3px rgba(0, 240, 255, 0.55), 0 0 32px 6px rgba(0, 240, 255, 0.2);
+  }
+}
+/*
+ * The "orb" — a point-light that travels with each color front.
+ * Timing mirrors ::before exactly:
+ *   0–15%:   invisible (blue hold)
+ *   15–48%:  sweep top→bottom with the red front
+ *   48–62%:  invisible (red hold)
+ *   62–95%:  sweep top→bottom with the blue restoring front
+ *   95–100%: invisible (blue hold before loop)
+ */
+@keyframes tron-legacy-orb {
+  /* blue hold — invisible */
+  0%    { top: 0%;               opacity: 0; }
+  14.9% { top: 0%;               opacity: 0; }
+  /* phase 1: orb leads red front downward — red glow throughout */
+  15%   { top: 0%;               opacity: 1;
+          box-shadow: 0 0 6px 4px #ffffff,
+                      0 0 16px 8px rgba(255, 80,  80, 0.95),
+                      0 0 32px 14px rgba(255, 48,  48, 0.55),
+                      0 0 56px 22px rgba(255, 40,  40, 0.2); }
+  48%   { top: 100%;             opacity: 1;
+          box-shadow: 0 0 6px 4px #ffffff,
+                      0 0 16px 8px rgba(255, 80,  80, 0.95),
+                      0 0 32px 14px rgba(255, 48,  48, 0.55),
+                      0 0 56px 22px rgba(255, 40,  40, 0.2); }
+  /* snap back — invisible during red hold */
+  48.1% { top: 0%;               opacity: 0; }
+  61.9% { top: 0%;               opacity: 0; }
+  /* phase 2: orb leads blue restoring front downward */
+  62%   { top: 0%;               opacity: 1;
+          box-shadow: 0 0 6px 4px #ffffff,
+                      0 0 16px 8px rgba(0, 240, 255, 0.95),
+                      0 0 32px 14px rgba(0, 240, 255, 0.55),
+                      0 0 56px 22px rgba(0, 240, 255, 0.2); }
+  95%   { top: 100%;             opacity: 1;
+          box-shadow: 0 0 6px 4px #ffffff,
+                      0 0 16px 8px rgba(0, 240, 255, 0.95),
+                      0 0 32px 14px rgba(0, 240, 255, 0.55),
+                      0 0 56px 22px rgba(0, 240, 255, 0.2); }
+  /* invisible during blue hold before loop */
+  95.1% { top: 0%;               opacity: 0; }
+  100%  { top: 0%;               opacity: 0; }
+}
+/* Remove the static sidebar border — the animated pseudo-element replaces it */
+body.tron-legacy .sidebar { border-right: none; }
+/* The animated line lives on main-content::before (left edge, always in-bounds) */
+body.tron-legacy .main-content {
+  position: relative;
+}
+body.tron-legacy .main-content::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    #00f0ff 0%,     #00f0ff 33.33%,
+    #ff3030 33.33%, #ff3030 66.66%,
+    #00f0ff 66.66%, #00f0ff 100%
+  );
+  background-size: 100% 300%;
+  background-position: 0 100%;
+  box-shadow: 0 0 4px 0 #00f0ff, 0 0 14px 3px rgba(0, 240, 255, 0.55), 0 0 32px 6px rgba(0, 240, 255, 0.2);
+  animation: tron-legacy-divider 108s linear infinite;
+  pointer-events: none;
+  z-index: 10;
+}
+/* The orb — bright point-light riding the leading edge of each color front */
+body.tron-legacy .main-content::after {
+  content: '';
+  position: absolute;
+  left: 1px;          /* center of the 2px line */
+  top: 0;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  opacity: 0;
+  animation: tron-legacy-orb 108s linear infinite;
+  pointer-events: none;
+  z-index: 11;
+}
+
 /* ===== Matrix theme ===== */
 body.matrix {
   --bg:          #000300;
