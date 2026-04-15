@@ -80,9 +80,9 @@ func HandleCreatePool(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "at least one device is required")
 		return
 	}
-	validLayouts := map[string]bool{"stripe": true, "mirror": true, "raidz1": true, "raidz2": true}
+	validLayouts := map[string]bool{"stripe": true, "mirror": true, "raidz1": true, "raidz2": true, "raidz3": true}
 	if !validLayouts[req.Layout] {
-		jsonErr(w, http.StatusBadRequest, "layout must be stripe, mirror, raidz1, or raidz2")
+		jsonErr(w, http.StatusBadRequest, "layout must be stripe, mirror, raidz1, raidz2, or raidz3")
 		return
 	}
 	validAshift := map[int]bool{9: true, 12: true, 13: true}
@@ -96,7 +96,7 @@ func HandleCreatePool(w http.ResponseWriter, r *http.Request) {
 	if !validDedup[req.Dedup] {
 		req.Dedup = "off"
 	}
-	min := map[string]int{"stripe": 1, "mirror": 2, "raidz1": 3, "raidz2": 4}
+	min := map[string]int{"stripe": 1, "mirror": 2, "raidz1": 3, "raidz2": 4, "raidz3": 5}
 	if len(req.Devices) < min[req.Layout] {
 		jsonErr(w, http.StatusBadRequest,
 			"not enough devices for "+req.Layout+" (need at least "+string(rune('0'+min[req.Layout]))+")")
@@ -289,7 +289,7 @@ func HandleGrowPool(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Pool    string   `json:"pool"`
 		Devices []string `json:"devices"`
-		Mode    string   `json:"mode"` // "expand" | "stripe" | "mirror" | "raidz1" | "raidz2"
+		Mode    string   `json:"mode"` // "expand" | "stripe" | "mirror" | "raidz1" | "raidz2" | "raidz3"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -301,7 +301,7 @@ func HandleGrowPool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate minimum device counts per mode.
-	minForMode := map[string]int{"expand": 1, "stripe": 1, "mirror": 2, "raidz1": 3, "raidz2": 4}
+	minForMode := map[string]int{"expand": 1, "stripe": 1, "mirror": 2, "raidz1": 3, "raidz2": 4, "raidz3": 5}
 	if min, ok := minForMode[req.Mode]; ok && len(req.Devices) < min {
 		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("%s requires at least %d disk(s)", req.Mode, min))
 		return
@@ -324,7 +324,7 @@ func HandleGrowPool(w http.ResponseWriter, r *http.Request) {
 	switch req.Mode {
 	case "expand":
 		growErr = system.GrowPoolRaidz(pool.Name, req.Devices)
-	case "mirror", "raidz1", "raidz2":
+	case "mirror", "raidz1", "raidz2", "raidz3":
 		growErr = system.GrowPoolWithVdev(pool.Name, req.Mode, req.Devices)
 	default: // "stripe" or legacy empty
 		growErr = system.GrowPool(pool.Name, req.Devices)

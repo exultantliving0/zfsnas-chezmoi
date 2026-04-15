@@ -268,7 +268,7 @@
     <button class="nav-item" onclick="showPage('disks')"     id="nav-disks">    <span class="nav-icon"><svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 98.96 122.88" width="18" height="18" fill="currentColor" style="vertical-align:middle;display:inline-block;"><path d="M5.44,0h88.09c1.49,0,2.85,0.61,3.83,1.59l0.01,0.01c0.98,0.98,1.59,2.34,1.59,3.83v89.92v22.09c0,1.49-0.61,2.85-1.59,3.83l-0.01,0.01c-0.98,0.98-2.34,1.59-3.83,1.59H5.44c-1.5,0-2.86-0.61-3.84-1.59C0.61,120.3,0,118.94,0,117.44V95.36V5.44c0-1.49,0.61-2.85,1.59-3.83l0.01-0.01C2.59,0.61,3.95,0,5.44,0L5.44,0z M64.96,21.3h6.63c4.28,0,7.17,0.19,8.68,0.59c1.51,0.4,2.66,1.04,3.44,1.94c0.78,0.9,1.28,1.9,1.47,3c0.19,1.11,0.29,3.27,0.29,6.5v11.94c0,3.06-0.14,5.11-0.43,6.14c-0.29,1.03-0.79,1.85-1.5,2.43c-0.72,0.58-1.6,0.98-2.66,1.22c-1.05,0.23-2.64,0.35-4.76,0.35H64.96V21.3L64.96,21.3z M73.84,27.12v22.46c1.26,0,2.03-0.26,2.32-0.77c0.29-0.52,0.44-1.91,0.44-4.19V31.36c0-1.54-0.05-2.54-0.14-2.97c-0.1-0.44-0.32-0.75-0.67-0.96C75.45,27.22,74.8,27.12,73.84,27.12L73.84,27.12z M41.14,21.3h6.63c4.28,0,7.17,0.19,8.68,0.59c1.51,0.4,2.66,1.04,3.44,1.94c0.78,0.9,1.28,1.9,1.47,3c0.19,1.11,0.29,3.27,0.29,6.5v11.94c0,3.06-0.14,5.11-0.43,6.14c-0.29,1.03-0.79,1.85-1.5,2.43c-0.72,0.58-1.6,0.98-2.66,1.22c-1.05,0.23-2.64,0.35-4.76,0.35H41.14V21.3L41.14,21.3z M50.02,27.12v22.46c1.26,0,2.03-0.26,2.32-0.77c0.29-0.52,0.44-1.91,0.44-4.19V31.36c0-1.54-0.05-2.54-0.14-2.97c-0.1-0.44-0.32-0.75-0.67-0.96C51.62,27.22,50.97,27.12,50.02,27.12L50.02,27.12z M37.55,21.3v34.1h-8.88V41.09h-2.59V55.4H17.2V21.3h8.88v12.2h2.59V21.3H37.55L37.55,21.3z M74.51,104.48h11.45c0.58,0,1.05,0.48,1.05,1.05v4.03c0,0.57-0.48,1.05-1.05,1.05H74.51c-0.57,0-1.05-0.47-1.05-1.05v-4.03C73.46,104.95,73.93,104.48,74.51,104.48L74.51,104.48z M5.62,92.55h87.72V5.62H5.62V92.55L5.62,92.55z M93.34,98.17H5.62v19.09h87.72V98.17L93.34,98.17z"/></svg></span><span class="nav-label"> Physical Disks</span><span id="nav-disks-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
     <button class="nav-item" onclick="showPage('pool')"      id="nav-pool">     <span class="nav-icon">🗄</span><span class="nav-label"> ZFS Pools</span><span id="nav-pool-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
     <button class="nav-item" onclick="showPage('datasets')"  id="nav-datasets"> <span class="nav-icon">📁</span><span class="nav-label"> Dataset & ZVol</span><span id="nav-datasets-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
-    <button class="nav-item" onclick="showPage('snapshots')" id="nav-snapshots"><span class="nav-icon">🛡️</span><span class="nav-label"> Protection</span><span id="nav-snapshots-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
+    <button class="nav-item" onclick="showPage('snapshots')" id="nav-snapshots"><span class="nav-icon">🛡️</span><span class="nav-label"> Protect</span><span id="nav-snapshots-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
 
     <div class="sidebar-section">Sharing</div>
     <button class="nav-item" onclick="showPage('shares')"    id="nav-shares">   <span class="nav-icon">🔗</span><span class="nav-label"> SMB Shares</span><span id="nav-smb-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
@@ -344,7 +344,9 @@
               <svg id="theme-icon-tron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00d2ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;filter:drop-shadow(0 0 4px rgba(0,210,255,0.7))"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
               <svg id="theme-icon-tron-legacy" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00f0ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;filter:drop-shadow(0 0 6px rgba(0,240,255,0.9))"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
               <svg id="theme-icon-matrix" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00ff41" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;filter:drop-shadow(0 0 4px rgba(0,255,65,0.7))"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              <svg id="theme-icon-matrix-reload" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#39ff14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;filter:drop-shadow(0 0 6px rgba(57,255,20,0.9))"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
               <svg id="theme-icon-purple" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d400ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;filter:drop-shadow(0 0 4px rgba(180,0,255,0.7))"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              <svg id="theme-icon-ghost-shell" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e060ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;filter:drop-shadow(0 0 6px rgba(224,96,255,0.9))"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
               <svg id="theme-icon-dusk" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e8a020" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;filter:drop-shadow(0 0 4px rgba(232,160,32,0.6))"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
               <svg id="theme-icon-dawn" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c87800" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/></svg>
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 6" fill="currentColor" style="opacity:.6"><path d="M0 0l5 6 5-6z"/></svg>
@@ -380,9 +382,19 @@
                 Matrix
                 <span class="theme-check">✓</span>
               </div>
+              <div class="theme-picker-item" onclick="setTheme('matrix-reload')">
+                <span class="theme-swatch" style="background:#000300;border-color:rgba(57,255,20,0.6);box-shadow:0 0 6px rgba(57,255,20,0.5);"></span>
+                Matrix Reload
+                <span class="theme-check">✓</span>
+              </div>
               <div class="theme-picker-item" onclick="setTheme('purple')">
                 <span class="theme-swatch" style="background:#130020;border-color:rgba(180,0,255,0.5);box-shadow:0 0 4px rgba(180,0,255,0.4);"></span>
                 Purple Neon
+                <span class="theme-check">✓</span>
+              </div>
+              <div class="theme-picker-item" onclick="setTheme('ghost-shell')">
+                <span class="theme-swatch" style="background:#0a0010;border-color:rgba(224,96,255,0.6);box-shadow:0 0 6px rgba(224,96,255,0.5);"></span>
+                Ghost in the Shell
                 <span class="theme-check">✓</span>
               </div>
               <div class="theme-picker-item" onclick="setTheme('dusk')">
@@ -1228,8 +1240,13 @@
                 </div>
               </div>
             </div>
-            <div style="padding:10px 18px;">
-              <button class="btn btn-ghost btn-sm" onclick="checkBinaryUpdate()" id="btn-check-binary-update">↻ Check for Update</button>
+            <div style="display:flex;flex-wrap:wrap;">
+              <div style="flex:1;min-width:200px;padding:8px 18px;">
+                <button class="btn btn-ghost btn-sm" onclick="checkBinaryUpdate()" id="btn-check-binary-update">↻ Check for Update</button>
+              </div>
+              <div style="flex:1;min-width:200px;padding:8px 18px;">
+                <button class="btn btn-ghost btn-sm" onclick="openReleaseNotes()" id="btn-release-notes">≡ Releases Details</button>
+              </div>
             </div>
           </div>
 
@@ -9445,7 +9462,7 @@ function renderPoolCreate(el, options) {
         <div>
           <label style="font-size:13px;font-weight:500;color:var(--text-2);display:block;margin-bottom:6px;">Layout</label>
           <div style="display:flex;gap:8px;" id="cp-layout-btns">
-            ${[['stripe','Stripe'],['mirror','Mirror'],['raidz1','RAIDZ-1'],['raidz2','RAIDZ-2']].map(([l,label],i) => `
+            ${[['stripe','Stripe'],['mirror','Mirror'],['raidz1','RAIDZ-1'],['raidz2','RAIDZ-2'],['raidz3','RAIDZ-3']].map(([l,label],i) => `
               <button type="button" onclick="selectLayout('${l}')" id="cp-layout-${l}"
                 class="btn ${i===0?'btn-primary':'btn-ghost'}"
                 style="flex:1;">
@@ -9557,6 +9574,7 @@ const layoutHints = {
   mirror:  'Mirrored disks — survives 1 disk failure per mirror pair. Min 2 disks. (mirror)',
   raidz1:  'Single parity — survives 1 disk failure. Min 3 disks. (RAID5)',
   raidz2:  'Double parity — survives 2 disk failures. Min 4 disks. (RAID6)',
+  raidz3:  'Triple parity — survives 3 disk failures. Min 5 disks, 9+ recommended. (RAID7)',
 };
 
 function openPoolLayoutGuide()    { document.getElementById('modal-pool-layout-guide').classList.remove('hidden'); }
@@ -9566,7 +9584,7 @@ function closeAddCapacityGuide()  { document.getElementById('modal-add-capacity-
 
 function selectLayout(l) {
   window._cpLayout = l;
-  ['stripe','mirror','raidz1','raidz2'].forEach(x => {
+  ['stripe','mirror','raidz1','raidz2','raidz3'].forEach(x => {
     document.getElementById('cp-layout-'+x).className = 'btn ' + (x===l?'btn-primary':'btn-ghost');
   });
   document.getElementById('cp-layout-hint').textContent = layoutHints[l];
@@ -9637,7 +9655,7 @@ function submitCreatePool() {
   if (!name) { alertEl.textContent = 'Pool name is required.'; alertEl.classList.remove('hidden'); return; }
   if (!devices.length) { alertEl.textContent = 'Select at least one disk.'; alertEl.classList.remove('hidden'); return; }
 
-  const minDisks = {stripe:1, mirror:2, raidz1:3, raidz2:4};
+  const minDisks = {stripe:1, mirror:2, raidz1:3, raidz2:4, raidz3:5};
   if (devices.length < minDisks[window._cpLayout]) {
     alertEl.textContent = `${window._cpLayout} requires at least ${minDisks[window._cpLayout]} disks.`;
     alertEl.classList.remove('hidden'); return;
@@ -10082,7 +10100,7 @@ function updateAddDisksMode() {
   const _expandPool = (_addDisksPoolName && allPoolsData.find(p => p.name === _addDisksPoolName))
     || poolData || null;
   const vdevType  = _expandPool && _expandPool.vdev_type || 'stripe';
-  const isRaidz   = vdevType === 'raidz1' || vdevType === 'raidz2';
+  const isRaidz   = vdevType === 'raidz1' || vdevType === 'raidz2' || vdevType === 'raidz3';
   // Show RAIDZ Expansion when: exactly 1 disk, raidz pool, and either ZFS ≥2.2 confirmed or version unknown.
   const canExpand = count === 1 && isRaidz && (!_addDisksVer || _addDisksVer.raidz_expand);
 
@@ -10092,6 +10110,10 @@ function updateAddDisksMode() {
     mode: 'expand', label: 'RAIDZ Expansion',
     badge: (_addDisksVer ? `ZFS ${_addDisksVer.version}` : 'ZFS 2.2+ required'), badgeColor: '#30d158',
     desc: 'Attaches this disk directly to the existing RAIDZ vdev, expanding its capacity in-place. No new vdev is created — the pool\'s fault tolerance is preserved.',
+  });
+  if (count >= 5) opts.push({
+    mode: 'raidz3', label: 'RAIDZ-3', badge: 'RAID7', badgeColor: '#ff6b35',
+    desc: 'Add these disks as a new RAIDZ-3 vdev — triple parity, survives 3 simultaneous disk failures. Min 5 disks, 9+ recommended.',
   });
   if (count >= 4) opts.push({
     mode: 'raidz2', label: 'RAIDZ-2', badge: 'RAID6', badgeColor: '#bf5af2',
@@ -18348,13 +18370,13 @@ async function _autoBinaryVersionCheck() {
   const ONE_DAY = 86400 * 1000;
 
   function _applyVerData(data) {
-    currentEl.textContent = 'v' + data.current;
-    latestEl.textContent  = 'v' + data.latest;
+    _setVerLabel(currentEl, data.current);
+    _setVerLabel(latestEl, data.latest);
     _applyBupSigBadge(data);
     const dot = document.getElementById('nav-updates-dot');
     if (data.update_available) {
       latestEl.style.color = 'var(--accent-warn)';
-      if (data.sig_valid === true) _showApplyBinaryWrap(data.service_installed === true);
+      if (data.sig_valid === true) _showApplyBinaryWrap(data.service_installed === true, data.latest);
       uptodateEl.classList.add('hidden');
       if (dot) dot.style.display = 'inline-block';
       const latSpan = document.getElementById('app-version-latest');
@@ -18368,7 +18390,7 @@ async function _autoBinaryVersionCheck() {
     }
   }
 
-  currentEl.textContent = 'v' + (appSettings.version || '…');
+  _setVerLabel(currentEl, appSettings.version || '…');
   latestEl.textContent = '…';
   uptodateEl.classList.add('hidden');
   applyWrap.classList.add('hidden');
@@ -19890,9 +19912,9 @@ function _renderUPSPerfChart(series) {
           data: chargePts,
           yAxisID: 'yLeft',
           borderColor: '#30d158',
-          backgroundColor: 'rgba(48,209,88,0.15)',
+          backgroundColor: 'rgba(48,209,88,0)',
           borderWidth: 2,
-          fill: true,
+          fill: false,
           pointRadius: 0,
           tension: 0.3,
           spanGaps: true,
@@ -20428,12 +20450,14 @@ function _applyBupSigBadge(data) {
   }
 }
 
-function _showApplyBinaryWrap(serviceInstalled) {
+function _showApplyBinaryWrap(serviceInstalled, ver) {
   const applyWrap = document.getElementById('btn-apply-binary-wrap');
   const activeBtn = document.getElementById('btn-apply-binary-active');
   const noSvcMsg  = document.getElementById('btn-apply-binary-nosvc');
   if (!applyWrap) return;
   applyWrap.classList.remove('hidden');
+  const label = ver ? '⚡ Instant Update to v' + ver : '⚡ Instant Update Now';
+  if (activeBtn) activeBtn.textContent = label;
   if (serviceInstalled) {
     if (activeBtn) activeBtn.style.display = '';
     if (noSvcMsg)  noSvcMsg.style.display  = 'none';
@@ -20441,6 +20465,188 @@ function _showApplyBinaryWrap(serviceInstalled) {
     if (activeBtn) activeBtn.style.display = 'none';
     if (noSvcMsg)  noSvcMsg.style.display  = '';
   }
+}
+
+// ── Version label helper ────────────────────────────────────────────────────
+// Renders the version number with a channel label (always "Stable" today;
+// designed to accept a future "Beta" or "Pre-release" value without rework).
+function _setVerLabel(el, ver, channel = 'Stable') {
+  el.innerHTML =
+    `<span style="font-family:'SF Mono',monospace;font-weight:700;">${esc('v'+ver)}</span>` +
+    `<span style="font-family:'SF Mono',monospace;font-weight:700;margin-left:6px;">(${esc(channel)})</span>`;
+}
+
+// ── Release Notes ───────────────────────────────────────────────────────────
+let _rnReleases    = null; // in-session cache
+let _rnDowngradeTag = null;
+
+function openReleaseNotes() {
+  document.getElementById('modal-release-notes').classList.remove('hidden');
+  _renderReleaseNotes();
+}
+function closeReleaseNotes() {
+  document.getElementById('modal-release-notes').classList.add('hidden');
+}
+
+async function _renderReleaseNotes() {
+  const body = document.getElementById('rn-body');
+  if (_rnReleases) { _buildReleaseNotesDom(_rnReleases); return; }
+  body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-3);">Loading…</div>';
+  try {
+    const resp = await fetch('/api/binary-update/releases');
+    if (!resp.ok) throw new Error(((await resp.json()).error) || 'fetch failed');
+    _rnReleases = await resp.json();
+    _buildReleaseNotesDom(_rnReleases);
+  } catch(e) {
+    body.innerHTML = `<div style="padding:24px;color:var(--accent-danger);">Failed to load release notes: ${esc(e.message)}
+      <button class="btn btn-ghost btn-sm" style="margin-left:12px;" onclick="_rnReleases=null;_renderReleaseNotes()">Retry</button></div>`;
+  }
+}
+
+// Markdown → safe HTML. Line-by-line renderer that handles:
+// - ## / ### headings, - and * bullets, **bold**, *italic*, `code`
+// - single newlines within a block become <br>, blank lines separate blocks
+// - "Full Changelog" lines (GitHub auto-append) are stripped
+function _mdToHtml(md) {
+  // Strip "Full Changelog" line before anything else
+  md = md.replace(/^[^\n]*Full Changelog[^\n]*/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+  if (!md) return '<em style="color:var(--text-3);">No description provided.</em>';
+
+  function esc2(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function fmt(s) {
+    // Apply inline formatting on already-escaped text — patterns use [^<]+ to
+    // avoid re-processing tags we already emitted.
+    return esc2(s)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g,     '<em>$1</em>')
+      .replace(/`([^`]+)`/g,     '<code style="font-family:\'SF Mono\',monospace;background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:12px;">$1</code>');
+  }
+
+  const lines  = md.split('\n');
+  let html     = '';
+  let inUl     = false;
+  let paraLines = [];
+
+  function flushPara() {
+    if (!paraLines.length) return;
+    html += '<p style="margin:6px 0 8px;">' + paraLines.join('<br>') + '</p>';
+    paraLines = [];
+  }
+  function flushUl() {
+    if (!inUl) return;
+    html += '</ul>';
+    inUl = false;
+  }
+
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+
+    // Blank line → flush current block
+    if (!trimmed) {
+      flushUl();
+      flushPara();
+      continue;
+    }
+
+    // Headings (## and ###)
+    let m;
+    if ((m = trimmed.match(/^### (.+)$/))) {
+      flushUl(); flushPara();
+      html += `<h5 style="margin:12px 0 4px;font-size:13px;font-weight:600;color:var(--text-1);">${fmt(m[1])}</h5>`;
+      continue;
+    }
+    if ((m = trimmed.match(/^## (.+)$/))) {
+      flushUl(); flushPara();
+      html += `<h4 style="margin:14px 0 6px;font-size:14px;font-weight:600;color:var(--text-1);">${fmt(m[1])}</h4>`;
+      continue;
+    }
+    if ((m = trimmed.match(/^# (.+)$/))) {
+      flushUl(); flushPara();
+      html += `<h3 style="margin:16px 0 8px;font-size:15px;font-weight:700;color:var(--text-1);">${fmt(m[1])}</h3>`;
+      continue;
+    }
+
+    // Bullet list items: - or *
+    if ((m = trimmed.match(/^[-*] (.+)$/))) {
+      flushPara();
+      if (!inUl) { html += '<ul style="margin:6px 0 6px 18px;padding:0;list-style:disc;">'; inUl = true; }
+      html += `<li style="margin:2px 0;">${fmt(m[1])}</li>`;
+      continue;
+    }
+
+    // Regular text — accumulate into paragraph, single newlines become <br>
+    flushUl();
+    paraLines.push(fmt(trimmed));
+  }
+
+  flushUl();
+  flushPara();
+  return html;
+}
+
+function _buildReleaseNotesDom(releases) {
+  const body    = document.getElementById('rn-body');
+  const current = appSettings && appSettings.version ? appSettings.version : '';
+  let html = '';
+  releases.forEach((r, i) => {
+    const tag        = r.tag.replace(/^v/, '');
+    const isCurrent  = tag === current;
+    const isLatest   = i === 0;
+    const canDowngrade = !isLatest;
+    const dateStr    = r.published_at
+      ? new Date(r.published_at).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'})
+      : '';
+
+    html += `
+    <div style="border:1px solid var(--border);border-radius:var(--radius-sm);margin-top:12px;overflow:hidden;">
+      <div onclick="toggleRnSection(${i})"
+        style="display:flex;align-items:center;gap:8px;padding:11px 14px;cursor:pointer;background:var(--surface2);user-select:none;">
+        <span style="font-family:'SF Mono',monospace;font-weight:700;font-size:14px;flex-shrink:0;">v${esc(tag)}<span style="margin-left:6px;">(Stable)</span></span>
+        ${isLatest  ? `<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:rgba(10,132,255,0.15);color:var(--accent-2);flex-shrink:0;">Latest</span>` : ''}
+        ${isCurrent ? `<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:rgba(48,209,88,0.15);color:var(--accent-3);flex-shrink:0;">← Current</span>` : ''}
+        ${r.prerelease ? `<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:rgba(255,159,10,0.15);color:var(--accent-warn);flex-shrink:0;">Pre-release</span>` : ''}
+        <span style="font-size:12px;color:var(--text-3);flex:1;">${esc(dateStr)}</span>
+        ${canDowngrade ? `<button class="btn btn-sm" onclick="event.stopPropagation();confirmDowngrade('${esc(r.tag)}','${esc(tag)}')"
+          style="font-size:11px;padding:3px 10px;background:rgba(255,159,10,0.12);color:var(--accent-warn);border:1px solid rgba(255,159,10,0.3);font-weight:600;flex-shrink:0;">
+          ⬇ Downgrade</button>` : ''}
+        <span id="rn-chevron-${i}" style="font-size:11px;color:var(--text-3);flex-shrink:0;">${i===0 ? '▲' : '▼'}</span>
+      </div>
+      <div id="rn-section-${i}"
+        style="padding:${i===0 ? '14px' : '0 14px'};max-height:${i===0 ? '9999px' : '0'};overflow:hidden;transition:max-height .25s ease,padding .2s ease;">
+        <div style="font-size:13px;color:var(--text-2);line-height:1.65;">${_mdToHtml(r.body || '_No description provided._')}</div>
+      </div>
+    </div>`;
+  });
+  body.innerHTML = html || '<div style="padding:24px;color:var(--text-3);">No releases found.</div>';
+}
+
+function toggleRnSection(i) {
+  const sec  = document.getElementById('rn-section-' + i);
+  const chv  = document.getElementById('rn-chevron-' + i);
+  const open = sec.style.maxHeight !== '0px' && sec.style.maxHeight !== '0';
+  if (open) {
+    sec.style.maxHeight = '0';
+    sec.style.padding   = '0 14px';
+    if (chv) chv.textContent = '▼';
+  } else {
+    sec.style.maxHeight = '9999px';
+    sec.style.padding   = '14px';
+    if (chv) chv.textContent = '▲';
+  }
+}
+
+function confirmDowngrade(tag, ver) {
+  _rnDowngradeTag = tag;
+  document.getElementById('rn-downgrade-ver').textContent = 'v' + ver;
+  document.getElementById('modal-rn-downgrade-confirm').classList.remove('hidden');
+}
+function closeDowngradeConfirm() {
+  document.getElementById('modal-rn-downgrade-confirm').classList.add('hidden');
+}
+function doDowngrade() {
+  closeDowngradeConfirm();
+  closeReleaseNotes();
+  applyBinaryUpdate(_rnDowngradeTag);
 }
 
 async function checkBinaryUpdate() {
@@ -20461,13 +20667,13 @@ async function checkBinaryUpdate() {
     const data = await resp.json();
     if (!resp.ok) { latestEl.textContent = data.error || 'unavailable'; return; }
     _saveVerCache(data);
-    currentEl.textContent = 'v' + data.current;
-    latestEl.textContent  = 'v' + data.latest;
+    _setVerLabel(currentEl, data.current);
+    _setVerLabel(latestEl, data.latest);
     latestEl.style.color  = '';
     _applyBupSigBadge(data);
     if (data.update_available) {
       latestEl.style.color = 'var(--accent-warn)';
-      if (data.sig_valid === true) _showApplyBinaryWrap(data.service_installed === true);
+      if (data.sig_valid === true) _showApplyBinaryWrap(data.service_installed === true, data.latest);
     } else {
       uptodateEl.classList.remove('hidden');
     }
@@ -20475,22 +20681,28 @@ async function checkBinaryUpdate() {
   finally { if (checkBtn) { checkBtn.disabled = false; checkBtn.textContent = '↻ Check'; } }
 }
 
-function applyBinaryUpdate() {
+function applyBinaryUpdate(tag = null) {
   const applyWrap  = document.getElementById('btn-apply-binary-wrap');
   const checkBtn   = document.getElementById('btn-check-binary-update');
   const sigInvalid = document.getElementById('bup-sig-invalid');
   const sigReason  = document.getElementById('bup-sig-invalid-reason');
 
-  // Block update if the last check reported an invalid or missing signature.
-  const cached = _loadVerCache();
-  const sigValid = cached && cached.data && cached.data.sig_valid === true;
-  if (!sigValid) {
-    const reason = (cached && cached.data && cached.data.sig_error)
-      ? cached.data.sig_error
-      : 'The signature of the online release could not be verified against the embedded release key. The update has been blocked to protect the integrity of the running system.';
-    if (sigReason) sigReason.textContent = reason;
-    if (sigInvalid) sigInvalid.classList.remove('hidden');
-    return;
+  // For the normal "update to latest" flow, guard against a cached invalid signature.
+  // For targeted downgrades (tag != null) the cached sig_valid is irrelevant — it
+  // corresponds to the latest release, not the target tag. The backend verifies the
+  // specific release's signature during the WS apply flow (step 2/5), so skip this
+  // check entirely and let the backend be the authority.
+  if (!tag) {
+    const cached = _loadVerCache();
+    const sigValid = cached && cached.data && cached.data.sig_valid === true;
+    if (!sigValid) {
+      const reason = (cached && cached.data && cached.data.sig_error)
+        ? cached.data.sig_error
+        : 'The signature of the online release could not be verified against the embedded release key. The update has been blocked to protect the integrity of the running system.';
+      if (sigReason) sigReason.textContent = reason;
+      if (sigInvalid) sigInvalid.classList.remove('hidden');
+      return;
+    }
   }
 
   if (sigInvalid) sigInvalid.classList.add('hidden');
@@ -20542,7 +20754,7 @@ function applyBinaryUpdate() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   try {
     let wsUpdateSucceeded = false;
-    const ws = new WebSocket(proto + '//' + location.host + '/ws/binary-update-apply');
+    const ws = new WebSocket(proto + '//' + location.host + '/ws/binary-update-apply' + (tag ? '?tag=' + encodeURIComponent(tag) : ''));
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
@@ -20703,23 +20915,25 @@ document.addEventListener('click', function(e) {
 
 // ===== Theme picker =====
 const _themeMediaQuery = window.matchMedia('(prefers-color-scheme: light)');
-const _themeIcons = { dark: 'moon', light: 'sun', auto: 'auto', tron: 'tron', 'tron-legacy': 'tron-legacy', matrix: 'matrix', purple: 'purple', dusk: 'dusk', dawn: 'dawn' };
+const _themeIcons = { dark: 'moon', light: 'sun', auto: 'auto', tron: 'tron', 'tron-legacy': 'tron-legacy', matrix: 'matrix', 'matrix-reload': 'matrix-reload', purple: 'purple', 'ghost-shell': 'ghost-shell', dusk: 'dusk', dawn: 'dawn' };
 
 function applyTheme(theme) {
   const effective = theme === 'auto'
     ? (_themeMediaQuery.matches ? 'light' : 'dark')
     : theme;
-  document.body.classList.remove('light', 'tron', 'tron-legacy', 'matrix', 'purple', 'dusk', 'dawn');
+  document.body.classList.remove('light', 'tron', 'tron-legacy', 'matrix', 'matrix-reload', 'purple', 'ghost-shell', 'dusk', 'dawn');
   if (effective === 'light') document.body.classList.add('light');
   else if (effective === 'tron') document.body.classList.add('tron');
   else if (effective === 'tron-legacy') document.body.classList.add('tron-legacy');
   else if (effective === 'matrix') document.body.classList.add('matrix');
+  else if (effective === 'matrix-reload') document.body.classList.add('matrix-reload');
   else if (effective === 'purple') document.body.classList.add('purple');
+  else if (effective === 'ghost-shell') document.body.classList.add('ghost-shell');
   else if (effective === 'dusk') document.body.classList.add('dusk');
   else if (effective === 'dawn') document.body.classList.add('dawn');
 
   // Update icon
-  ['sun','moon','auto','tron','tron-legacy','matrix','purple','dusk','dawn'].forEach(n => {
+  ['sun','moon','auto','tron','tron-legacy','matrix','matrix-reload','purple','ghost-shell','dusk','dawn'].forEach(n => {
     const el = document.getElementById('theme-icon-' + n);
     if (el) el.style.display = 'none';
   });
@@ -20731,7 +20945,7 @@ function applyTheme(theme) {
   const dropdown = document.getElementById('theme-picker-dropdown');
   if (dropdown) {
     dropdown.querySelectorAll('.theme-picker-item').forEach((item, i) => {
-      const themes = ['dark','light','auto','tron','tron-legacy','matrix','purple','dusk','dawn'];
+      const themes = ['dark','light','auto','tron','tron-legacy','matrix','matrix-reload','purple','ghost-shell','dusk','dawn'];
       item.classList.toggle('active', themes[i] === theme);
     });
   }
@@ -23650,6 +23864,45 @@ function showToast(msg, type = 'error') {
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeFbEditModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Release Notes Modal ─────────────────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-release-notes" onclick="if(event.target===this)closeReleaseNotes()">
+  <div class="modal" style="max-width:800px;width:95vw;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">📋</span>
+        <h3 style="margin:0;">Release Notes</h3>
+      </div>
+      <button class="modal-close" onclick="closeReleaseNotes()">✕</button>
+    </div>
+    <div id="rn-body" style="flex:1;overflow-y:auto;padding:0 20px 20px;">
+      <!-- populated by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- ── Downgrade Confirm Modal ─────────────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-rn-downgrade-confirm" onclick="if(event.target===this)closeDowngradeConfirm()">
+  <div class="modal" style="max-width:420px;border:1px solid rgba(255,159,10,0.4);">
+    <div class="modal-header" style="background:rgba(255,159,10,0.08);border-bottom:1px solid rgba(255,159,10,0.3);">
+      <h3 style="margin:0;color:var(--accent-warn);">⚠ Confirm Downgrade</h3>
+      <button class="modal-close" onclick="closeDowngradeConfirm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--text-2);margin-bottom:8px;">
+        You are about to downgrade ZFSNAS to <strong id="rn-downgrade-ver" style="font-family:'SF Mono',monospace;"></strong>.
+      </p>
+      <p style="font-size:13px;color:var(--text-3);">
+        This will replace the running binary and restart the portal. Ensure the older version is compatible with your current configuration.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeDowngradeConfirm()">Cancel</button>
+      <button class="btn btn-sm" onclick="doDowngrade()"
+        style="background:var(--accent-warn);color:#000;font-weight:700;border:none;">⬇ Downgrade Now</button>
     </div>
   </div>
 </div>

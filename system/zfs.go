@@ -43,7 +43,7 @@ type Pool struct {
 	Health      string   `json:"health"`
 	Members         []string `json:"members"`          // raw device paths as tracked by zpool (may be by-partuuid)
 	MemberDevices   []string `json:"member_devices"`   // resolved canonical /dev/sdX paths
-	MemberRoles     []string `json:"member_roles"`     // per-member vdev role: "stripe"|"mirror"|"raidz1"|"raidz2"
+	MemberRoles     []string `json:"member_roles"`     // per-member vdev role: "stripe"|"mirror"|"raidz1"|"raidz2"|"raidz3"
 	MemberStatuses  []string `json:"member_statuses"`  // per-member device state: "ONLINE"|"FAULTED"|etc
 	MemberPresent   []bool   `json:"member_present"`   // per-member: true if the device path exists in /dev
 	CacheDevs     []string `json:"cache_devs"`      // raw L2ARC cache paths (may be by-partuuid)
@@ -52,7 +52,7 @@ type Pool struct {
 	SpareDevices  []string `json:"spare_devices"`   // resolved canonical /dev/sdX paths
 	SpareStatuses []string `json:"spare_statuses"`  // per-spare state: "AVAIL"|"INUSE"|"FAULTED" etc
 	SparePresent  []bool   `json:"spare_present"`   // per-spare: true if the device path exists in /dev
-	VdevType    string   `json:"vdev_type"`  // "stripe" | "mirror" | "raidz1" | "raidz2"
+	VdevType    string   `json:"vdev_type"`  // "stripe" | "mirror" | "raidz1" | "raidz2" | "raidz3"
 	Operation   string   `json:"operation"`  // "" | "scrubbing" | "resilvering" | "expanding"
 	SizeStr     string   `json:"size_str"`
 	AllocStr    string   `json:"alloc_str"`
@@ -241,7 +241,7 @@ func zpoolStatusDevices(poolName, section string, withFullPaths bool) []string {
 		"OFFLINE": true, "REMOVED": true, "UNAVAIL": true,
 		"AVAIL": true, "INUSE": true,
 	}
-	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
+	vdevPrefixes := []string{"mirror-", "raidz3-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
 	skipSections := map[string]bool{"cache": true, "log": true, "logs": true, "spare": true, "spares": true}
 
 	inConfig := false
@@ -393,7 +393,7 @@ func poolMemberRoles(poolName string, count int) []string {
 		"ONLINE": true, "DEGRADED": true, "FAULTED": true,
 		"OFFLINE": true, "REMOVED": true, "UNAVAIL": true,
 	}
-	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
+	vdevPrefixes := []string{"mirror-", "raidz3-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
 	skipSections := map[string]bool{"cache": true, "log": true, "logs": true, "spare": true, "spares": true}
 	inConfig, inData, seenPool := false, true, false
 	poolIndent := -1
@@ -456,6 +456,8 @@ func poolMemberRoles(poolName string, count int) []string {
 				switch {
 				case strings.HasPrefix(name, "mirror-"):
 					currentRole = "mirror"
+				case strings.HasPrefix(name, "raidz3-"):
+					currentRole = "raidz3"
 				case strings.HasPrefix(name, "raidz2-"):
 					currentRole = "raidz2"
 				case strings.HasPrefix(name, "raidz1-"), strings.HasPrefix(name, "raidz-"):
@@ -778,7 +780,7 @@ func poolMemberStatuses(poolName string) []string {
 		"ONLINE": true, "DEGRADED": true, "FAULTED": true,
 		"OFFLINE": true, "REMOVED": true, "UNAVAIL": true,
 	}
-	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
+	vdevPrefixes := []string{"mirror-", "raidz3-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-", "replacing-"}
 	skipSections := map[string]bool{"cache": true, "log": true, "logs": true, "spare": true, "spares": true}
 
 	inConfig, inData := false, true
@@ -1147,7 +1149,7 @@ func PrepareZFSPartition(device string) (string, error) {
 // CreatePool creates a new ZFS pool.
 // Each device is first wiped and repartitioned (GPT, type BF01) so the pool
 // tracks the partition by its stable PARTUUID rather than by kernel device name.
-// layout: "stripe" | "mirror" | "raidz1" | "raidz2"
+// layout: "stripe" | "mirror" | "raidz1" | "raidz2" | "raidz3"
 // ashift: 9, 12, or 13
 // compression: "off" | "lz4" | "zstd"
 // dedup: "off" | "on" | "verify"
@@ -1188,7 +1190,7 @@ func CreatePool(name, layout string, ashift int, compression, dedup string, devi
 		args = append(args, "-O", "dedup="+dedup)
 	}
 	args = append(args, name)
-	if layout == "mirror" || layout == "raidz1" || layout == "raidz2" {
+	if layout == "mirror" || layout == "raidz1" || layout == "raidz2" || layout == "raidz3" {
 		args = append(args, layout)
 	}
 	args = append(args, devPaths...)
@@ -1664,7 +1666,7 @@ func SetPoolProperties(poolName string, props map[string]string) error {
 }
 
 // poolVdevType inspects `zpool status` and returns the top-level vdev type:
-// "raidz1", "raidz2", "mirror", or "stripe" (default when no named vdev is found).
+// "raidz1", "raidz2", "raidz3", "mirror", or "stripe" (default when no named vdev is found).
 func poolVdevType(poolName string) string {
 	out, err := exec.Command("sudo", "zpool", "status", poolName).Output()
 	if err != nil {
@@ -1685,6 +1687,9 @@ func poolVdevType(poolName string) string {
 			continue
 		}
 		name := fields[0]
+		if strings.HasPrefix(name, "raidz3") {
+			return "raidz3"
+		}
 		if strings.HasPrefix(name, "raidz2") {
 			return "raidz2"
 		}

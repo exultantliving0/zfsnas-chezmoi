@@ -197,6 +197,84 @@ body.matrix .card, body.matrix .card-sm { box-shadow: 0 0 0 1px rgba(0,255,65,0.
 body.matrix .btn { box-shadow: 0 0 8px rgba(0,255,65,0.2); }
 body.matrix .badge-smbonly { background: rgba(0,255,65,0.15); color: #00ff41; }
 
+/* ===== Matrix Reload theme (Matrix colors + Tron Legacy fonts) ===== */
+body.matrix-reload {
+  --bg:          #000300;
+  --surface:     #001200;
+  --surface2:    #001e00;
+  --border:      rgba(0, 200, 50, 0.18);
+  --border-focus: rgba(0, 255, 65, 0.7);
+  --accent-1:    #00ff41;
+  --accent-2:    #00c832;
+  --accent-3:    #39ff14;
+  --accent-4:    #00e620;
+  --accent-warn: #ffe600;
+  --accent-danger:#ff2d55;
+  --zvol-color:  #00ff41;
+  --gradient:    linear-gradient(135deg, #004d00, #00ff41);
+  --gradient-full: linear-gradient(135deg, #004d00, #00c832, #39ff14);
+  --text:        #b8ffcc;
+  --text-2:      #6adc7a;
+  --text-3:      #3a8f4a;
+  --shadow:      0 4px 24px rgba(0, 255, 65, 0.12);
+  --shadow-lg:   0 8px 40px rgba(0, 255, 65, 0.22);
+}
+/* Matrix Reload — Orbitron + Share Tech Mono, green glow */
+body.matrix-reload,
+body.matrix-reload input,
+body.matrix-reload select,
+body.matrix-reload textarea,
+body.matrix-reload button {
+  font-family: 'Orbitron', 'Segoe UI', sans-serif;
+  letter-spacing: 0.03em;
+}
+body.matrix-reload code,
+body.matrix-reload pre,
+body.matrix-reload .font-mono,
+body.matrix-reload [style*="font-family:monospace"],
+body.matrix-reload [style*="font-family: monospace"] {
+  font-family: 'Share Tech Mono', 'Courier New', monospace !important;
+  letter-spacing: 0.04em;
+  color: #39ff14;
+  text-shadow: 0 0 6px rgba(57, 255, 20, 0.5);
+}
+body.matrix-reload .nav-item,
+body.matrix-reload .nav-label,
+body.matrix-reload h1, body.matrix-reload h2, body.matrix-reload h3, body.matrix-reload h4 {
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.55), 0 0 20px rgba(0, 255, 65, 0.2);
+}
+body.matrix-reload .sidebar-section {
+  color: #00c832;
+  text-shadow: 0 0 10px rgba(0, 200, 50, 0.65), 0 0 24px rgba(0, 200, 50, 0.25);
+}
+body.matrix-reload .nav-item.active {
+  color: #39ff14;
+  text-shadow: 0 0 10px rgba(57, 255, 20, 0.7), 0 0 24px rgba(57, 255, 20, 0.3);
+}
+body.matrix-reload .stat-label,
+body.matrix-reload .text-xs {
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.08em;
+  color: #00c832;
+  text-shadow: 0 0 6px rgba(0, 200, 50, 0.45);
+}
+body.matrix-reload a { color: #00ff41; text-shadow: 0 0 6px rgba(0, 255, 65, 0.4); }
+body.matrix-reload .logo {
+  background: linear-gradient(135deg, #00c832, #39ff14);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 14px rgba(0, 255, 65, 0.75));
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.1em;
+}
+body.matrix-reload .card, body.matrix-reload .card-sm { box-shadow: 0 0 0 1px rgba(0,255,65,0.18), inset 0 0 30px rgba(0,255,65,0.04); }
+body.matrix-reload .btn { box-shadow: 0 0 10px rgba(0,255,65,0.25); font-family: 'Orbitron', sans-serif; letter-spacing: 0.05em; }
+body.matrix-reload .badge-smbonly { background: rgba(0,255,65,0.15); color: #00ff41; }
+
 /* ===== Purple Neon theme ===== */
 body.purple {
   --bg:          #0a0010;
@@ -230,6 +308,84 @@ body.purple .logo {
 body.purple .card, body.purple .card-sm { box-shadow: 0 0 0 1px rgba(180,0,255,0.15), inset 0 0 30px rgba(180,0,255,0.03); }
 body.purple .btn { box-shadow: 0 0 8px rgba(180,0,255,0.2); }
 body.purple .badge-smbonly { background: rgba(180,0,255,0.15); color: #d400ff; }
+
+/* ===== Ghost in the Shell theme (Purple Neon colors + Orbitron/Share Tech Mono fonts) ===== */
+body.ghost-shell {
+  --bg:          #0a0010;
+  --surface:     #130020;
+  --surface2:    #1e0035;
+  --border:      rgba(180, 0, 255, 0.18);
+  --border-focus: rgba(200, 0, 255, 0.7);
+  --accent-1:    #d400ff;
+  --accent-2:    #b000e0;
+  --accent-3:    #e060ff;
+  --accent-4:    #cc00ff;
+  --accent-warn: #ffe600;
+  --accent-danger:#ff2d55;
+  --zvol-color:  #d400ff;
+  --gradient:    linear-gradient(135deg, #5500aa, #d400ff);
+  --gradient-full: linear-gradient(135deg, #5500aa, #b000e0, #e060ff);
+  --text:        #c8f0ff;
+  --text-2:      #7ecfed;
+  --text-3:      #4a9ab5;
+  --shadow:      0 4px 24px rgba(180, 0, 255, 0.15);
+  --shadow-lg:   0 8px 40px rgba(180, 0, 255, 0.25);
+}
+/* Ghost in the Shell — Orbitron + Share Tech Mono, purple glow */
+body.ghost-shell,
+body.ghost-shell input,
+body.ghost-shell select,
+body.ghost-shell textarea,
+body.ghost-shell button {
+  font-family: 'Orbitron', 'Segoe UI', sans-serif;
+  letter-spacing: 0.03em;
+}
+body.ghost-shell code,
+body.ghost-shell pre,
+body.ghost-shell .font-mono,
+body.ghost-shell [style*="font-family:monospace"],
+body.ghost-shell [style*="font-family: monospace"] {
+  font-family: 'Share Tech Mono', 'Courier New', monospace !important;
+  letter-spacing: 0.04em;
+  color: #e060ff;
+  text-shadow: 0 0 6px rgba(224, 96, 255, 0.5);
+}
+body.ghost-shell .nav-item,
+body.ghost-shell .nav-label,
+body.ghost-shell h1, body.ghost-shell h2, body.ghost-shell h3, body.ghost-shell h4 {
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(212, 0, 255, 0.55), 0 0 20px rgba(212, 0, 255, 0.2);
+}
+body.ghost-shell .sidebar-section {
+  color: #b000e0;
+  text-shadow: 0 0 10px rgba(176, 0, 224, 0.65), 0 0 24px rgba(176, 0, 224, 0.25);
+}
+body.ghost-shell .nav-item.active {
+  color: #e060ff;
+  text-shadow: 0 0 10px rgba(224, 96, 255, 0.7), 0 0 24px rgba(224, 96, 255, 0.3);
+}
+body.ghost-shell .stat-label,
+body.ghost-shell .text-xs {
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.08em;
+  color: #b000e0;
+  text-shadow: 0 0 6px rgba(176, 0, 224, 0.45);
+}
+body.ghost-shell a { color: #d400ff; text-shadow: 0 0 6px rgba(212, 0, 255, 0.4); }
+body.ghost-shell .logo {
+  background: linear-gradient(135deg, #b000e0, #e060ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 14px rgba(180, 0, 255, 0.75));
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.1em;
+}
+body.ghost-shell .card, body.ghost-shell .card-sm { box-shadow: 0 0 0 1px rgba(180,0,255,0.18), inset 0 0 30px rgba(180,0,255,0.04); }
+body.ghost-shell .btn { box-shadow: 0 0 10px rgba(180,0,255,0.25); font-family: 'Orbitron', sans-serif; letter-spacing: 0.05em; }
+body.ghost-shell .badge-smbonly { background: rgba(180,0,255,0.15); color: #d400ff; }
 
 /* ===== Dusk theme (midtone — between dark and light) ===== */
 body.dusk {

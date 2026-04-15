@@ -465,7 +465,7 @@ func zfsPoolDiskNames() map[string]bool {
 		"ONLINE": true, "DEGRADED": true, "FAULTED": true,
 		"OFFLINE": true, "REMOVED": true, "UNAVAIL": true,
 	}
-	vdevPrefixes := []string{"mirror-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-"}
+	vdevPrefixes := []string{"mirror-", "raidz3-", "raidz2-", "raidz1-", "raidz-", "spare-", "log-", "cache-"}
 
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)

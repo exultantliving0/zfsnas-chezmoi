@@ -506,6 +506,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// --- Binary self-update (admin only) ---
 	r.Handle("/api/binary-update/check",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCheckBinaryUpdate(appCfg))))).Methods("GET")
+	r.Handle("/api/binary-update/releases",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleListReleases(appCfg))))).Methods("GET")
 	r.Handle("/ws/binary-update-apply",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleBinaryUpdateApply(appCfg))))).Methods("GET")
 

@@ -20,12 +20,26 @@ import (
 )
 
 const repoAPI = "https://api.github.com/repos/macgaver/zfsnas-chezmoi/releases/latest"
+const repoReleasesAPI = "https://api.github.com/repos/macgaver/zfsnas-chezmoi/releases"
+const repoTagAPI = "https://api.github.com/repos/macgaver/zfsnas-chezmoi/releases/tags/"
 
 // ReleaseInfo holds the result of CheckLatest.
 type ReleaseInfo struct {
 	Tag         string
 	DownloadURL string
 	SigURL      string // URL of the .sig file (cosign signature of the binary)
+}
+
+// ReleaseSummary is a single GitHub release entry returned by CheckReleases.
+// Prerelease is always false in the output — pre-releases are filtered at the source.
+type ReleaseSummary struct {
+	Tag         string `json:"tag"`
+	Name        string `json:"name"`
+	Body        string `json:"body"`        // raw markdown from GitHub
+	PublishedAt string `json:"published_at"` // RFC3339
+	DownloadURL string `json:"download_url"`
+	SigURL      string `json:"sig_url"`
+	Prerelease  bool   `json:"prerelease"` // always false — pre-releases are filtered out
 }
 
 // CheckLatest calls the GitHub Releases API and returns the latest release info.
@@ -225,6 +239,114 @@ func ExePath() (string, error) {
 		return "", err
 	}
 	return filepath.EvalSymlinks(exe)
+}
+
+// CheckReleases returns the latest n stable releases from GitHub.
+// Pre-releases (GitHub prerelease flag == true) are always excluded even if they
+// appear at the top of the releases list. We request a larger page to guarantee
+// n stable results are available after filtering.
+func CheckReleases(n int) ([]ReleaseSummary, error) {
+	u := fmt.Sprintf("%s?per_page=%d", repoReleasesAPI, n*3)
+	resp, err := http.Get(u)
+	if err != nil {
+		return nil, fmt.Errorf("github API: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github API returned status %d", resp.StatusCode)
+	}
+
+	var raw []struct {
+		TagName     string `json:"tag_name"`
+		Name        string `json:"name"`
+		Body        string `json:"body"`
+		PublishedAt string `json:"published_at"`
+		Prerelease  bool   `json:"prerelease"`
+		Assets      []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+
+	suffix := "linux-" + runtime.GOARCH
+	out := make([]ReleaseSummary, 0, n)
+	for _, r := range raw {
+		if r.Prerelease {
+			continue // pre-releases are invisible to stable-channel users
+		}
+		s := ReleaseSummary{
+			Tag:         r.TagName,
+			Name:        r.Name,
+			Body:        r.Body,
+			PublishedAt: r.PublishedAt,
+			Prerelease:  false,
+		}
+		for _, a := range r.Assets {
+			switch {
+			case strings.HasSuffix(a.Name, ".sig"):
+				s.SigURL = a.BrowserDownloadURL
+			case strings.Contains(a.Name, suffix):
+				s.DownloadURL = a.BrowserDownloadURL
+			}
+		}
+		out = append(out, s)
+		if len(out) >= n {
+			break
+		}
+	}
+	return out, nil
+}
+
+// CheckRelease fetches a specific GitHub release by tag name (e.g. "v6.4.10").
+func CheckRelease(tag string) (ReleaseInfo, error) {
+	resp, err := http.Get(repoTagAPI + tag)
+	if err != nil {
+		return ReleaseInfo{}, fmt.Errorf("github API: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ReleaseInfo{}, fmt.Errorf("release %s not found on GitHub", tag)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return ReleaseInfo{}, fmt.Errorf("github API returned status %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return ReleaseInfo{}, fmt.Errorf("decode: %w", err)
+	}
+
+	info := ReleaseInfo{Tag: release.TagName}
+	suffix := "linux-" + runtime.GOARCH
+	for _, a := range release.Assets {
+		switch {
+		case strings.HasSuffix(a.Name, ".sig"):
+			info.SigURL = a.BrowserDownloadURL
+		case strings.Contains(a.Name, suffix):
+			info.DownloadURL = a.BrowserDownloadURL
+		}
+	}
+	// Fallback: any asset containing "zfsnas" that isn't a .sig
+	// (covers older releases whose binary asset has no arch suffix).
+	if info.DownloadURL == "" {
+		for _, a := range release.Assets {
+			n := strings.ToLower(a.Name)
+			if strings.Contains(n, "zfsnas") && !strings.HasSuffix(n, ".sig") {
+				info.DownloadURL = a.BrowserDownloadURL
+				break
+			}
+		}
+	}
+	return info, nil
 }
 
 // downloadText fetches a URL and returns its body as a string.

@@ -97,8 +97,23 @@ func HandleCheckBinaryUpdate(appCfg *config.AppConfig) http.HandlerFunc {
 	}
 }
 
+// HandleListReleases returns the last 5 stable GitHub releases with tag, name, body, and assets.
+// Pre-releases are always excluded.
+// GET /api/binary-update/releases
+func HandleListReleases(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		releases, err := updater.CheckReleases(5)
+		if err != nil {
+			jsonErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		jsonOK(w, releases)
+	}
+}
+
 // HandleBinaryUpdateApply streams the update progress over WebSocket, verifies
 // the binary hash, then atomically replaces the binary and calls syscall.Exec to restart.
+// An optional ?tag= query parameter targets a specific release (used for downgrade).
 // WS /ws/binary-update-apply
 func HandleBinaryUpdateApply(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -121,28 +136,50 @@ func HandleBinaryUpdateApply(appCfg *config.AppConfig) http.HandlerFunc {
 			}))
 		}
 
-		send("Step 1/5: Fetching release info from GitHub…")
-		info, err := updater.CheckLatest()
+		// If a specific tag is requested, target that release instead of latest.
+		targetTag := strings.TrimSpace(r.URL.Query().Get("tag"))
+		var info updater.ReleaseInfo
+		if targetTag != "" {
+			send("Step 1/5: Fetching release info for " + targetTag + " from GitHub…")
+			info, err = updater.CheckRelease(targetTag)
+		} else {
+			send("Step 1/5: Fetching release info from GitHub…")
+			info, err = updater.CheckLatest()
+		}
 		if err != nil {
 			done(false, "fetch release info failed: "+err.Error())
 			return
 		}
 		latest := strings.TrimPrefix(info.Tag, "v")
-		if !semverGreater(latest, version.Version) {
+		// Skip the "already up to date" guard when a specific tag is requested
+		// (user is intentionally downgrading to that version).
+		if targetTag == "" && !semverGreater(latest, version.Version) {
 			done(true, "already up to date (v"+version.Version+")")
 			return
 		}
-		send("Latest release: v" + latest + "  (current: v" + version.Version + ")")
+		send("Target release: v" + latest + "  (current: v" + version.Version + ")")
+
+		// Older releases may not have a .sig asset. For targeted downgrades we
+		// skip both signature steps gracefully; for normal updates a missing sig
+		// is still treated as a hard failure.
+		hasSig := info.SigURL != ""
 
 		send("Step 2/5: Verifying release signature…")
-		if valid, err := updater.VerifyRelease(info); err != nil {
-			done(false, "signature verification failed: "+err.Error())
-			return
-		} else if !valid {
-			done(false, "signature verification failed: signature does not match release key")
+		if hasSig {
+			if valid, err := updater.VerifyRelease(info); err != nil {
+				done(false, "signature verification failed: "+err.Error())
+				return
+			} else if !valid {
+				done(false, "signature verification failed: signature does not match release key")
+				return
+			}
+			send("Signature valid ✓")
+		} else if targetTag != "" {
+			send("No signature asset for " + targetTag + " — skipping (pre-signing release)")
+		} else {
+			done(false, "signature verification failed: release has no signature asset")
 			return
 		}
-		send("Signature valid ✓")
 
 		exePath, err := updater.ExePath()
 		if err != nil {
@@ -159,12 +196,16 @@ func HandleBinaryUpdateApply(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 
 		send("Step 4/5: Verifying binary signature…")
-		if err := updater.VerifyDownloadedBinary(tmpPath, info.SigURL); err != nil {
-			os.Remove(tmpPath)
-			done(false, "signature verification failed: "+err.Error())
-			return
+		if hasSig {
+			if err := updater.VerifyDownloadedBinary(tmpPath, info.SigURL); err != nil {
+				os.Remove(tmpPath)
+				done(false, "signature verification failed: "+err.Error())
+				return
+			}
+			send("Signature verified ✓")
+		} else {
+			send("No signature asset — skipping post-download verification")
 		}
-		send("Signature verified ✓")
 
 		send("Step 5/5: Replacing binary at " + exePath + "…")
 		if err := updater.Replace(tmpPath, exePath); err != nil {
