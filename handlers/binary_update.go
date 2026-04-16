@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
 	"zfsnas/internal/updater"
@@ -52,11 +54,52 @@ func parseSemver(v string) [4]int {
 	return out
 }
 
+// versionCheckTTL returns the cache TTL for the given interval setting.
+// Empty / unknown defaults to daily.
+func versionCheckTTL(interval string) time.Duration {
+	switch interval {
+	case "weekly":
+		return 7 * 24 * time.Hour
+	case "monthly":
+		return 30 * 24 * time.Hour
+	case "manual":
+		// Very large sentinel — effectively never auto-refresh.
+		return 100 * 365 * 24 * time.Hour
+	default: // "daily" or ""
+		return 24 * time.Hour
+	}
+}
+
 // HandleCheckBinaryUpdate checks GitHub for a newer release and verifies its signature.
+// Results are cached server-side according to the configured VersionCheckInterval.
+// Pass ?force=true to bypass the cache and always hit GitHub.
 // Version checking is always allowed regardless of LiveUpdateEnabled.
 // GET /api/binary-update/check
 func HandleCheckBinaryUpdate(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		force := r.URL.Query().Get("force") == "true"
+		cached := appCfg.VersionCheckCache
+		interval := appCfg.VersionCheckInterval
+
+		ttl := versionCheckTTL(interval)
+		now := time.Now().Unix()
+
+		// Return cached result if still fresh and not forced.
+		if !force && cached != nil && (now-cached.CheckedAt) < int64(ttl.Seconds()) {
+			jsonOK(w, map[string]interface{}{
+				"current":           version.Version,
+				"latest":            cached.Latest,
+				"update_available":  cached.UpdateAvailable,
+				"download_url":      cached.DownloadURL,
+				"sig_valid":         cached.SigValid,
+				"sig_error":         cached.SigError,
+				"service_installed": system.IsServiceInstalled(),
+				"cached":            true,
+				"checked_at":        cached.CheckedAt,
+			})
+			return
+		}
+
 		info, err := updater.CheckLatest()
 		if err != nil {
 			if system.DebugMode {
@@ -85,6 +128,23 @@ func HandleCheckBinaryUpdate(appCfg *config.AppConfig) http.HandlerFunc {
 			log.Printf("[debug] binary-update/check: current=%s latest=%s update_available=%v sig_valid=%v",
 				current, latest, updateAvailable, sigValid)
 		}
+
+		svcInstalled := system.IsServiceInstalled()
+
+		// Persist the result in the server-side cache.
+		appCfg.VersionCheckCache = &config.VersionCacheEntry{
+			CheckedAt:        now,
+			Latest:           latest,
+			UpdateAvailable:  updateAvailable,
+			SigValid:         sigValid,
+			SigError:         sigError,
+			DownloadURL:      info.DownloadURL,
+			ServiceInstalled: svcInstalled,
+		}
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			log.Printf("[binary-update] failed to persist version cache: %v", err)
+		}
+
 		jsonOK(w, map[string]interface{}{
 			"current":           current,
 			"latest":            latest,
@@ -92,9 +152,205 @@ func HandleCheckBinaryUpdate(appCfg *config.AppConfig) http.HandlerFunc {
 			"download_url":      info.DownloadURL,
 			"sig_valid":         sigValid,
 			"sig_error":         sigError,
-			"service_installed": system.IsServiceInstalled(),
+			"service_installed": svcInstalled,
+			"cached":            false,
+			"checked_at":        now,
 		})
 	}
+}
+
+// HandleGetBinaryUpdateSettings returns current version-check and auto-update settings.
+// GET /api/binary-update/settings
+func HandleGetBinaryUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		interval := appCfg.VersionCheckInterval
+		cached := appCfg.VersionCheckCache
+		if interval == "" {
+			interval = "daily"
+		}
+		autoHour := appCfg.AutoUpdateHour
+		if autoHour == 0 && !appCfg.AutoUpdateEnabled {
+			autoHour = 3 // sensible default shown in UI before first save
+		}
+		var checkedAt int64
+		if cached != nil {
+			checkedAt = cached.CheckedAt
+		}
+		jsonOK(w, map[string]interface{}{
+			"interval":            interval,
+			"checked_at":          checkedAt,
+			"auto_update_enabled": appCfg.AutoUpdateEnabled,
+			"auto_update_hour":    autoHour,
+		})
+	}
+}
+
+// HandleSaveBinaryUpdateSettings saves the version-check interval and auto-update config.
+// Clears the server-side version cache so the new interval takes effect immediately.
+// PUT /api/binary-update/settings
+func HandleSaveBinaryUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Interval          string `json:"interval"`
+			AutoUpdateEnabled bool   `json:"auto_update_enabled"`
+			AutoUpdateHour    int    `json:"auto_update_hour"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		switch body.Interval {
+		case "daily", "weekly", "monthly", "manual":
+		default:
+			jsonErr(w, http.StatusBadRequest, "interval must be daily, weekly, monthly, or manual")
+			return
+		}
+		if body.AutoUpdateHour < 0 || body.AutoUpdateHour > 23 {
+			jsonErr(w, http.StatusBadRequest, "auto_update_hour must be 0–23")
+			return
+		}
+		appCfg.VersionCheckInterval = body.Interval
+		// Manual Only disables auto-update regardless of what the client sent.
+		if body.Interval == "manual" {
+			appCfg.AutoUpdateEnabled = false
+		} else {
+			appCfg.AutoUpdateEnabled = body.AutoUpdateEnabled
+		}
+		appCfg.AutoUpdateHour = body.AutoUpdateHour
+		// Clear the cache so the next check honours the new interval.
+		appCfg.VersionCheckCache = nil
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonOK(w, map[string]interface{}{"ok": true})
+	}
+}
+
+// doAutoUpdate performs a full update cycle without a WebSocket connection.
+// Called by the scheduler goroutine at the configured hour.
+func doAutoUpdate(appCfg *config.AppConfig) {
+	interval := appCfg.VersionCheckInterval
+	if interval == "" {
+		interval = "daily"
+	}
+	// Manual Only means no automatic anything — guard here as well as in the scheduler.
+	if interval == "manual" {
+		log.Printf("[auto-update] skipping — interval is Manual Only")
+		return
+	}
+
+	// Honour the interval TTL: only run if enough time has passed since the last check.
+	ttl := versionCheckTTL(interval)
+	if appCfg.VersionCheckCache != nil {
+		elapsed := time.Since(time.Unix(appCfg.VersionCheckCache.CheckedAt, 0))
+		if elapsed < ttl {
+			log.Printf("[auto-update] skipping — interval not yet elapsed (%.1fh of %.1fh)", elapsed.Hours(), ttl.Hours())
+			return
+		}
+	}
+
+	log.Printf("[auto-update] scheduled check starting (hour=%d, interval=%s)", appCfg.AutoUpdateHour, interval)
+
+	if !system.IsServiceInstalled() {
+		log.Printf("[auto-update] skipping — ZNAS is not running as a systemd service")
+		return
+	}
+
+	info, err := updater.CheckLatest()
+	if err != nil {
+		log.Printf("[auto-update] CheckLatest failed: %v", err)
+		return
+	}
+	latest := strings.TrimPrefix(info.Tag, "v")
+	if !semverGreater(latest, version.Version) {
+		log.Printf("[auto-update] already up to date (v%s)", version.Version)
+		// Refresh the server-side cache even on no-update.
+		now := time.Now().Unix()
+		appCfg.VersionCheckCache = &config.VersionCacheEntry{
+			CheckedAt:        now,
+			Latest:           latest,
+			UpdateAvailable:  false,
+			SigValid:         true,
+			DownloadURL:      info.DownloadURL,
+			ServiceInstalled: true,
+		}
+		config.SaveAppConfig(appCfg)
+		return
+	}
+
+	log.Printf("[auto-update] new version v%s available — verifying signature…", latest)
+	if valid, err := updater.VerifyRelease(info); err != nil || !valid {
+		log.Printf("[auto-update] signature verification failed (%v) — aborting", err)
+		return
+	}
+
+	exePath, err := updater.ExePath()
+	if err != nil {
+		log.Printf("[auto-update] cannot determine executable path: %v", err)
+		return
+	}
+	destDir := filepath.Dir(exePath)
+
+	log.Printf("[auto-update] downloading v%s…", latest)
+	tmpPath, err := updater.Download(info.DownloadURL, destDir)
+	if err != nil {
+		log.Printf("[auto-update] download failed: %v", err)
+		return
+	}
+
+	if info.SigURL != "" {
+		if err := updater.VerifyDownloadedBinary(tmpPath, info.SigURL); err != nil {
+			os.Remove(tmpPath)
+			log.Printf("[auto-update] binary verification failed: %v", err)
+			return
+		}
+	}
+
+	log.Printf("[auto-update] replacing binary at %s…", exePath)
+	if err := updater.Replace(tmpPath, exePath); err != nil {
+		log.Printf("[auto-update] replace failed: %v", err)
+		return
+	}
+
+	audit.Log(audit.Entry{
+		User:    "system",
+		Role:    "admin",
+		Action:  audit.ActionSoftwareUpdate,
+		Result:  audit.ResultOK,
+		Details: "auto-updated from v" + version.Version + " to v" + latest,
+	})
+
+	// Clear the cached version so the next session sees fresh data.
+	appCfg.VersionCheckCache = nil
+	config.SaveAppConfig(appCfg)
+
+	log.Printf("[auto-update] updated to v%s — restarting process", latest)
+	if err := updater.Restart(exePath); err != nil {
+		log.Printf("[auto-update] syscall.Exec failed (%v) — exiting for systemd restart", err)
+		os.Exit(1)
+	}
+}
+
+// StartAutoUpdateScheduler ticks every minute and triggers doAutoUpdate when
+// the current hour matches the configured AutoUpdateHour and AutoUpdateEnabled is true.
+func StartAutoUpdateScheduler(appCfg *config.AppConfig) {
+	go func() {
+		for {
+			now := time.Now()
+			// Sleep until the top of the next minute.
+			next := now.Truncate(time.Minute).Add(time.Minute)
+			time.Sleep(time.Until(next))
+
+			if !appCfg.AutoUpdateEnabled || appCfg.VersionCheckInterval == "manual" {
+				continue
+			}
+			t := time.Now()
+			if t.Hour() == appCfg.AutoUpdateHour && t.Minute() == 0 {
+				doAutoUpdate(appCfg)
+			}
+		}
+	}()
 }
 
 // HandleListReleases returns the last 5 stable GitHub releases with tag, name, body, and assets.

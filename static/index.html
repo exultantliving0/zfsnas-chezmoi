@@ -220,6 +220,39 @@
       text-transform: none; letter-spacing: 0;
     }
     #tip-box.tip-visible { opacity: 1; }
+
+    /* ── Custom Select ── */
+    .cs-wrap { position:relative; display:block; }
+    .cs-trigger {
+      display:flex; align-items:center; justify-content:space-between; gap:8px;
+      width:100%; padding:7px 11px; background:var(--surface2);
+      border:1px solid var(--border); border-radius:var(--radius-sm);
+      color:var(--text-1); font-size:14px; cursor:pointer; text-align:left;
+      line-height:1.4; transition:border-color .15s; box-sizing:border-box;
+    }
+    .cs-trigger:hover, .cs-trigger.cs-open { border-color:var(--accent); }
+    .cs-trigger .cs-label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+    .cs-trigger .cs-arrow { color:var(--text-3); font-size:10px; flex-shrink:0; transition:transform .15s; }
+    .cs-trigger.cs-open .cs-arrow { transform:rotate(180deg); }
+    .cs-panel {
+      position:fixed; z-index:9100;
+      background:var(--surface2); border:1px solid var(--border);
+      border-radius:var(--radius-sm); box-shadow:0 8px 24px rgba(0,0,0,.4);
+      display:none; flex-direction:column; overflow:hidden;
+    }
+    .cs-panel.cs-visible { display:flex; }
+    .cs-search {
+      padding:7px 10px; border:none; border-bottom:1px solid var(--border);
+      background:var(--surface2); color:var(--text-1); font-size:13px;
+      outline:none; flex-shrink:0;
+    }
+    .cs-list { overflow-y:auto; max-height:240px; }
+    .cs-opt {
+      padding:7px 12px; font-size:13px; color:var(--text-1); cursor:pointer;
+      white-space:nowrap; transition:background .1s;
+    }
+    .cs-opt:hover { background:var(--surface3,rgba(255,255,255,.07)); }
+    .cs-opt.cs-selected { color:var(--accent); font-weight:600; }
   </style>
 </head>
 <body>
@@ -1222,7 +1255,10 @@
 
         <!-- Binary / Portal Update card -->
         <div class="card">
-          <h3 style="margin-bottom:4px;">ZFSNAS Instant Update</h3>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <h3 style="margin:0;">ZFSNAS Instant Update</h3>
+            <span onclick="openBinaryUpdateSettings()" title="Instant Update settings" style="cursor:pointer;color:var(--text-3);font-size:22px;line-height:1;padding:2px 4px;border-radius:4px;transition:color .15s;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-3)'">&#9881;</span>
+          </div>
           <p style="color:var(--text-3);font-size:13px;margin-bottom:20px;">Keep the portal binary up to date from GitHub Releases.</p>
 
           <!-- Version comparison rows -->
@@ -1242,7 +1278,7 @@
             </div>
             <div style="display:flex;flex-wrap:wrap;">
               <div style="flex:1;min-width:200px;padding:8px 18px;">
-                <button class="btn btn-ghost btn-sm" onclick="checkBinaryUpdate()" id="btn-check-binary-update">↻ Check for Update</button>
+                <button class="btn btn-ghost btn-sm" onclick="checkBinaryUpdate()" id="btn-check-binary-update">↻ Check for Releases</button>
               </div>
               <div style="flex:1;min-width:200px;padding:8px 18px;">
                 <button class="btn btn-ghost btn-sm" onclick="openReleaseNotes()" id="btn-release-notes">≡ Releases Details</button>
@@ -1306,7 +1342,10 @@
 
         <!-- OS update live output log -->
         <div id="updates-log-wrap" class="card" style="display:none;">
-          <div style="font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:10px;">Active/Recent OS Upgrade Output</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <div style="font-size:13px;font-weight:600;color:var(--text-2);">Active/Recent OS Upgrade Output</div>
+            <span onclick="document.getElementById('updates-log-wrap').style.display='none'" title="Dismiss" style="cursor:pointer;color:var(--text-3);font-size:16px;line-height:1;padding:2px 4px;border-radius:4px;transition:color .15s;" onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-3)'">✕</span>
+          </div>
           <div id="updates-log"
             style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;
                    font-family:'SF Mono',monospace;font-size:12px;line-height:1.6;max-height:420px;overflow-y:auto;
@@ -2211,6 +2250,106 @@
       <button class="btn" id="btn-recursive-delete-confirm"
         style="background:var(--accent-danger);color:#fff;opacity:.4;cursor:not-allowed;"
         disabled onclick="submitRecursiveDelete()">Delete Recursively</button>
+    </div>
+  </div>
+</div>
+
+<!-- Instant Update Settings Modal -->
+<div class="modal-backdrop hidden" id="modal-bup-settings" onclick="if(event.target===this)closeBinaryUpdateSettings()">
+  <div class="modal" style="max-width:620px;width:94vw;max-height:90vh;display:flex;flex-direction:column;">
+    <div class="modal-header" style="flex-shrink:0;">
+      <h3>Instant Update Settings</h3>
+      <button class="modal-close" onclick="closeBinaryUpdateSettings()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:0;overflow-y:auto;flex:1;">
+
+      <!-- ── Intro banner ───────────────────────────────────── -->
+      <div style="margin:18px 20px 0;padding:12px 14px;background:rgba(10,132,255,0.07);border:1px solid rgba(10,132,255,0.22);border-radius:var(--radius-sm);display:flex;gap:10px;align-items:flex-start;">
+        <div style="width:22px;height:22px;border-radius:50%;background:#30d158;color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">i</div>
+        <div style="font-size:12px;color:var(--text-2);line-height:1.65;">
+          ZNAS follows a <strong>Continuous Delivery</strong> model — like Chrome, features that pass testing reach a release quickly rather than waiting for large quarterly drops.
+          Enabling Auto-Update keeps your portal current without manual intervention.
+        </div>
+      </div>
+
+      <!-- ── Version Check section ──────────────────────────── -->
+      <div style="padding:18px 20px 0;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin-bottom:14px;">Version Check</div>
+
+        <!-- Check frequency row -->
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);">Check for new version</div>
+            <div id="bup-interval-hint" style="font-size:12px;color:var(--text-3);margin-top:2px;"></div>
+          </div>
+          <div style="position:relative;flex-shrink:0;" id="bup-interval-wrap">
+            <button id="bup-interval-trigger" type="button" onclick="toggleBupIntervalDropdown(event)"
+              style="min-width:148px;padding:7px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-1);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;white-space:nowrap;">
+              <span id="bup-interval-trigger-label">Daily</span>
+              <span style="color:var(--text-3);font-size:11px;">▾</span>
+            </button>
+            <div id="bup-interval-options"
+              style="display:none;position:absolute;top:calc(100% + 4px);right:0;min-width:220px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:500;box-shadow:0 8px 32px rgba(0,0,0,0.45);overflow:hidden;"></div>
+          </div>
+        </div>
+
+        <!-- Last-checked pill -->
+        <div id="bup-settings-last-check" style="display:none;margin-top:12px;padding:8px 12px;background:var(--surface2);border-radius:var(--radius-sm);font-size:12px;color:var(--text-3);"></div>
+
+        <!-- Update Train row -->
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);">Update Train</div>
+            <div style="font-size:12px;color:var(--text-3);margin-top:2px;">Pre-release support coming in a future version.</div>
+          </div>
+          <button disabled style="min-width:148px;padding:7px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-3);font-size:13px;font-weight:600;cursor:not-allowed;opacity:.5;display:flex;align-items:center;justify-content:space-between;gap:10px;white-space:nowrap;">
+            <span>Stable Releases</span>
+            <span style="font-size:11px;">▾</span>
+          </button>
+        </div>
+
+      </div>
+
+      <!-- ── Auto-Update section ────────────────────────────── -->
+      <div id="bup-autoupdate-section" style="padding:18px 20px 22px;margin-top:6px;border-top:1px solid var(--border);transition:opacity .2s;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin-bottom:14px;">Auto-Update</div>
+
+        <!-- Toggle row -->
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);">Enable Auto-Update</div>
+            <div style="font-size:12px;color:var(--text-3);margin-top:2px;">Automatically install new versions at the time and frequency set above. Requires ZNAS to run as a systemd service. Not available with <em>Manual Only</em>.</div>
+          </div>
+          <div id="bup-autoupdate-track" class="share-toggle-track" onclick="toggleBupAutoUpdate()" style="flex-shrink:0;">
+            <div class="share-toggle-thumb"></div>
+          </div>
+        </div>
+
+        <!-- Time picker row — shown only when auto-update is on -->
+        <div id="bup-autoupdate-time-row" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text-1);">Update time</div>
+              <div style="font-size:12px;color:var(--text-3);margin-top:2px;">When a check is due (per the interval above), ZNAS will run it at this hour and apply the update automatically if a newer version is found.</div>
+            </div>
+            <div style="position:relative;flex-shrink:0;" id="bup-hour-wrap">
+              <button id="bup-hour-trigger" type="button" onclick="toggleBupHourDropdown(event)"
+                style="min-width:148px;padding:7px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-1);font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;white-space:nowrap;">
+                <span id="bup-hour-trigger-label">3:00 AM</span>
+                <span style="color:var(--text-3);font-size:11px;">▾</span>
+              </button>
+              <div id="bup-hour-options"
+                style="display:none;position:absolute;top:calc(100% + 4px);right:0;min-width:160px;max-height:240px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);z-index:500;box-shadow:0 8px 32px rgba(0,0,0,0.45);"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+    <div class="modal-footer" style="flex-shrink:0;">
+      <button class="btn btn-ghost" onclick="closeBinaryUpdateSettings()">Cancel</button>
+      <button class="btn btn-primary" id="btn-bup-settings-save" onclick="saveBinaryUpdateSettings()">Save</button>
     </div>
   </div>
 </div>
@@ -4419,7 +4558,7 @@
 
 <!-- Edit iSCSI Share Modal -->
 <div class="modal-backdrop hidden" id="modal-iscsi-edit-share">
-  <div class="modal" style="max-width:780px;">
+  <div class="modal" style="max-width:960px;width:94vw;">
     <div class="modal-header">
       <h3>Edit iSCSI Share</h3>
       <button class="modal-close" onclick="closeEditISCSIShareModal()">✕</button>
@@ -5330,58 +5469,74 @@
 
 <!-- About Modal -->
 <div class="modal-backdrop hidden" id="modal-about">
-  <div class="modal" style="max-width:440px;text-align:center;position:relative;">
+  <div class="modal" style="max-width:520px;width:94vw;text-align:center;position:relative;padding:28px 28px 24px;">
     <button class="modal-close" onclick="closeAbout()" style="position:absolute;top:16px;right:16px;">✕</button>
 
     <!-- Logo -->
-    <div style="margin-bottom:20px;margin-top:8px;">
-      <img src="/static/logo.svg" alt="ZFS NAS" style="height:52px;object-fit:contain;opacity:.9;">
+    <div style="margin-bottom:18px;margin-top:4px;">
+      <img src="/static/logo.svg" alt="ZFS NAS" style="height:58px;object-fit:contain;opacity:.95;">
     </div>
 
     <!-- Tagline -->
-    <p style="font-size:13px;color:var(--text-2);margin-bottom:20px;line-height:1.6;">
+    <p style="font-size:13px;color:var(--text-2);margin-bottom:20px;line-height:1.65;max-width:380px;margin-left:auto;margin-right:auto;">
       <strong style="color:var(--text-1);">ZFS NAS Chezmoi</strong> is a free, 100% open-source NAS management portal —
       now and forever.<br>No subscriptions, no licensing, no hidden costs.
     </p>
 
     <!-- Versions -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
-      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:12px 10px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin-bottom:4px;">Current</div>
-        <div style="font-family:'SF Mono',monospace;font-weight:700;font-size:15px;" id="about-current">v…</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:22px;">
+      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:14px 10px;border:1px solid var(--border);">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--text-3);margin-bottom:5px;">Current</div>
+        <div style="font-family:'SF Mono',monospace;font-weight:700;font-size:16px;" id="about-current">v…</div>
       </div>
-      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:12px 10px;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin-bottom:4px;">Latest</div>
-        <div style="font-family:'SF Mono',monospace;font-weight:700;font-size:15px;" id="about-latest">…</div>
+      <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:14px 10px;border:1px solid var(--border);">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--text-3);margin-bottom:5px;">Latest</div>
+        <div style="font-family:'SF Mono',monospace;font-weight:700;font-size:16px;" id="about-latest">…</div>
       </div>
     </div>
 
     <!-- Links -->
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:22px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">
+      <a href="https://github.com/macgaver/zfsnas-chezmoi/wiki" target="_blank" rel="noopener"
+         style="display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius-sm);text-decoration:none;color:var(--text-2);font-size:13px;font-weight:500;border:1px solid var(--border);transition:border-color .15s,color .15s;"
+         onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text-1)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
+        <span style="font-size:15px;">📖</span>
+        ZNAS Documentation
+      </a>
+      <a href="https://github.com/macgaver/zfsnas-chezmoi/wiki/ZFS-Basic" target="_blank" rel="noopener"
+         style="display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius-sm);text-decoration:none;color:var(--text-2);font-size:13px;font-weight:500;border:1px solid var(--border);transition:border-color .15s,color .15s;"
+         onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text-1)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
+        <span style="font-size:15px;">🎓</span>
+        Learn about ZFS
+      </a>
       <a href="https://github.com/macgaver/zfsnas-chezmoi" target="_blank" rel="noopener"
-         style="display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 14px;background:var(--surface2);border-radius:var(--radius-sm);text-decoration:none;color:var(--text-2);font-size:13px;font-weight:500;border:1px solid var(--border);">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;opacity:.8;"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg>
+         style="display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius-sm);text-decoration:none;color:var(--text-2);font-size:13px;font-weight:500;border:1px solid var(--border);transition:border-color .15s,color .15s;"
+         onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text-1)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;opacity:.8;"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.341-3.369-1.341-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg>
         GitHub Repository
       </a>
       <a href="https://github.com/macgaver/zfsnas-chezmoi/releases" target="_blank" rel="noopener"
-         style="display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 14px;background:var(--surface2);border-radius:var(--radius-sm);text-decoration:none;color:var(--text-2);font-size:13px;font-weight:500;border:1px solid var(--border);">
-        <span style="font-size:15px;opacity:.8;">🏷</span>
+         style="display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius-sm);text-decoration:none;color:var(--text-2);font-size:13px;font-weight:500;border:1px solid var(--border);transition:border-color .15s,color .15s;"
+         onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text-1)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
+        <span style="font-size:15px;">🏷</span>
         Releases &amp; Changelog
       </a>
       <a href="https://github.com/macgaver/zfsnas-chezmoi/issues" target="_blank" rel="noopener"
-         style="display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 14px;background:var(--surface2);border-radius:var(--radius-sm);text-decoration:none;color:var(--text-2);font-size:13px;font-weight:500;border:1px solid var(--border);">
-        <span style="font-size:15px;opacity:.8;">🐛</span>
+         style="display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 12px;background:var(--surface2);border-radius:var(--radius-sm);text-decoration:none;color:var(--text-2);font-size:13px;font-weight:500;border:1px solid var(--border);transition:border-color .15s,color .15s;grid-column:1 / -1;"
+         onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text-1)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-2)'">
+        <span style="font-size:15px;">🐛</span>
         Support &amp; Issues
       </a>
     </div>
 
     <!-- Donation -->
     <a href="https://ko-fi.com/macgaver" target="_blank" rel="noopener"
-       style="display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 16px;background:rgba(255,94,91,0.1);border:1px solid rgba(255,94,91,0.3);border-radius:var(--radius-sm);text-decoration:none;margin-bottom:4px;">
-      <span style="font-size:22px;">☕</span>
+       style="display:flex;align-items:center;justify-content:center;gap:14px;padding:16px 20px;background:linear-gradient(135deg,rgba(255,94,91,0.18) 0%,rgba(255,149,0,0.14) 100%);border:1.5px solid rgba(255,94,91,0.45);border-radius:10px;text-decoration:none;transition:border-color .15s,box-shadow .15s;box-shadow:0 2px 12px rgba(255,94,91,0.12);"
+       onmouseover="this.style.borderColor='rgba(255,94,91,0.75)';this.style.boxShadow='0 4px 20px rgba(255,94,91,0.28)'" onmouseout="this.style.borderColor='rgba(255,94,91,0.45)';this.style.boxShadow='0 2px 12px rgba(255,94,91,0.12)'">
+      <span style="font-size:32px;line-height:1;flex-shrink:0;">☕</span>
       <div style="text-align:left;">
-        <div style="font-size:13px;font-weight:700;color:#ff6b6b;">Buy us a coffee</div>
-        <div style="font-size:11px;color:var(--text-3);">Support the project on Ko-fi — every coffee helps!</div>
+        <div style="font-size:14px;font-weight:700;color:#ff6b6b;margin-bottom:2px;">Buy us a coffee</div>
+        <div style="font-size:12px;color:var(--text-3);line-height:1.4;">Support the project on Ko-fi — every coffee helps!</div>
       </div>
     </a>
   </div>
@@ -6107,7 +6262,7 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
     }
     if (d.username) window._serverUsername = d.username;
     updateSchedReplUserHint();
-  }).catch(() => {}).finally(() => { _sidebarVersionCheck(); setInterval(_sidebarVersionCheck, 86400000); });
+  }).catch(() => {}).finally(() => { _sidebarVersionCheck(); });
 
   await loadSettings();
   initAlertsWebSocket();
@@ -6208,14 +6363,21 @@ function openAbout() {
     const verEl = document.getElementById('app-version');
     curEl.textContent = verEl ? verEl.textContent : 'v…';
   }
-  // Populate latest version from cache
+  // Populate latest version from in-memory cache
   if (latEl) {
-    const cached = _loadVerCache();
-    if (cached && cached.data && cached.data.latest) {
-      latEl.textContent = 'v' + cached.data.latest;
-      latEl.style.color = cached.data.update_available ? 'var(--accent-warn)' : '';
+    if (_lastBupData && _lastBupData.latest) {
+      latEl.textContent = 'v' + _lastBupData.latest;
+      latEl.style.color = _lastBupData.update_available ? 'var(--accent-warn)' : '';
     } else {
       latEl.textContent = '…';
+      // Fetch from server cache (no GitHub hit if cache is fresh)
+      fetch('/api/binary-update/check').then(r => r.ok ? r.json() : null).then(data => {
+        if (data && data.latest) {
+          _lastBupData = data;
+          latEl.textContent = 'v' + data.latest;
+          latEl.style.color = data.update_available ? 'var(--accent-warn)' : '';
+        }
+      }).catch(() => {});
     }
   }
   document.getElementById('modal-about').classList.remove('hidden');
@@ -7390,6 +7552,8 @@ function openEditUser(id) {
   document.getElementById('eu-username-label').textContent = u.username;
   document.getElementById('eu-email').value    = u.email || '';
   document.getElementById('eu-role').value     = u.role;
+  initCustomSelect('eu-role');
+  csRefresh('eu-role');
   document.getElementById('eu-password').value = '';
   document.getElementById('eu-smb-home').checked = !!u.smb_home_folder;
   document.getElementById('edit-user-alert').classList.add('hidden');
@@ -7417,6 +7581,7 @@ function openEditUser(id) {
 
   // Prevent changing your own role (avoid accidental self-lockout).
   document.getElementById('eu-role').disabled = isSelf;
+  csSetDisabled('eu-role', isSelf);
   document.getElementById('eu-role-self-hint').classList.toggle('hidden', !isSelf);
 
   onEditRoleChange();
@@ -7558,6 +7723,8 @@ function openCreateUser() {
   document.getElementById('new-email').value    = '';
   document.getElementById('new-password').value = '';
   document.getElementById('new-role').value     = 'admin';
+  initCustomSelect('new-role');
+  csRefresh('new-role');
   document.getElementById('new-password-label').textContent = 'Password';
   document.getElementById('new-smb-home').checked = false;
   document.getElementById('new-uid').value = '';
@@ -7850,9 +8017,156 @@ async function loadAudit() {
 }
 
 // ===== Settings =====
+// ── Custom Select utility ──────────────────────────────────────────────────
+// Replaces native <select> elements with a styled floating-panel dropdown.
+// The native <select> stays hidden but synced so all existing .value reads work.
+(function() {
+  var _openPanel = null;
+  document.addEventListener('mousedown', function(e) {
+    if (!_openPanel) return;
+    var id = _openPanel.dataset.csId;
+    var trigger = document.querySelector('.cs-trigger[data-cs="' + id + '"]');
+    if (!_openPanel.contains(e.target) && (!trigger || !trigger.contains(e.target))) {
+      _csClose();
+    }
+  }, true);
+  function _csClose() {
+    if (!_openPanel) return;
+    var id = _openPanel.dataset.csId;
+    _openPanel.classList.remove('cs-visible');
+    var trigger = document.querySelector('.cs-trigger[data-cs="' + id + '"]');
+    if (trigger) trigger.classList.remove('cs-open');
+    _openPanel = null;
+  }
+  window._csCloseAll = _csClose;
+
+  window.initCustomSelect = function(id, opts) {
+    var sel = document.getElementById(id);
+    if (!sel || sel._csInit) return;
+    sel._csInit = true;
+    opts = opts || {};
+    sel.style.display = 'none';
+
+    // Wrap
+    var wrap = document.createElement('div');
+    wrap.className = 'cs-wrap';
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+
+    // Trigger button
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'cs-trigger';
+    trigger.dataset.cs = id;
+    trigger.innerHTML = '<span class="cs-label"></span><span class="cs-arrow">▾</span>';
+    wrap.insertBefore(trigger, sel);
+
+    // Panel — appended to <body> so it can overlay overflow:hidden card boundaries
+    var panel = document.createElement('div');
+    panel.className = 'cs-panel';
+    panel.dataset.csId = id;
+    document.body.appendChild(panel);
+
+    var searchInput = null;
+    if (opts.searchable) {
+      searchInput = document.createElement('input');
+      searchInput.type = 'text';
+      searchInput.className = 'cs-search';
+      searchInput.placeholder = 'Search…';
+      panel.appendChild(searchInput);
+      searchInput.addEventListener('input', function() {
+        var q = this.value.toLowerCase();
+        list.querySelectorAll('.cs-opt').forEach(function(o) {
+          o.style.display = o.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+      });
+    }
+
+    var list = document.createElement('div');
+    list.className = 'cs-list';
+    panel.appendChild(list);
+
+    function _buildOpts() {
+      list.innerHTML = '';
+      Array.from(sel.options).forEach(function(opt) {
+        var div = document.createElement('div');
+        div.className = 'cs-opt' + (opt.value === sel.value ? ' cs-selected' : '');
+        div.textContent = opt.textContent;
+        div.dataset.val = opt.value;
+        div.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          sel.value = div.dataset.val;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          _refreshTrigger();
+          _csClose();
+        });
+        list.appendChild(div);
+      });
+    }
+
+    function _refreshTrigger() {
+      var cur = sel.options[sel.selectedIndex];
+      trigger.querySelector('.cs-label').textContent = cur ? cur.textContent : '';
+      list.querySelectorAll('.cs-opt').forEach(function(o) {
+        o.classList.toggle('cs-selected', o.dataset.val === sel.value);
+      });
+    }
+
+    function _open() {
+      _csClose();
+      _buildOpts();
+      var rect = trigger.getBoundingClientRect();
+      panel.style.width = Math.max(rect.width, 160) + 'px';
+      var spaceBelow = window.innerHeight - rect.bottom;
+      if (spaceBelow < 120 && rect.top > spaceBelow) {
+        panel.style.top = '';
+        panel.style.bottom = (window.innerHeight - rect.top + 2) + 'px';
+      } else {
+        panel.style.top = (rect.bottom + 2) + 'px';
+        panel.style.bottom = '';
+      }
+      panel.style.left = rect.left + 'px';
+      panel.classList.add('cs-visible');
+      trigger.classList.add('cs-open');
+      _openPanel = panel;
+      if (searchInput) {
+        searchInput.value = '';
+        list.querySelectorAll('.cs-opt').forEach(function(o){ o.style.display = ''; });
+        searchInput.focus();
+      }
+      var selectedOpt = list.querySelector('.cs-selected');
+      if (selectedOpt) setTimeout(function() { selectedOpt.scrollIntoView({ block: 'nearest' }); }, 0);
+    }
+
+    trigger.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (panel.classList.contains('cs-visible')) _csClose();
+      else _open();
+    });
+
+    sel._csRefresh = _refreshTrigger;
+    sel._csRebuild = _buildOpts;
+    _refreshTrigger();
+  };
+
+  window.csRefresh = function(id) {
+    var sel = document.getElementById(id);
+    if (sel && sel._csRefresh) sel._csRefresh();
+  };
+
+  window.csSetDisabled = function(id, disabled) {
+    var trigger = document.querySelector('.cs-trigger[data-cs="' + id + '"]');
+    if (!trigger) return;
+    trigger.disabled = !!disabled;
+    trigger.style.opacity = disabled ? '0.5' : '';
+    trigger.style.pointerEvents = disabled ? 'none' : '';
+  };
+})();
+
 let _savedPort = null;
 
 async function loadSettings() {
+  initCustomSelect('settings-theme');
   try {
     const resp = await fetch('/api/settings');
     if (!resp.ok) return;
@@ -7861,7 +8175,7 @@ async function loadSettings() {
     const portEl = document.getElementById('settings-port');
     if (portEl) { portEl.value = appSettings.port; _savedPort = appSettings.port; }
     const themeEl = document.getElementById('settings-theme');
-    if (themeEl) themeEl.value = appSettings.login_theme || 'dark';
+    if (themeEl) { themeEl.value = appSettings.login_theme || 'dark'; csRefresh('settings-theme'); }
     selectStorageUnit(appSettings.storage_unit || 'gb', false);
     const liveToggle = document.getElementById('live-update-toggle');
     if (liveToggle) liveToggle.checked = !!appSettings.live_update_enabled;
@@ -7904,6 +8218,7 @@ async function loadTreeMapScheduleSettings() {
         opt.textContent = String(h).padStart(2, '0');
         hourSel.appendChild(opt);
       }
+      initCustomSelect('treemap-hour-select');
     }
     if (minuteSel && minuteSel.options.length === 0) {
       for (let m = 0; m < 60; m++) {
@@ -7912,10 +8227,12 @@ async function loadTreeMapScheduleSettings() {
         opt.textContent = String(m).padStart(2, '0');
         minuteSel.appendChild(opt);
       }
+      initCustomSelect('treemap-minute-select');
     }
-    if (schedSel)  schedSel.value  = sched.schedule || '';
-    if (hourSel)   hourSel.value   = sched.hour ?? 2;
-    if (minuteSel) minuteSel.value = sched.minute ?? 0;
+    initCustomSelect('treemap-schedule-select');
+    if (schedSel)  { schedSel.value  = sched.schedule || '';  csRefresh('treemap-schedule-select'); }
+    if (hourSel)   { hourSel.value   = sched.hour ?? 2;       csRefresh('treemap-hour-select'); }
+    if (minuteSel) { minuteSel.value = sched.minute ?? 0;     csRefresh('treemap-minute-select'); }
     if (hourWrap)  hourWrap.style.display = sched.schedule ? 'flex' : 'none';
   } catch {}
 }
@@ -7934,8 +8251,10 @@ async function loadTimezone() {
         `<option value="${esc(tz)}">${esc(tz)}</option>`
       ).join('');
       _tzLoaded = true;
+      initCustomSelect('settings-timezone', { searchable: true });
     }
     sel.value = data.timezone || 'UTC';
+    csRefresh('settings-timezone');
   } catch {}
 }
 
@@ -8273,6 +8592,12 @@ function _collectEventSubs(p) {
 }
 
 async function loadAlerts() {
+  // Init custom selects for static alert dropdowns (idempotent — safe to call each load)
+  initCustomSelect('al-auth');
+  initCustomSelect('al-nt-prio');
+  initCustomSelect('al-po-prio');
+  initCustomSelect('al-sl-proto');
+  initCustomSelect('al-sl-facility');
   try {
     const resp = await fetch('/api/alerts');
     if (!resp.ok) return;
@@ -8291,6 +8616,7 @@ async function loadAlerts() {
     document.getElementById('al-port').value                  = d.email?.smtp?.port      || 587;
     document.getElementById('al-from').value                  = d.email?.smtp?.from      || '';
     document.getElementById('al-auth').value                  = d.email?.smtp?.auth_mode || 'starttls';
+    csRefresh('al-auth');
     document.getElementById('al-username').value              = d.email?.smtp?.username  || '';
     document.getElementById('al-password').value              = d.email?.smtp?.password  || '';
     document.getElementById('al-em-send-separately').checked  = !!d.email?.send_separately;
@@ -8302,6 +8628,7 @@ async function loadAlerts() {
     document.getElementById('al-nt-url').value   = d.ntfy?.url      || '';
     document.getElementById('al-nt-token').value = d.ntfy?.token    || '';
     document.getElementById('al-nt-prio').value  = d.ntfy?.priority || 'default';
+    csRefresh('al-nt-prio');
     _loadEventSubs('nt', d.ntfy?.events);
 
     // Gotify
@@ -8317,6 +8644,7 @@ async function loadAlerts() {
     document.getElementById('al-po-token').value   = d.pushover?.api_token  || '';
     document.getElementById('al-po-device').value  = d.pushover?.device     || '';
     document.getElementById('al-po-prio').value    = String(d.pushover?.priority ?? 0);
+    csRefresh('al-po-prio');
     _loadEventSubs('po', d.pushover?.events);
 
     // Syslog
@@ -8324,7 +8652,9 @@ async function loadAlerts() {
     document.getElementById('al-sl-host').value     = d.syslog?.host     || '';
     document.getElementById('al-sl-port').value     = d.syslog?.port     || 514;
     document.getElementById('al-sl-proto').value    = d.syslog?.protocol || 'udp';
+    csRefresh('al-sl-proto');
     document.getElementById('al-sl-facility').value = d.syslog?.facility || 'daemon';
+    csRefresh('al-sl-facility');
     document.getElementById('al-sl-tag').value      = d.syslog?.tag      || 'zfsnas';
     _loadEventSubs('sl', d.syslog?.events);
 
@@ -10754,6 +11084,9 @@ function _renderCacheModal() {
   const cacheSet = new Set(cacheDevs);
   sel.innerHTML = '<option value="">Loading available disks…</option>';
   sel.disabled = true;
+  initCustomSelect('cache-add-select');
+  csRefresh('cache-add-select');
+  csSetDisabled('cache-add-select', true);
   // Build set of all devices already in any pool (members + cache across all pools).
   const allPoolDevices = new Set(allPoolsData.flatMap(p => [
     ...(p.member_devices || []), ...(p.members || []),
@@ -10764,6 +11097,7 @@ function _renderCacheModal() {
       !d.in_use && !cacheSet.has(d.device) &&
       !allPoolDevices.has(d.device) && !allPoolDevices.has('/dev/' + d.name));
     sel.disabled = false;
+    csSetDisabled('cache-add-select', false);
     if (available.length === 0) {
       sel.innerHTML = '<option value="">No available disks</option>';
     } else {
@@ -10771,9 +11105,12 @@ function _renderCacheModal() {
         `<option value="${esc(d.device)}">${esc(d.device)}${d.serial ? ` (${esc(d.serial)})` : ''} — ${esc(d.vendor||'')} ${esc(d.model||'')} (${d.size_bytes ? fmtBytes(d.size_bytes) : esc(d.size)})</option>`
       ).join('');
     }
+    csRefresh('cache-add-select');
   }).catch(() => {
     sel.disabled = false;
+    csSetDisabled('cache-add-select', false);
     sel.innerHTML = '<option value="">Failed to load disks</option>';
+    csRefresh('cache-add-select');
   });
 }
 
@@ -18321,53 +18658,36 @@ function _attachUpgradeWS(log, btn, status, pkgList) {
   ws.onclose = () => { /* normal close after done */ };
 }
 
-// ── Version cache (localStorage, max once per day) ──────────────────────────
-const _VER_CACHE_KEY = 'zfsnas_ver_cache';
+// ── Version check — server-side cache ───────────────────────────────────────
+// The latest-version result is now cached in config.json on the server.
+// The server honours the configured interval (daily/weekly/monthly/manual)
+// and returns cached:true when serving a non-expired result.
+// The client no longer needs localStorage for version caching.
+let _lastBupData = null; // last successful /api/binary-update/check response
 
-function _loadVerCache() {
-  try { return JSON.parse(localStorage.getItem(_VER_CACHE_KEY) || 'null'); } catch { return null; }
-}
-function _saveVerCache(data) {
-  try { localStorage.setItem(_VER_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch {}
-}
-
-// Called once after login — checks at most once per day, updates sidebar version.
+// Called once after login — asks the server (which handles caching internally).
 async function _sidebarVersionCheck() {
-  const cached = _loadVerCache();
-  const ONE_DAY = 86400 * 1000;
-  let data = null;
-
-  if (cached && (Date.now() - cached.ts) < ONE_DAY) {
-    data = cached.data;
-  } else {
-    try {
-      const resp = await fetch('/api/binary-update/check');
-      if (resp.ok) {
-        data = await resp.json();
-        _saveVerCache(data);
-      }
-    } catch {}
-  }
-
-  if (data && data.update_available) {
-    const dot = document.getElementById('nav-updates-dot');
-    if (dot) dot.style.display = 'inline-block';
-    const latSpan = document.getElementById('app-version-latest');
-    if (latSpan) { latSpan.textContent = '→ v' + data.latest; latSpan.style.display = 'inline'; }
-  }
+  try {
+    const resp = await fetch('/api/binary-update/check');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data && data.latest) _lastBupData = data;
+    if (data && data.update_available) {
+      const dot = document.getElementById('nav-updates-dot');
+      if (dot) dot.style.display = 'inline-block';
+      const latSpan = document.getElementById('app-version-latest');
+      if (latSpan) { latSpan.textContent = '→ v' + data.latest; latSpan.style.display = 'inline'; }
+    }
+  } catch {}
 }
 
-// Called when the Updates page opens — uses cache to populate fields instantly,
-// then only hits the network if the cache is older than 1 day.
+// Called when the Updates page opens — fetches from server (server uses cache if fresh).
 async function _autoBinaryVersionCheck() {
   const currentEl  = document.getElementById('bup-current');
   const latestEl   = document.getElementById('bup-latest');
   const uptodateEl = document.getElementById('bup-uptodate');
   const applyWrap  = document.getElementById('btn-apply-binary-wrap');
   if (!currentEl) return;
-
-  const cached = _loadVerCache();
-  const ONE_DAY = 86400 * 1000;
 
   function _applyVerData(data) {
     _setVerLabel(currentEl, data.current);
@@ -18395,18 +18715,213 @@ async function _autoBinaryVersionCheck() {
   uptodateEl.classList.add('hidden');
   applyWrap.classList.add('hidden');
 
-  if (cached && (Date.now() - cached.ts) < ONE_DAY) {
-    _applyVerData(cached.data);
-    return;
-  }
-
   try {
     const resp = await fetch('/api/binary-update/check');
     const data = await resp.json();
     if (!resp.ok) { latestEl.textContent = data.error || 'unavailable'; return; }
-    _saveVerCache(data);
+    _lastBupData = data;
     _applyVerData(data);
   } catch { latestEl.textContent = 'unavailable'; }
+}
+
+// ── Instant Update Settings modal ────────────────────────────────────────────
+let _bupSettingsInterval   = 'daily';
+let _bupAutoUpdateEnabled  = false;
+let _bupAutoUpdateHour     = 3;
+
+const _BUP_INTERVAL_OPTS = [
+  { value: 'daily',   label: 'Daily',       desc: 'Once every 24 hours' },
+  { value: 'weekly',  label: 'Weekly',      desc: 'Once every 7 days'   },
+  { value: 'monthly', label: 'Monthly',     desc: 'Once every 30 days'  },
+  { value: 'manual',  label: 'Manual Only', desc: 'Use ↻ Check button'  },
+];
+
+const _BUP_INTERVAL_HINTS = {
+  daily:   'Checks GitHub for a new release once every 24 hours.',
+  weekly:  'Checks GitHub for a new release once a week.',
+  monthly: 'Checks GitHub for a new release once a month.',
+  manual:  'No automatic checks — use the ↻ Check for Releases button on demand.',
+};
+
+function _setBupIntervalTrigger(val) {
+  const opt = _BUP_INTERVAL_OPTS.find(o => o.value === val);
+  const lbl = document.getElementById('bup-interval-trigger-label');
+  if (lbl && opt) lbl.textContent = opt.label;
+  const hint = document.getElementById('bup-interval-hint');
+  if (hint) hint.textContent = _BUP_INTERVAL_HINTS[val] || '';
+}
+
+function _buildBupIntervalOptions() {
+  const panel = document.getElementById('bup-interval-options');
+  if (!panel) return;
+  panel.innerHTML = _BUP_INTERVAL_OPTS.map(o => `
+    <div class="bup-interval-opt" data-val="${o.value}"
+      onclick="_pickBupInterval('${o.value}')"
+      style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s;"
+      onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-1);">${o.label}</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:1px;">${o.desc}</div>
+      </div>
+      <span class="bup-opt-check" data-val="${o.value}" style="font-size:14px;color:var(--accent-2);display:none;">✓</span>
+    </div>`).join('');
+  // remove bottom border from last item
+  const items = panel.querySelectorAll('.bup-interval-opt');
+  if (items.length) items[items.length - 1].style.borderBottom = 'none';
+}
+
+function _updateBupIntervalChecks() {
+  document.querySelectorAll('.bup-opt-check').forEach(el => {
+    el.style.display = el.dataset.val === _bupSettingsInterval ? '' : 'none';
+  });
+}
+
+function _pickBupInterval(val) {
+  _bupSettingsInterval = val;
+  _setBupIntervalTrigger(val);
+  _updateBupIntervalChecks();
+  _closeBupIntervalDropdown();
+  _applyBupAutoUpdateAvailability();
+}
+
+function _applyBupAutoUpdateAvailability() {
+  const isManual = _bupSettingsInterval === 'manual';
+  const section  = document.getElementById('bup-autoupdate-section');
+  if (!section) return;
+  if (isManual) {
+    section.style.opacity = '0.45';
+    section.style.pointerEvents = 'none';
+    // Force toggle off if manual is picked.
+    if (_bupAutoUpdateEnabled) _applyBupAutoUpdateUI(false);
+  } else {
+    section.style.opacity = '';
+    section.style.pointerEvents = '';
+  }
+}
+
+function _closeBupIntervalDropdown() {
+  const panel = document.getElementById('bup-interval-options');
+  if (panel) panel.style.display = 'none';
+}
+
+function toggleBupIntervalDropdown(e) {
+  e && e.stopPropagation();
+  const panel = document.getElementById('bup-interval-options');
+  if (!panel) return;
+  if (panel.style.display !== 'none') { _closeBupIntervalDropdown(); return; }
+  _buildBupIntervalOptions();
+  _updateBupIntervalChecks();
+  panel.style.display = 'block';
+  const close = ev => { if (!document.getElementById('bup-interval-wrap').contains(ev.target)) { _closeBupIntervalDropdown(); document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+// ── Auto-Update toggle ───────────────────────────────────────────────────────
+function _applyBupAutoUpdateUI(enabled) {
+  _bupAutoUpdateEnabled = enabled;
+  const track = document.getElementById('bup-autoupdate-track');
+  if (track) {
+    if (enabled) track.classList.add('on'); else track.classList.remove('on');
+  }
+  const row = document.getElementById('bup-autoupdate-time-row');
+  if (row) row.style.display = enabled ? '' : 'none';
+}
+function toggleBupAutoUpdate() { _applyBupAutoUpdateUI(!_bupAutoUpdateEnabled); }
+
+// ── Update-hour dropdown ─────────────────────────────────────────────────────
+function _hourLabel(h) {
+  if (h === 0)  return '12:00 AM (midnight)';
+  if (h < 12)  return h + ':00 AM';
+  if (h === 12) return '12:00 PM (noon)';
+  return (h - 12) + ':00 PM';
+}
+function _setBupHourTrigger(h) {
+  const lbl = document.getElementById('bup-hour-trigger-label');
+  if (lbl) lbl.textContent = _hourLabel(h);
+}
+function _closeBupHourDropdown() {
+  const p = document.getElementById('bup-hour-options');
+  if (p) p.style.display = 'none';
+}
+function toggleBupHourDropdown(e) {
+  e && e.stopPropagation();
+  const panel = document.getElementById('bup-hour-options');
+  if (!panel) return;
+  if (panel.style.display !== 'none') { _closeBupHourDropdown(); return; }
+  // Build hour options
+  panel.innerHTML = Array.from({length: 24}, (_, h) => `
+    <div onclick="_pickBupHour(${h})"
+      style="padding:8px 14px;cursor:pointer;font-size:13px;font-weight:${h===_bupAutoUpdateHour?'700':'400'};color:${h===_bupAutoUpdateHour?'var(--accent-2)':'var(--text-1)'};display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);"
+      onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      ${_hourLabel(h)}
+      ${h===_bupAutoUpdateHour ? '<span style="color:var(--accent-2);">✓</span>' : ''}
+    </div>`).join('');
+  // remove last border
+  const items = panel.children;
+  if (items.length) items[items.length-1].style.borderBottom = 'none';
+  panel.style.display = 'block';
+  // scroll selected into view
+  const active = [...items].find((_, i) => i === _bupAutoUpdateHour);
+  if (active) setTimeout(() => active.scrollIntoView({block:'nearest'}), 0);
+  const close = ev => { if (!document.getElementById('bup-hour-wrap').contains(ev.target)) { _closeBupHourDropdown(); document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+function _pickBupHour(h) {
+  _bupAutoUpdateHour = h;
+  _setBupHourTrigger(h);
+  _closeBupHourDropdown();
+}
+
+async function openBinaryUpdateSettings() {
+  try {
+    const resp = await fetch('/api/binary-update/settings');
+    if (!resp.ok) return;
+    const s = await resp.json();
+    _bupSettingsInterval = s.interval || 'daily';
+    _setBupIntervalTrigger(_bupSettingsInterval);
+    _bupAutoUpdateHour = (s.auto_update_hour !== undefined) ? s.auto_update_hour : 3;
+    _setBupHourTrigger(_bupAutoUpdateHour);
+    _applyBupAutoUpdateUI(!!s.auto_update_enabled);
+    const lastEl = document.getElementById('bup-settings-last-check');
+    if (lastEl) {
+      if (s.checked_at && s.checked_at > 0) {
+        lastEl.style.display = '';
+        lastEl.innerHTML = 'Last checked: <strong>' + new Date(s.checked_at * 1000).toLocaleString() + '</strong>';
+      } else {
+        lastEl.style.display = '';
+        lastEl.textContent = 'Not yet checked — will run on next page load.';
+      }
+    }
+  } catch {}
+  _applyBupAutoUpdateAvailability();
+  document.getElementById('modal-bup-settings').classList.remove('hidden');
+}
+
+function closeBinaryUpdateSettings() {
+  _closeBupIntervalDropdown();
+  _closeBupHourDropdown();
+  document.getElementById('modal-bup-settings').classList.add('hidden');
+}
+
+async function saveBinaryUpdateSettings() {
+  const btn = document.getElementById('btn-bup-settings-save');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const resp = await fetch('/api/binary-update/settings', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        interval:            _bupSettingsInterval,
+        auto_update_enabled: _bupAutoUpdateEnabled,
+        auto_update_hour:    _bupAutoUpdateHour,
+      })
+    });
+    if (!resp.ok) { showToast('Failed to save settings', 'error'); return; }
+  } catch { showToast('Failed to save settings', 'error'); return; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } }
+  closeBinaryUpdateSettings();
+  showToast('Settings saved', 'success');
+  await _autoBinaryVersionCheck();
 }
 
 async function checkUpdates() {
@@ -20660,13 +21175,12 @@ async function checkBinaryUpdate() {
   if (sigBadge) sigBadge.classList.add('hidden');
   uptodateEl.classList.add('hidden');
   applyWrap.classList.add('hidden');
-  // Invalidate cache so this manual check always hits the network.
-  try { localStorage.removeItem(_VER_CACHE_KEY); } catch {}
+  // ?force=true bypasses the server-side cache so this manual check always hits GitHub.
   try {
-    const resp = await fetch('/api/binary-update/check');
+    const resp = await fetch('/api/binary-update/check?force=true');
     const data = await resp.json();
     if (!resp.ok) { latestEl.textContent = data.error || 'unavailable'; return; }
-    _saveVerCache(data);
+    _lastBupData = data;
     _setVerLabel(currentEl, data.current);
     _setVerLabel(latestEl, data.latest);
     latestEl.style.color  = '';
@@ -20678,7 +21192,7 @@ async function checkBinaryUpdate() {
       uptodateEl.classList.remove('hidden');
     }
   } catch { latestEl.textContent = 'unavailable'; }
-  finally { if (checkBtn) { checkBtn.disabled = false; checkBtn.textContent = '↻ Check'; } }
+  finally { if (checkBtn) { checkBtn.disabled = false; checkBtn.textContent = '↻ Check for Releases'; } }
 }
 
 function applyBinaryUpdate(tag = null) {
@@ -20693,11 +21207,10 @@ function applyBinaryUpdate(tag = null) {
   // specific release's signature during the WS apply flow (step 2/5), so skip this
   // check entirely and let the backend be the authority.
   if (!tag) {
-    const cached = _loadVerCache();
-    const sigValid = cached && cached.data && cached.data.sig_valid === true;
+    const sigValid = _lastBupData && _lastBupData.sig_valid === true;
     if (!sigValid) {
-      const reason = (cached && cached.data && cached.data.sig_error)
-        ? cached.data.sig_error
+      const reason = (_lastBupData && _lastBupData.sig_error)
+        ? _lastBupData.sig_error
         : 'The signature of the online release could not be verified against the embedded release key. The update has been blocked to protect the integrity of the running system.';
       if (sigReason) sigReason.textContent = reason;
       if (sigInvalid) sigInvalid.classList.remove('hidden');
@@ -20742,9 +21255,8 @@ function applyBinaryUpdate(tag = null) {
           xhr.send();
         });
         clearInterval(dotTimer);
-        // Forget the cached version so the next session does a fresh check
-        // and doesn't show a stale "update available" after a successful upgrade.
-        try { localStorage.removeItem(_VER_CACHE_KEY); } catch {}
+        // Clear in-memory data so the next page load does a fresh check.
+        _lastBupData = null;
         window.location.href = '/login';
       } catch { setTimeout(poll, 1500); }
     }, 2000);
@@ -20849,6 +21361,7 @@ document.addEventListener('click', function(e) {
     'modal-install':          closeInstallModal,
     'modal-about':            closeAbout,
     'modal-sig-invalid-help': () => document.getElementById('modal-sig-invalid-help').classList.add('hidden'),
+    'modal-bup-settings':     closeBinaryUpdateSettings,
     'modal-fb-edit':          closeFbEditModal,
   };
   const fn = closeFns[e.target.id];
@@ -24166,6 +24679,13 @@ function renderSysPowerBody(d) {
       <button class="btn btn-primary" onclick="saveSysPower()">Save &amp; Apply</button>
       <button class="btn btn-ghost" onclick="closeSysPowerModal()">Cancel</button>
     </div>`;
+
+  // Init custom selects for dynamically-injected power selects.
+  ['sp-governor', 'sp-aspm'].forEach(function(id) {
+    initCustomSelect(id);
+    const sel = document.getElementById(id);
+    if (sel && sel.disabled) csSetDisabled(id, true);
+  });
 }
 
 function _spUsbSelect(enable) {

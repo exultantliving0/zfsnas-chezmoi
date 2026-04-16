@@ -221,6 +221,18 @@ type LinkedServer struct {
 	TLSFingerprint string    `json:"tls_fingerprint,omitempty"` // SHA-256 hex of peer TLS cert (TOFU pin)
 }
 
+// VersionCacheEntry holds the last fetched GitHub release check result,
+// cached server-side to avoid hitting the API on every page load.
+type VersionCacheEntry struct {
+	CheckedAt        int64  `json:"checked_at"`         // Unix timestamp (seconds)
+	Latest           string `json:"latest"`
+	UpdateAvailable  bool   `json:"update_available"`
+	SigValid         bool   `json:"sig_valid"`
+	SigError         string `json:"sig_error,omitempty"`
+	DownloadURL      string `json:"download_url,omitempty"`
+	ServiceInstalled bool   `json:"service_installed"`
+}
+
 // AppConfig holds top-level application settings.
 type AppConfig struct {
 	ConfigDir         string    `json:"-"` // runtime-only, not persisted
@@ -231,7 +243,11 @@ type AppConfig struct {
 	WeeklyScrub       bool      `json:"weekly_scrub"`                  // deprecated: migrated to ScrubSchedule
 	ScrubSchedule     string    `json:"scrub_schedule,omitempty"`      // weekly | biweekly | monthly | 2months | 4months | "" (off)
 	ScrubHour         int       `json:"scrub_hour"`                    // hour of day to run scrub (0-23), default 2
-	LiveUpdateEnabled  bool   `json:"live_update_enabled,omitempty"`  // enable in-place binary self-update
+	LiveUpdateEnabled      bool               `json:"live_update_enabled,omitempty"`       // enable in-place binary self-update
+	VersionCheckInterval   string             `json:"version_check_interval,omitempty"`    // daily (default) | weekly | monthly | manual
+	VersionCheckCache      *VersionCacheEntry `json:"version_check_cache,omitempty"`       // server-side cache of last GitHub check
+	AutoUpdateEnabled      bool               `json:"auto_update_enabled,omitempty"`       // automatically apply updates at scheduled hour
+	AutoUpdateHour         int                `json:"auto_update_hour"`                    // hour of day (0-23) to run auto-update, default 3
 	MaxSmbdProcesses   int    `json:"max_smbd_processes,omitempty"`   // Samba max smbd processes (0 = use default 100)
 	SMBHomeDataset     string `json:"smb_home_dataset,omitempty"`     // ZFS dataset path for SMB user home folders; "" = disabled
 	SMBCleanDefaults   bool   `json:"smb_clean_defaults,omitempty"`   // remove distro default [printers], [print$], [homes] sections

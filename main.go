@@ -180,6 +180,9 @@ func main() {
 	// ===== TreeMap scheduler =====
 	handlers.StartTreeMapScheduler(appCfg)
 
+	// ===== Auto-update scheduler =====
+	handlers.StartAutoUpdateScheduler(appCfg)
+
 	// ===== Recycle bin nightly cleaner =====
 	system.StartRecycleCleaner(absConfig)
 
