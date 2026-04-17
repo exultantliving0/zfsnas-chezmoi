@@ -5921,22 +5921,6 @@
   </div>
 </div>
 
-<!-- ===== Relay mode: WebSocket not available warning ===== -->
-<div class="modal-backdrop hidden" id="modal-relay-ws-warn" onclick="if(event.target===this)closeRelayWsWarn()">
-  <div class="modal" style="max-width:420px;">
-    <div class="modal-header">
-      <h3 style="margin:0;">WebSocket Unavailable in Relay Mode</h3>
-      <button class="modal-close" onclick="closeRelayWsWarn()">✕</button>
-    </div>
-    <div style="padding:20px 24px 24px;font-size:14px;color:var(--text-2);line-height:1.6;">
-      <p style="margin:0 0 14px;">WebSocket connections (terminal, live metrics) are not available in Relay mode.</p>
-      <p style="margin:0 0 18px;">To use these features, switch directly to the remote portal using <strong>Direct</strong> mode.</p>
-      <div style="display:flex;justify-content:flex-end;">
-        <button class="btn btn-ghost" onclick="closeRelayWsWarn()">OK</button>
-      </div>
-    </div>
-  </div>
-</div>
 
 <!-- ===== InterLink: Add Server sub-popup ===== -->
 <div class="modal-backdrop hidden" id="modal-interlink-add" onclick="if(event.target===this)closeAddServerModal()">
@@ -14579,7 +14563,6 @@ function _applyDiskNavDot(disks) {
 }
 
 async function refreshDisks() {
-  if (_relayGuardWS()) return;
   const btn = document.getElementById('btn-refresh-disks');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Refreshing SMART…';
@@ -19084,7 +19067,6 @@ async function checkUpdates() {
 }
 
 function applyUpdates() {
-  if (_relayGuardWS()) return;
   const logWrap  = document.getElementById('updates-log-wrap');
   const log      = document.getElementById('updates-log');
   const btn      = document.getElementById('btn-apply-updates');
@@ -21329,7 +21311,6 @@ async function checkBinaryUpdate() {
 }
 
 function applyBinaryUpdate(tag = null) {
-  if (_relayGuardWS()) return;
   const applyWrap  = document.getElementById('btn-apply-binary-wrap');
   const checkBtn   = document.getElementById('btn-check-binary-update');
   const sigInvalid = document.getElementById('bup-sig-invalid');
@@ -22487,7 +22468,6 @@ function closeReplicationLog() {
 }
 
 function runReplicationTask(id, name) {
-  if (_relayGuardWS()) return;
   const panel  = document.getElementById('replication-log-panel');
   const output = document.getElementById('replication-log-output');
   const title  = document.getElementById('replication-log-title');
@@ -24460,17 +24440,6 @@ async function exitRelayMode() {
   location.reload();
 }
 
-// Show the WebSocket-unavailable warning if relay is active.
-// Returns true if the caller should abort the WS operation.
-function _relayGuardWS() {
-  if (!_relayActive) return false;
-  document.getElementById('modal-relay-ws-warn').classList.remove('hidden');
-  return true;
-}
-
-function closeRelayWsWarn() {
-  document.getElementById('modal-relay-ws-warn').classList.add('hidden');
-}
 
 // ===== Global confirm modal =================================================
 // Usage: showConfirm({ title, body, confirmText, danger, onConfirm })

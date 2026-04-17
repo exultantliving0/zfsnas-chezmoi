@@ -40,6 +40,9 @@ var relayBypassPrefixes = []string{
 // despite /ws/ being in the bypass list above.
 var relayWSForwardPaths = []string{
 	"/ws/terminal",
+	"/ws/binary-update-apply",
+	"/ws/updates-apply",
+	"/ws/replication/",
 }
 
 // isRelayBypassed reports whether path should be served locally even when
