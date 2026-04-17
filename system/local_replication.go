@@ -25,12 +25,20 @@ func RunLocalReplication(sourceDataset, fullSnapName, destDataset, lastSnap stri
 
 	send(fmt.Sprintf("Local replication: %s → %s", fullSnapName, destDataset))
 
+	// Detect encryption so we can send raw (-w); raw mode makes -c redundant.
+	rawSend := datasetIsEncrypted(sourceDataset)
+	if rawSend {
+		send("Encrypted dataset detected — using raw send (-w)")
+	}
+
 	// Build zfs send args.
 	sendArgs := []string{"send"}
 	if recursive {
 		sendArgs = append(sendArgs, "-R")
 	}
-	if compressed {
+	if rawSend {
+		sendArgs = append(sendArgs, "-w")
+	} else if compressed {
 		sendArgs = append(sendArgs, "-c")
 	}
 	if lastSnap != "" {

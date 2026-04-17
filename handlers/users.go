@@ -151,6 +151,17 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject usernames that already exist on the host OS (root, system service
+	// accounts, or any other OS user) — creating a portal user with the same name
+	// would collide with the system account during Linux user provisioning.
+	if osExists, err := system.UsernameExistsOnSystem(req.Username); err != nil {
+		jsonErr(w, http.StatusInternalServerError, "failed to check OS username: "+err.Error())
+		return
+	} else if osExists {
+		jsonErr(w, http.StatusConflict, fmt.Sprintf("username '%s' is already in use by the operating system", req.Username))
+		return
+	}
+
 	// Check that the requested UID/GID are not already in use — first in portal
 	// users, then in the system /etc/passwd and /etc/group.
 	if req.UID != nil {

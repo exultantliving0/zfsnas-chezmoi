@@ -56,12 +56,21 @@ func RunReplication(task *config.ReplicationTask, send func(string), existingSna
 		send("Snapshot created.")
 	}
 
+	// Detect encryption on the source dataset so we can send raw (-w).
+	// Raw mode preserves encrypted blocks end-to-end; it also makes -c redundant.
+	rawSend := datasetIsEncrypted(task.SourceDataset)
+	if rawSend {
+		send("Encrypted dataset detected — using raw send (-w)")
+	}
+
 	// Build the zfs send command.
 	sendArgs := []string{"send"}
 	if task.Recursive {
 		sendArgs = append(sendArgs, "-R")
 	}
-	if task.Compressed {
+	if rawSend {
+		sendArgs = append(sendArgs, "-w")
+	} else if task.Compressed {
 		sendArgs = append(sendArgs, "-c")
 	}
 	fullSend := true // will stay true if no valid incremental base is found

@@ -25,8 +25,16 @@ func SessionFromRequest(r *http.Request) (*session.Session, bool) {
 
 // RequireAuth rejects unauthenticated requests with 401.
 // For browser requests (no Accept: application/json), redirects to /login.
+// Also accepts relay-injected sessions (set by RelayAuthMiddleware on Server B).
 func RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check for a relay-injected synthetic session first (Server B relay path).
+		if injected, ok := r.Context().Value(relaySessionKey).(*session.Session); ok && injected != nil {
+			ctx := context.WithValue(r.Context(), sessionKey, injected)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		// Normal cookie-based auth.
 		sess, ok := SessionFromRequest(r)
 		if !ok {
 			if isBrowser(r) {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -200,6 +201,62 @@ func checkUserHMAC(sharedSecret, username string, timestamp int64, nonce string)
 	}
 	h := hmac.New(sha256.New, key)
 	h.Write([]byte(username + "|" + strconv.FormatInt(timestamp, 10) + "|" + nonce))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// relayClientCache caches one HTTP client per TLS fingerprint so all relay
+// requests to the same server reuse a single connection pool instead of
+// opening a new TCP connection per request.
+var (
+	relayClientMu    sync.Mutex
+	relayClientCache = map[string]*http.Client{}
+)
+
+// InterlinkClientForRelay returns a cached HTTP client suitable for relay
+// proxying.  Clients are keyed by TLS fingerprint and created once.
+func InterlinkClientForRelay(tlsFP string) *http.Client {
+	relayClientMu.Lock()
+	defer relayClientMu.Unlock()
+	if c, ok := relayClientCache[tlsFP]; ok {
+		return c
+	}
+	c := interlinkClientFor(tlsFP)
+	relayClientCache[tlsFP] = c
+	return c
+}
+
+// InterlinkTLSConfigForRelay returns the TLS config used for relay connections.
+// Used by the WebSocket dialer in the relay proxy.
+func InterlinkTLSConfigForRelay(tlsFP string) *tls.Config {
+	tlsConf := &tls.Config{InsecureSkipVerify: true} //nolint:gosec
+	if tlsFP != "" {
+		pinned := tlsFP
+		tlsConf.VerifyConnection = func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return fmt.Errorf("interlink: server presented no TLS certificate")
+			}
+			h := sha256.Sum256(cs.PeerCertificates[0].Raw)
+			got := hex.EncodeToString(h[:])
+			if got != pinned {
+				return fmt.Errorf("interlink: TLS certificate fingerprint mismatch (want %s…, got %s…)",
+					pinned[:16], got[:16])
+			}
+			return nil
+		}
+	}
+	return tlsConf
+}
+
+// RelayForwardHMAC signs an outbound relay-proxy request.
+// The "relay|" prefix is distinct from all other interlink HMAC prefixes,
+// preventing cross-endpoint HMAC reuse.
+func RelayForwardHMAC(sharedSecret, username string, timestamp int64, nonce string) string {
+	key, _ := hex.DecodeString(sharedSecret)
+	if len(key) == 0 {
+		key = []byte(sharedSecret)
+	}
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte("relay|" + username + "|" + strconv.FormatInt(timestamp, 10) + "|" + nonce))
 	return hex.EncodeToString(h.Sum(nil))
 }
 

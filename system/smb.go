@@ -879,6 +879,23 @@ func GIDExistsOnSystem(gid int) (bool, error) {
 	return false, nil
 }
 
+// UsernameExistsOnSystem returns true if the given username is already present
+// in /etc/passwd (covers root, system service accounts, and regular OS users).
+func UsernameExistsOnSystem(username string) (bool, error) {
+	data, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return false, fmt.Errorf("read /etc/passwd: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.Split(line, ":")
+		// /etc/passwd format: name:pw:uid:gid:gecos:home:shell — name is field index 0
+		if len(parts) >= 1 && parts[0] == username {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ensureSambashareGroup creates the sambashare group if it does not already
 // exist. The Samba package creates this group on Debian/Ubuntu, but it may be
 // absent on minimal installs or before Samba is fully set up.

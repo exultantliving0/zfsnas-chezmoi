@@ -12,10 +12,13 @@ import (
 // staticFS is the embedded (or disk) filesystem rooted at the static/ directory.
 // readFile is a helper to read a named file from staticFS (e.g. "index.html").
 // appCfg is a pointer to the loaded application config (for settings handlers).
-func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *config.AppConfig) *mux.Router {
+func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *config.AppConfig) http.Handler {
 	r := mux.NewRouter()
 	r.Use(SecurityHeaders)
 	r.Use(EnforceOrigin)
+	// RelayAuthMiddleware runs early (Server B): validates relay headers and injects
+	// a synthetic session so RequireAuth works without a browser cookie.
+	r.Use(func(next http.Handler) http.Handler { return RelayAuthMiddleware(appCfg, next) })
 
 	// --- Static assets ---
 	r.PathPrefix("/static/").Handler(
@@ -571,6 +574,12 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandleInterlinkLink(appCfg))))).Methods("POST")
 	r.Handle("/api/interlink/switch",
 		RequireAuth(http.HandlerFunc(HandleInterlinkSwitch(appCfg)))).Methods("POST")
+	r.Handle("/api/interlink/relay-exit",
+		RequireAuth(http.HandlerFunc(HandleInterlinkRelayExit))).Methods("POST")
+	r.Handle("/api/interlink/relay-mode",
+		RequireAuth(http.HandlerFunc(HandleInterlinkGetRelayMode(appCfg)))).Methods("GET")
+	r.Handle("/api/interlink/relay-mode",
+		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandleInterlinkSetRelayMode(appCfg))))).Methods("PUT")
 	r.Handle("/api/interlink/{id}",
 		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandleInterlinkUnlink(appCfg))))).Methods("DELETE")
 	r.Handle("/api/interlink/remote-pools/{server_id}",
@@ -642,5 +651,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		w.Write(data)
 	}).Methods("GET")
 
-	return r
+	// RelayMiddleware wraps the completed mux router (Server A outbound proxy):
+	// intercepts requests for relay-active sessions and forwards them to the remote.
+	return RelayMiddleware(appCfg, r)
 }

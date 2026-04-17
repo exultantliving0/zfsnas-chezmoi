@@ -716,7 +716,8 @@ func HandleInterlinkRemoteUnlink(appCfg *config.AppConfig) http.HandlerFunc {
 }
 
 // HandleInterlinkSwitch handles POST /api/interlink/switch
-// Checks user existence on the remote, generates SSO token, returns redirect URL.
+// Accepts an optional "mode" field: "direct" (default, existing redirect behaviour)
+// or "relay" (stay on this portal, proxy API calls to the remote).
 func HandleInterlinkSwitch(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess := MustSession(r)
@@ -750,6 +751,30 @@ func HandleInterlinkSwitch(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 
+		// Use relay if global relay mode is enabled.
+		useRelay := appCfg.InterlinkRelayMode
+
+		if useRelay {
+			// Relay mode: store relay state on the session, return relay:true.
+			cookie, cookieErr := r.Cookie("zfsnas_session")
+			if cookieErr != nil {
+				jsonErr(w, http.StatusUnauthorized, "no session cookie")
+				return
+			}
+			session.SetRelay(cookie.Value, &session.RelayState{
+				ServerID: ls.ID,
+				Hostname: ls.Hostname,
+			})
+			jsonOK(w, map[string]interface{}{
+				"user_exists": true,
+				"relay":       true,
+				"hostname":    ls.Hostname,
+				"relay_url":   ls.URL,
+			})
+			return
+		}
+
+		// Default: direct mode — generate SSO token and return redirect URL.
 		token := interlink.GenerateToken(ls.SharedSecret, sess.Username)
 		redirectURL := ls.URL + "/interlink-login?token=" + token + "&server_id=" + ls.RemoteID
 
@@ -758,6 +783,44 @@ func HandleInterlinkSwitch(appCfg *config.AppConfig) http.HandlerFunc {
 			"redirect_url": redirectURL,
 		})
 	}
+}
+
+// HandleInterlinkGetRelayMode handles GET /api/interlink/relay-mode
+// Returns the global relay mode setting.
+func HandleInterlinkGetRelayMode(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		jsonOK(w, map[string]bool{"relay_mode": appCfg.InterlinkRelayMode})
+	}
+}
+
+// HandleInterlinkSetRelayMode handles PUT /api/interlink/relay-mode
+// Saves the global relay mode preference.
+func HandleInterlinkSetRelayMode(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			RelayMode bool `json:"relay_mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		appCfg.InterlinkRelayMode = req.RelayMode
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to save config")
+			return
+		}
+		jsonOK(w, map[string]bool{"ok": true})
+	}
+}
+
+// HandleInterlinkRelayExit handles POST /api/interlink/relay-exit
+// Clears the relay state for the current session (exits relay mode).
+func HandleInterlinkRelayExit(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("zfsnas_session")
+	if err == nil {
+		session.ClearRelay(cookie.Value)
+	}
+	jsonOK(w, map[string]bool{"ok": true})
 }
 
 // localURL returns this server's externally-visible base URL for use in link handshakes.

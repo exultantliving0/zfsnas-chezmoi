@@ -378,10 +378,28 @@ func GetRemotePools(remoteURL, sharedSecret, tlsFP string) (*RemotePoolsResponse
 
 // ── ZFS push over SSH ─────────────────────────────────────────────────────────
 
+// datasetIsEncrypted reports whether the ZFS dataset (or the dataset that owns
+// a snapshot) has encryption enabled.  Used to decide whether to add -w to
+// zfs send so encrypted blocks are transferred as raw ciphertext.
+func datasetIsEncrypted(datasetOrSnap string) bool {
+	// Strip snapshot suffix if present.
+	ds := datasetOrSnap
+	if i := strings.LastIndex(ds, "@"); i >= 0 {
+		ds = ds[:i]
+	}
+	val := strings.TrimSpace(GetEncryptionStatus(ds))
+	return val != "" && val != "off"
+}
+
 // GetSnapshotSize returns an estimated byte size for a snapshot via zfs send -nP,
 // falling back to the snapshot's refer property if the dry-run flag is unavailable.
 func GetSnapshotSize(snapshot string) int64 {
-	out, err := exec.Command("zfs", "send", "-nP", snapshot).Output()
+	args := []string{"send", "-nP"}
+	if datasetIsEncrypted(snapshot) {
+		args = append(args, "-w")
+	}
+	args = append(args, snapshot)
+	out, err := exec.Command("zfs", args...).Output()
 	if err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			if strings.HasPrefix(line, "size") {
@@ -429,7 +447,12 @@ func RunZFSPush(ctx context.Context, snapshot, remoteHost, remoteUser, destDatas
 	}
 	keyPath := filepath.Join(u.HomeDir, ".ssh", "id_ed25519")
 
-	sendCmd := exec.CommandContext(ctx, "zfs", "send", snapshot)
+	sendArgs := []string{"send"}
+	if datasetIsEncrypted(snapshot) {
+		sendArgs = append(sendArgs, "-w")
+	}
+	sendArgs = append(sendArgs, snapshot)
+	sendCmd := exec.CommandContext(ctx, "zfs", sendArgs...)
 	recvCmd := exec.CommandContext(ctx, "ssh",
 		"-i", keyPath,
 		"-o", "StrictHostKeyChecking=no",

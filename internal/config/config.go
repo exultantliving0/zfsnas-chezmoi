@@ -270,15 +270,19 @@ type AppConfig struct {
 	SudoersSilencedExtra     []string `json:"sudoers_silenced_extra,omitempty"`
 	SudoersAppliedHash       string   `json:"sudoers_applied_hash,omitempty"`
 	SudoersAppliedContent    string   `json:"sudoers_applied_content,omitempty"`
-	Replication        []ReplicationTask `json:"replication,omitempty"`
-	InterLink          []LinkedServer    `json:"inter_link,omitempty"`
+	Replication          []ReplicationTask `json:"replication,omitempty"`
+	InterLink            []LinkedServer    `json:"inter_link,omitempty"`
+	InterlinkRelayMode   bool              `json:"interlink_relay_mode,omitempty"` // global relay mode: proxy API calls through local server
 }
 
 // UserPreferences holds per-user UI preferences persisted across sessions.
 type UserPreferences struct {
-	ActivityBarCollapsed bool   `json:"activity_bar_collapsed,omitempty"`
-	SelectedPool         string `json:"selected_pool,omitempty"`          // last pool shown in Pool tab
-	SelectedTopBarPool   string `json:"selected_top_bar_pool,omitempty"`  // last pool shown in top bar
+	ActivityBarCollapsed bool                `json:"activity_bar_collapsed,omitempty"`
+	SelectedPool         string              `json:"selected_pool,omitempty"`          // last pool shown in Pool tab
+	SelectedTopBarPool   string              `json:"selected_top_bar_pool,omitempty"`  // last pool shown in top bar
+	Theme                string              `json:"theme,omitempty"`                  // UI theme name (dark, light, auto, tron, …)
+	CapSelectedKeys      map[string][]string `json:"cap_selected_keys,omitempty"`      // capacity trend selection keyed by "local" or relay hostname
+	TreemapSelectedDS    map[string]string   `json:"treemap_selected_ds,omitempty"`    // treemap selected pool/dataset keyed by "local" or relay hostname
 }
 
 // User represents a portal or SMB-only user.

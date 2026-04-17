@@ -278,8 +278,7 @@
       </div>
 
       <div id="hostname-dropdown-wrapper" style="margin-top:8px;">
-        <button id="sidebar-hostname" onclick="toggleHostnameDropdown(event)" style="display:flex;align-items:center;gap:6px;width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text-2);text-align:left;white-space:nowrap;" title="System hostname">
-          <img src="/static/favicon.svg" style="width:16px;height:16px;flex-shrink:0;object-fit:contain;" alt="">
+        <button id="sidebar-hostname" onclick="toggleHostnameDropdown(event)" style="display:flex;align-items:center;gap:6px;width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:14px;font-weight:600;color:var(--text-2);text-align:left;white-space:nowrap;" title="System hostname">
           <span id="sidebar-hostname-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;">…</span>
           <span style="font-size:13px;opacity:0.7;flex-shrink:0;line-height:1;">▾</span>
         </button>
@@ -884,7 +883,6 @@
             <span id="prereq-ups-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
             <button id="prereq-ups-btn" class="btn btn-ghost btn-sm" onclick="enableUPSFeature()" style="font-size:12px;white-space:nowrap;">
               Enable UPS Feature
-              <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>
             </button>
             <span id="prereq-ups-menu-wrap" class="hidden" onclick="_optFeatMenu(event,'ups')" title="Options" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;line-height:1;user-select:none;">⋮</span>
           </div>
@@ -3606,14 +3604,37 @@
       </div>
       <!-- Passphrase section (keylocation=prompt) -->
       <div id="unlock-ds-passphrase-section" style="display:none;">
-        <div style="border:1px solid var(--accent-warn,#f0b429);border-radius:6px;padding:10px 12px;background:rgba(240,180,41,0.07);margin-bottom:14px;font-size:13px;line-height:1.5;">
-          This dataset uses a client key that is <strong>not stored on ZNAS</strong>. Type or paste the key you saved when this dataset was created. It will be used once and discarded immediately — never written to disk or logs.
+        <!-- Tab bar -->
+        <div style="display:flex;gap:0;margin-bottom:14px;border-bottom:1px solid var(--border);">
+          <button id="unlock-ds-tab-paste" onclick="switchUnlockDsTab('paste')" style="background:none;border:none;border-bottom:2px solid var(--accent);color:var(--text-1);font-size:13px;padding:6px 14px 8px 14px;cursor:pointer;margin-bottom:-1px;">Paste Key</button>
+          <button id="unlock-ds-tab-stored" onclick="switchUnlockDsTab('stored')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--text-3);font-size:13px;padding:6px 14px 8px 14px;cursor:pointer;margin-bottom:-1px;">Use Local Stored Key</button>
         </div>
-        <div class="form-group" style="margin-bottom:0;">
-          <label>Key / Passphrase</label>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="password" id="unlock-ds-passphrase" style="flex:1;" placeholder="Paste your key here…" autocomplete="off" onkeydown="if(event.key==='Enter')doUnlockDataset()">
-            <button type="button" class="btn btn-ghost btn-sm" id="unlock-ds-pass-toggle" onclick="toggleUnlockPassVisibility()" style="padding:6px 10px;" title="Show/hide key">👁</button>
+        <!-- Paste key pane -->
+        <div id="unlock-ds-paste-pane">
+          <div style="border:1px solid var(--accent-warn,#f0b429);border-radius:6px;padding:10px 12px;background:rgba(240,180,41,0.07);margin-bottom:14px;font-size:13px;line-height:1.5;">
+            This dataset uses a client key that is <strong>not stored on ZNAS</strong>. Type or paste the key you saved when this dataset was created. It will be used once and discarded immediately — never written to disk or logs.
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Key / Passphrase</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="password" id="unlock-ds-passphrase" style="flex:1;" placeholder="Paste your key here…" autocomplete="off" onkeydown="if(event.key==='Enter')doUnlockDataset()">
+              <button type="button" class="btn btn-ghost btn-sm" id="unlock-ds-pass-toggle" onclick="toggleUnlockPassVisibility()" style="padding:6px 10px;" title="Show/hide key">👁</button>
+            </div>
+          </div>
+        </div>
+        <!-- Link stored key pane -->
+        <div id="unlock-ds-link-pane" style="display:none;">
+          <div style="border:1px solid var(--accent,#4a9eff);border-radius:6px;padding:10px 12px;background:rgba(74,158,255,0.07);margin-bottom:14px;font-size:13px;line-height:1.5;">
+            Select a key stored on this server. The dataset will be unlocked and the key will be <strong>linked</strong> — future unlocks will happen automatically at boot.
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Local Stored Key</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <select id="unlock-ds-link-key-select" style="flex:1;">
+                <option value="">— select a key —</option>
+              </select>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="openKeyMgmtModal('unlock-ds-link')" style="white-space:nowrap;">Manage Keys</button>
+            </div>
           </div>
         </div>
       </div>
@@ -5885,8 +5906,33 @@
       <div id="interlink-table-wrap">
         <div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>
       </div>
-      <div style="margin-top:10px;font-size:12px;color:var(--text-3);">
-        <span style="color:#22c55e;">●</span> online &nbsp; <span style="color:#6b7280;">○</span> offline
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-3);">
+        <span><span style="color:#22c55e;">●</span> online &nbsp; <span style="color:#6b7280;">○</span> offline</span>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;">
+          <input type="checkbox" id="interlink-relay-mode-chk"
+            onchange="setGlobalRelayMode(this.checked)"
+            style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer;">
+          <span style="color:var(--text-2);">Relay mode</span>
+          <span style="font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;letter-spacing:.04em;">BETA</span>
+          <i class="info-tip" data-tip="When enabled, switching to a linked server keeps your browser on this portal — all management API calls are securely proxied through this server to the remote. The remote does not need to be directly reachable from your browser, improving security and allowing management of servers behind a firewall."></i>
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Relay mode: WebSocket not available warning ===== -->
+<div class="modal-backdrop hidden" id="modal-relay-ws-warn" onclick="if(event.target===this)closeRelayWsWarn()">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h3 style="margin:0;">WebSocket Unavailable in Relay Mode</h3>
+      <button class="modal-close" onclick="closeRelayWsWarn()">✕</button>
+    </div>
+    <div style="padding:20px 24px 24px;font-size:14px;color:var(--text-2);line-height:1.6;">
+      <p style="margin:0 0 14px;">WebSocket connections (terminal, live metrics) are not available in Relay mode.</p>
+      <p style="margin:0 0 18px;">To use these features, switch directly to the remote portal using <strong>Direct</strong> mode.</p>
+      <div style="display:flex;justify-content:flex-end;">
+        <button class="btn btn-ghost" onclick="closeRelayWsWarn()">OK</button>
       </div>
     </div>
   </div>
@@ -6243,6 +6289,16 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
         }
       }
     }
+    // Restore relay banner if the session was already in relay mode before the page loaded.
+    if (currentUser.relay_active) {
+      _applyRelayState(true, currentUser.relay_hostname || '');
+    }
+    // Restore theme from server-side user preferences (overrides localStorage default).
+    // Use applyTheme (not setTheme) to avoid triggering loadDashboard during boot.
+    if (currentUser.preferences && currentUser.preferences.theme) {
+      localStorage.setItem('theme', currentUser.preferences.theme);
+      applyTheme(currentUser.preferences.theme);
+    }
   } catch { window.location.href = '/login'; return; }
 
   // Fetch version badge + server IP, then check for updates (cached, once/day)
@@ -6254,11 +6310,14 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
     if (d.server_ip) window._serverIP = d.server_ip;
     if (d.hostname) {
       window._serverHostname = d.hostname;
+      _localHostnameFallback = d.hostname; // used by hostname dropdown in relay mode
       document.title = 'ZNAS - ' + d.hostname.toUpperCase();
       const hl = document.getElementById('sidebar-hostname-label');
       if (hl) hl.textContent = d.hostname;
       const hb = document.getElementById('sidebar-hostname');
       if (hb) hb.title = d.hostname;
+      // If relay was already active before version loaded, refresh the button display.
+      if (_relayActive) _applyRelayState(true, _relayHostname);
     }
     if (d.username) window._serverUsername = d.username;
     updateSchedReplUserHint();
@@ -13145,6 +13204,9 @@ async function openUnlockDatasetModal(name) {
   document.getElementById('unlock-ds-passphrase-section').style.display = 'none';
   document.getElementById('modal-unlock-dataset').classList.remove('hidden');
 
+  // Reset passphrase tab to "Paste Key".
+  switchUnlockDsTab('paste');
+
   try {
     const r = await fetch('/api/datasets/' + encodeURIComponent(name) + '/key-info');
     const info = await r.json();
@@ -13153,21 +13215,47 @@ async function openUnlockDatasetModal(name) {
       await refreshUnlockDsKeyDropdown();
     } else {
       document.getElementById('unlock-ds-passphrase-section').style.display = '';
+      // Pre-load stored keys for the "Use Local Stored Key" tab.
+      refreshUnlockDsKeyDropdown();
     }
   } catch(e) {
     // Fallback to passphrase mode on error.
     document.getElementById('unlock-ds-passphrase-section').style.display = '';
+    refreshUnlockDsKeyDropdown();
   }
 }
 
 async function refreshUnlockDsKeyDropdown() {
-  const sel = document.getElementById('unlock-ds-key-select');
   try {
     const r = await fetch('/api/encryption/keys');
     const keys = await r.json();
-    sel.innerHTML = '<option value="">— select a key —</option>' +
+    const opts = '<option value="">— select a key —</option>' +
       (keys || []).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
+    document.getElementById('unlock-ds-key-select').innerHTML = opts;
+    document.getElementById('unlock-ds-link-key-select').innerHTML = opts;
   } catch(e) {}
+}
+
+function switchUnlockDsTab(tab) {
+  const pastePn = document.getElementById('unlock-ds-paste-pane');
+  const linkPn  = document.getElementById('unlock-ds-link-pane');
+  const tabPaste = document.getElementById('unlock-ds-tab-paste');
+  const tabStored = document.getElementById('unlock-ds-tab-stored');
+  if (tab === 'stored') {
+    pastePn.style.display  = 'none';
+    linkPn.style.display   = '';
+    tabPaste.style.borderBottomColor  = 'transparent';
+    tabPaste.style.color              = 'var(--text-3)';
+    tabStored.style.borderBottomColor = 'var(--accent)';
+    tabStored.style.color             = 'var(--text-1)';
+  } else {
+    pastePn.style.display  = '';
+    linkPn.style.display   = 'none';
+    tabPaste.style.borderBottomColor  = 'var(--accent)';
+    tabPaste.style.color              = 'var(--text-1)';
+    tabStored.style.borderBottomColor = 'transparent';
+    tabStored.style.color             = 'var(--text-3)';
+  }
 }
 
 function closeUnlockDatasetModal() {
@@ -13193,7 +13281,9 @@ async function doUnlockDataset() {
   btn.innerHTML = '<span class="spinner"></span> Unlocking…';
 
   let resp;
+  const linkPane = document.getElementById('unlock-ds-link-pane');
   if (storedSection.style.display !== 'none') {
+    // keylocation=file:// — use stored key dropdown.
     const keyID = document.getElementById('unlock-ds-key-select').value;
     if (!keyID) {
       alertEl.textContent = 'Please select an encryption key.';
@@ -13205,7 +13295,21 @@ async function doUnlockDataset() {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({key_id: keyID}),
     });
+  } else if (passphraseSection.style.display !== 'none' && linkPane && linkPane.style.display !== 'none') {
+    // keylocation=prompt, but user chose to link a local stored key.
+    const keyID = document.getElementById('unlock-ds-link-key-select').value;
+    if (!keyID) {
+      alertEl.textContent = 'Please select a stored key.';
+      alertEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Unlock & Mount';
+      return;
+    }
+    resp = await fetch('/api/datasets/' + encodeURIComponent(_unlockDsName) + '/load-key', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({key_id: keyID}),
+    });
   } else {
+    // keylocation=prompt, paste-key tab.
     const pass = document.getElementById('unlock-ds-passphrase').value;
     if (!pass.trim()) {
       alertEl.textContent = 'Please enter your key.';
@@ -13629,8 +13733,10 @@ function resetSchedReplSection() {
   document.getElementById('sched-repl-enabled').checked         = false;
   document.getElementById('sched-repl-fields').style.display    = 'none';
   document.getElementById('sched-repl-target').value            = '';
+  csRefresh('sched-repl-target');
   document.getElementById('sched-repl-il-grp').style.display    = 'none';
   document.getElementById('sched-repl-il-pool').innerHTML       = '<option value="">Select pool…</option>';
+  csRefresh('sched-repl-il-pool');
   document.getElementById('sched-repl-il-dest').value           = '';
   document.getElementById('sched-repl-custom-grp').style.display = 'none';
   document.getElementById('sched-repl-host').value              = '';
@@ -13644,7 +13750,9 @@ function resetSchedReplSection() {
   document.getElementById('sched-local-repl-enabled').checked      = false;
   document.getElementById('sched-local-repl-fields').style.display = 'none';
   document.getElementById('sched-local-repl-pool').innerHTML        = '';
+  csRefresh('sched-local-repl-pool');
   document.getElementById('sched-local-repl-ds-select').innerHTML   = '';
+  csRefresh('sched-local-repl-ds-select');
   document.getElementById('sched-local-repl-ds-custom').value       = '';
   document.getElementById('sched-local-repl-ds-custom').style.display = 'none';
   document.getElementById('sched-local-repl-recursive').checked    = false;
@@ -13689,8 +13797,10 @@ async function loadSchedLocalReplPools(selectedPool) {
     sel.innerHTML = pools.map(p =>
       `<option value="${esc(p.name)}"${p.name === selectedPool ? ' selected' : ''}>${esc(p.name)}</option>`
     ).join('') || '<option value="">No pools available</option>';
+    initCustomSelect('sched-local-repl-pool'); csRefresh('sched-local-repl-pool');
   } catch {
     sel.innerHTML = '<option value="">Failed to load pools</option>';
+    initCustomSelect('sched-local-repl-pool'); csRefresh('sched-local-repl-pool');
   }
   await loadSchedLocalReplDatasets();
 }
@@ -13740,8 +13850,10 @@ async function loadSchedLocalReplDatasets(selectedPath) {
     } else {
       customEl.style.display = 'none';
     }
+    initCustomSelect('sched-local-repl-ds-select'); csRefresh('sched-local-repl-ds-select');
   } catch {
     sel.innerHTML = '<option value="">Failed to load datasets</option>';
+    initCustomSelect('sched-local-repl-ds-select'); csRefresh('sched-local-repl-ds-select');
   }
 }
 
@@ -13773,6 +13885,8 @@ async function openCreateSchedule() {
   resetSchedReplSection();
   await loadSchedDatasets('');
   await loadSchedLocalReplPools();
+  initCustomSelect('sched-freq');    csRefresh('sched-freq');
+  initCustomSelect('sched-weekday'); csRefresh('sched-weekday');
   updateSchedFields();
   document.getElementById('modal-schedule').classList.remove('hidden');
 }
@@ -13792,6 +13906,8 @@ async function openEditSchedule(i) {
   document.getElementById('sched-dom').value        = p.day_of_month ?? 1;
   document.getElementById('sched-enabled').checked  = !!p.enabled;
   document.getElementById('sched-alert').classList.add('hidden');
+  initCustomSelect('sched-freq');    csRefresh('sched-freq');
+  initCustomSelect('sched-weekday'); csRefresh('sched-weekday');
   // Populate replication sections (sync setup first — show modal immediately)
   resetSchedReplSection();
   if (p.replication_enabled) {
@@ -13824,6 +13940,7 @@ async function openEditSchedule(i) {
     const matchPool = poolOpts.find(pl => p.local_repl_dataset === pl || p.local_repl_dataset.startsWith(pl + '/'));
     if (matchPool) {
       document.getElementById('sched-local-repl-pool').value = matchPool;
+      csRefresh('sched-local-repl-pool');
     }
     await loadSchedLocalReplDatasets(p.local_repl_dataset);
   } else {
@@ -13853,8 +13970,10 @@ async function loadSchedDatasets(selected) {
         `</optgroup>`;
     }
     sel.innerHTML = html || '<option value="">No datasets available</option>';
+    initCustomSelect('sched-dataset'); csRefresh('sched-dataset');
   } catch {
     sel.innerHTML = '<option value="">Failed to load datasets</option>';
+    initCustomSelect('sched-dataset'); csRefresh('sched-dataset');
   }
 }
 
@@ -14391,8 +14510,9 @@ async function loadDisks() {
     _applyDiskNavDot(_diskCache);
     renderDisks(el, _diskCache);
     // Immediately kick off a background SMART refresh so Temp + SMART are fresh.
-    // Only admins can call the refresh endpoint; skip for read-only / smb-only users.
-    if (currentUser && currentUser.role === 'admin') _refreshDisksBackground();
+    // Skip in relay mode (role check uses Server A's session, refresh runs on Server B
+    // and may not complete — spinners would never resolve).
+    if (!_relayActive && currentUser && currentUser.role === 'admin') _refreshDisksBackground();
   } catch {
     el.innerHTML = '<div style="color:var(--accent-danger);padding:24px;">Failed to load disk info.</div>';
   }
@@ -14459,6 +14579,7 @@ function _applyDiskNavDot(disks) {
 }
 
 async function refreshDisks() {
+  if (_relayGuardWS()) return;
   const btn = document.getElementById('btn-refresh-disks');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Refreshing SMART…';
@@ -14656,7 +14777,7 @@ function diskRowWithPool(d, poolName) {
     <td id="disk-smart-${ck}">${smartBadge(d)}</td>
     <td>${poolName === '⚡ Cache'
       ? `<span style="font-size:12px;font-weight:600;color:#bf5af2;">⚡ L2ARC Cache</span>`
-      : `<span style="font-family:monospace;font-size:12px;font-weight:600;color:var(--accent-2);">🗄 ${esc(poolName)}</span>`
+      : `<span style="font-family:monospace;font-size:12px;font-weight:600;color:var(--accent-2);">${esc(poolName)}</span>`
     }</td>
   </tr>`;
 }
@@ -16725,10 +16846,19 @@ async function loadS3Page() {
       badge.style.background  = s.service_active ? 'rgba(48,209,88,0.15)'  : 'rgba(255,69,58,0.15)';
       badge.style.color       = s.service_active ? '#30d158' : '#ff453a';
     }
-    // Set MinIO portal link using the correct scheme.
+    // Set MinIO portal link using the correct scheme and hostname.
+    // In relay mode use the remote server's hostname (saved before reload) so the
+    // browser opens the MinIO console directly on Server B — it cannot be relayed.
     const portalLink = document.getElementById('s3-portal-link');
     if (portalLink && s.console_port) {
-      portalLink.href = (s.tls ? 'https' : 'http') + '://' + window.location.hostname + ':' + s.console_port;
+      let minioHost = window.location.hostname;
+      if (_relayActive) {
+        try {
+          const relayUrl = localStorage.getItem('znas_relay_url');
+          if (relayUrl) minioHost = new URL(relayUrl).hostname;
+        } catch(_) {}
+      }
+      portalLink.href = (s.tls ? 'https' : 'http') + '://' + minioHost + ':' + s.console_port;
     }
 
     await loadS3Buckets();
@@ -17441,7 +17571,7 @@ async function _updateUPSPrereqStatus() {
     if (!r.ok) return;
     const s = await r.json();
     if (s.installed) {
-      statusEl.innerHTML = '✓ Installed <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>';
+      statusEl.innerHTML = '✓ Installed';
       statusEl.style.color = '#30d158';
       statusEl.style.fontWeight = '600';
       if (btnEl) btnEl.style.display = 'none';
@@ -17453,7 +17583,7 @@ async function _updateUPSPrereqStatus() {
       statusEl.textContent = 'Not installed';
       statusEl.style.color = 'var(--text-3)';
       statusEl.style.fontWeight = '';
-      if (btnEl) { btnEl.style.display = ''; btnEl.disabled = false; btnEl.innerHTML = 'Enable UPS Feature <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>'; }
+      if (btnEl) { btnEl.style.display = ''; btnEl.disabled = false; btnEl.innerHTML = 'Enable UPS Feature'; }
       if (menuWrap) menuWrap.classList.add('hidden');
     }
   } catch (_) {}
@@ -17483,7 +17613,7 @@ async function enableUPSFeature() {
         }
         const statusEl = document.getElementById('prereq-ups-status');
         if (statusEl) {
-          statusEl.innerHTML = '✓ Installed <span style="margin-left:6px;font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;vertical-align:middle;letter-spacing:.04em;">BETA</span>';
+          statusEl.innerHTML = '✓ Installed';
           statusEl.style.color = '#30d158';
           statusEl.style.fontWeight = '600';
         }
@@ -18954,6 +19084,7 @@ async function checkUpdates() {
 }
 
 function applyUpdates() {
+  if (_relayGuardWS()) return;
   const logWrap  = document.getElementById('updates-log-wrap');
   const log      = document.getElementById('updates-log');
   const btn      = document.getElementById('btn-apply-updates');
@@ -20314,16 +20445,18 @@ async function buildPerfPoolTabs() {
 async function buildUPSPerfTab() {
   const bar = document.getElementById('dash-tab-bar');
   if (!bar) return;
-  // Remove any previously added UPS tab button.
-  const existing = document.getElementById('perf-tab-btn-ups');
-  if (existing) existing.remove();
 
+  let installed = false;
   try {
     const r = await fetch('/api/ups/status');
-    if (!r.ok) return;
-    const s = await r.json();
-    if (!s.installed) return;
-  } catch (_) { return; }
+    if (r.ok) { const s = await r.json(); installed = !!s.installed; }
+  } catch (_) {}
+
+  // Remove AFTER fetch completes — prevents race where two concurrent calls both
+  // pass the "no existing button" check before either fetch returns.
+  const existing = document.getElementById('perf-tab-btn-ups');
+  if (existing) existing.remove();
+  if (!installed) return;
 
   const btn = document.createElement('button');
   btn.className = 'cap-tab';
@@ -21196,6 +21329,7 @@ async function checkBinaryUpdate() {
 }
 
 function applyBinaryUpdate(tag = null) {
+  if (_relayGuardWS()) return;
   const applyWrap  = document.getElementById('btn-apply-binary-wrap');
   const checkBtn   = document.getElementById('btn-check-binary-update');
   const sigInvalid = document.getElementById('bup-sig-invalid');
@@ -21468,6 +21602,13 @@ function setTheme(theme) {
   localStorage.setItem('theme', theme);
   applyTheme(theme);
   closeThemeDropdown();
+  // Persist theme in user preferences so it follows the user across servers.
+  if (currentUser) {
+    if (!currentUser.preferences) currentUser.preferences = {};
+    currentUser.preferences.theme = theme;
+    fetch('/api/prefs', { method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(currentUser.preferences) }).catch(() => {});
+  }
   // Rebuild charts so axis/grid/tooltip colours match the new theme
   resetIOCharts();
   if (_ioPollTimer) { _fetchDiskIO(); }
@@ -22064,6 +22205,7 @@ async function _replLoadILServers(prefix) {
       `<option value="${esc(s.id)}">${esc(s.hostname || s.id)}</option>`
     ).join('');
   if (cur) sel.value = cur;
+  initCustomSelect(prefix + '-target'); csRefresh(prefix + '-target');
 }
 
 // Show/hide IL group vs custom SSH group based on dropdown selection.
@@ -22090,7 +22232,7 @@ function _replTargetChange(prefix) {
 async function _replLoadILPools(prefix, serverId) {
   const sel = document.getElementById(prefix + '-il-pool');
   sel.innerHTML = '<option value="">Connecting to server…</option>';
-  sel.disabled  = true;
+  sel.disabled  = true; csSetDisabled(prefix + '-il-pool', true);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
@@ -22114,7 +22256,8 @@ async function _replLoadILPools(prefix, serverId) {
       sel.innerHTML = '<option value="">Error loading pools</option>';
     }
   }
-  sel.disabled = false;
+  sel.disabled = false; csSetDisabled(prefix + '-il-pool', false);
+  initCustomSelect(prefix + '-il-pool'); csRefresh(prefix + '-il-pool');
 }
 
 // Pre-fill destination when a pool is selected (uses source leaf name as hint).
@@ -22163,15 +22306,17 @@ async function _replRestoreTarget(prefix, savedHost, savedUser, savedDest) {
   });
   if (matchedServer) {
     document.getElementById(prefix + '-target').value           = matchedServer.id;
+    csRefresh(prefix + '-target');
     document.getElementById(prefix + '-il-grp').style.display   = '';
     document.getElementById(prefix + '-custom-grp').style.display = 'none';
     await _replLoadILPools(prefix, matchedServer.id);
     const pools = _replILPoolsCache[matchedServer.id] || [];
     const matchPool = pools.find(p => savedDest === p.name || savedDest.startsWith(p.name + '/'));
-    if (matchPool) document.getElementById(prefix + '-il-pool').value = matchPool.name;
+    if (matchPool) { document.getElementById(prefix + '-il-pool').value = matchPool.name; csRefresh(prefix + '-il-pool'); }
     document.getElementById(prefix + '-il-dest').value = savedDest || '';
   } else {
     document.getElementById(prefix + '-target').value             = '__custom__';
+    csRefresh(prefix + '-target');
     document.getElementById(prefix + '-il-grp').style.display     = 'none';
     document.getElementById(prefix + '-custom-grp').style.display = '';
     const hostEl = document.getElementById(prefix + '-host');
@@ -22342,6 +22487,7 @@ function closeReplicationLog() {
 }
 
 function runReplicationTask(id, name) {
+  if (_relayGuardWS()) return;
   const panel  = document.getElementById('replication-log-panel');
   const output = document.getElementById('replication-log-output');
   const title  = document.getElementById('replication-log-title');
@@ -22375,29 +22521,49 @@ function runReplicationTask(id, name) {
     '#b4b4b4','#5ac8fa'
   ];
 
-  const CAP_LS_KEYS    = 'cap_selected_keys';
   const CAP_LS_RANGE   = 'cap_selected_range';
   const CAP_LS_AGG     = 'cap_selected_agg';
   const CAP_LS_USABLE  = 'cap_show_usable';
   const CAP_LS_FLOOR   = 'cap_dyn_floor';
 
+  // Returns the hostname key used to namespace capacity selections per server.
+  function _capHostKey() {
+    return (_relayActive && _relayHostname) ? _relayHostname : 'local';
+  }
+
   function capSavePrefs() {
     try {
-      localStorage.setItem(CAP_LS_KEYS,   JSON.stringify(capSelectedKeys));
       localStorage.setItem(CAP_LS_RANGE,  capCurrentRange);
       localStorage.setItem(CAP_LS_AGG,    capCurrentAgg);
       localStorage.setItem(CAP_LS_USABLE, capShowUsable ? '1' : '0');
       localStorage.setItem(CAP_LS_FLOOR,  capDynFloor   ? '1' : '0');
     } catch(e) {}
+    // Persist selected keys server-side, keyed by server hostname so each
+    // server keeps its own dataset selection.
+    if (currentUser) {
+      if (!currentUser.preferences) currentUser.preferences = {};
+      if (!currentUser.preferences.cap_selected_keys) currentUser.preferences.cap_selected_keys = {};
+      currentUser.preferences.cap_selected_keys[_capHostKey()] = capSelectedKeys.slice();
+      fetch('/api/prefs', { method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(currentUser.preferences) }).catch(() => {});
+    }
   }
 
   function capLoadPrefs() {
-    try {
-      const k = localStorage.getItem(CAP_LS_KEYS);
-      // Strip legacy pool:* keys — only ds:* and zv:* keys are shown in the trend chart.
-      if (k) capSelectedKeys = JSON.parse(k).filter(key =>
+    // Restore selected keys from server-side prefs (keyed by server hostname).
+    const serverKeys = currentUser && currentUser.preferences &&
+                       currentUser.preferences.cap_selected_keys &&
+                       currentUser.preferences.cap_selected_keys[_capHostKey()];
+    if (Array.isArray(serverKeys)) {
+      capSelectedKeys = serverKeys.filter(key =>
         (key.startsWith('ds:') && !_capIsRootDs(key.split(':')[1])) || key.startsWith('zv:')
       );
+    } else {
+      capSelectedKeys = [];
+    }
+    // Restore other prefs (range, agg, usable, floor) from localStorage — these are
+    // display preferences that are the same regardless of which server is active.
+    try {
       const r = localStorage.getItem(CAP_LS_RANGE);
       if (r) capCurrentRange = r;
       const a = localStorage.getItem(CAP_LS_AGG);
@@ -22528,22 +22694,19 @@ function runReplicationTask(id, name) {
       const resp = await fetch('/api/capacity/series');
       if (!resp.ok) { showCapNoData(); return; }
       capMeta = await resp.json();
-      buildCapSelectorPanel(capMeta);
-      // Default (no saved prefs): select all datasets and zvols >= 100 MB.
+      // Auto-select all non-root datasets and zvols when nothing is saved.
+      // Must run BEFORE buildCapSelectorPanel so checkboxes render checked.
       if (capSelectedKeys.length === 0) {
-        const MIN_BYTES = 100 * 1024 * 1024;
         capSelectedKeys = [
           ...(capMeta.datasets || [])
-            .filter(d => (d.used || 0) >= MIN_BYTES && !_capIsRootDs(d.name))
+            .filter(d => !_capIsRootDs(d.name))
             .map(d => 'ds:' + d.name + ':used'),
           ...(capMeta.zvols || [])
-            .filter(z => (z.used || 0) >= MIN_BYTES)
             .map(z => 'zv:' + z.name + ':used'),
         ];
-        updateCapSelectorLabel();
-        capSavePrefs();
-        buildCapTree(capMeta);
       }
+      buildCapSelectorPanel(capMeta);
+      updateCapSelectorLabel();
     } catch(e) { showCapNoData(); return; }
 
     try {
@@ -22862,6 +23025,15 @@ function runReplicationTask(id, name) {
   }
 
   window.renderCapChart = async function() {
+    // Auto-select all when nothing is selected (safety net for calls outside loadCapacityPage).
+    if (capSelectedKeys.length === 0 && capMeta && (capMeta.datasets || []).length + (capMeta.zvols || []).length > 0) {
+      capSelectedKeys = [
+        ...(capMeta.datasets || []).filter(d => !_capIsRootDs(d.name)).map(d => 'ds:' + d.name + ':used'),
+        ...(capMeta.zvols   || []).map(z => 'zv:' + z.name + ':used'),
+      ];
+      buildCapTree(capMeta);
+      updateCapSelectorLabel();
+    }
     if (capSelectedKeys.length === 0) { showCapNoData(); return; }
 
     const tier  = capTierForRange(capCurrentRange);
@@ -23138,7 +23310,7 @@ function runReplicationTask(id, name) {
     _initCapZoom();
   };
   // ===== Dataset Tree Usage tab =====
-  const CAP_LS_TREE_DS = 'cap_tree_ds'; // persisted selected dataset
+
 
   let capTreeDrillStack    = []; // [{entry, name}, …] drill-down history
   let capTreeCurrentDs     = ''; // selected dataset name
@@ -23160,8 +23332,11 @@ function runReplicationTask(id, name) {
   function capTreeOnSwitch() {
     capTreePopulateSelect(capMeta);
     if (!capTreeCurrentDs) {
-      // Restore persisted selection, or default to the first pool.
-      const saved = localStorage.getItem(CAP_LS_TREE_DS) || (capMeta.pools[0] && capMeta.pools[0].name) || '';
+      // Restore persisted selection from server-side prefs (keyed by server).
+      const serverSaved = currentUser && currentUser.preferences &&
+                          currentUser.preferences.treemap_selected_ds &&
+                          currentUser.preferences.treemap_selected_ds[_capHostKey()];
+      const saved = serverSaved || (capMeta.pools[0] && capMeta.pools[0].name) || '';
       if (saved) {
         const sel = document.getElementById('cap-tree-ds-select');
         if (sel) sel.value = saved;
@@ -23190,7 +23365,14 @@ function runReplicationTask(id, name) {
 
   window.capTreeSelectDataset = async function(dataset) {
     capTreeCurrentDs   = dataset;
-    try { localStorage.setItem(CAP_LS_TREE_DS, dataset || ''); } catch(e) {}
+    // Persist server-side, keyed by server hostname.
+    if (currentUser) {
+      if (!currentUser.preferences) currentUser.preferences = {};
+      if (!currentUser.preferences.treemap_selected_ds) currentUser.preferences.treemap_selected_ds = {};
+      currentUser.preferences.treemap_selected_ds[_capHostKey()] = dataset || '';
+      fetch('/api/prefs', { method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(currentUser.preferences) }).catch(() => {});
+    }
     capTreeDrillStack  = [];
     capTreeCurrentData = null;
     document.getElementById('cap-tree-back-btn').classList.add('hidden');
@@ -23584,15 +23766,37 @@ function runReplicationTask(id, name) {
     }
   });
 
+  // _localHostnameFallback: the actual local system hostname stored at boot.
+  // Bootstrap from the page <title> which the server already sets to "ZNAS - HOSTNAME",
+  // so the dropdown shows the real name even before /api/version resolves.
+  let _localHostnameFallback = (() => {
+    const t = document.title || '';
+    const m = t.match(/^ZNAS\s*[-—]\s*(.+)$/i);
+    return (m && m[1]) ? m[1].toLowerCase() : '…';
+  })();
+
   function _dropdownBase(servers, pending) {
     if (!_hddEl) return;
-    const localHostname = (document.getElementById('sidebar-hostname-label') || {}).textContent || 'this server';
-    let html = `<div class="hdd-current">` +
-      `<span class="status-dot online"></span>` +
-      `<span class="hdd-hostname">${_esc(localHostname)}</span>` +
-      `<span class="hdd-badge">current</span>` +
-      `</div>`;
+    let html = '';
+
+    // In relay mode the API calls go to the remote server, so the local server is absent
+    // from the list.  Prepend it manually so the user can switch back home.
+    // In relay mode window._serverHostname is the remote server's name (proxied /api/version).
+    // Use the value saved to localStorage just before the relay reload instead.
+    const localName = (_relayActive ? ((() => { try { return localStorage.getItem('znas_local_hostname'); } catch(_) { return ''; } })() || '') : '') || window._serverHostname || _localHostnameFallback || '';
+    if (_relayActive) {
+      const localUrl = (() => { try { return new URL(window.location.origin).host; } catch { return ''; } })();
+      html += `<div class="hdd-server" onclick="exitRelayMode()" style="cursor:pointer;">` +
+        `<span class="status-dot online"></span>` +
+        `<span class="hdd-hostname">${_esc(localName)}</span>` +
+        `<span class="hdd-url">${_esc(localUrl)}</span>` +
+        `</div>`;
+    }
+
     for (const s of (servers || [])) {
+      // Skip the local server (already injected above) and the current relay target (we're on it).
+      if (_relayActive && localName && s.hostname === localName) continue;
+      if (_relayActive && _relayHostname && s.hostname === _relayHostname) continue;
       const dotClass = pending ? 'pending' : (s.online ? 'online' : 'offline');
       const urlText  = pending ? '' : (() => { try { return new URL(s.url).host; } catch { return ''; } })();
       const offlineClass = (!pending && !s.online) ? ' offline' : '';
@@ -23602,6 +23806,7 @@ function runReplicationTask(id, name) {
         `<span class="hdd-url">${_esc(urlText)}</span>` +
         `</div>`;
     }
+
     html += `<div class="hdd-divider"></div>` +
       `<div class="hdd-manage" onclick="openInterlinkModal()">Manage InterLink</div>`;
     _hddEl.innerHTML = html;
@@ -23636,6 +23841,7 @@ function runReplicationTask(id, name) {
   window.closeHostnameDropdown  = closeHostnameDropdown;
 
   // ── switch to remote server ──────────────────────────────────────────────
+  // Backend checks the global InterlinkRelayMode setting to decide relay vs direct.
 
   window._interlinkSwitch = async function(serverId) {
     closeHostnameDropdown();
@@ -23646,6 +23852,17 @@ function runReplicationTask(id, name) {
       });
       if (!res.user_exists) {
         _showToast('Your account does not exist on that server.', 'warning');
+        return;
+      }
+      if (res.relay) {
+        // Persist the local hostname before reloading — after reload /api/version is
+        // proxied to the remote server and window._serverHostname would be wrong.
+        try { localStorage.setItem('znas_local_hostname', window._serverHostname || _localHostnameFallback || ''); } catch(_) {}
+        // Persist the relay server URL so external services (MinIO console etc.) can
+        // build direct links using the remote hostname instead of window.location.hostname.
+        try { if (res.relay_url) localStorage.setItem('znas_relay_url', res.relay_url); } catch(_) {}
+        // Reload so all cached data is fetched fresh from the relay target.
+        location.reload();
       } else {
         window.location.href = res.redirect_url;
       }
@@ -23660,6 +23877,7 @@ function runReplicationTask(id, name) {
     closeHostnameDropdown();
     document.getElementById('modal-interlink').classList.remove('hidden');
     loadInterlinkList();
+    loadGlobalRelayMode();
   };
 
   window.closeInterlinkModal = function() {
@@ -23705,6 +23923,28 @@ function runReplicationTask(id, name) {
   }
 
   window.loadInterlinkList = loadInterlinkList;
+
+  // Load global relay mode checkbox state when modal opens.
+  async function loadGlobalRelayMode() {
+    try {
+      const res = await _apiFetch('/api/interlink/relay-mode');
+      const chk = document.getElementById('interlink-relay-mode-chk');
+      if (chk) chk.checked = !!res.relay_mode;
+    } catch(e) { /* ignore */ }
+  }
+
+  window.setGlobalRelayMode = async function(enabled) {
+    try {
+      await _apiFetch('/api/interlink/relay-mode', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relay_mode: enabled })
+      });
+    } catch(e) {
+      _showToast('Failed to save relay mode: ' + e.message, 'error');
+      loadGlobalRelayMode(); // revert checkbox on failure
+    }
+  };
 
   window.unlinkServer = function(id, hostname) {
     showConfirm({
@@ -24068,18 +24308,19 @@ async function onPushILServerChange() {
       poolSel.innerHTML = '<option value="">No pools on remote server</option>';
       return;
     }
-    poolSel.innerHTML = '<option value="">— select pool —</option>' +
-      pools.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    poolSel.innerHTML = pools.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
     destGrp.style.display = '';
 
-    // Pre-fill destination: remote_pool/source_dataset_path_without_pool
-    poolSel.onchange = function() {
+    function applyPoolSelection() {
       const pool = poolSel.value;
       if (!pool) { document.getElementById('btn-push-il-start').disabled = true; return; }
       const dsPath = (_pushSnapName || '').split('@')[0].split('/').slice(1).join('/');
       document.getElementById('push-il-dest').value = dsPath ? pool + '/' + dsPath : pool;
       document.getElementById('btn-push-il-start').disabled = false;
-    };
+    }
+    poolSel.onchange = applyPoolSelection;
+    // Auto-select first pool.
+    applyPoolSelection();
   } catch(e) {
     poolSel.innerHTML = `<option value="">Error: ${esc(e.message)}</option>`;
   }
@@ -24192,6 +24433,43 @@ function _startPushJobsPolling() {
   if (_pushJobsPollIv) return;
   _pollPushJobs();
   _pushJobsPollIv = setInterval(_pollPushJobs, 2500);
+}
+
+// ===== Relay mode =============================================================
+
+let _relayActive   = false;
+let _relayHostname = '';
+
+// Apply or clear relay state variables.  Called on page load (from /api/auth/me data)
+// and after switching/exiting relay mode.
+// The sidebar hostname label is always the local server name — set by /api/version handler,
+// not here, so this function never touches DOM and is safe to call before the IIFE runs.
+function _applyRelayState(active, hostname) {
+  _relayActive   = !!active;
+  _relayHostname = hostname || '';
+}
+
+// Exit relay mode — POST to the backend, then reload.
+async function exitRelayMode() {
+  try {
+    await fetch('/api/interlink/relay-exit', { method: 'POST', credentials: 'same-origin' });
+  } catch {}
+  try { localStorage.removeItem('znas_local_hostname'); } catch(_) {}
+  try { localStorage.removeItem('znas_relay_url'); } catch(_) {}
+  _applyRelayState(false, '');
+  location.reload();
+}
+
+// Show the WebSocket-unavailable warning if relay is active.
+// Returns true if the caller should abort the WS operation.
+function _relayGuardWS() {
+  if (!_relayActive) return false;
+  document.getElementById('modal-relay-ws-warn').classList.remove('hidden');
+  return true;
+}
+
+function closeRelayWsWarn() {
+  document.getElementById('modal-relay-ws-warn').classList.add('hidden');
 }
 
 // ===== Global confirm modal =================================================

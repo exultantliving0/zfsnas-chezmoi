@@ -445,6 +445,16 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 		totpEnabled = user.TOTPEnabled
 		standardPerms = user.StandardPerms
 	}
+	// Include relay state so the browser can restore the relay banner on page refresh.
+	var relayActive bool
+	var relayHostname string
+	if cookie, cookieErr := r.Cookie("zfsnas_session"); cookieErr == nil {
+		if rs := session.GetRelay(cookie.Value); rs != nil {
+			relayActive = true
+			relayHostname = rs.Hostname
+		}
+	}
+
 	jsonOK(w, map[string]interface{}{
 		"user_id":        sess.UserID,
 		"username":       sess.Username,
@@ -452,6 +462,8 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 		"totp_enabled":   totpEnabled,
 		"preferences":    prefs,
 		"standard_perms": standardPerms,
+		"relay_active":   relayActive,
+		"relay_hostname": relayHostname,
 	})
 }
 
