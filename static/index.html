@@ -3648,7 +3648,7 @@
 
 <!-- Edit Dataset Modal -->
 <div class="modal-backdrop hidden" id="modal-edit-dataset">
-  <div class="modal" style="max-width:540px;max-height:90vh;display:flex;flex-direction:column;">
+  <div class="modal" style="max-width:780px;width:95vw;max-height:90vh;display:flex;flex-direction:column;">
     <div class="modal-header">
       <div><h3>Edit Dataset</h3><div class="text-3 text-sm" id="eds-name" style="font-family:monospace;"></div></div>
       <button class="modal-close" onclick="closeEditDataset()">✕</button>
@@ -8379,6 +8379,7 @@ function toggleSMBAdvanced() {
 async function openSMBConfigureModal() {
   document.getElementById('smb-configure-alert').classList.add('hidden');
   document.getElementById('smb-configure-ok').classList.add('hidden');
+  initCustomSelect('smb-cfg-home-dataset');
 
   const sel = document.getElementById('smb-cfg-home-dataset');
   sel.innerHTML = '<option value="">Disabled</option>';
@@ -8395,6 +8396,7 @@ async function openSMBConfigureModal() {
         sel.appendChild(opt);
       });
     }
+    csRefresh('smb-cfg-home-dataset');
   } catch (_) {}
 
   // Fetch current config and apply values.
@@ -8407,6 +8409,7 @@ async function openSMBConfigureModal() {
       _smbCfgOrigWorkgroup = wg;
       document.getElementById('smb-cfg-max-processes').value = cfg.max_smbd_processes || 100;
       sel.value = cfg.home_dataset || '';
+      csRefresh('smb-cfg-home-dataset');
       document.getElementById('smb-cfg-custom-global').value = cfg.custom_global || '';
       const cdEl = document.getElementById('smb-cfg-clean-defaults');
       cdEl.checked = !!cfg.clean_defaults;
@@ -10236,8 +10239,10 @@ async function _fetchScrubStatus() {
         hourSel.appendChild(opt);
       }
     }
-    if (schedSel) schedSel.value = sched.schedule || '';
-    if (hourSel)  hourSel.value  = sched.hour ?? 2;
+    initCustomSelect('scrub-schedule-select');
+    initCustomSelect('scrub-hour-select');
+    if (schedSel) { schedSel.value = sched.schedule || ''; csRefresh('scrub-schedule-select'); }
+    if (hourSel)  { hourSel.value  = sched.hour ?? 2; csRefresh('scrub-hour-select'); }
     if (hourWrap) hourWrap.style.display = sched.schedule ? 'flex' : 'none';
 
     // Actions bar
@@ -10630,6 +10635,7 @@ function openPoolSettingsModal() {
     ['on',  'On',  'Update access time on every read'],
   ], pool.atime || 'off');
 
+  initCustomSelect('ps-enc-key');
   // Show encryption key section when pool key is locked.
   const encSec = document.getElementById('ps-enc-section');
   if (pool.encrypted && pool.key_locked) {
@@ -10638,6 +10644,7 @@ function openPoolSettingsModal() {
   } else {
     encSec.style.display = 'none';
     document.getElementById('ps-enc-key').value = '';
+    csRefresh('ps-enc-key');
   }
 
   document.getElementById('modal-pool-settings').classList.remove('hidden');
@@ -10651,6 +10658,7 @@ async function refreshPSKeyDropdown() {
     sel.innerHTML = '<option value="">— select a key —</option>' +
       (keys||[]).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
     if (cur) sel.value = cur;
+    csRefresh('ps-enc-key');
   } catch(e) {}
 }
 function closePoolSettingsModal() {
@@ -11307,8 +11315,10 @@ async function openAddSpareModal(poolName) {
         return `<option value="${esc(dev)}">${esc(label)}</option>`;
       }).join('');
     }
+    initCustomSelect('add-spare-disk-select'); csRefresh('add-spare-disk-select');
   } catch(e) {
     sel.innerHTML = '<option value="">Failed to load disks</option>';
+    initCustomSelect('add-spare-disk-select'); csRefresh('add-spare-disk-select');
   }
 }
 function closeAddSpareModal() {
@@ -11539,8 +11549,10 @@ async function openAttachDiskModal(poolName, rawPath, devPath) {
           const label = (d.model ? d.model + ' ' : '') + (d.name || d.device) + gb;
           return `<option value="${esc(d.device)}">${esc(label)}</option>`;
         }).join('');
+    initCustomSelect('attach-disk-select'); csRefresh('attach-disk-select');
   } catch(e) {
     sel.innerHTML = '<option value="">Error loading disks</option>';
+    initCustomSelect('attach-disk-select'); csRefresh('attach-disk-select');
   }
 }
 function closeAttachDiskModal() {
@@ -12438,6 +12450,8 @@ let _editZVolPending = null;
 let _ezvOriginalSizeBytes = 0;
 
 function openCreateZVol() {
+  ['czv-parent','czv-provisioning','czv-sync','czv-dedup',
+   'czv-compression','czv-blocksize','czv-encryption','czv-enc-key'].forEach(id => initCustomSelect(id));
   const allDs = datasetCache || [];
   const poolNames = [...new Set(allDs.map(d => d.name.split('/')[0]))];
   const parentSel = document.getElementById('czv-parent');
@@ -12448,17 +12462,18 @@ function openCreateZVol() {
         return `<optgroup label="${esc(pn)}">${opts}</optgroup>`;
       }).join('')
     : allDs.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('');
+  csRefresh('czv-parent');
   // Reset all fields
   document.getElementById('czv-alert').classList.add('hidden');
   document.getElementById('czv-name').value = '';
   document.getElementById('czv-size').value = '';
-  document.getElementById('czv-provisioning').value = 'thick';
+  document.getElementById('czv-provisioning').value = 'thick'; csRefresh('czv-provisioning');
   document.getElementById('czv-comment').value = '';
-  document.getElementById('czv-sync').value = 'inherit';
-  document.getElementById('czv-dedup').value = 'inherit';
-  document.getElementById('czv-compression').value = 'inherit';
-  document.getElementById('czv-blocksize').value = 'inherit';
-  document.getElementById('czv-encryption').value = 'inherit';
+  document.getElementById('czv-sync').value = 'inherit'; csRefresh('czv-sync');
+  document.getElementById('czv-dedup').value = 'inherit'; csRefresh('czv-dedup');
+  document.getElementById('czv-compression').value = 'inherit'; csRefresh('czv-compression');
+  document.getElementById('czv-blocksize').value = 'inherit'; csRefresh('czv-blocksize');
+  document.getElementById('czv-encryption').value = 'inherit'; csRefresh('czv-encryption');
   document.getElementById('czv-enc-key-row').style.display = 'none';
 
   document.getElementById('czv-enc-body').style.display = 'none';
@@ -12492,6 +12507,7 @@ async function _refreshCZVKeyDropdown() {
     const keys = await r.json();
     sel.innerHTML = '<option value="">— select a key —</option>' +
       (keys || []).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
+    csRefresh('czv-enc-key');
   } catch(e) {}
 }
 
@@ -12609,6 +12625,7 @@ function _ezvValidateSize() {
 function openEditZVol(name) {
   const z = (zvolCache || []).find(x => x.name === name);
   if (!z) return;
+  ['ezv-provisioning','ezv-sync','ezv-dedup','ezv-compression'].forEach(id => initCustomSelect(id));
   _editZVolPending = name;
   _ezvOriginalSizeBytes = z.size || 0;
   document.getElementById('ezv-name-label').textContent = name;
@@ -12620,10 +12637,10 @@ function openEditZVol(name) {
   sizeEl.style.borderColor = '';
   document.getElementById('ezv-size-error').classList.add('hidden');
   document.getElementById('ezv-save-btn').style.display = '';
-  document.getElementById('ezv-provisioning').value = _inferProvisioning(z);
-  document.getElementById('ezv-sync').value = z.sync || 'inherit';
-  document.getElementById('ezv-dedup').value = z.dedup || 'inherit';
-  document.getElementById('ezv-compression').value = z.compression || 'inherit';
+  document.getElementById('ezv-provisioning').value = _inferProvisioning(z); csRefresh('ezv-provisioning');
+  document.getElementById('ezv-sync').value = z.sync || 'inherit'; csRefresh('ezv-sync');
+  document.getElementById('ezv-dedup').value = z.dedup || 'inherit'; csRefresh('ezv-dedup');
+  document.getElementById('ezv-compression').value = z.compression || 'inherit'; csRefresh('ezv-compression');
   document.getElementById('modal-edit-zvol').classList.remove('hidden');
 }
 
@@ -12834,6 +12851,9 @@ function closeZVolDetail() {
 
 function openCreateDataset() {
   document.getElementById('modal-create-dataset').classList.remove('hidden');
+  ['cds-quota-unit','cds-quota-type','cds-refreserv-unit','cds-compression',
+   'cds-recordsize','cds-sync','cds-dedup','cds-casesensitivity',
+   'cds-enc-enable','cds-enc-key','cds-parent'].forEach(id => initCustomSelect(id));
   const allDs = datasetCache || [];
   const poolNames = [...new Set(allDs.map(d => d.name.split('/')[0]))];
   const parentSel = document.getElementById('cds-parent');
@@ -12844,25 +12864,26 @@ function openCreateDataset() {
         return `<optgroup label="${esc(pn)}">${opts}</optgroup>`;
       }).join('')
     : allDs.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('');
+  csRefresh('cds-parent');
   parentSel.onchange = _updateCDSEncVisibility;
   _updateCDSEncVisibility();
   document.getElementById('cds-alert').classList.add('hidden');
   document.getElementById('cds-name').value = '';
   document.getElementById('cds-quota-amount').value = '0';
-  document.getElementById('cds-quota-unit').value = 'GB';
-  document.getElementById('cds-quota-type').value = 'quota';
+  document.getElementById('cds-quota-unit').value = 'GB'; csRefresh('cds-quota-unit');
+  document.getElementById('cds-quota-type').value = 'quota'; csRefresh('cds-quota-type');
   document.getElementById('cds-refreserv-amount').value = '0';
-  document.getElementById('cds-refreserv-unit').value = 'GB';
-  document.getElementById('cds-compression').value = 'inherit';
-  document.getElementById('cds-recordsize').value = 'inherit';
-  document.getElementById('cds-sync').value = 'inherit';
-  document.getElementById('cds-dedup').value = 'inherit';
-  document.getElementById('cds-casesensitivity').value = 'sensitive';
+  document.getElementById('cds-refreserv-unit').value = 'GB'; csRefresh('cds-refreserv-unit');
+  document.getElementById('cds-compression').value = 'inherit'; csRefresh('cds-compression');
+  document.getElementById('cds-recordsize').value = 'inherit'; csRefresh('cds-recordsize');
+  document.getElementById('cds-sync').value = 'inherit'; csRefresh('cds-sync');
+  document.getElementById('cds-dedup').value = 'inherit'; csRefresh('cds-dedup');
+  document.getElementById('cds-casesensitivity').value = 'sensitive'; csRefresh('cds-casesensitivity');
   document.getElementById('cds-comment').value = '';
   // Reset encryption section
   document.getElementById('cds-enc-body').style.display = 'none';
   document.getElementById('cds-enc-chevron').textContent = '▶';
-  document.getElementById('cds-enc-enable').value = 'inherit';
+  document.getElementById('cds-enc-enable').value = 'inherit'; csRefresh('cds-enc-enable');
   document.getElementById('cds-enc-key-row').style.display = 'none';
   document.getElementById('cds-client-key-panel').style.display = 'none';
   document.getElementById('cds-generated-key').textContent = '';
@@ -12920,6 +12941,7 @@ async function refreshCDSKeyDropdown() {
     sel.innerHTML = '<option value="">— select a key —</option>' +
       '<option value="__client__">✦ Generate Client Key (you keep it)</option>' +
       (keys||[]).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
+    csRefresh('cds-enc-key');
   } catch(e) {}
 }
 
@@ -13039,6 +13061,8 @@ function openEditDataset(name) {
   const d = (datasetCache || []).find(x => x.name === name);
   if (!d) return;
   document.getElementById('modal-edit-dataset').classList.remove('hidden');
+  ['eds-quota-unit','eds-quota-type','eds-refreserv-unit','eds-compression',
+   'eds-recordsize','eds-sync','eds-dedup','eds-enc-key','eds-key-source'].forEach(id => initCustomSelect(id));
   document.getElementById('eds-name').textContent = name;
   document.getElementById('eds-name').dataset.name = name;
   document.getElementById('eds-alert').classList.add('hidden');
@@ -13053,8 +13077,8 @@ function openEditDataset(name) {
     else { qAmt = quota / unitMap['MB']; qUnit = 'MB'; }
   }
   document.getElementById('eds-quota-amount').value = qAmt;
-  document.getElementById('eds-quota-unit').value   = qUnit;
-  document.getElementById('eds-quota-type').value   = d.refquota > 0 ? 'refquota' : 'quota';
+  document.getElementById('eds-quota-unit').value   = qUnit; csRefresh('eds-quota-unit');
+  document.getElementById('eds-quota-type').value   = d.refquota > 0 ? 'refquota' : 'quota'; csRefresh('eds-quota-type');
 
   // Refreservation.
   const refreserv = d.refreservation || 0;
@@ -13065,12 +13089,12 @@ function openEditDataset(name) {
     else { rAmt = refreserv / unitMap['MB']; rUnit = 'MB'; }
   }
   document.getElementById('eds-refreserv-amount').value = rAmt;
-  document.getElementById('eds-refreserv-unit').value   = rUnit;
+  document.getElementById('eds-refreserv-unit').value   = rUnit; csRefresh('eds-refreserv-unit');
 
-  document.getElementById('eds-compression').value = d.compression || 'inherit';
-  document.getElementById('eds-recordsize').value   = d.record_size_raw || 'inherit';
-  document.getElementById('eds-sync').value         = d.sync || 'inherit';
-  document.getElementById('eds-dedup').value        = d.dedup || 'inherit';
+  document.getElementById('eds-compression').value = d.compression || 'inherit'; csRefresh('eds-compression');
+  document.getElementById('eds-recordsize').value   = d.record_size_raw || 'inherit'; csRefresh('eds-recordsize');
+  document.getElementById('eds-sync').value         = d.sync || 'inherit'; csRefresh('eds-sync');
+  document.getElementById('eds-dedup').value        = d.dedup || 'inherit'; csRefresh('eds-dedup');
   document.getElementById('eds-comment').value      = d.comment || '';
 
   // Show encryption key section only when the dataset itself has a locked key
@@ -13217,6 +13241,8 @@ async function refreshUnlockDsKeyDropdown() {
       (keys || []).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
     document.getElementById('unlock-ds-key-select').innerHTML = opts;
     document.getElementById('unlock-ds-link-key-select').innerHTML = opts;
+    initCustomSelect('unlock-ds-key-select'); csRefresh('unlock-ds-key-select');
+    initCustomSelect('unlock-ds-link-key-select'); csRefresh('unlock-ds-link-key-select');
   } catch(e) {}
 }
 
@@ -13341,6 +13367,7 @@ async function openEDSAdvSec(dsName) {
     const keys = await r.json();
     sel.innerHTML = '<option value="prompt">Ask User — enter key at unlock (not stored on ZNAS)</option>' +
       (keys || []).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
+    csRefresh('eds-key-source');
   } catch(e) {}
 
   // Pre-select current keylocation.
@@ -13355,6 +13382,7 @@ async function openEDSAdvSec(dsName) {
     } else {
       sel.value = 'prompt';
     }
+    csRefresh('eds-key-source');
   } catch(e) {}
   onEDSKeySourceChange();
 }
@@ -13461,6 +13489,7 @@ async function refreshEDSKeyDropdown() {
     sel.innerHTML = '<option value="">— select a key —</option>' +
       (keys||[]).map(k => `<option value="${esc(k.id)}">${esc(k.name)}</option>`).join('');
     if (cur) sel.value = cur;
+    csRefresh('eds-enc-key');
   } catch(e) {}
 }
 
@@ -15181,6 +15210,8 @@ let _shareAllUsers = [];
 async function loadShareFormData(selectedUsers) {
   // Populate dataset path dropdown.
   const pathSel = document.getElementById('share-path-select');
+  initCustomSelect('share-path-select');
+  initCustomSelect('share-add-user-select');
   try {
     const resp = await fetch('/api/datasets');
     const datasets = await resp.json() || [];
@@ -15190,6 +15221,7 @@ async function loadShareFormData(selectedUsers) {
   } catch {
     pathSel.innerHTML = '<option value="">— failed to load datasets —</option>';
   }
+  csRefresh('share-path-select');
 
   // Load all available users.
   try {
@@ -15247,6 +15279,7 @@ function _refreshShareUsersUI() {
   sel.innerHTML = available.length
     ? '<option value="">— Add a user —</option>' + available.map(u => `<option value="${esc(u.username)}">${esc(u.username)} (${esc(u.role)})</option>`).join('')
     : '<option value="">— All users added —</option>';
+  csRefresh('share-add-user-select');
 }
 
 function addShareUser() {
@@ -15658,6 +15691,7 @@ async function loadNFSDatasetDropdown(selectedPath) {
   } catch {
     sel.innerHTML = '<option value="">— failed to load datasets —</option>';
   }
+  initCustomSelect('nfs-path-select'); csRefresh('nfs-path-select');
 }
 
 function closeNFSShareModal() {
@@ -16221,6 +16255,7 @@ async function openNewISCSIShareModal() {
   _iscsiHostsEditMode = false;
 
   // Populate ZVol select.
+  initCustomSelect('iscsi-zvol-select');
   const zvSel = document.getElementById('iscsi-zvol-select');
   zvSel.innerHTML = '<option value="">Loading…</option>';
   try {
@@ -16234,6 +16269,7 @@ async function openNewISCSIShareModal() {
           zvols.map(z => `<option value="${esc(z.name)}">${esc(z.name)}</option>`).join('');
       }
     }
+    csRefresh('iscsi-zvol-select');
   } catch (_) {}
 
   document.getElementById('iscsi-share-comment').value = '';
@@ -16391,7 +16427,8 @@ async function openManageISCSICredsModal(fromCtx) {
   ['nc-name','nc-in-username','nc-in-password','nc-out-username','nc-out-password'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
-  document.getElementById('nc-method').value = 'incoming';
+  initCustomSelect('nc-method');
+  document.getElementById('nc-method').value = 'incoming'; csRefresh('nc-method');
   document.getElementById('nc-out-fields').style.display = 'none';
   await _loadManageISCSICredsList();
   document.getElementById('modal-iscsi-creds').classList.remove('hidden');
@@ -16490,7 +16527,7 @@ async function _submitNewISCSICred() {
     document.getElementById('nc-in-password').value = '';
     document.getElementById('nc-out-username').value = '';
     document.getElementById('nc-out-password').value = '';
-    document.getElementById('nc-method').value = 'incoming';
+    document.getElementById('nc-method').value = 'incoming'; csRefresh('nc-method');
     document.getElementById('nc-out-fields').style.display = 'none';
     alertEl.classList.add('hidden');
     await _loadManageISCSICredsList();
@@ -16950,6 +16987,7 @@ async function openS3ConfigureModal() {
       .filter(d => d.mountpoint && d.mountpoint !== 'none' && d.mountpoint !== 'legacy')
       .map(d => `<option value="${esc(d.name)}" ${d.name === cfg.dataset_path ? 'selected' : ''}>${esc(d.name)} (${esc(d.mountpoint)})</option>`)
       .join('');
+  initCustomSelect('s3cfg-dataset'); csRefresh('s3cfg-dataset');
 
   // Populate cert picker.
   const savedCert = cfg.tls_cert_name || 'auto';
@@ -16960,6 +16998,7 @@ async function openS3ConfigureModal() {
       .map(c => `<option value="${esc(c.name)}" ${c.name === savedCert ? 'selected' : ''}>${esc(c.name)}${c.is_self_signed ? ' (self-signed)' : ''}${c.is_expired ? ' ⚠ expired' : ''}</option>`)
       .join('');
   if (savedCert === 'auto' || savedCert === '') certSel.value = 'auto';
+  initCustomSelect('s3cfg-cert-name'); csRefresh('s3cfg-cert-name');
 
   document.getElementById('s3cfg-port').value         = cfg.port         || 9000;
   document.getElementById('s3cfg-console-port').value = cfg.console_port || 9001;
@@ -17160,16 +17199,17 @@ function _s3BktVersioningChange() {
 }
 
 async function openNewS3BucketModal() {
+  ['s3bkt-versioning','s3bkt-object-lock','s3bkt-anon-access'].forEach(id => initCustomSelect(id));
   document.getElementById('s3bkt-modal-title').textContent = 'New S3 Bucket';
   document.getElementById('s3bkt-submit-btn').textContent  = 'Create Bucket';
   document.getElementById('s3bkt-name').value        = '';
   document.getElementById('s3bkt-name').disabled     = false;
   document.getElementById('s3bkt-comment').value     = '';
-  document.getElementById('s3bkt-versioning').value  = 'off';
-  document.getElementById('s3bkt-object-lock').value = 'false';
-  document.getElementById('s3bkt-object-lock').disabled = false;
+  document.getElementById('s3bkt-versioning').value  = 'off'; csRefresh('s3bkt-versioning');
+  document.getElementById('s3bkt-object-lock').value = 'false'; csRefresh('s3bkt-object-lock');
+  document.getElementById('s3bkt-object-lock').disabled = false; csSetDisabled('s3bkt-object-lock', false);
   document.getElementById('s3bkt-quota').value       = '';
-  document.getElementById('s3bkt-anon-access').value = 'none';
+  document.getElementById('s3bkt-anon-access').value = 'none'; csRefresh('s3bkt-anon-access');
   document.getElementById('s3bkt-error').classList.add('hidden');
   _s3BktVersioningChange();
   await _populateS3UserChips([]);
@@ -17185,12 +17225,13 @@ async function openEditS3BucketModal(nameOrObj) {
   document.getElementById('s3bkt-submit-btn').textContent  = 'Save Changes';
   document.getElementById('s3bkt-name').value    = bucket.name;
   document.getElementById('s3bkt-name').disabled = true;
+  ['s3bkt-versioning','s3bkt-object-lock','s3bkt-anon-access'].forEach(id => initCustomSelect(id));
   document.getElementById('s3bkt-comment').value     = bucket.comment || '';
-  document.getElementById('s3bkt-versioning').value  = bucket.versioning || 'off';
-  document.getElementById('s3bkt-object-lock').value = bucket.object_lock ? 'true' : 'false';
-  document.getElementById('s3bkt-object-lock').disabled = true;
+  document.getElementById('s3bkt-versioning').value  = bucket.versioning || 'off'; csRefresh('s3bkt-versioning');
+  document.getElementById('s3bkt-object-lock').value = bucket.object_lock ? 'true' : 'false'; csRefresh('s3bkt-object-lock');
+  document.getElementById('s3bkt-object-lock').disabled = true; csSetDisabled('s3bkt-object-lock', true);
   document.getElementById('s3bkt-quota').value       = bucket.quota || '';
-  document.getElementById('s3bkt-anon-access').value = bucket.anon_access || 'none';
+  document.getElementById('s3bkt-anon-access').value = bucket.anon_access || 'none'; csRefresh('s3bkt-anon-access');
   document.getElementById('s3bkt-error').classList.add('hidden');
   _s3BktVersioningChange();
   // Re-enable versioning change in edit mode (object lock stays locked).
@@ -17883,6 +17924,7 @@ function renderUPSPanel(body, s, cfg) {
   if (!st) {
     body.innerHTML = `<div style="color:var(--text-3);text-align:center;padding:32px;">${s.error ? 'UPS error: ' + esc(s.error) : 'UPS not configured or not responding.'}</div>
     ${_upsShutdownForm(cfg.enabled, policy, trigType, pct, mins, cfg)}`;
+    initCustomSelect('ups-mode-select'); csRefresh('ups-mode-select');
     return;
   }
 
@@ -17902,6 +17944,7 @@ function renderUPSPanel(body, s, cfg) {
     ${allVarsHtml}
     ${_upsShutdownForm(cfg.enabled, policy, trigType, pct, mins, cfg)}
   `;
+  initCustomSelect('ups-mode-select'); csRefresh('ups-mode-select');
 }
 
 function _upsShutdownForm(upsEnabled, policy, trigType, pct, mins, cfg) {
@@ -21735,6 +21778,7 @@ async function refreshCPKeyDropdown() {
       sel.appendChild(opt);
     });
     if (prev) sel.value = prev;
+    initCustomSelect('cp-key-select'); csRefresh('cp-key-select');
   } catch {}
 }
 
@@ -24090,6 +24134,8 @@ async function openPushDsILModal(dsName, isZvol) {
   _pushDsBtn.disabled = true;
   _pushDsBtn.textContent = 'Push';
 
+  initCustomSelect('push-ds-il-server');
+  initCustomSelect('push-ds-il-pool');
   const serverSel = document.getElementById('push-ds-il-server');
   serverSel.innerHTML = '<option value="">Loading servers…</option>';
   document.getElementById('modal-push-ds-il').classList.remove('hidden');
@@ -24103,8 +24149,10 @@ async function openPushDsILModal(dsName, isZvol) {
       serverSel.innerHTML = '<option value="">— select server —</option>' +
         online.map(s => `<option value="${esc(s.id)}">${esc(s.hostname)}</option>`).join('');
     }
+    csRefresh('push-ds-il-server');
   } catch {
     serverSel.innerHTML = '<option value="">Failed to load servers</option>';
+    csRefresh('push-ds-il-server');
   }
 }
 
@@ -24139,10 +24187,12 @@ async function onPushDsILServerChange() {
     for (const p of pools) { _pushDsILPoolAvail[p.name] = p.available || 0; }
     poolSel.innerHTML = '<option value="">— select pool —</option>' +
       pools.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    csRefresh('push-ds-il-pool');
     destGrp.style.display = '';
     onPushDsILPoolChange(); // reset dest input
   } catch(e) {
     poolSel.innerHTML = `<option value="">Error: ${esc(e.message)}</option>`;
+    csRefresh('push-ds-il-pool');
   }
 }
 
@@ -24244,6 +24294,8 @@ async function openPushInterlinkModal(snapName) {
   document.getElementById('push-il-dest-grp').style.display = 'none';
   document.getElementById('btn-push-il-start').disabled = true;
 
+  initCustomSelect('push-il-server');
+  initCustomSelect('push-il-pool');
   const serverSel = document.getElementById('push-il-server');
   serverSel.innerHTML = '<option value="">Loading…</option>';
   try {
@@ -24255,8 +24307,10 @@ async function openPushInterlinkModal(snapName) {
       serverSel.innerHTML = '<option value="">— select server —</option>' +
         online.map(s => `<option value="${esc(s.id)}">${esc(s.hostname)}</option>`).join('');
     }
+    csRefresh('push-il-server');
   } catch {
     serverSel.innerHTML = '<option value="">Failed to load servers</option>';
+    csRefresh('push-il-server');
   }
   document.getElementById('modal-push-interlink').classList.remove('hidden');
 }
@@ -24289,6 +24343,7 @@ async function onPushILServerChange() {
       return;
     }
     poolSel.innerHTML = pools.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+    csRefresh('push-il-pool');
     destGrp.style.display = '';
 
     function applyPoolSelection() {
@@ -25221,11 +25276,14 @@ async function openFbEditModal(entryIdx) {
   const unhideBtn = document.getElementById('fb-edit-unhide-btn');
   if (unhideBtn) unhideBtn.textContent = 'Unhide System Users';
 
+  initCustomSelect('fb-chown-owner');
+  initCustomSelect('fb-chown-group');
   // Populate ownership selects.
   try {
     const ug = await loadUsersGroups(false);
     document.getElementById('fb-chown-owner').innerHTML = ug.users.map(u => `<option value="${esc(u.name)}"${u.name===curOwner?' selected':''}>${esc(u.name)} (${u.uid})</option>`).join('');
     document.getElementById('fb-chown-group').innerHTML = ug.groups.map(g => `<option value="${esc(g.name)}"${g.name===curGroup?' selected':''}>${esc(g.name)} (${g.gid})</option>`).join('');
+    csRefresh('fb-chown-owner'); csRefresh('fb-chown-group');
   } catch(err) {
     document.getElementById('fb-chown-err').textContent = err.message;
     document.getElementById('fb-chown-err').classList.remove('hidden');
@@ -25270,6 +25328,7 @@ async function _repopulateOwnershipSelects() {
     const curGroup = document.getElementById('fb-chown-group').value;
     document.getElementById('fb-chown-owner').innerHTML = ug.users.map(u => `<option value="${esc(u.name)}"${u.name===curOwner?' selected':''}>${esc(u.name)} (${u.uid})</option>`).join('');
     document.getElementById('fb-chown-group').innerHTML = ug.groups.map(g => `<option value="${esc(g.name)}"${g.name===curGroup?' selected':''}>${esc(g.name)} (${g.gid})</option>`).join('');
+    csRefresh('fb-chown-owner'); csRefresh('fb-chown-group');
   } catch(err) {
     if (errEl) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
   }

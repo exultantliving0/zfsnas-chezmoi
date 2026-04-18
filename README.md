@@ -13,6 +13,13 @@
 </p>
 
 ## Why ZNAS Chezmoi?
+
+### Always Current, Zero Disruption
+
+ZNAS is built like a modern browser — updates are continuous, silent, and non-disruptive. Like Chrome, you never have to think about versions: a single click applies the latest release in seconds while the portal keeps running. No package manager, no downtime, no breaking changes forced on you. Each update is a single self-contained binary that replaces itself atomically; if something ever goes wrong, the previous version is still there. ZNAS evolves constantly in the background so your NAS management stays ahead of the curve without ever interrupting your work.
+
+---
+
 Most NAS management software are slow to install, slow to load, and buried under layers of configuration. ZNAS Chezmoi is different:
 
 - **One binary, zero dependencies** — compile once, copy anywhere, run. No Docker. No Node. No Python runtime.
