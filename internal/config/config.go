@@ -47,6 +47,7 @@ type StandardPermissions struct {
 	ManageSnapshots   bool `json:"manage_snapshots,omitempty"`
 	EditSettings      bool `json:"edit_settings,omitempty"`
 	ManageInterlink   bool `json:"manage_interlink,omitempty"`
+	ManageNetworking  bool `json:"manage_networking,omitempty"`
 }
 
 // S3Bucket is a MinIO bucket managed by ZFSNAS and tracked in portal config.
@@ -281,6 +282,9 @@ type UserPreferences struct {
 	SelectedPool         string              `json:"selected_pool,omitempty"`          // last pool shown in Pool tab
 	SelectedTopBarPool   string              `json:"selected_top_bar_pool,omitempty"`  // last pool shown in top bar
 	Theme                string              `json:"theme,omitempty"`                  // UI theme name (dark, light, auto, tron, …)
+	ThemeDay             string              `json:"theme_day,omitempty"`              // theme used by Auto during daytime
+	ThemeNight           string              `json:"theme_night,omitempty"`            // theme used by Auto at night
+	LandingPage          string              `json:"landing_page,omitempty"`           // page shown after login
 	CapSelectedKeys      map[string][]string `json:"cap_selected_keys,omitempty"`      // capacity trend selection keyed by "local" or relay hostname
 	TreemapSelectedDS    map[string]string   `json:"treemap_selected_ds,omitempty"`    // treemap selected pool/dataset keyed by "local" or relay hostname
 }

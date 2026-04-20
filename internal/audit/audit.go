@@ -124,6 +124,17 @@ const (
 	ActionChangeKeySource = "change_key_source"
 	// Access control.
 	ActionForbidden = "forbidden_access"
+	// LXD / VM events.
+	ActionLXDCreateVM        = "lxd_create_vm"
+	ActionLXDCreateContainer = "lxd_create_container"
+	ActionLXDStart           = "lxd_start"
+	ActionLXDStop            = "lxd_stop"
+	ActionLXDRestart         = "lxd_restart"
+	ActionLXDDelete          = "lxd_delete"
+	ActionLXDEditConfig      = "lxd_edit_config"
+	ActionLXDNetCreate       = "lxd_net_create"
+	ActionLXDNetEdit         = "lxd_net_edit"
+	ActionLXDNetDelete       = "lxd_net_delete"
 )
 
 var (

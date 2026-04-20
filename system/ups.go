@@ -16,6 +16,127 @@ import (
 	"zfsnas/internal/config"
 )
 
+// sysfsRead reads a trimmed string from a sysfs file, returning "" on error.
+func sysfsRead(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// SysBatteryPath returns the sysfs path of the first Battery-type power supply,
+// or "" if none is found.
+func SysBatteryPath() string {
+	entries, err := os.ReadDir("/sys/class/power_supply")
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		dir := "/sys/class/power_supply/" + e.Name()
+		if sysfsRead(dir+"/type") == "Battery" {
+			return dir
+		}
+	}
+	return ""
+}
+
+// QuerySysBattery reads battery data from /sys/class/power_supply and returns
+// a UPSStatus populated with the available fields. Returns nil when no battery
+// is present.
+func QuerySysBattery() *UPSStatus {
+	dir := SysBatteryPath()
+	if dir == "" {
+		return nil
+	}
+
+	s := &UPSStatus{
+		Name:         sysfsRead(dir + "/model_name"),
+		Manufacturer: sysfsRead(dir + "/manufacturer"),
+		Model:        sysfsRead(dir + "/model_name"),
+		Serial:       sysfsRead(dir + "/serial_number"),
+		AllVars:      map[string]string{},
+	}
+
+	status := sysfsRead(dir + "/status") // "Charging", "Discharging", "Not charging", "Full"
+	acDir := ""
+	if acentries, err := os.ReadDir("/sys/class/power_supply"); err == nil {
+		for _, e := range acentries {
+			if sysfsRead("/sys/class/power_supply/"+e.Name()+"/type") == "Mains" {
+				acDir = "/sys/class/power_supply/" + e.Name()
+				break
+			}
+		}
+	}
+	acOnline := acDir != "" && sysfsRead(acDir+"/online") == "1"
+
+	s.OnLine = acOnline
+	s.OnBattery = !acOnline && status == "Discharging"
+	switch status {
+	case "Charging":
+		s.RawStatus = "OL CHRG"
+	case "Discharging":
+		s.RawStatus = "OB"
+	case "Full":
+		s.RawStatus = "OL"
+	default:
+		if acOnline {
+			s.RawStatus = "OL"
+		} else {
+			s.RawStatus = "OB"
+		}
+	}
+
+	if cap := sysfsRead(dir + "/capacity"); cap != "" {
+		if f, err := strconv.ParseFloat(cap, 64); err == nil {
+			s.ChargePct = &f
+			s.LowBattery = f <= 10
+		}
+	}
+
+	// voltage_now is in µV
+	if v := sysfsRead(dir + "/voltage_now"); v != "" {
+		if uv, err := strconv.ParseFloat(v, 64); err == nil {
+			volts := uv / 1_000_000
+			s.BattVoltage = &volts
+		}
+	}
+
+	// Estimate runtime from charge_now / current_now (both in µAh/µA)
+	if s.OnBattery {
+		chargeNow := sysfsRead(dir + "/charge_now")
+		currentNow := sysfsRead(dir + "/current_now")
+		if chargeNow != "" && currentNow != "" {
+			cn, err1 := strconv.ParseFloat(chargeNow, 64)
+			cur, err2 := strconv.ParseFloat(currentNow, 64)
+			if err1 == nil && err2 == nil && cur > 0 {
+				runtimeSecs := int((cn / cur) * 3600)
+				s.RuntimeSecs = &runtimeSecs
+			}
+		}
+	}
+
+	// Temperature: in tenths of °C
+	if t := sysfsRead(dir + "/temp"); t != "" {
+		if tv, err := strconv.ParseFloat(t, 64); err == nil {
+			c := tv / 10
+			s.TempC = &c
+		}
+	}
+
+	// Populate AllVars for the detail panel
+	for _, field := range []string{"capacity", "status", "health", "technology", "cycle_count", "capacity_level"} {
+		if v := sysfsRead(dir + "/" + field); v != "" {
+			s.AllVars[field] = v
+		}
+	}
+	if s.Serial != "" {
+		s.AllVars["ups.serial"] = s.Serial
+	}
+
+	return s
+}
+
 // UPSPrereqsInstalled returns true when the nut packages are present.
 func UPSPrereqsInstalled() bool {
 	_, err1 := exec.LookPath("upsc")
@@ -560,22 +681,30 @@ func StartUPSShutdownWatcher(appCfg *config.AppConfig) {
 
 		var status *UPSStatus
 		var err error
-		switch mode {
-		case "network_client":
-			if ups.NUTClient != nil && ups.NUTClient.Host != "" {
-				status, err = QueryUPSClient(ups.NUTClient)
-			} else {
+		if !UPSPrereqsInstalled() {
+			// NUT not installed — use sysfs battery directly.
+			status = QuerySysBattery()
+			if status == nil {
 				continue
 			}
-		default: // standalone or network_server both query localhost
-			if ups.UPSName == "" {
+		} else {
+			switch mode {
+			case "network_client":
+				if ups.NUTClient != nil && ups.NUTClient.Host != "" {
+					status, err = QueryUPSClient(ups.NUTClient)
+				} else {
+					continue
+				}
+			default: // standalone or network_server both query localhost
+				if ups.UPSName == "" {
+					continue
+				}
+				status, err = QueryUPS(ups.UPSName)
+			}
+			if err != nil {
+				// Transient query failure — keep existing battery timer.
 				continue
 			}
-			status, err = QueryUPS(ups.UPSName)
-		}
-		if err != nil {
-			// Transient query failure — keep existing battery timer.
-			continue
 		}
 
 		// Reset when AC power is restored.
@@ -596,7 +725,11 @@ func StartUPSShutdownWatcher(appCfg *config.AppConfig) {
 				Target: ups.UPSName,
 				Details: fmt.Sprintf("UPS switched to battery power — AC lost; shutdown policy active: %v", ups.ShutdownPolicy.Enabled),
 			})
-			log.Printf("UPS: AC power lost on %s — now on battery", ups.UPSName)
+			deviceName := ups.UPSName
+			if deviceName == "" {
+				deviceName = "sysfs-battery"
+			}
+			log.Printf("UPS: AC power lost on %s — now on battery", deviceName)
 		}
 
 		// Require 20 s of confirmed battery power before any action.

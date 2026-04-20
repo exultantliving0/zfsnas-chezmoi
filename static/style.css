@@ -746,6 +746,8 @@ input[type="text"],
 input[type="email"],
 input[type="password"],
 input[type="number"],
+input:not([type]),
+input.input,
 select,
 textarea {
   background: var(--surface2);
@@ -758,9 +760,12 @@ textarea {
   transition: border-color 0.15s, box-shadow 0.15s;
   width: 100%;
   font-family: inherit;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
-input:focus, select:focus, textarea:focus {
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"]):focus,
+select:focus, textarea:focus {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.15);
 }
@@ -896,13 +901,85 @@ input::placeholder { color: var(--text-3); }
 }
 
 .sidebar-header {
-  padding: 0 20px 20px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 12px;
+  padding: 0 20px 12px;
 }
 
 .sidebar-header .logo {
   font-size: 18px;
+}
+
+.sidebar-mode-selector {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 16px 2px;
+  margin-bottom: 0;
+}
+
+.sidebar-mode-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+
+.sidebar-mode-btn:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.sidebar-mode-btn.active {
+  background: var(--surface2);
+  color: var(--accent);
+}
+
+.lxd-tbl-icon {
+  cursor: pointer;
+  padding: 4px 6px;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: color .15s;
+}
+.lxd-tbl-icon:hover { color: var(--text); }
+.lxd-tbl-icon-busy { opacity: 0.35; cursor: default; pointer-events: none; }
+
+.nav-compute-instance {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 20px 7px 24px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  border-radius: 0;
+  transition: background .12s;
+  overflow: hidden;
+}
+
+.nav-compute-instance:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.nav-compute-instance.active {
+  background: var(--surface2);
+  color: var(--accent);
 }
 
 .sidebar-section {
@@ -916,6 +993,7 @@ input::placeholder { color: var(--text-3); }
 }
 
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -939,6 +1017,17 @@ input::placeholder { color: var(--text-3); }
 }
 
 .nav-icon { width: 18px; text-align: center; font-size: 16px; opacity: 0.8; }
+
+.nav-dot {
+  position: absolute !important;
+  right: 5px !important;
+  top: 5% !important;
+  height: 90% !important;
+  width: 3px !important;
+  border-radius: 2px !important;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
+}
 
 /* Main content */
 .main-content {
@@ -1130,9 +1219,10 @@ input::placeholder { color: var(--text-3); }
 
 .pool-bar-legend {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 12px;
   margin-top: 8px;
+  overflow: hidden;
 }
 
 .pool-bar-legend-item {
@@ -1142,6 +1232,7 @@ input::placeholder { color: var(--text-3); }
   font-size: 12px;
   color: var(--text-2);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .pool-bar-legend-dot {
@@ -1332,6 +1423,11 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 }
 
 /* ===== Terminal Panel ===== */
+/* Resize handle inside a term-panel gets the header surface color, not the terminal black */
+.term-panel > .panel-resize-handle {
+  background: var(--surface);
+}
+
 /* ===== Vertical resize handle (activity bar + terminal) ===== */
 .panel-resize-handle {
   height: 6px;
@@ -1437,6 +1533,26 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   color: var(--accent-2);
   border-bottom: 1px solid rgba(255,255,255,0.04);
 }
+.ab-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.ab-tab {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  padding: 3px 9px;
+  border-radius: 4px;
+  transition: color .15s, background .15s;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.ab-tab:hover { color: var(--text-2); background: rgba(255,255,255,0.05); }
+.ab-tab.ab-tab-active { color: var(--text); background: rgba(255,255,255,0.09); font-weight: 600; }
 
 /* ===== Prereqs Modal ===== */
 #prereq-list {
@@ -1525,11 +1641,10 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   }
 }
 
-/* Collapse-button row — sits in the existing margin gap above the first sidebar section */
+/* Collapse button is now merged into the Overview section header */
 .sidebar-collapse-row {
-  display: flex;
-  justify-content: flex-end;
-  padding: 2px 10px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
 }
 
 /* ===== Programmatic compact sidebar (mirrors the responsive media query above) ===== */
@@ -1773,3 +1888,16 @@ body.light .iscsi-icon { filter: none; }
 .fb-chmod-table td,
 .fb-chmod-table th     { text-align:center; padding:4px 8px; }
 .fb-chmod-table td:first-child { text-align:left; font-weight:500; width:70px; }
+
+.ci-related-row:hover  { background: var(--surface2); border-radius: 4px; }
+
+/* ── Settings Tabs ─────────────────────────────────────────────────────────── */
+.settings-tab-bar      { display:flex; gap:4px; margin-bottom:20px;
+                         border-bottom:2px solid var(--border); padding-bottom:0; }
+.settings-tab          { background:none; border:none; border-bottom:2px solid transparent;
+                         margin-bottom:-2px; padding:8px 20px; font-size:14px; font-weight:500;
+                         color:var(--text-2); cursor:pointer; border-radius:4px 4px 0 0;
+                         transition:color .15s, border-color .15s; }
+.settings-tab:hover    { color:var(--text-1); background:var(--surface2); }
+.settings-tab.active   { color:var(--accent-2); border-bottom-color:var(--accent-2);
+                         background:none; }

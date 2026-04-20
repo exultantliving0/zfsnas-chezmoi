@@ -31,10 +31,11 @@ var embeddedStatic embed.FS
 
 func main() {
 	// ===== Flags =====
-	devMode      := flag.Bool("dev", false, "Serve static files from disk (development mode)")
-	debugMode    := flag.Bool("debug", false, "Enable verbose debug logging (lsblk details, etc.)")
-	configDir    := flag.String("config", "./config", "Path to config directory")
-	setHTTPSPort := flag.Int("set-https-port", 0, "Persist a new HTTPS port to config and use it this run (1–65535)")
+	devMode        := flag.Bool("dev", false, "Serve static files from disk (development mode)")
+	debugMode      := flag.Bool("debug", false, "Enable verbose debug logging (lsblk details, etc.)")
+	configDir      := flag.String("config", "./config", "Path to config directory")
+	setHTTPSPort   := flag.Int("set-https-port", 0, "Persist a new HTTPS port to config and use it this run (1–65535)")
+	experimentalMode := flag.Bool("experimental", false, "Enable experimental features (e.g. LXD VM/container management)")
 	flag.Parse()
 
 	// ===== Sudo check =====
@@ -220,6 +221,17 @@ func main() {
 			session.Default.CleanExpired()
 		}
 	}()
+
+	// ===== Experimental features =====
+	if *experimentalMode {
+		log.Println("Experimental mode enabled.")
+		if system.LXDAvailable() {
+			log.Println("LXD detected and accessible — VMs & Containers feature enabled.")
+			handlers.SetLXDAvailable(true)
+		} else {
+			log.Println("WARNING: LXD not accessible. Ensure the ZNAS user is in the 'lxd' group. VMs & Containers feature disabled.")
+		}
+	}
 
 	// ===== Static file system =====
 	var staticFS fs.FS

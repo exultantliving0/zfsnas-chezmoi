@@ -13,9 +13,21 @@ import (
 
 // HandleGetUPSStatus returns the current UPS status.
 // GET /api/ups/status
+// When NUT is not installed but a battery is detected in /sys/class/power_supply,
+// the response is served from sysfs directly (battery_source=true).
 func HandleGetUPSStatus(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !system.UPSPrereqsInstalled() {
+			// Fall back to sysfs battery if present.
+			if bat := system.QuerySysBattery(); bat != nil {
+				jsonOK(w, map[string]interface{}{
+					"installed":      false,
+					"enabled":        true,
+					"battery_source": true,
+					"status":         bat,
+				})
+				return
+			}
 			jsonOK(w, map[string]interface{}{"installed": false})
 			return
 		}
@@ -280,6 +292,53 @@ func HandleSetNominalPower(appCfg *config.AppConfig) http.HandlerFunc {
 			Action: audit.ActionUpdateSettings,
 			Result: audit.ResultOK,
 			Target: "ups_nominal_power",
+		})
+		jsonOK(w, map[string]bool{"ok": true})
+	}
+}
+
+// HandleSaveShutdownPolicy saves only the UPS shutdown policy without touching
+// NUT config files. Used when monitoring a sysfs battery (no NUT installed).
+// PUT /api/ups/shutdown-policy
+func HandleSaveShutdownPolicy(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ShutdownPolicy config.UPSShutdownPolicy `json:"shutdown_policy"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		p := req.ShutdownPolicy
+		if p.Enabled {
+			switch p.TriggerType {
+			case "time", "percent", "both":
+			default:
+				jsonErr(w, http.StatusBadRequest, "trigger_type must be time, percent, or both")
+				return
+			}
+			if p.PercentThreshold < 0 || p.PercentThreshold > 100 {
+				jsonErr(w, http.StatusBadRequest, "percent_threshold must be 0-100")
+				return
+			}
+			if p.RuntimeThreshold < 0 || p.RuntimeThreshold > 3600 {
+				jsonErr(w, http.StatusBadRequest, "runtime_threshold must be 0-3600 seconds")
+				return
+			}
+		}
+		appCfg.UPS.ShutdownPolicy = p
+		appCfg.UPS.Enabled = true
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:   sess.Username,
+			Role:   sess.Role,
+			Action: audit.ActionUpdateSettings,
+			Result: audit.ResultOK,
+			Target: "ups_shutdown_policy",
 		})
 		jsonOK(w, map[string]bool{"ok": true})
 	}

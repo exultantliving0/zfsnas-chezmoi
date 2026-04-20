@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  ZFS NAS Portal — Quick Installer for Debian / Ubuntu
-#  Script version 1.2
+#  Script version 1.3
 #  https://github.com/macgaver/zfsnas-chezmoi
 #
 #  Usage (run as root or with sudo):
@@ -21,9 +21,10 @@ header()  { echo -e "\n${BOLD}${CYAN}$*${RESET}"; echo -e "${CYAN}$(printf '─%
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 ZFSNAS_USER="zfsnas"
-ZFSNAS_HOME="/opt/zfsnas"
-ZFSNAS_BIN="${ZFSNAS_HOME}/zfsnas"
-ZFSNAS_CONFIG="${ZFSNAS_HOME}/config"
+ZFSNAS_HOME="/home/zfsnas"   # user home (shell, .bashrc, .profile)
+ZFSNAS_OPT="/opt/zfsnas"     # binary + config live here
+ZFSNAS_BIN="${ZFSNAS_OPT}/zfsnas"
+ZFSNAS_CONFIG="${ZFSNAS_OPT}/config"
 SUDOERS_FILE="/etc/sudoers.d/zfsnas"
 UNIT_FILE="/etc/systemd/system/zfsnas.service"
 GITHUB_REPO="macgaver/zfsnas-chezmoi"
@@ -210,9 +211,9 @@ else
   success "User '${ZFSNAS_USER}' created with home ${ZFSNAS_HOME}"
 fi
 
-# Ensure home directory exists with correct permissions
-mkdir -p "${ZFSNAS_HOME}" "${ZFSNAS_CONFIG}"
-chown -R "${ZFSNAS_USER}:${ZFSNAS_USER}" "${ZFSNAS_HOME}"
+# Ensure home directory and /opt/zfsnas (binary + config) exist with correct permissions
+mkdir -p "${ZFSNAS_HOME}" "${ZFSNAS_OPT}" "${ZFSNAS_CONFIG}"
+chown -R "${ZFSNAS_USER}:${ZFSNAS_USER}" "${ZFSNAS_HOME}" "${ZFSNAS_OPT}"
 
 # ── Write .bashrc ─────────────────────────────────────────────────────────────
 header "Configuring shell"
@@ -262,7 +263,7 @@ alias zpstatus='sudo zpool status'
 BASHRC
 
 chown "${ZFSNAS_USER}:${ZFSNAS_USER}" "${ZFSNAS_HOME}/.bashrc"
-success ".bashrc written"
+success ".bashrc written to ${ZFSNAS_HOME}"
 
 # Also write .profile so login shells source .bashrc
 cat > "${ZFSNAS_HOME}/.profile" << 'PROFILE'
@@ -348,7 +349,7 @@ After=network.target
 Type=simple
 User=${ZFSNAS_USER}
 Group=${ZFSNAS_USER}
-WorkingDirectory=${ZFSNAS_HOME}
+WorkingDirectory=${ZFSNAS_OPT}
 ExecStart=${ZFSNAS_BIN}
 Restart=on-failure
 RestartSec=5

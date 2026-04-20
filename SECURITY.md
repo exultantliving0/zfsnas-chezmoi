@@ -241,6 +241,22 @@ Cmnd_Alias ZFSNAS_SYSTEM = \
     /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_max, \
     /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_min
 
+# ── Network Time (chrony NTP) ─────────────────────────────────────────────────
+# since v6.4.18 — NTP server configuration via Settings > General > Network Time card
+#   (only visible when chrony is installed and running)
+Cmnd_Alias ZFSNAS_NTP = \
+    /usr/bin/tee /etc/chrony/chrony.conf, \
+    /usr/bin/systemctl restart chronyd
+
+# ── LXD Network Bridges — VLAN interface management ─────────────────────────
+# since v6.4.19 — creates VLAN sub-interfaces in /etc/network/interfaces for
+#   VLAN-backed LXC bridges; ifup/ifdown bring them up/down without reboot.
+#   Only needed when using the Networking mode in the Compute section (experimental).
+Cmnd_Alias ZFSNAS_LXDNET = \
+    /usr/sbin/ifup *, \
+    /usr/sbin/ifdown *, \
+    /usr/bin/tee /etc/network/interfaces
+
 # ── OS updates & service installation ────────────────────────────────────────
 # since v1.0.0 — prerequisite package install (apt-get install) and
 #   systemd service setup (tee + daemon-reload + enable)
@@ -286,7 +302,7 @@ Cmnd_Alias ZFSNAS_SYSPOWER = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_APT, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_LXDNET, ZFSNAS_APT, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER
 # To enable the optional Sudoers Hardening UI feature, also add: ZFSNAS_SECURITY
 ```
 

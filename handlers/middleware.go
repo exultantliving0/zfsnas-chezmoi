@@ -117,6 +117,7 @@ func permEnabled(p *config.StandardPermissions, perm string) bool {
 	case "manage_snapshots":    return p.ManageSnapshots
 	case "edit_settings":       return p.EditSettings
 	case "manage_interlink":    return p.ManageInterlink
+	case "manage_networking":   return p.ManageNetworking
 	}
 	return false
 }

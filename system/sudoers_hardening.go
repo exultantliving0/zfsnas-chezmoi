@@ -48,6 +48,8 @@ var sudoersSectionInfoMap = map[string]sudoersSectionInfo{
 	"ZFSNAS_SCAN":      {Label: "Folder Usage Scanning"},
 	"ZFSNAS_FILES":     {Label: "File Browser"},
 	"ZFSNAS_SYSTEM":    {Label: "System Management"},
+	"ZFSNAS_NTP":       {Label: "Network Time (chrony NTP)", Optional: true},
+	"ZFSNAS_LXDNET":   {Label: "LXD Network Bridges (VLAN interfaces)", Optional: true},
 	"ZFSNAS_APT":       {Label: "OS Updates & Installation"},
 	"ZFSNAS_SECURITY":  {Label: "Sudoers Self-Management"},
 }
@@ -799,6 +801,10 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/chmod +x /etc/rc.local":                                     "System Power Management: ensures /etc/rc.local is executable after writing the persistence block (v6.3.22+).",
 	"/usr/bin/systemctl enable rc-local":                                   "System Power Management: enables the rc-local systemd service so /etc/rc.local runs at boot. Only called once when the file is first created (v6.3.22+).",
 	"/usr/bin/systemctl start rc-local":                                    "System Power Management: starts rc-local immediately after creation so power settings take effect without a reboot (v6.3.22+).",
+
+	// ── Network Time (chrony NTP) ─────────────────────────────────────────────
+	"/usr/bin/tee /etc/chrony/chrony.conf":  "Network Time: writes updated NTP server/pool configuration to chrony.conf (v6.4.18+).",
+	"/usr/bin/systemctl restart chronyd":    "Network Time: restarts the chrony daemon to apply new NTP server configuration (v6.4.18+).",
 }
 
 // requiredSudoersTemplate is the canonical sudoers file content for ZFS NAS Portal.
@@ -1015,6 +1021,22 @@ Cmnd_Alias ZFSNAS_SYSTEM = \
     /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_max, \
     /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_min
 
+# ── Network Time (chrony NTP) ─────────────────────────────────────────────────
+# since v6.4.18 — NTP server configuration via Settings > General > Network Time
+#   (card is only visible when chrony is installed and running)
+Cmnd_Alias ZFSNAS_NTP = \
+    /usr/bin/tee /etc/chrony/chrony.conf, \
+    /usr/bin/systemctl restart chronyd
+
+# ── LXD Network Bridges — VLAN interface management ─────────────────────────
+# since v6.4.19 — creates VLAN sub-interfaces via /etc/network/interfaces for
+#   VLAN-backed LXC bridges; ifup/ifdown bring them up/down without reboot.
+#   Only needed when using the Networking mode in the Compute section.
+Cmnd_Alias ZFSNAS_LXDNET = \
+    /usr/sbin/ifup *, \
+    /usr/sbin/ifdown *, \
+    /usr/bin/tee /etc/network/interfaces
+
 # ── OS updates & service installation ────────────────────────────────────────
 # since v1.0.0 — prerequisite package install (apt-get install) and
 #   systemd service setup (tee + daemon-reload + enable)
@@ -1037,5 +1059,5 @@ Cmnd_Alias ZFSNAS_SECURITY = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_APT, ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_LXDNET, ZFSNAS_APT, ZFSNAS_SECURITY
 `
