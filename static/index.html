@@ -349,13 +349,19 @@
 
     <!-- Compute nav — shown only in compute mode -->
     <div id="nav-compute-section" style="display:none;">
-      <div class="sidebar-section" id="nav-compute-root" style="margin-top:0;cursor:pointer;user-select:none;" onclick="switchToLXDTable()">Compute</div>
+      <div class="sidebar-section" id="nav-compute-root" style="margin-top:0;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;" onclick="switchToLXDTable()">
+        <span>Compute</span>
+        <span style="color:var(--text-3);font-size:14px;">+</span>
+      </div>
       <div id="nav-compute-instances"></div>
     </div>
 
     <!-- Networking nav — shown only in networking mode -->
     <div id="nav-networking-section" style="display:none;">
-      <div class="sidebar-section" id="nav-networking-root" style="margin-top:0;cursor:pointer;user-select:none;" onclick="showPage('lxd-networks');_setNetworkingRootActive()">Networking</div>
+      <div class="sidebar-section" id="nav-networking-root" style="margin-top:0;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;" onclick="showPage('lxd-networks');_setNetworkingRootActive()">
+        Networking
+        <span style="color:var(--text-3);font-size:14px;">+</span>
+      </div>
       <div id="nav-networking-bridges"></div>
     </div>
 
@@ -1772,21 +1778,39 @@
           <button class="btn btn-primary btn-sm" onclick="openCreateBridgeModal()">+ Create Bridge</button>
         </div>
         <div id="lxd-networks-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
-        <div class="card" style="padding:0;overflow:hidden;">
+        <div class="card" style="padding:0;overflow:hidden;margin-bottom:24px;">
           <table class="data-table" id="lxd-networks-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th style="width:80px;">Type</th>
-                <th>IPv4</th>
-                <th>IPv6</th>
-                <th style="width:60px;">VMs</th>
-                <th>Description</th>
+                <th style="cursor:pointer;" onclick="sortNetworksTable('bridges','name')" title="Click to sort">Name ↕</th>
+                <th style="width:80px;cursor:pointer;" onclick="sortNetworksTable('bridges','type')" title="Click to sort">Type ↕</th>
+                <th style="cursor:pointer;" onclick="sortNetworksTable('bridges','ipv4')" title="Click to sort">IPv4 ↕</th>
+                <th style="cursor:pointer;" onclick="sortNetworksTable('bridges','ipv6')" title="Click to sort">IPv6 ↕</th>
+                <th style="width:60px;cursor:pointer;" onclick="sortNetworksTable('bridges','vm_count')" title="Click to sort">VMs ↕</th>
+                <th style="cursor:pointer;" onclick="sortNetworksTable('bridges','description')" title="Click to sort">Description ↕</th>
                 <th style="width:40px;"></th>
               </tr>
             </thead>
-            <tbody id="lxd-networks-tbody">
+            <tbody id="lxd-networks-tbody-bridges">
               <tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden;">
+          <table class="data-table" id="lxd-other-networks-table">
+            <thead>
+              <tr>
+                <th style="cursor:pointer;" onclick="sortNetworksTable('others','name')" title="Click to sort">Name ↕</th>
+                <th style="width:80px;cursor:pointer;" onclick="sortNetworksTable('others','type')" title="Click to sort">Type ↕</th>
+                <th style="cursor:pointer;" onclick="sortNetworksTable('others','ipv4')" title="Click to sort">IPv4 ↕</th>
+                <th style="cursor:pointer;" onclick="sortNetworksTable('others','ipv6')" title="Click to sort">IPv6 ↕</th>
+                <th style="width:60px;cursor:pointer;" onclick="sortNetworksTable('others','vm_count')" title="Click to sort">VMs ↕</th>
+                <th style="cursor:pointer;" onclick="sortNetworksTable('others','description')" title="Click to sort">Description ↕</th>
+                <th style="width:40px;"></th>
+              </tr>
+            </thead>
+            <tbody id="lxd-other-networks-tbody">
+              <tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">No other networks.</td></tr>
             </tbody>
           </table>
         </div>
@@ -28812,9 +28836,9 @@ let _editBridgeCurrentName = '';
 let _deleteBridgePendingName = '';
 
 async function loadLXDNetworks() {
-  const tbody = document.getElementById('lxd-networks-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">Loading…</td></tr>';
+  const tbodyBridges = document.getElementById('lxd-networks-tbody-bridges');
+  if (!tbodyBridges) return;
+  tbodyBridges.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">Loading…</td></tr>';
   try {
     const res = await fetch('/api/lxd/network-bridges');
     if (!res.ok) throw new Error(await res.text());
@@ -28825,43 +28849,93 @@ async function loadLXDNetworks() {
   } catch(e) {
     const al = document.getElementById('lxd-networks-alert');
     if (al) { al.textContent = e.message; al.classList.remove('hidden'); }
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:24px;">'+esc(e.message)+'</td></tr>';
+    tbodyBridges.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:24px;">'+esc(e.message)+'</td></tr>';
   }
 }
 
+// Sort state for network tables (independent per table)
+let _bridgesSortKey = 'name', _bridgesSortDir = 'asc';
+let _othersSortKey = 'name', _othersSortDir = 'asc';
+let _bridgesCache = [];
+let _othersCache = [];
+
 function renderLXDNetworksTable(nets) {
-  const tbody = document.getElementById('lxd-networks-tbody');
-  if (!tbody) return;
+  const tbodyBridges = document.getElementById('lxd-networks-tbody-bridges');
+  const tbodyOther = document.getElementById('lxd-other-networks-tbody');
+  if (!tbodyBridges || !tbodyOther) return;
   if (!nets || nets.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">No networks found.</td></tr>';
+    tbodyBridges.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
+    tbodyOther.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">No other networks.</td></tr>';
     return;
   }
-  tbody.innerHTML = nets.map(n => {
-    const typeBadge = `<span style="background:rgba(99,179,237,0.15);color:#63b3ed;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;">${esc(n.type)}</span>`;
-    const vmPill = n.vm_count > 0
-      ? `<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600;">${n.vm_count}</span>`
-      : `<span style="color:var(--text-3);font-size:12px;">0</span>`;
-    const descEl = n.description
-      ? `<span style="font-size:12px;color:var(--text-2);">${esc(n.description)}</span>`
-      : `<span style="font-size:12px;color:var(--text-3);font-style:italic;">—</span>`;
-    let actionsEl = '';
-    if (n.managed || n.type === 'vlan') {
-      actionsEl = `<span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
-        onclick='toggleNetBurger(event,${JSON.stringify(n.name)},${n.vm_count},${JSON.stringify(n.type)},${n.managed})'>&#x22EE;</span>`;
-    } else if (n.type === 'physical') {
-      actionsEl = `<span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
-        onclick='togglePhysicalIfaceBurger(event,${JSON.stringify(n.name)})'>&#x22EE;</span>`;
-    }
-    return `<tr>
-      <td style="font-family:monospace;font-weight:600;">${esc(n.name)}</td>
-      <td>${typeBadge}</td>
-      <td style="font-family:monospace;font-size:12px;color:var(--text-2);">${esc(n.ipv4 || '—')}</td>
-      <td style="font-family:monospace;font-size:12px;color:var(--text-2);">${esc(n.ipv6 || '—')}</td>
-      <td style="text-align:center;">${vmPill}</td>
-      <td>${descEl}</td>
-      <td style="text-align:right;">${actionsEl}</td>
-    </tr>`;
-  }).join('');
+  _bridgesCache = (nets || []).filter(n => n.type === 'bridge');
+  _othersCache = (nets || []).filter(n => n.type !== 'bridge');
+  _sortArr(_bridgesCache, _bridgesSortKey, _bridgesSortDir);
+  _sortArr(_othersCache, _othersSortKey, _othersSortDir);
+  tbodyBridges.innerHTML = _bridgesCache.length === 0
+    ? '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">No bridges found.</td></tr>'
+    : _bridgesCache.map(n => _renderNetworkRow(n)).join('');
+  tbodyOther.innerHTML = _othersCache.length === 0
+    ? '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">No other networks.</td></tr>'
+    : _othersCache.map(n => _renderNetworkRow(n)).join('');
+}
+
+function _sortArr(arr, key, dir) {
+  arr.sort((a, b) => {
+    let aVal = a[key] ?? '', bVal = b[key] ?? '';
+    if (typeof aVal === 'string') { aVal = aVal.toLowerCase(); bVal = bVal.toLowerCase(); }
+    if (aVal < bVal) return dir === 'asc' ? -1 : 1;
+    if (aVal > bVal) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+}
+
+function _renderNetworkRow(n) {
+  const typeBadge = `<span style="background:rgba(99,179,237,0.15);color:#63b3ed;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;">${esc(n.type)}</span>`;
+  const vmPill = n.vm_count > 0
+    ? `<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600;">${n.vm_count}</span>`
+    : `<span style="color:var(--text-3);font-size:12px;">0</span>`;
+  const descEl = n.description
+    ? `<span style="font-size:12px;color:var(--text-2);">${esc(n.description)}</span>`
+    : `<span style="font-size:12px;color:var(--text-3);font-style:italic;">—</span>`;
+  let actionsEl = '';
+  if (n.managed || n.type === 'vlan') {
+    actionsEl = `<span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      onclick='toggleNetBurger(event,${JSON.stringify(n.name)},${n.vm_count},${JSON.stringify(n.type)},${n.managed})'>&#x22EE;</span>`;
+  } else if (n.type === 'physical') {
+    actionsEl = `<span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      onclick='togglePhysicalIfaceBurger(event,${JSON.stringify(n.name)})'>&#x22EE;</span>`;
+  }
+  return `<tr>
+    <td style="font-family:monospace;font-weight:600;">${esc(n.name)}</td>
+    <td>${typeBadge}</td>
+    <td style="font-family:monospace;font-size:12px;color:var(--text-2);">${esc(n.ipv4 || '—')}</td>
+    <td style="font-family:monospace;font-size:12px;color:var(--text-2);">${esc(n.ipv6 || '—')}</td>
+    <td style="text-align:center;">${vmPill}</td>
+    <td>${descEl}</td>
+    <td style="text-align:right;">${actionsEl}</td>
+  </tr>`;
+}
+
+function sortNetworksTable(table, key) {
+  const tbodyId = table === 'bridges' ? 'lxd-networks-tbody-bridges' : 'lxd-other-networks-tbody';
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  if (table === 'bridges') {
+    if (_bridgesSortKey === key) _bridgesSortDir = _bridgesSortDir === 'asc' ? 'desc' : 'asc';
+    else { _bridgesSortKey = key; _bridgesSortDir = 'asc'; }
+    _sortArr(_bridgesCache, _bridgesSortKey, _bridgesSortDir);
+    tbody.innerHTML = _bridgesCache.length === 0
+      ? '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">No bridges found.</td></tr>'
+      : _bridgesCache.map(n => _renderNetworkRow(n)).join('');
+  } else {
+    if (_othersSortKey === key) _othersSortDir = _othersSortDir === 'asc' ? 'desc' : 'asc';
+    else { _othersSortKey = key; _othersSortDir = 'asc'; }
+    _sortArr(_othersCache, _othersSortKey, _othersSortDir);
+    tbody.innerHTML = _othersCache.length === 0
+      ? '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">No other networks.</td></tr>'
+      : _othersCache.map(n => _renderNetworkRow(n)).join('');
+  }
 }
 
 // ===== Networking sidebar nav =================================================
@@ -28892,7 +28966,7 @@ function refreshNetworkingNav() {
 function renderNetworkingNav(nets) {
   const el = document.getElementById('nav-networking-bridges');
   if (!el) return;
-  const bridges = (nets || []).filter(n => n.type === 'bridge' && n.managed);
+  const bridges = (nets || []).filter(n => n.type === 'bridge');
   el.innerHTML = bridges.map(n => {
     const dot = n.vm_count > 0
       ? `<span class="nav-dot" style="background:#3fb950;"></span>`
