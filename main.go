@@ -23,6 +23,7 @@ import (
 	"zfsnas/internal/keystore"
 	"zfsnas/internal/scheduler"
 	"zfsnas/internal/session"
+	"zfsnas/internal/version"
 	"zfsnas/system"
 )
 
@@ -224,10 +225,30 @@ func main() {
 
 	// ===== Experimental features =====
 	if *experimentalMode {
+		version.SetExperimental(true)
 		log.Println("Experimental mode enabled.")
 		if system.LXDAvailable() {
 			log.Println("LXD detected and accessible — VMs & Containers feature enabled.")
 			handlers.SetLXDAvailable(true)
+			// Ensure cross-distro OVMF firmware symlinks exist (Ubuntu ↔ Debian naming).
+			system.EnsureOVMFCompat()
+			// Background: sync LXD trust with all InterLink peers that don't have
+			// it confirmed yet, so the flag is set without requiring manual action.
+			go func() {
+				for i := range appCfg.InterLink {
+					ls := &appCfg.InterLink[i]
+					if ls.LXDTrusted {
+						continue
+					}
+					if err := system.LXDSyncInterlinkTrustForPeer(*ls, ls.ID); err != nil {
+						log.Printf("LXD trust auto-sync for %s: %v", ls.Hostname, err)
+						continue
+					}
+					ls.LXDTrusted = true
+					config.SaveAppConfig(appCfg) //nolint:errcheck
+					log.Printf("LXD trust auto-synced for %s", ls.Hostname)
+				}
+			}()
 		} else {
 			log.Println("WARNING: LXD not accessible. Ensure the ZNAS user is in the 'lxd' group. VMs & Containers feature disabled.")
 		}
@@ -276,9 +297,9 @@ func main() {
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 300 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadHeaderTimeout: 15 * time.Second,
+		WriteTimeout:      300 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Graceful shutdown on SIGINT / SIGTERM.

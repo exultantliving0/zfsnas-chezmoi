@@ -140,6 +140,9 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	config.LockUsers()
+	defer config.UnlockUsers()
+
 	users, err := config.LoadUsers()
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to load users")
@@ -301,6 +304,9 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	config.LockUsers()
+	defer config.UnlockUsers()
+
 	users, err := config.LoadUsers()
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to load users")
@@ -452,6 +458,9 @@ func HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
 func HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	sess := MustSession(r)
+
+	config.LockUsers()
+	defer config.UnlockUsers()
 
 	users, err := config.LoadUsers()
 	if err != nil {

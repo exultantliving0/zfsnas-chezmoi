@@ -43,6 +43,8 @@ var relayWSForwardPaths = []string{
 	"/ws/binary-update-apply",
 	"/ws/updates-apply",
 	"/ws/replication/",
+	"/ws/lxd-console",
+	"/ws/lxd-vga",
 }
 
 // isRelayBypassed reports whether path should be served locally even when
@@ -177,7 +179,13 @@ func RelayMiddleware(appCfg *config.AppConfig, next http.Handler) http.Handler {
 // Server A upgrades the browser connection, dials Server B with HMAC-signed
 // headers, then forwards frames in both directions until either side closes.
 func relayWebSocket(w http.ResponseWriter, r *http.Request, ls *config.LinkedServer, username string, ts int64, nonceHex, sig string) {
-	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	// Capture requested subprotocols before upgrading so we can mirror them to Server B.
+	requestedProtos := websocket.Subprotocols(r)
+
+	upgrader := websocket.Upgrader{
+		CheckOrigin:  func(*http.Request) bool { return true },
+		Subprotocols: requestedProtos,
+	}
 	browserConn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -198,11 +206,18 @@ func relayWebSocket(w http.ResponseWriter, r *http.Request, ls *config.LinkedSer
 	dialHeader.Set("X-Interlink-Relay-TS", strconv.FormatInt(ts, 10))
 	dialHeader.Set("X-Interlink-Relay-Nonce", nonceHex)
 	dialHeader.Set("X-Interlink-Relay-HMAC", sig)
+	// Forward requested subprotocols to Server B so it can negotiate the right one.
+	if len(requestedProtos) > 0 {
+		dialHeader.Set("Sec-WebSocket-Protocol", strings.Join(requestedProtos, ", "))
+	}
 
-	dialer := websocket.Dialer{TLSClientConfig: system.InterlinkTLSConfigForRelay(ls.TLSFingerprint)}
+	dialer := websocket.Dialer{
+		TLSClientConfig: system.InterlinkTLSConfigForRelay(ls.TLSFingerprint),
+		Subprotocols:    requestedProtos,
+	}
 	remoteConn, _, err := dialer.Dial(wsURL, dialHeader)
 	if err != nil {
-		browserConn.WriteMessage(websocket.TextMessage, []byte("relay: could not connect to remote terminal: "+err.Error())) //nolint:errcheck
+		browserConn.WriteMessage(websocket.TextMessage, []byte("relay: could not connect to remote console: "+err.Error())) //nolint:errcheck
 		return
 	}
 	defer remoteConn.Close()

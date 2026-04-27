@@ -181,9 +181,12 @@ var requiredSudoChecks = []sudoCheck{
 	{Binary: "chmod", Match: "+x /etc/rc.local", Name: "chmod +x /etc/rc.local"},
 	{Binary: "systemctl", Match: "enable rc-local", Name: "systemctl enable rc-local"},
 	{Binary: "systemctl", Match: "start rc-local", Name: "systemctl start rc-local"},
-	{Binary: "tee", Match: "/sys/module/pcie_aspm/parameters/policy", Name: "tee /sys/module/pcie_aspm/parameters/policy"},
-	{Binary: "tee", Match: "/sys/devices/system/cpu/cpu*", Name: "tee /sys/devices/system/cpu/cpu* (CPU governor)"},
-	{Binary: "tee", Match: "/sys/bus/usb/devices/*/power/", Name: "tee /sys/bus/usb/devices/*/power/ (USB autosuspend)"},
+	// System Power Management uses runtime-determined paths (per-CPU scaling
+	// governor, /sys/module/pcie_aspm/..., per-USB-device autosuspend, /etc/rc.local).
+	// sudo-rs does not allow wildcards in non-trailing argument positions, so the
+	// sudoers template grants `/usr/bin/tee *` in ZFSNAS_SYSPOWER. The wildcard
+	// fallback in the loop below treats `tee *` as covering this check.
+	{Binary: "tee", Match: "*", Name: "tee * (System Power Management)"},
 }
 
 // CheckSudoAccess probes the effective sudo permissions of the running process.
@@ -202,6 +205,17 @@ func CheckSudoAccess() SudoStatus {
 	// Blanket NOPASSWD: ALL — every command allowed.
 	if strings.Contains(sudoList, "NOPASSWD: ALL") || strings.Contains(sudoList, "NOPASSWD:ALL") {
 		return SudoStatus{Type: "all", MissingCommands: []string{}}
+	}
+
+	// "sudo -l" output is unreliable for substring matching across sudo versions:
+	//   - Classic sudo on some configurations leaves Cmnd_Alias names unexpanded
+	//     (the output literally contains "ZFSNAS_ZFS" instead of the command paths).
+	//   - sudo-rs (default on Ubuntu 26.04+) collapses "cmd *" entries to bare
+	//     "cmd" in its output, so substring checks for "/usr/sbin/zpool *" miss.
+	// In both cases the authoritative source is the sudoers file itself; prefer it
+	// whenever it is readable.
+	if content, _ := GetCurrentSudoersContent(); content != "" {
+		sudoList = content
 	}
 
 	// Hardened configuration — check each required entry.

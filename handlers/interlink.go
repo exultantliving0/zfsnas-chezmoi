@@ -26,6 +26,7 @@ import (
 type serverStatus struct {
 	Online        bool
 	RemoteVersion string
+	LXDEnabled    bool
 	FetchedAt     time.Time
 }
 
@@ -60,9 +61,10 @@ func HandleInterlinkPing(w http.ResponseWriter, r *http.Request) {
 		hostname = "localhost"
 	}
 	jsonOK(w, map[string]interface{}{
-		"hostname": hostname,
-		"version":  version.Version,
-		"ok":       true,
+		"hostname":    hostname,
+		"version":     version.Version,
+		"lxd_enabled": isLXDAvailable(),
+		"ok":          true,
 	})
 }
 
@@ -271,17 +273,26 @@ func HandleInterlinkLogin(appCfg *config.AppConfig) http.HandlerFunc {
 // ─── outbound endpoints (called by local portal UI) ──────────────────────────
 
 // HandleInterlinkListFast handles GET /api/interlink/servers/fast
-// Returns server config immediately without pinging remotes (no online status).
+// Returns server config immediately with last-cached online/lxd_enabled status (no live ping).
 func HandleInterlinkListFast(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		type serverOut struct {
-			ID       string `json:"id"`
-			URL      string `json:"url"`
-			Hostname string `json:"hostname"`
+			ID         string `json:"id"`
+			URL        string `json:"url"`
+			Hostname   string `json:"hostname"`
+			Online     bool   `json:"online"`
+			LXDEnabled bool   `json:"lxd_enabled"`
 		}
 		out := make([]serverOut, 0, len(appCfg.InterLink))
 		for _, ls := range appCfg.InterLink {
-			out = append(out, serverOut{ID: ls.ID, URL: ls.URL, Hostname: ls.Hostname})
+			s, _ := cachedStatus(ls.ID)
+			out = append(out, serverOut{
+				ID:         ls.ID,
+				URL:        ls.URL,
+				Hostname:   ls.Hostname,
+				Online:     s.Online,
+				LXDEnabled: s.LXDEnabled,
+			})
 		}
 		jsonOK(w, out)
 	}
@@ -300,13 +311,15 @@ func HandleInterlinkList(appCfg *config.AppConfig) http.HandlerFunc {
 			Online        bool      `json:"online"`
 			RemoteVersion string    `json:"remote_version,omitempty"`
 			ZFSAccess     bool      `json:"zfs_access"`
+			LXDEnabled    bool      `json:"lxd_enabled"`
 		}
 
 		type result struct {
-			id        string
-			online    bool
-			ver       string
-			zfsAccess bool
+			id         string
+			online     bool
+			ver        string
+			zfsAccess  bool
+			lxdEnabled bool
 		}
 		ch := make(chan result, len(appCfg.InterLink))
 		for _, ls := range appCfg.InterLink {
@@ -314,14 +327,15 @@ func HandleInterlinkList(appCfg *config.AppConfig) http.HandlerFunc {
 			go func() {
 				if s, ok := cachedStatus(ls.ID); ok {
 					zfsAccess, _ := system.GetRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
-					ch <- result{ls.ID, s.Online, s.RemoteVersion, zfsAccess}
+					ch <- result{ls.ID, s.Online, s.RemoteVersion, zfsAccess, s.LXDEnabled}
 					return
 				}
 				h, v, err := system.PingServer(ls.URL, ls.TLSFingerprint)
 				online := err == nil && h != ""
-				setStatus(ls.ID, serverStatus{Online: online, RemoteVersion: v, FetchedAt: time.Now()})
+				lxdEnabled := system.RemotePingHasLXD(ls.URL, ls.TLSFingerprint)
+				setStatus(ls.ID, serverStatus{Online: online, RemoteVersion: v, LXDEnabled: lxdEnabled, FetchedAt: time.Now()})
 				zfsAccess, _ := system.GetRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
-				ch <- result{ls.ID, online, v, zfsAccess}
+				ch <- result{ls.ID, online, v, zfsAccess, lxdEnabled}
 			}()
 		}
 
@@ -343,6 +357,7 @@ func HandleInterlinkList(appCfg *config.AppConfig) http.HandlerFunc {
 				Online:        s.online,
 				RemoteVersion: s.ver,
 				ZFSAccess:     s.zfsAccess,
+				LXDEnabled:    s.lxdEnabled,
 			})
 		}
 		jsonOK(w, out)

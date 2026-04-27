@@ -16,6 +16,10 @@ type BridgeMember struct {
 	Description string `json:"description"`
 	DeviceName  string `json:"device_name"` // NIC device name inside the instance
 	IPv4        string `json:"ipv4"`        // IP on this bridge (empty if stopped or unknown)
+	Image       string `json:"image"`
+	CPULimit    string `json:"cpu_limit"`
+	MemoryLimit string `json:"memory_limit"`
+	RootPool    string `json:"root_pool"` // LXD storage pool name for the root disk
 }
 
 // GetBridgeMembers returns instances attached to the named LXD bridge with their IPs.
@@ -49,6 +53,7 @@ func GetBridgeMembers(bridge string) ([]BridgeMember, error) {
 			Description    string                       `json:"description"`
 			Status         string                       `json:"status"`
 			Devices        map[string]map[string]string `json:"devices"`
+			Config         map[string]string            `json:"config"`
 			ExpandedConfig map[string]string            `json:"expanded_config"`
 		}
 		if err := json.Unmarshal(cfgOut, &inst); err != nil {
@@ -73,12 +78,27 @@ func GetBridgeMembers(bridge string) ([]BridgeMember, error) {
 			}
 		}
 
+		img := inst.Config["image.description"]
+		if img == "" {
+			img = strings.TrimSpace(inst.Config["image.os"] + " " + inst.Config["image.version"])
+		}
+		rootPool := ""
+		for _, dev := range inst.Devices {
+			if dev["type"] == "disk" && dev["path"] == "/" && dev["pool"] != "" {
+				rootPool = dev["pool"]
+				break
+			}
+		}
 		m := BridgeMember{
 			Name:        instName,
 			Type:        inst.Type,
 			Status:      inst.Status,
 			Description: inst.Description,
 			DeviceName:  devName,
+			Image:       img,
+			CPULimit:    inst.ExpandedConfig["limits.cpu"],
+			MemoryLimit: inst.ExpandedConfig["limits.memory"],
+			RootPool:    rootPool,
 		}
 
 		// Get IP from instance state if running.
@@ -196,6 +216,10 @@ func ListLXDNetworks() ([]LXDNetwork, error) {
 			n.IPv4 = r.Config["ipv4.address"]
 			n.IPv6 = r.Config["ipv6.address"]
 		}
+		// For unmanaged OS bridges LXD reports no IP; read it directly from the kernel.
+		if !r.Managed && r.Type == "bridge" && n.IPv4 == "" {
+			n.IPv4 = osBridgeIPv4(r.Name)
+		}
 		for _, u := range r.UsedBy {
 			if strings.Contains(u, "/1.0/instances/") {
 				n.VMCount++
@@ -204,6 +228,30 @@ func ListLXDNetworks() ([]LXDNetwork, error) {
 		nets = append(nets, n)
 	}
 	return nets, nil
+}
+
+// osBridgeIPv4 returns the first IPv4 CIDR assigned to an OS bridge interface
+// (e.g. "192.168.2.213/24"), or "" if none is found.
+func osBridgeIPv4(name string) string {
+	out, err := exec.Command("ip", "-4", "-j", "addr", "show", "dev", name).Output()
+	if err != nil {
+		return ""
+	}
+	var addrs []struct {
+		AddrInfo []struct {
+			Local     string `json:"local"`
+			PrefixLen int    `json:"prefixlen"`
+		} `json:"addr_info"`
+	}
+	if err := json.Unmarshal(out, &addrs); err != nil || len(addrs) == 0 {
+		return ""
+	}
+	for _, a := range addrs[0].AddrInfo {
+		if a.Local != "" {
+			return fmt.Sprintf("%s/%d", a.Local, a.PrefixLen)
+		}
+	}
+	return ""
 }
 
 // GetLXDNetwork returns detail for a single LXD network.
@@ -316,11 +364,13 @@ iface %s inet manual
 
 	newContent := string(existing) + stanza
 
-	// Write via sudo tee.
-	cmd := exec.Command("sudo", "/usr/bin/tee", "/etc/network/interfaces")
-	cmd.Stdin = strings.NewReader(newContent)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("write interfaces: %s", strings.TrimSpace(string(out)))
+	// /etc/network/interfaces is written in-process; no sudo entry is granted for
+	// this path, so the portal must be running as root for VLAN management to work.
+	if os.Getuid() != 0 {
+		return fmt.Errorf("writing /etc/network/interfaces requires running as root")
+	}
+	if err := os.WriteFile("/etc/network/interfaces", []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("write interfaces: %w", err)
 	}
 
 	// Bring the interface up immediately.
@@ -372,9 +422,11 @@ func removeVLANInterfaceStanza(iface string) {
 		}
 	}
 
-	cmd := exec.Command("sudo", "/usr/bin/tee", "/etc/network/interfaces")
-	cmd.Stdin = strings.NewReader(content)
-	cmd.CombinedOutput()
+	// Best-effort write; only succeeds when running as root since no sudo entry
+	// is granted for /etc/network/interfaces.
+	if os.Getuid() == 0 {
+		_ = os.WriteFile("/etc/network/interfaces", []byte(content), 0644)
+	}
 
 	// Best-effort bring-down.
 	exec.Command("sudo", "/usr/sbin/ifdown", iface).CombinedOutput()
@@ -524,6 +576,7 @@ func EditLXDNetwork(req LXDNetworkEditRequest) error {
 
 // DeleteLXDNetwork deletes an LXD network. If the network had a ZNAS-managed VLAN
 // sub-interface, that stanza is also removed from /etc/network/interfaces.
+// Profile references to the network are automatically removed before deletion.
 func DeleteLXDNetwork(name string) error {
 	// Get network detail first so we can check for VLAN external interfaces.
 	net, err := GetLXDNetwork(name)
@@ -531,7 +584,29 @@ func DeleteLXDNetwork(name string) error {
 		return err
 	}
 	if net.VMCount > 0 {
-		return fmt.Errorf("network is in use by %d instance(s)", net.VMCount)
+		return fmt.Errorf("network is in use by %d running instance(s)", net.VMCount)
+	}
+
+	// Detach the network from any profiles that reference it.
+	// LXD counts profile references as "in use" even when no VMs exist.
+	for _, ref := range net.UsedBy {
+		if !strings.Contains(ref, "/1.0/profiles/") {
+			continue
+		}
+		profileName := ref[strings.LastIndex(ref, "/")+1:]
+		// Find which device in this profile uses our network.
+		if out, e := exec.Command("lxc", "profile", "show", profileName).Output(); e == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				line = strings.TrimSpace(line)
+				// Matches "network: <name>" inside a devices block.
+				if line == "network: "+name {
+					// The device name is the previous non-empty parent key — easier to
+					// just remove any nic device whose network matches.
+					removeProfileNICByNetwork(profileName, name)
+					break
+				}
+			}
+		}
 	}
 
 	externalIface := ""
@@ -552,6 +627,26 @@ func DeleteLXDNetwork(name string) error {
 		}
 	}
 	return nil
+}
+
+// removeProfileNICByNetwork removes any NIC device from a profile that has
+// "network: <networkName>" in its config (used before deleting an LXD network).
+func removeProfileNICByNetwork(profileName, networkName string) {
+	out, err := exec.Command("lxc", "profile", "show", profileName, "--format", "json").Output()
+	if err != nil {
+		return
+	}
+	var profile struct {
+		Devices map[string]map[string]string `json:"devices"`
+	}
+	if json.Unmarshal(out, &profile) != nil {
+		return
+	}
+	for devName, dev := range profile.Devices {
+		if dev["type"] == "nic" && dev["network"] == networkName {
+			exec.Command("lxc", "profile", "device", "remove", profileName, devName).Run() //nolint:errcheck
+		}
+	}
 }
 
 // isVLANSubIface returns true if iface looks like a ZNAS-generated VLAN
@@ -633,4 +728,284 @@ func ListPhysicalInterfaces() ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+// BridgeStats holds cumulative rx/tx byte counters read from /proc/net/dev.
+type BridgeStats struct {
+	Interface string       `json:"interface"`
+	RxBytes   int64        `json:"rx_bytes"`
+	TxBytes   int64        `json:"tx_bytes"`
+	Members   []BridgeStats `json:"members,omitempty"`
+}
+
+// readIfaceBytes reads rx_bytes and tx_bytes for a single interface from a
+// pre-read /proc/net/dev byte slice. Returns (rx, tx, ok).
+func readIfaceBytes(data []byte, iface string) (int64, int64, bool) {
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		colon := strings.IndexByte(line, ':')
+		if colon < 0 || strings.TrimSpace(line[:colon]) != iface {
+			continue
+		}
+		fields := strings.Fields(line[colon+1:])
+		if len(fields) < 9 {
+			return 0, 0, false
+		}
+		var rx, tx int64
+		fmt.Sscanf(fields[0], "%d", &rx)
+		fmt.Sscanf(fields[8], "%d", &tx)
+		return rx, tx, true
+	}
+	return 0, 0, false
+}
+
+// bridgePhysMembers returns the physical/VLAN member interfaces of a bridge by
+// reading /sys/class/net/<bridge>/brif/. Virtual kernel links (veth*, tap*,
+// macvtap*) used by containers and VMs are excluded; only real uplink
+// interfaces such as eth0, eth0.100, bond0, etc. are returned.
+func bridgePhysMembers(bridge string) []string {
+	entries, err := os.ReadDir("/sys/class/net/" + bridge + "/brif")
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, "veth") ||
+			strings.HasPrefix(name, "tap") ||
+			strings.HasPrefix(name, "macvtap") {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// GetBridgeStats reads /proc/net/dev and returns cumulative rx/tx byte counters
+// for the named bridge interface plus any physical/VLAN member interfaces.
+func GetBridgeStats(iface string) (BridgeStats, error) {
+	data, err := os.ReadFile("/proc/net/dev")
+	if err != nil {
+		return BridgeStats{}, err
+	}
+	rx, tx, ok := readIfaceBytes(data, iface)
+	if !ok {
+		return BridgeStats{}, fmt.Errorf("interface %q not found in /proc/net/dev", iface)
+	}
+	result := BridgeStats{Interface: iface, RxBytes: rx, TxBytes: tx}
+	for _, member := range bridgePhysMembers(iface) {
+		mrx, mtx, mok := readIfaceBytes(data, member)
+		if mok {
+			result.Members = append(result.Members, BridgeStats{Interface: member, RxBytes: mrx, TxBytes: mtx})
+		}
+	}
+	return result, nil
+}
+
+// LXDStoragePool describes an LXD storage pool.
+type LXDStoragePool struct {
+	Name          string            `json:"name"`
+	Description   string            `json:"description"`
+	Driver        string            `json:"driver"`
+	Status        string            `json:"status"`
+	Config        map[string]string `json:"config"`
+	Source        string            `json:"source"`
+	InstanceCount int               `json:"instance_count"`
+}
+
+// LXDListStoragePoolInfos returns all LXD storage pools with full detail.
+func LXDListStoragePoolInfos() ([]LXDStoragePool, error) {
+	out, err := exec.Command("lxc", "storage", "list", "--format", "json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("lxc storage list: %w", err)
+	}
+	var raw []struct {
+		Name        string            `json:"name"`
+		Description string            `json:"description"`
+		Driver      string            `json:"driver"`
+		Status      string            `json:"status"`
+		Config      map[string]string `json:"config"`
+		UsedBy      []string          `json:"used_by"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, err
+	}
+	pools := make([]LXDStoragePool, 0, len(raw))
+	for _, r := range raw {
+		count := 0
+		for _, u := range r.UsedBy {
+			if strings.Contains(u, "/1.0/instances/") {
+				count++
+			}
+		}
+		source := ""
+		if r.Config != nil {
+			source = r.Config["source"]
+		}
+		pools = append(pools, LXDStoragePool{
+			Name:          r.Name,
+			Description:   r.Description,
+			Driver:        r.Driver,
+			Status:        r.Status,
+			Config:        r.Config,
+			Source:        source,
+			InstanceCount: count,
+		})
+	}
+	return pools, nil
+}
+
+// GetStoragePoolMembers returns instances that live on the named LXD storage pool.
+func GetStoragePoolMembers(pool string) ([]BridgeMember, error) {
+	poolOut, err := exec.Command("lxc", "query", "/1.0/storage-pools/"+pool).Output()
+	if err != nil {
+		return nil, fmt.Errorf("lxc query storage-pool: %w", err)
+	}
+	var poolData struct {
+		UsedBy []string `json:"used_by"`
+	}
+	if err := json.Unmarshal(poolOut, &poolData); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var members []BridgeMember
+	for _, uri := range poolData.UsedBy {
+		if !strings.Contains(uri, "/1.0/instances/") {
+			continue
+		}
+		instName := uri[strings.LastIndex(uri, "/")+1:]
+		if seen[instName] {
+			continue
+		}
+		seen[instName] = true
+		cfgOut, err := exec.Command("lxc", "query", "/1.0/instances/"+instName).Output()
+		if err != nil {
+			continue
+		}
+		var inst struct {
+			Type            string                       `json:"type"`
+			Description     string                       `json:"description"`
+			Status          string                       `json:"status"`
+			Config          map[string]string            `json:"config"`
+			ExpandedConfig  map[string]string            `json:"expanded_config"`
+			ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+		}
+		if err := json.Unmarshal(cfgOut, &inst); err != nil {
+			continue
+		}
+		img := inst.Config["image.description"]
+		if img == "" {
+			img = strings.TrimSpace(inst.Config["image.os"] + " " + inst.Config["image.version"])
+		}
+		rootPool := pool // we already know the pool; use it as fallback
+		for _, dev := range inst.ExpandedDevices {
+			if dev["type"] == "disk" && dev["path"] == "/" && dev["pool"] != "" {
+				rootPool = dev["pool"]
+				break
+			}
+		}
+		m := BridgeMember{
+			Name:        instName,
+			Type:        inst.Type,
+			Status:      inst.Status,
+			Description: inst.Description,
+			Image:       img,
+			CPULimit:    inst.ExpandedConfig["limits.cpu"],
+			MemoryLimit: inst.ExpandedConfig["limits.memory"],
+			RootPool:    rootPool,
+		}
+		if inst.Status == "Running" {
+			stateOut, err2 := exec.Command("lxc", "query", "/1.0/instances/"+instName+"/state").Output()
+			if err2 == nil {
+				var state struct {
+					Network map[string]struct {
+						Addresses []struct {
+							Family  string `json:"family"`
+							Address string `json:"address"`
+							Scope   string `json:"scope"`
+						} `json:"addresses"`
+					} `json:"network"`
+				}
+				if json.Unmarshal(stateOut, &state) == nil {
+					outer:
+					for dev, iface := range state.Network {
+						if dev == "lo" {
+							continue
+						}
+						for _, addr := range iface.Addresses {
+							if addr.Family == "inet" && addr.Scope == "global" {
+								m.IPv4 = addr.Address
+								break outer
+							}
+						}
+					}
+				}
+			}
+		}
+		members = append(members, m)
+	}
+	return members, nil
+}
+
+// LXDCreateStoragePool creates a new ZFS-backed LXD storage pool.
+func LXDCreateStoragePool(name, zfsDataset string) error {
+	out, err := exec.Command("lxc", "storage", "create", name, "zfs", "source="+zfsDataset).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// LXDDeleteStoragePool deletes an LXD storage pool.
+func LXDDeleteStoragePool(name string) error {
+	out, err := exec.Command("lxc", "storage", "delete", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// LXDStoragePoolEditRequest holds the fields the user may change on an existing pool.
+type LXDStoragePoolEditRequest struct {
+	Description           string `json:"description"`
+	VolumeSize            string `json:"volume_size"`              // volume.size
+	RemoveSnapshotsOnFull *bool  `json:"remove_snapshots_on_full"` // volume.zfs.remove_snapshots
+	UseRefquota           *bool  `json:"use_refquota"`             // volume.zfs.use_refquota
+}
+
+// LXDEditStoragePool applies editable settings to an existing LXD storage pool via
+// PATCH /1.0/storage-pools/<name>.
+func LXDEditStoragePool(name string, req LXDStoragePoolEditRequest) error {
+	cfg := map[string]string{}
+	if req.VolumeSize != "" {
+		cfg["volume.size"] = req.VolumeSize
+	}
+	if req.RemoveSnapshotsOnFull != nil {
+		if *req.RemoveSnapshotsOnFull {
+			cfg["volume.zfs.remove_snapshots"] = "true"
+		} else {
+			cfg["volume.zfs.remove_snapshots"] = "false"
+		}
+	}
+	if req.UseRefquota != nil {
+		if *req.UseRefquota {
+			cfg["volume.zfs.use_refquota"] = "true"
+		} else {
+			cfg["volume.zfs.use_refquota"] = "false"
+		}
+	}
+	payload := map[string]interface{}{
+		"description": req.Description,
+		"config":      cfg,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	out, err := exec.Command("lxc", "query", "--request", "PATCH",
+		"/1.0/storage-pools/"+name, "--data", string(data)).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }

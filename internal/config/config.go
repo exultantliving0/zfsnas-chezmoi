@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -220,6 +221,7 @@ type LinkedServer struct {
 	LinkedBy       string    `json:"linked_by"`       // admin username who created the link
 	LinkedAt       time.Time `json:"linked_at"`
 	TLSFingerprint string    `json:"tls_fingerprint,omitempty"` // SHA-256 hex of peer TLS cert (TOFU pin)
+	LXDTrusted     bool      `json:"lxd_trusted,omitempty"`     // true once LXD cert exchange completed successfully
 }
 
 // VersionCacheEntry holds the last fetched GitHub release check result,
@@ -334,10 +336,37 @@ func SaveEncryptionKeys(keys []EncryptionKey) error {
 var (
 	configDir string
 	mu        sync.RWMutex
-	totpKey   []byte // AES-256 key for TOTP secret encryption
-	chapKey   []byte // AES-256 key for iSCSI CHAP credential encryption
-	apiKeyKey []byte // AES-256 key for API key encryption
+	usersMu   sync.Mutex // serialises the full load→modify→save cycle for users.json
+	totpKey   []byte     // AES-256 key for TOTP secret encryption
+	chapKey   []byte     // AES-256 key for iSCSI CHAP credential encryption
+	apiKeyKey []byte     // AES-256 key for API key encryption
 )
+
+// UpdateUserByID atomically loads users.json, calls fn with a pointer to the
+// matching user, then saves the result. All under usersMu so concurrent writes
+// cannot interleave and cause lost updates.
+func UpdateUserByID(id string, fn func(*User) error) error {
+	usersMu.Lock()
+	defer usersMu.Unlock()
+	users, err := LoadUsers()
+	if err != nil {
+		return err
+	}
+	user := FindUserByID(users, id)
+	if user == nil {
+		return fmt.Errorf("user not found")
+	}
+	if err := fn(user); err != nil {
+		return err
+	}
+	return SaveUsers(users)
+}
+
+// LockUsers acquires the users-file mutex for a multi-step load→modify→save
+// sequence that cannot be expressed as a single UpdateUserByID call.
+// Caller must defer UnlockUsers() immediately after calling LockUsers().
+func LockUsers()   { usersMu.Lock() }
+func UnlockUsers() { usersMu.Unlock() }
 
 // Init creates the config directory, stores its path, and loads encryption keys.
 func Init(dir string) error {

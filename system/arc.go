@@ -44,6 +44,9 @@ type ARCStats struct {
 	// Tunable kernel parameters (from /sys/module/zfs/parameters/)
 	ParamARCMax int64 `json:"param_arc_max"`
 	ParamARCMin int64 `json:"param_arc_min"`
+
+	// Total system RAM in bytes (from /proc/meminfo MemTotal)
+	TotalRAMBytes int64 `json:"total_ram_bytes"`
 }
 
 const arcStatsPath = "/proc/spl/kstat/zfs/arcstats"
@@ -98,6 +101,11 @@ func GetARCStats() (*ARCStats, error) {
 	}
 	if s.ParamARCMin == 0 {
 		s.ParamARCMin = s.ARCMin
+	}
+
+	// Read total system RAM from /proc/meminfo for percentage calculations.
+	if totalKB, _, err := readMemInfo(); err == nil && totalKB > 0 {
+		s.TotalRAMBytes = int64(totalKB) * 1024
 	}
 
 	return s, nil

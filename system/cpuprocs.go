@@ -12,12 +12,14 @@ import (
 
 // CPU category constants (used both for the snapshot and frontend coloring).
 const (
-	CpuCatSMB   = "smb"
-	CpuCatNFS   = "nfs"
-	CpuCatZFS   = "zfs"
-	CpuCatMinIO = "minio"
-	CpuCatISCSI = "iscsi"
-	CpuCatOther = "other"
+	CpuCatSMB       = "smb"
+	CpuCatNFS       = "nfs"
+	CpuCatZFS       = "zfs"
+	CpuCatMinIO     = "minio"
+	CpuCatISCSI     = "iscsi"
+	CpuCatVM        = "vm"
+	CpuCatContainer = "container"
+	CpuCatOther     = "other"
 )
 
 // ProcCPUInfo is a single process CPU entry.
@@ -31,14 +33,16 @@ type ProcCPUInfo struct {
 
 // CpuProcsSnapshot is the full snapshot returned by the API.
 type CpuProcsSnapshot struct {
-	SmbPct   float64       `json:"smb_pct"`
-	NfsPct   float64       `json:"nfs_pct"`
-	ZfsPct   float64       `json:"zfs_pct"`
-	MinioPct float64       `json:"minio_pct"`
-	ISCSIPct float64       `json:"iscsi_pct"`
-	OtherPct float64       `json:"other_pct"`
-	TopProcs []ProcCPUInfo `json:"top_procs"`
-	At       time.Time     `json:"at"`
+	SmbPct       float64       `json:"smb_pct"`
+	NfsPct       float64       `json:"nfs_pct"`
+	ZfsPct       float64       `json:"zfs_pct"`
+	MinioPct     float64       `json:"minio_pct"`
+	ISCSIPct     float64       `json:"iscsi_pct"`
+	VMPct        float64       `json:"vm_pct"`
+	ContainerPct float64       `json:"container_pct"`
+	OtherPct     float64       `json:"other_pct"`
+	TopProcs     []ProcCPUInfo `json:"top_procs"`
+	At           time.Time     `json:"at"`
 }
 
 var (
@@ -149,7 +153,7 @@ func sampleCpuProcs() *CpuProcsSnapshot {
 			pid:      s.pid,
 			name:     s.name,
 			cpuPct:   pct,
-			category: categorizeProcName(s.name),
+			category: categorizeProc(s.pid, s.name),
 		})
 	}
 	cpuProcsPrev = newPrev
@@ -161,19 +165,21 @@ func sampleCpuProcs() *CpuProcsSnapshot {
 
 	// Aggregate by category
 	catPct := map[string]float64{
-		CpuCatSMB:   0,
-		CpuCatNFS:   0,
-		CpuCatZFS:   0,
-		CpuCatMinIO: 0,
-		CpuCatISCSI: 0,
-		CpuCatOther: 0,
+		CpuCatSMB:       0,
+		CpuCatNFS:       0,
+		CpuCatZFS:       0,
+		CpuCatMinIO:     0,
+		CpuCatISCSI:     0,
+		CpuCatVM:        0,
+		CpuCatContainer: 0,
+		CpuCatOther:     0,
 	}
 	for _, r := range results {
 		catPct[r.category] += r.cpuPct
 	}
 
 	// Cap total at 100% (can slightly exceed on multi-core with short samples)
-	total := catPct[CpuCatSMB] + catPct[CpuCatNFS] + catPct[CpuCatZFS] + catPct[CpuCatMinIO] + catPct[CpuCatISCSI] + catPct[CpuCatOther]
+	total := catPct[CpuCatSMB] + catPct[CpuCatNFS] + catPct[CpuCatZFS] + catPct[CpuCatMinIO] + catPct[CpuCatISCSI] + catPct[CpuCatVM] + catPct[CpuCatContainer] + catPct[CpuCatOther]
 	if total > 100 {
 		scale := 100.0 / total
 		for k := range catPct {
@@ -201,14 +207,16 @@ func sampleCpuProcs() *CpuProcsSnapshot {
 	}
 
 	return &CpuProcsSnapshot{
-		SmbPct:   catPct[CpuCatSMB],
-		NfsPct:   catPct[CpuCatNFS],
-		ZfsPct:   catPct[CpuCatZFS],
-		MinioPct: catPct[CpuCatMinIO],
-		ISCSIPct: catPct[CpuCatISCSI],
-		OtherPct: catPct[CpuCatOther],
-		TopProcs: topProcs,
-		At:       time.Now(),
+		SmbPct:       catPct[CpuCatSMB],
+		NfsPct:       catPct[CpuCatNFS],
+		ZfsPct:       catPct[CpuCatZFS],
+		MinioPct:     catPct[CpuCatMinIO],
+		ISCSIPct:     catPct[CpuCatISCSI],
+		VMPct:        catPct[CpuCatVM],
+		ContainerPct: catPct[CpuCatContainer],
+		OtherPct:     catPct[CpuCatOther],
+		TopProcs:     topProcs,
+		At:           time.Now(),
 	}
 }
 
@@ -284,14 +292,46 @@ func readProcCmdline(pid int) string {
 	return s
 }
 
-// categorizeProcName maps a process name to a CPU category.
-func categorizeProcName(name string) string {
+// categorizeProc maps a process (by pid + name) to a CPU/memory category.
+// It first checks by process name for well-known services, then falls back
+// to cgroup inspection for LXD VMs (qemu) and containers.
+func categorizeProc(pid int, name string) string {
 	lower := strings.ToLower(name)
+
+	// ── VMs: QEMU processes spawned by LXD ───────────────────────────────────
+	if strings.HasPrefix(lower, "qemu-system-") || lower == "qemu-kvm" || lower == "qemu" {
+		return CpuCatVM
+	}
+
+	// ── Name-based service categories ────────────────────────────────────────
+	if cat := categorizeProcName(lower); cat != CpuCatOther {
+		return cat
+	}
+
+	// ── Cgroup check: LXD containers ─────────────────────────────────────────
+	if isLXDContainerProc(pid) {
+		return CpuCatContainer
+	}
+
+	return CpuCatOther
+}
+
+// isLXDContainerProc returns true if the process's cgroup path indicates it
+// runs inside an LXD container (cgroup path contains "lxc.payload").
+func isLXDContainerProc(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "lxc.payload")
+}
+
+// categorizeProcName maps a lower-cased process name to a service category,
+// returning CpuCatOther for unknown processes.
+func categorizeProcName(lower string) string {
 	switch {
 
 	// ── SMB / Samba ─────────────────────────────────────────────────────────
-	// smbd (main + workers smbd-notifyd, smbd-cleanupd, smbd[ip], …)
-	// nmbd, winbindd / wb[machine] workers, samba-dcerpcd, rpcd_lsad, …
 	case strings.HasPrefix(lower, "smbd") ||
 		strings.HasPrefix(lower, "nmbd") ||
 		strings.HasPrefix(lower, "winbind") ||
@@ -302,7 +342,6 @@ func categorizeProcName(name string) string {
 		return CpuCatSMB
 
 	// ── NFS ──────────────────────────────────────────────────────────────────
-	// kernel nfsd threads, user-space helpers, rpcbind, lockd, blkmapd
 	case strings.HasPrefix(lower, "nfsd") ||
 		lower == "rpc.mountd" || lower == "rpc.statd" || lower == "rpc.idmapd" ||
 		lower == "rpc.gssd" || lower == "rpc.svcgssd" ||
@@ -312,8 +351,6 @@ func categorizeProcName(name string) string {
 		return CpuCatNFS
 
 	// ── ZFS / OpenZFS / SPL ──────────────────────────────────────────────────
-	// z_* I/O threads, arc_* eviction, txg_*, l2arc, zvol*, dp_* datapath,
-	// dbuf*/dbu* eviction, spl_* task queues, raidz_expand, mmp, fsidd
 	case strings.HasPrefix(lower, "z_") ||
 		lower == "zed" || lower == "zpool" || lower == "zfs" ||
 		strings.HasPrefix(lower, "spa_") ||
@@ -333,7 +370,6 @@ func categorizeProcName(name string) string {
 		return CpuCatMinIO
 
 	// ── iSCSI ────────────────────────────────────────────────────────────────
-	// iscsid, iscsiuio, kernel iscsi_np/iscsi_trx/iscsi_ttx, tgtd, LIO targetcli
 	case strings.HasPrefix(lower, "iscsi") ||
 		lower == "iscsiuio" || lower == "tgtd" ||
 		strings.HasPrefix(lower, "lio_") ||

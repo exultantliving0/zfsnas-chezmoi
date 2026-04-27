@@ -298,6 +298,81 @@ func HandlePushInterlinkStartDataset(appCfg *config.AppConfig) http.HandlerFunc 
 	}
 }
 
+// HandleInterlinkRemoteLXDStorage handles GET /api/interlink/remote-lxd-storage/{server_id}.
+// Proxies an HMAC-auth call to get the remote server's LXD storage pool names.
+func HandleInterlinkRemoteLXDStorage(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["server_id"]
+		var ls *config.LinkedServer
+		for i := range appCfg.InterLink {
+			if appCfg.InterLink[i].ID == id {
+				ls = &appCfg.InterLink[i]
+				break
+			}
+		}
+		if ls == nil {
+			jsonErr(w, http.StatusNotFound, "linked server not found")
+			return
+		}
+		pools, err := system.GetRemoteLXDStoragePools(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
+		if err != nil {
+			jsonErr(w, http.StatusBadGateway, "cannot get remote LXD storage pools: "+err.Error())
+			return
+		}
+		jsonOK(w, map[string][]string{"pools": pools})
+	}
+}
+
+// HandleInterlinkRemoteLXDBridges handles GET /api/interlink/remote-lxd-bridges/{server_id}.
+// Proxies an HMAC-auth call to get the remote server's LXD bridge network infos.
+func HandleInterlinkRemoteLXDBridges(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["server_id"]
+		var ls *config.LinkedServer
+		for i := range appCfg.InterLink {
+			if appCfg.InterLink[i].ID == id {
+				ls = &appCfg.InterLink[i]
+				break
+			}
+		}
+		if ls == nil {
+			jsonErr(w, http.StatusNotFound, "linked server not found")
+			return
+		}
+		bridges, err := system.GetRemoteLXDBridges(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
+		if err != nil {
+			jsonErr(w, http.StatusBadGateway, "cannot get remote LXD bridges: "+err.Error())
+			return
+		}
+		jsonOK(w, map[string]interface{}{"bridges": bridges})
+	}
+}
+
+// HandleInterlinkRemoteLXDInstances handles GET /api/interlink/remote-lxd-instances/{server_id}.
+// Proxies an HMAC-auth call to get the remote server's LXD instance names and descriptions.
+func HandleInterlinkRemoteLXDInstances(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["server_id"]
+		var ls *config.LinkedServer
+		for i := range appCfg.InterLink {
+			if appCfg.InterLink[i].ID == id {
+				ls = &appCfg.InterLink[i]
+				break
+			}
+		}
+		if ls == nil {
+			jsonErr(w, http.StatusNotFound, "linked server not found")
+			return
+		}
+		instances, err := system.GetRemoteLXDInstances(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
+		if err != nil {
+			jsonErr(w, http.StatusBadGateway, "cannot get remote LXD instances: "+err.Error())
+			return
+		}
+		jsonOK(w, map[string]interface{}{"instances": instances})
+	}
+}
+
 // HandlePushInterlinkJobs handles GET /api/push-interlink/jobs.
 func HandlePushInterlinkJobs(w http.ResponseWriter, r *http.Request) {
 	jobs := pushinterlink.Default.List()

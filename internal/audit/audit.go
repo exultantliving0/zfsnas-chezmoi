@@ -135,6 +135,16 @@ const (
 	ActionLXDNetCreate       = "lxd_net_create"
 	ActionLXDNetEdit         = "lxd_net_edit"
 	ActionLXDNetDelete       = "lxd_net_delete"
+	ActionLXDSnapshot        = "lxd_snapshot"
+	ActionLXDRestore         = "lxd_restore"
+	ActionLXDDeleteSnapshot  = "lxd_delete_snapshot"
+	ActionLXDClone           = "lxd_clone"
+	ActionLXDMoveStorage     = "lxd_move_storage"
+	ActionProxmoxImport      = "proxmox_import"
+	ActionLXDEnable          = "lxd_enable"
+	ActionLXDStorageCreate   = "lxd_storage_create"
+	ActionLXDStorageEdit     = "lxd_storage_edit"
+	ActionLXDStorageDelete   = "lxd_storage_delete"
 )
 
 var (

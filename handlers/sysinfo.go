@@ -20,7 +20,8 @@ func HandleGetCpuProcs(w http.ResponseWriter, r *http.Request) {
 	snap := system.GetCpuProcsSnapshot()
 	if snap == nil {
 		jsonOK(w, map[string]interface{}{
-			"smb_pct": 0, "nfs_pct": 0, "zfs_pct": 0, "minio_pct": 0, "iscsi_pct": 0, "other_pct": 0,
+			"smb_pct": 0, "nfs_pct": 0, "zfs_pct": 0, "minio_pct": 0, "iscsi_pct": 0,
+			"vm_pct": 0, "container_pct": 0, "other_pct": 0,
 			"top_procs": []interface{}{},
 		})
 		return
@@ -33,7 +34,8 @@ func HandleGetMemProcs(w http.ResponseWriter, r *http.Request) {
 	snap := system.GetMemProcsSnapshot()
 	if snap == nil {
 		jsonOK(w, map[string]interface{}{
-			"smb_pct": 0, "nfs_pct": 0, "zfs_pct": 0, "minio_pct": 0, "iscsi_pct": 0, "other_pct": 0,
+			"smb_pct": 0, "nfs_pct": 0, "zfs_pct": 0, "minio_pct": 0, "iscsi_pct": 0,
+			"vm_pct": 0, "container_pct": 0, "other_pct": 0,
 			"arc_mb": 0, "total_mb": 0, "used_mb": 0,
 			"top_procs": []interface{}{},
 		})

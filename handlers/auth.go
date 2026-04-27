@@ -349,21 +349,11 @@ func HandleTOTPConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	users, err := config.LoadUsers()
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "failed to load users")
-		return
-	}
-	user := config.FindUserByID(users, sess.UserID)
-	if user == nil {
-		jsonErr(w, http.StatusNotFound, "user not found")
-		return
-	}
-
-	user.TOTPSecret  = req.Secret
-	user.TOTPEnabled = true
-
-	if err := config.SaveUsers(users); err != nil {
+	if err := config.UpdateUserByID(sess.UserID, func(u *config.User) error {
+		u.TOTPSecret  = req.Secret
+		u.TOTPEnabled = true
+		return nil
+	}); err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to save user")
 		return
 	}
@@ -468,29 +458,29 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleUpdatePrefs saves the current user's UI preferences.
+// The incoming JSON is merged on top of the existing preferences so that a
+// partial body (e.g. only activity_bar_collapsed) cannot wipe other fields.
 func HandleUpdatePrefs(w http.ResponseWriter, r *http.Request) {
 	sess := MustSession(r)
-	var prefs config.UserPreferences
-	if err := json.NewDecoder(r.Body).Decode(&prefs); err != nil {
+	var raw json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	users, err := config.LoadUsers()
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "failed to load users")
-		return
-	}
-	user := config.FindUserByID(users, sess.UserID)
-	if user == nil {
-		jsonErr(w, http.StatusNotFound, "user not found")
-		return
-	}
-	user.Preferences = prefs
-	if err := config.SaveUsers(users); err != nil {
+	var saved config.UserPreferences
+	if err := config.UpdateUserByID(sess.UserID, func(u *config.User) error {
+		// Unmarshal onto the existing prefs struct — absent fields keep their
+		// current value, present fields are overwritten.
+		if err := json.Unmarshal(raw, &u.Preferences); err != nil {
+			return fmt.Errorf("invalid prefs: %w", err)
+		}
+		saved = u.Preferences
+		return nil
+	}); err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to save preferences")
 		return
 	}
-	jsonOK(w, prefs)
+	jsonOK(w, saved)
 }
 
 func newID() string {

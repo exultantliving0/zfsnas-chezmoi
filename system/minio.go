@@ -254,13 +254,11 @@ func EnableMinIOTLS() error {
 	if out, err := exec.Command("sudo", "mkdir", "-p", minIOCertsDir).CombinedOutput(); err != nil {
 		return fmt.Errorf("mkdir certs: %s", strings.TrimSpace(string(out)))
 	}
-	for _, pair := range [][2]string{
-		{certFile, filepath.Join(minIOCertsDir, "public.crt")},
-		{keyFile, filepath.Join(minIOCertsDir, "private.key")},
-	} {
-		if out, err := exec.Command("sudo", "cp", pair[0], pair[1]).CombinedOutput(); err != nil {
-			return fmt.Errorf("copy %s: %s", filepath.Base(pair[1]), strings.TrimSpace(string(out)))
-		}
+	if err := teeToFixedPath(certFile, filepath.Join(minIOCertsDir, "public.crt")); err != nil {
+		return err
+	}
+	if err := teeToFixedPath(keyFile, filepath.Join(minIOCertsDir, "private.key")); err != nil {
+		return err
 	}
 	if out, err := exec.Command("sudo", "chown", "-R", "minio-user:minio-user", minIOCertsDir).CombinedOutput(); err != nil {
 		return fmt.Errorf("chown: %s", strings.TrimSpace(string(out)))
@@ -271,18 +269,34 @@ func EnableMinIOTLS() error {
 	return nil
 }
 
+// teeToFixedPath reads src in-process and pipes its contents through sudo tee
+// to dst. dst MUST be a fixed string that exactly matches a sudoers entry
+// (e.g. "/var/lib/minio/.minio/certs/public.crt"); sudo-rs requires the path
+// match the sudoers entry verbatim, with no wildcards.
+func teeToFixedPath(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", src, err)
+	}
+	cmd := exec.Command("sudo", "/usr/bin/tee", dst)
+	cmd.Stdin = strings.NewReader(string(data))
+	cmd.Stdout = nil
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tee %s: %s", dst, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // installMinIOTLSFromFiles copies an existing cert/key pair into the MinIO certs directory.
 func installMinIOTLSFromFiles(certFile, keyFile string) error {
 	if out, err := exec.Command("sudo", "mkdir", "-p", minIOCertsDir).CombinedOutput(); err != nil {
 		return fmt.Errorf("mkdir certs: %s", strings.TrimSpace(string(out)))
 	}
-	for _, pair := range [][2]string{
-		{certFile, filepath.Join(minIOCertsDir, "public.crt")},
-		{keyFile, filepath.Join(minIOCertsDir, "private.key")},
-	} {
-		if out, err := exec.Command("sudo", "cp", pair[0], pair[1]).CombinedOutput(); err != nil {
-			return fmt.Errorf("copy %s: %s", filepath.Base(pair[1]), strings.TrimSpace(string(out)))
-		}
+	if err := teeToFixedPath(certFile, filepath.Join(minIOCertsDir, "public.crt")); err != nil {
+		return err
+	}
+	if err := teeToFixedPath(keyFile, filepath.Join(minIOCertsDir, "private.key")); err != nil {
+		return err
 	}
 	if out, err := exec.Command("sudo", "chown", "-R", "minio-user:minio-user", minIOCertsDir).CombinedOutput(); err != nil {
 		return fmt.Errorf("chown: %s", strings.TrimSpace(string(out)))

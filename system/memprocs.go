@@ -22,17 +22,19 @@ type ProcMemInfo struct {
 
 // MemProcsSnapshot is the full memory snapshot returned by the API.
 type MemProcsSnapshot struct {
-	SmbPct   float64       `json:"smb_pct"`
-	NfsPct   float64       `json:"nfs_pct"`
-	ZfsPct   float64       `json:"zfs_pct"` // ZFS processes + ARC cache
-	MinioPct float64       `json:"minio_pct"`
-	ISCSIPct float64       `json:"iscsi_pct"`
-	OtherPct float64       `json:"other_pct"`
-	ArcMB    float64       `json:"arc_mb"`
-	TotalMB  float64       `json:"total_mb"`
-	UsedMB   float64       `json:"used_mb"`
-	TopProcs []ProcMemInfo `json:"top_procs"`
-	At       time.Time     `json:"at"`
+	SmbPct       float64       `json:"smb_pct"`
+	NfsPct       float64       `json:"nfs_pct"`
+	ZfsPct       float64       `json:"zfs_pct"` // ZFS processes + ARC cache
+	MinioPct     float64       `json:"minio_pct"`
+	ISCSIPct     float64       `json:"iscsi_pct"`
+	VMPct        float64       `json:"vm_pct"`
+	ContainerPct float64       `json:"container_pct"`
+	OtherPct     float64       `json:"other_pct"`
+	ArcMB        float64       `json:"arc_mb"`
+	TotalMB      float64       `json:"total_mb"`
+	UsedMB       float64       `json:"used_mb"`
+	TopProcs     []ProcMemInfo `json:"top_procs"`
+	At           time.Time     `json:"at"`
 }
 
 var (
@@ -109,7 +111,7 @@ func sampleMemProcs() *MemProcsSnapshot {
 			pid:      pid,
 			name:     name,
 			rssKB:    rssKB,
-			category: categorizeProcName(name),
+			category: categorizeProc(pid, name),
 		})
 	}
 
@@ -120,12 +122,14 @@ func sampleMemProcs() *MemProcsSnapshot {
 
 	// Aggregate by category (as % of total RAM)
 	catKB := map[string]uint64{
-		CpuCatSMB:   0,
-		CpuCatNFS:   0,
-		CpuCatZFS:   0,
-		CpuCatMinIO: 0,
-		CpuCatISCSI: 0,
-		CpuCatOther: 0,
+		CpuCatSMB:       0,
+		CpuCatNFS:       0,
+		CpuCatZFS:       0,
+		CpuCatMinIO:     0,
+		CpuCatISCSI:     0,
+		CpuCatVM:        0,
+		CpuCatContainer: 0,
+		CpuCatOther:     0,
 	}
 	for _, p := range procs {
 		catKB[p.category] += p.rssKB
@@ -155,17 +159,19 @@ func sampleMemProcs() *MemProcsSnapshot {
 	}
 
 	return &MemProcsSnapshot{
-		SmbPct:   pct(catKB[CpuCatSMB]),
-		NfsPct:   pct(catKB[CpuCatNFS]),
-		ZfsPct:   pct(catKB[CpuCatZFS]),
-		MinioPct: pct(catKB[CpuCatMinIO]),
-		ISCSIPct: pct(catKB[CpuCatISCSI]),
-		OtherPct: pct(catKB[CpuCatOther]),
-		ArcMB:    arcMB,
-		TotalMB:  totalMB,
-		UsedMB:   usedMB,
-		TopProcs: topProcs,
-		At:       time.Now(),
+		SmbPct:       pct(catKB[CpuCatSMB]),
+		NfsPct:       pct(catKB[CpuCatNFS]),
+		ZfsPct:       pct(catKB[CpuCatZFS]),
+		MinioPct:     pct(catKB[CpuCatMinIO]),
+		ISCSIPct:     pct(catKB[CpuCatISCSI]),
+		VMPct:        pct(catKB[CpuCatVM]),
+		ContainerPct: pct(catKB[CpuCatContainer]),
+		OtherPct:     pct(catKB[CpuCatOther]),
+		ArcMB:        arcMB,
+		TotalMB:      totalMB,
+		UsedMB:       usedMB,
+		TopProcs:     topProcs,
+		At:           time.Now(),
 	}
 }
 

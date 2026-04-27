@@ -49,7 +49,9 @@ var sudoersSectionInfoMap = map[string]sudoersSectionInfo{
 	"ZFSNAS_FILES":     {Label: "File Browser"},
 	"ZFSNAS_SYSTEM":    {Label: "System Management"},
 	"ZFSNAS_NTP":       {Label: "Network Time (chrony NTP)", Optional: true},
-	"ZFSNAS_LXDNET":   {Label: "LXD Network Bridges (VLAN interfaces)", Optional: true},
+	"ZFSNAS_LXDNET":    {Label: "LXD Network Bridges (VLAN interfaces)", Optional: true},
+	"ZFSNAS_LXD":       {Label: "LXD Compute (Proxmox Import + ISO Management)", Optional: true},
+	"ZFSNAS_VMSETUP":   {Label: "VMs & Containers Feature Setup", Optional: true},
 	"ZFSNAS_APT":       {Label: "OS Updates & Installation"},
 	"ZFSNAS_SECURITY":  {Label: "Sudoers Self-Management"},
 }
@@ -122,60 +124,17 @@ func RequiredSudoersContent() string {
 }
 
 // buildFilesAlias generates the ZFSNAS_FILES Cmnd_Alias block.
-// It scopes find/chown/chmod to /mnt/* and to any pool root mounted outside /mnt/.
+// sudo-rs (Ubuntu 26.04+) does not support wildcards in command arguments
+// other than as the entire trailing argument, so the previous "/mnt/*" path
+// scoping cannot be expressed in sudoers. Path scoping is enforced in Go
+// (see SafeJoin and the dataset/share root validation in handlers/filebrowser.go).
 func buildFilesAlias() string {
-	// Collect pool root mountpoints that sit outside /mnt/.
-	var extraPaths []string
-	seen := map[string]bool{}
-	if datasets, err := ListAllDatasets(); err == nil {
-		for _, d := range datasets {
-			mp := d.Mountpoint
-			if mp == "" || mp == "none" || mp == "-" || mp == "legacy" || mp == "/" {
-				continue
-			}
-			// Only look at pool root datasets (name has no "/" component).
-			if strings.Contains(d.Name, "/") {
-				continue
-			}
-			if mp == "/mnt" || strings.HasPrefix(mp, "/mnt/") {
-				continue
-			}
-			if !seen[mp] {
-				seen[mp] = true
-				extraPaths = append(extraPaths, mp)
-			}
-		}
-	}
-
-	allPaths := append([]string{"/mnt"}, extraPaths...)
-
-	// For each mount base, emit five entries:
-	//   find <base>/*             (file browser listing)
-	//   chown * <base>/*          (non-recursive ownership change)
-	//   chown -R * <base>/*       (recursive)
-	//   chmod * <base>/*          (non-recursive mode change)
-	//   chmod -R * <base>/*       (recursive)
-	var entries []string
-	for _, p := range allPaths {
-		entries = append(entries,
-			fmt.Sprintf("    /usr/bin/find %s/*", p),
-			fmt.Sprintf("    /usr/bin/chown * %s/*", p),
-			fmt.Sprintf("    /usr/bin/chown -R * %s/*", p),
-			fmt.Sprintf("    /usr/bin/chmod * %s/*", p),
-			fmt.Sprintf("    /usr/bin/chmod -R * %s/*", p),
-		)
-	}
-
-	var sb strings.Builder
-	sb.WriteString("Cmnd_Alias ZFSNAS_FILES = \\\n")
-	for i, e := range entries {
-		if i < len(entries)-1 {
-			sb.WriteString(e + ", \\\n")
-		} else {
-			sb.WriteString(e + "\n")
-		}
-	}
-	return sb.String()
+	return "Cmnd_Alias ZFSNAS_FILES = \\\n" +
+		"    /usr/bin/find *, \\\n" +
+		"    /usr/bin/chown *, \\\n" +
+		"    /usr/bin/chown -R *, \\\n" +
+		"    /usr/bin/chmod *, \\\n" +
+		"    /usr/bin/chmod -R *\n"
 }
 
 
@@ -285,12 +244,30 @@ func ApplySudoers(required string, silencedMissing, silencedExtra []string) erro
 		return fmt.Errorf("content validation failed: %w", err)
 	}
 
-	// Write via sudo tee.
-	teeCmd := exec.Command("sudo", "tee", "/etc/sudoers.d/zfsnas")
+	const sudoersPath = "/etc/sudoers.d/zfsnas"
+
+	// When running as root, write the file directly — sudo as root requires a
+	// password on many systems and cannot be used non-interactively.
+	if os.Getuid() == 0 {
+		if err := os.WriteFile(sudoersPath, []byte(content), 0440); err != nil {
+			return fmt.Errorf("write failed: %w", err)
+		}
+		return nil
+	}
+
+	// Write via sudo tee (runs tee as root so it can create/overwrite the file).
+	teeCmd := exec.Command("sudo", "tee", sudoersPath)
 	teeCmd.Stdin = strings.NewReader(content)
 	if out, err := teeCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tee failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
+
+	// Ensure 0440 permissions. sudo tee creates new files with umask-derived
+	// permissions (typically 0644); sudoers files must not be world-writable and
+	// should be 0440 to follow convention. This is a best-effort call: it is
+	// allowed by ZFSNAS_SECURITY in the hardened template and by NOPASSWD:ALL
+	// on first-time setup. Failure is non-fatal (0644 is accepted by sudo).
+	exec.Command("sudo", "chmod", "0440", sudoersPath).Run() //nolint:errcheck
 
 	return nil
 }
@@ -307,14 +284,19 @@ func SudoAllContent() string {
 
 // ApplySudoAll writes the minimal NOPASSWD:ALL sudoers entry for the zfsnas
 // user. It bypasses the normal template + visudo pipeline and writes directly
-// via sudo tee, then calls visudo -c to validate.
+// via sudo tee (or directly when running as root).
 func ApplySudoAll() error {
+	const sudoersPath = "/etc/sudoers.d/zfsnas"
 	content := SudoAllContent()
-	teeCmd := exec.Command("sudo", "tee", "/etc/sudoers.d/zfsnas")
+	if os.Getuid() == 0 {
+		return os.WriteFile(sudoersPath, []byte(content), 0440)
+	}
+	teeCmd := exec.Command("sudo", "tee", sudoersPath)
 	teeCmd.Stdin = strings.NewReader(content)
 	if out, err := teeCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tee failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
+	exec.Command("sudo", "chmod", "0440", sudoersPath).Run() //nolint:errcheck
 	return nil
 }
 
@@ -365,11 +347,16 @@ func RemoveSudoersWriteAccess() error {
 		return fmt.Errorf("content validation after removal failed: %w", err)
 	}
 
-	teeCmd := exec.Command("sudo", "tee", "/etc/sudoers.d/zfsnas")
+	const sudoersPath = "/etc/sudoers.d/zfsnas"
+	if os.Getuid() == 0 {
+		return os.WriteFile(sudoersPath, []byte(content), 0440)
+	}
+	teeCmd := exec.Command("sudo", "tee", sudoersPath)
 	teeCmd.Stdin = strings.NewReader(content)
 	if out, err := teeCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tee failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
+	exec.Command("sudo", "chmod", "0440", sudoersPath).Run() //nolint:errcheck
 	return nil
 }
 
@@ -683,15 +670,15 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/chmod +x /usr/local/bin/mc":                                  "Makes the downloaded MinIO client (mc) binary executable.",
 	"/usr/bin/mkdir -p /var/lib/minio":                                     "Creates the MinIO data directory.",
 	"/usr/bin/mkdir -p /var/lib/minio/.minio/certs":                        "Creates the MinIO TLS certificate directory.",
-	"/usr/bin/mkdir -p *":                                                   "Creates a required directory during feature setup.",
+	"/usr/bin/mkdir -p *":                                                   "Creates a required directory during feature setup (MinIO data dirs, ISO storage dirs, etc.).",
 	"/usr/bin/chown minio-user\\:minio-user /var/lib/minio":                "Transfers ownership of the MinIO data directory to the minio-user account.",
 	"/usr/bin/chown -R minio-user\\:minio-user /var/lib/minio/.minio/certs": "Transfers ownership of the MinIO TLS certificate directory to minio-user.",
 	"/usr/bin/chown -R minio-user\\:minio-user *":                          "Transfers ownership of MinIO data directories to the minio-user account.",
 	"/usr/bin/chown root\\:minio-user /etc/default/minio":                  "Sets MinIO environment file ownership so minio-user can read it.",
 	"/usr/bin/chmod 640 /etc/default/minio":                                "Restricts the MinIO environment file to root and minio-user.",
 	"/usr/bin/chmod 640 /var/lib/minio/.minio/certs/private.key":           "Protects the MinIO TLS private key from world-read access.",
-	"/usr/bin/cp * /var/lib/minio/.minio/certs/public.crt":                 "Installs the TLS public certificate for MinIO.",
-	"/usr/bin/cp * /var/lib/minio/.minio/certs/private.key":                "Installs the TLS private key for MinIO.",
+	"/usr/bin/tee /var/lib/minio/.minio/certs/public.crt":                   "Installs the MinIO TLS public certificate at a fixed destination. The source is read in-process and piped through sudo tee, so no source-path wildcard is granted.",
+	"/usr/bin/tee /var/lib/minio/.minio/certs/private.key":                  "Installs the MinIO TLS private key at a fixed destination. The source is read in-process and piped through sudo tee, so no source-path wildcard is granted.",
 	"/usr/bin/rm -f /var/lib/minio/.minio/certs/public.crt":                "Removes the MinIO TLS certificate when TLS is disabled.",
 	"/usr/bin/rm -f /var/lib/minio/.minio/certs/private.key":               "Removes the MinIO TLS private key when TLS is disabled.",
 	"/usr/bin/systemctl enable minio":   "Enables MinIO to start automatically at boot.",
@@ -732,7 +719,6 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/rm -rf /etc/nut":                                    "Removes the NUT configuration directory during feature uninstall.",
 	"/usr/bin/rm -rf /etc/systemd/system/nut-driver.target.wants": "Removes NUT driver target symlinks during uninstall.",
 	"/usr/bin/rm -rf /etc/systemd/system/nut-driver@.service.d":   "Removes the NUT driver service drop-in directory during uninstall.",
-	"/usr/bin/rm -rf /etc/systemd/system/nut-driver@*":            "Removes all NUT driver service instance files during uninstall.",
 
 	// ── Service registration (APT / systemd setup) ────────────────────────────
 	"/usr/bin/systemctl daemon-reload": "Reloads systemd unit files after writing the zfsnas service file.",
@@ -751,12 +737,13 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/tee /sys/module/zfs/parameters/zfs_arc_min": "Applies a new ARC minimum immediately via the ZFS sysfs interface without requiring a reboot.",
 	"/usr/bin/tee /etc/sudoers.d/zfsnas":                 "Lets the portal write its own sudoers file when using the Sudoers Hardening feature. Required so in-app changes continue to work after sudo is restricted.",
 	"/usr/bin/cat /etc/sudoers.d/zfsnas":                 "Lets the portal read its own sudoers file so the Sudoers Review diff is always accurate and detects manual edits (v6.3.32+).",
+	"/usr/bin/chmod 0440 /etc/sudoers.d/zfsnas":          "Sets the correct sudoers file permissions (0440) after each write. Required when the file is newly created — sudo tee inherits the process umask and may produce 0644; this corrects it to the recommended 0440.",
 	"/usr/sbin/useradd *":                                "Creates the Linux account for a new portal user. Wildcards required for optional --uid/--gid/--no-user-group flags (v3.0.0+).",
 	"/usr/sbin/usermod -aG sambashare *":                 "Adds a user to the sambashare group for SMB access.",
 	"/usr/sbin/userdel -f *":                             "Deletes a portal user's Linux account (force flag covers locked accounts).",
 	"/usr/sbin/groupadd *":                               "Creates a Linux group. Used when creating users with a custom primary group (v3.0.0+).",
 	"/usr/sbin/groupdel *":                               "Removes a Linux group when deleting the last user that owned it.",
-	"/usr/bin/gpasswd -d * sambashare":                   "Removes a user from the sambashare group during account deletion.",
+	"/usr/bin/gpasswd *":                                 "Manages Linux group membership; used during user deletion to remove users from the sambashare group (and other group-management operations).",
 	"/usr/bin/smbpasswd *":                               "Sets or removes the Samba password for a user.",
 	"/usr/bin/smbstatus -S":                              "Lists active SMB sessions per share (v6.1.0+).",
 	"/usr/bin/chgrp sambashare *":                        "Sets group ownership of a share directory to sambashare (v6.3.27+).",
@@ -769,6 +756,12 @@ var sudoersExplanations = map[string]string{
 	"/usr/sbin/wipefs -a *":                              "Clears all disk signatures before adding a disk to a pool.",
 	"/usr/sbin/sgdisk *":                                 "Wipes the GPT partition table before pool creation. Path may differ by distribution.",
 	"/usr/bin/dd if=/dev/zero *":                         "Zero-fills the first sectors of a disk during the wipe-disk workflow.",
+	"/usr/bin/dd *":                                      "Proxmox Import: streams a raw disk image into a ZFS volume (zvol) backing an LXD VM disk (v6.4.21+). Broadened from `dd of=/dev/zd* *` because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
+	"/usr/bin/partx *":                                   "Proxmox Import: adds/removes partition block devices for a zvol (/dev/zdX → /dev/zdXp1 …) so the EFI System Partition can be mounted and the UEFI fallback boot path repaired after import (v6.4.21+). Broadened from `partx * /dev/zd*` for sudo-rs compatibility.",
+	"/usr/bin/mount *":                                   "Proxmox Import: mounts the EFI System Partition (FAT32) from an imported VM's root zvol into a private /tmp directory so grub.cfg can be installed for UEFI fallback boot repair (v6.4.21+). Broadened from `mount -t vfat * /dev/zd*p* /tmp/.znas-esp-*` for sudo-rs compatibility.",
+	"/usr/bin/umount *":                                  "Proxmox Import: unmounts the EFI System Partition after the UEFI fallback boot repair is complete (v6.4.21+). Broadened from `umount * /tmp/.znas-esp-*` for sudo-rs compatibility.",
+	"/usr/bin/chmod 0775 *":                             "ISO Management: sets group-write permission on the .isos directory so the zfsnas process user can upload ISO files without requiring root on each transfer (v6.4.22+).",
+	"/usr/bin/rm -f *":                                  "ISO Management: removes a partially-written ISO file if the upload is interrupted (v6.4.22+).",
 	"/usr/sbin/partprobe *":                              "Refreshes the kernel partition table after disk changes.",
 	"/usr/bin/udevadm settle *":                          "Waits for udev to settle after disk operations before proceeding.",
 	"/usr/sbin/blkid -o export":                         "Reads disk UUIDs and filesystem types after partitioning.",
@@ -782,22 +775,18 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/tee /etc/nut/upsd.conf":                    "Writes the NUT daemon configuration (listen address, port).",
 	"/usr/bin/tee /etc/nut/upsd.users":                   "Writes the NUT user authentication file for upsmon.",
 	"/usr/bin/tee /etc/nut/upsmon.conf":                  "Writes the UPS monitor configuration.",
-	"/usr/bin/find /mnt/*":                               "File Browser: lists directory contents under /mnt (v6.4.4+). Path-scoped to dataset mount area; the portal validates the target before calling this command.",
-	"/usr/bin/chown * /mnt/*":                            "File Browser: non-recursive ownership change on files/folders under /mnt (v6.4.3+). Path-scoped; arbitrary paths cannot be targeted via the UI.",
-	"/usr/bin/chown -R * /mnt/*":                         "File Browser: recursive ownership change on a directory tree under /mnt (v6.4.3+). Path-scoped; arbitrary paths cannot be targeted via the UI.",
-	"/usr/bin/chmod * /mnt/*":                            "File Browser: non-recursive permission change on files/folders under /mnt (v6.4.3+). Path-scoped; arbitrary paths cannot be targeted via the UI.",
-	"/usr/bin/chmod -R * /mnt/*":                         "File Browser: recursive permission change on a directory tree under /mnt (v6.4.3+). Path-scoped; arbitrary paths cannot be targeted via the UI.",
+	"/usr/bin/find *":                                    "File Browser: lists directory contents (v6.4.4+). The portal validates the target path against known dataset mountpoints and share roots before calling this command. Path-scoping moved from sudoers to Go because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
+	"/usr/bin/chown *":                                   "File Browser: non-recursive ownership change (v6.4.3+). Path validation enforced in Go (SafeJoin against dataset/share roots). Broadened from `chown * /mnt/*` for sudo-rs compatibility.",
+	"/usr/bin/chown -R *":                                "File Browser: recursive ownership change on a directory tree (v6.4.3+). Path validation enforced in Go.",
+	"/usr/bin/chmod *":                                   "File Browser: non-recursive permission change (v6.4.3+). Path validation enforced in Go.",
+	"/usr/bin/chmod -R *":                                "File Browser: recursive permission change on a directory tree (v6.4.3+). Path validation enforced in Go.",
 	"/usr/bin/wget -q -O /usr/local/bin/minio *":         "Downloads the MinIO binary during feature install.",
 	"/usr/bin/wget -q -O /usr/local/bin/mc *":            "Downloads the MinIO client (mc) binary during feature install.",
 	"/usr/bin/tee /etc/systemd/system/minio.service":     "Writes the MinIO systemd service unit file.",
 	"/usr/bin/tee /etc/default/minio":                    "Writes the MinIO environment configuration file.",
 	"/usr/sbin/hdparm *":                                 "Disk Power Management: applies APM, spindown, write-cache, and acoustic settings immediately to SATA/SAS drives (optional feature, v6.3.22+).",
 	"/usr/bin/tee /etc/hdparm.conf":                      "Disk Power Management: persists hdparm settings across reboots via /etc/hdparm.conf (optional feature, v6.3.22+).",
-	"/usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor": "System Power Management: sets the CPU frequency scaling governor immediately on all CPU cores (v6.3.22+). Persistence is handled via /etc/rc.local.",
-	"/usr/bin/tee /sys/module/pcie_aspm/parameters/policy":               "System Power Management: sets the PCIe Active State Power Management policy immediately (v6.3.22+). Persistence is handled via /etc/rc.local.",
-	"/usr/bin/tee /sys/bus/usb/devices/*/power/autosuspend_delay_ms":     "System Power Management: sets USB autosuspend delay per device immediately (v6.3.22+).",
-	"/usr/bin/tee /sys/bus/usb/devices/*/power/control":                  "System Power Management: enables or disables USB autosuspend per device immediately (v6.3.22+).",
-	"/usr/bin/tee /etc/rc.local":                                          "System Power Management: writes the persistence block in /etc/rc.local so CPU governor, PCIe ASPM, and USB autosuspend settings survive reboot (v6.3.22+).",
+	"/usr/bin/tee *":                                                       "Writes feature config files where the path is determined at runtime: per-CPU scaling governor (/sys/devices/system/cpu/cpu*/...), PCIe ASPM policy, USB autosuspend, /etc/rc.local persistence block, and ISO Management uploads. Single trailing wildcard required because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
 	"/usr/bin/chmod +x /etc/rc.local":                                     "System Power Management: ensures /etc/rc.local is executable after writing the persistence block (v6.3.22+).",
 	"/usr/bin/systemctl enable rc-local":                                   "System Power Management: enables the rc-local systemd service so /etc/rc.local runs at boot. Only called once when the file is first created (v6.3.22+).",
 	"/usr/bin/systemctl start rc-local":                                    "System Power Management: starts rc-local immediately after creation so power settings take effect without a reboot (v6.3.22+).",
@@ -841,7 +830,7 @@ Cmnd_Alias ZFSNAS_SMB = \
     /usr/sbin/userdel -f *, \
     /usr/sbin/groupadd *, \
     /usr/sbin/groupdel *, \
-    /usr/bin/gpasswd -d * sambashare, \
+    /usr/bin/gpasswd *, \
     /usr/bin/smbpasswd *, \
     /usr/bin/chgrp sambashare *, \
     /usr/bin/tee /etc/samba/smb.conf, \
@@ -912,8 +901,8 @@ Cmnd_Alias ZFSNAS_MINIO = \
     /usr/bin/chown root\:minio-user /etc/default/minio, \
     /usr/bin/chmod 640 /etc/default/minio, \
     /usr/bin/chmod 640 /var/lib/minio/.minio/certs/private.key, \
-    /usr/bin/cp * /var/lib/minio/.minio/certs/public.crt, \
-    /usr/bin/cp * /var/lib/minio/.minio/certs/private.key, \
+    /usr/bin/tee /var/lib/minio/.minio/certs/public.crt, \
+    /usr/bin/tee /var/lib/minio/.minio/certs/private.key, \
     /usr/bin/rm -f /var/lib/minio/.minio/certs/public.crt, \
     /usr/bin/rm -f /var/lib/minio/.minio/certs/private.key, \
     /usr/bin/tee /etc/systemd/system/minio.service, \
@@ -968,8 +957,7 @@ Cmnd_Alias ZFSNAS_UPS = \
     /usr/bin/tee /etc/nut/ups.conf, \
     /usr/bin/rm -rf /etc/nut, \
     /usr/bin/rm -rf /etc/systemd/system/nut-driver.target.wants, \
-    /usr/bin/rm -rf /etc/systemd/system/nut-driver@.service.d, \
-    /usr/bin/rm -rf /etc/systemd/system/nut-driver@*
+    /usr/bin/rm -rf /etc/systemd/system/nut-driver@.service.d
 
 # ── Disk Power Management (hdparm) ────────────────────────────────────────────
 # since v6.3.22 — optional hdparm feature; APM level, spindown timeout,
@@ -984,11 +972,7 @@ Cmnd_Alias ZFSNAS_DISKPOWER = \
 #   persisted via /etc/rc.local managed block; PCIe ASPM policy and USB
 #   autosuspend likewise applied live and persisted in the same rc.local block.
 Cmnd_Alias ZFSNAS_SYSPOWER = \
-    /usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor, \
-    /usr/bin/tee /sys/module/pcie_aspm/parameters/policy, \
-    /usr/bin/tee /sys/bus/usb/devices/*/power/autosuspend_delay_ms, \
-    /usr/bin/tee /sys/bus/usb/devices/*/power/control, \
-    /usr/bin/tee /etc/rc.local, \
+    /usr/bin/tee *, \
     /usr/bin/chmod +x /etc/rc.local, \
     /usr/bin/systemctl enable rc-local, \
     /usr/bin/systemctl start rc-local
@@ -1029,13 +1013,58 @@ Cmnd_Alias ZFSNAS_NTP = \
     /usr/bin/systemctl restart chronyd
 
 # ── LXD Network Bridges — VLAN interface management ─────────────────────────
-# since v6.4.19 — creates VLAN sub-interfaces via /etc/network/interfaces for
-#   VLAN-backed LXC bridges; ifup/ifdown bring them up/down without reboot.
+# since v6.4.19 — ifup/ifdown bring VLAN sub-interfaces up/down without reboot.
+# /etc/network/interfaces edits are performed in-process (root only); no sudo entry
+# is granted for that path.
 #   Only needed when using the Networking mode in the Compute section.
 Cmnd_Alias ZFSNAS_LXDNET = \
     /usr/sbin/ifup *, \
-    /usr/sbin/ifdown *, \
-    /usr/bin/tee /etc/network/interfaces
+    /usr/sbin/ifdown *
+
+# ── LXD Compute (Proxmox Import + ISO Management) ────────────────────────────
+# since v6.4.21 — Proxmox live VM import streams raw disk images directly into
+#   the ZFS volumes (zvols) that back LXD VM instance disks.
+#   volmode=dev is set on each zvol so ZFS creates a /dev/zdX block device.
+#   dd reads from stdin and writes to /dev/zdX (bypasses /dev/zvol/ symlinks
+#   which may be blocked by stale files from a prior failed import).
+#   partx exposes partition block devices (/dev/zdXp1 …) so the EFI System
+#   Partition can be mounted and the fallback GRUB boot path repaired for UEFI VMs.
+# since v6.4.22 — ISO Management creates a .isos directory inside the ZFS pool
+#   root (owned by root). mkdir -p creates it on first upload; chmod 0775 lets
+#   the zfsnas process user write ISO files into it without requiring root for
+#   every upload.
+# NOTE: partx, mount, umount may live under /usr/bin/ or /sbin/ depending on
+#   the distribution. Verify with "which partx" if a sudoers error occurs.
+Cmnd_Alias ZFSNAS_LXD = \
+    /usr/bin/dd *, \
+    /usr/bin/partx *, \
+    /usr/bin/mount *, \
+    /usr/bin/umount *, \
+    /usr/bin/mkdir -p *, \
+    /usr/bin/chmod 0775 *, \
+    /usr/bin/tee *, \
+    /usr/bin/rm -f *
+
+# ── VMs & Containers feature setup ───────────────────────────────────────────
+# since v6.4.24 — one-time enablement of LXD compute support:
+#   lxd init: initialises the LXD daemon from a preseed YAML.
+#   usermod:  adds the zfsnas service account to the lxd group.
+#   systemctl restart networking: applies bridge config after rewrite.
+#   systemctl {enable,start,restart} lxd: service lifecycle during setup.
+#   ln -sf /usr/share/OVMF/*: creates cross-distro OVMF firmware symlinks so
+#       VMs pushed between Ubuntu (OVMF_CODE.4MB.fd) and Debian (OVMF_CODE_4M.fd)
+#       can start on either host without manual intervention.
+# /etc/network/interfaces edits and backups are performed in-process (root only);
+# no sudo entry is granted for that path.
+Cmnd_Alias ZFSNAS_VMSETUP = \
+    /usr/bin/lxd init --preseed, \
+    /usr/sbin/lxd init --preseed, \
+    /usr/sbin/usermod -a -G lxd zfsnas, \
+    /usr/bin/systemctl restart networking, \
+    /usr/bin/systemctl enable lxd, \
+    /usr/bin/systemctl start lxd, \
+    /usr/bin/systemctl restart lxd, \
+    /usr/bin/ln -sf *
 
 # ── OS updates & service installation ────────────────────────────────────────
 # since v1.0.0 — prerequisite package install (apt-get install) and
@@ -1053,11 +1082,15 @@ Cmnd_Alias ZFSNAS_APT = \
 #   Sudoers Hardening feature is enabled in the Prerequisites tab.
 # since v6.3.32 — cat /etc/sudoers.d/zfsnas lets the portal read its own file
 #   so the Sudoers Review diff is always accurate (detects manual edits).
+# since v6.4.25 — chmod 0440 /etc/sudoers.d/zfsnas corrects the file
+#   permissions after each write; sudo tee creates new files with umask-derived
+#   permissions (typically 0644) and this restores the recommended 0440.
 Cmnd_Alias ZFSNAS_SECURITY = \
     /usr/bin/tee /etc/sudoers.d/zfsnas, \
-    /usr/bin/cat /etc/sudoers.d/zfsnas
+    /usr/bin/cat /etc/sudoers.d/zfsnas, \
+    /usr/bin/chmod 0440 /etc/sudoers.d/zfsnas
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_LXDNET, ZFSNAS_APT, ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_LXDNET, ZFSNAS_LXD, ZFSNAS_VMSETUP, ZFSNAS_APT, ZFSNAS_SECURITY
 `

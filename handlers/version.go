@@ -18,12 +18,13 @@ func HandleGetVersion(w http.ResponseWriter, r *http.Request) {
 	if u, err := user.Current(); err == nil && u.Username != "" {
 		username = u.Username
 	}
-	jsonOK(w, map[string]string{
-		"version":      version.Version,
-		"releases_url": version.ReleasesURL,
-		"server_ip":    serverIP(),
-		"hostname":     hostname,
-		"username":     username,
+	jsonOK(w, map[string]interface{}{
+		"version":          version.Version,
+		"releases_url":     version.ReleasesURL,
+		"server_ip":        serverIP(),
+		"hostname":         hostname,
+		"username":         username,
+		"experimental_mode": version.IsExperimental(),
 	})
 }
 

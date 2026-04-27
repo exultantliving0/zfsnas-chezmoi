@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sort"
 	"sync"
 	"time"
 	"zfsnas/internal/audit"
@@ -109,6 +111,206 @@ func HandleLXDInstanceStatus(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": status})
 }
 
+// HandleLXDListSnapshots returns all snapshots for an instance.
+// GET /api/lxd/instances/{name}/snapshots
+func HandleLXDListSnapshots(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	snaps, err := system.ListLXDSnapshots(name)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, snaps)
+}
+
+// HandleLXDCreateSnapshot starts an async snapshot job and returns a job_id immediately.
+// POST /api/lxd/instances/{name}/snapshots
+func HandleLXDCreateSnapshot(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	sess := MustSession(r)
+	var req struct {
+		SnapName string `json:"name"`
+		Stateful bool   `json:"stateful"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
+	job := &lxdJob{Status: "running"}
+	lxdJobs.Store(jobID, job)
+	go func() {
+		err := system.CreateLXDSnapshot(name, req.SnapName, req.Stateful)
+		job.mu.Lock()
+		defer job.mu.Unlock()
+		if err != nil {
+			job.Status = "error"
+			job.Error = err.Error()
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDSnapshot, Target: name + "/" + req.SnapName, Result: audit.ResultError, Details: err.Error()})
+		} else {
+			job.Status = "done"
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDSnapshot, Target: name + "/" + req.SnapName, Result: audit.ResultOK})
+		}
+	}()
+	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
+// HandleLXDRestoreSnapshot reverts an instance to a snapshot.
+// POST /api/lxd/instances/{name}/snapshots/{snap}/restore
+// Body (optional): {"remove_subsequent": true}
+func HandleLXDRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name, snap := vars["name"], vars["snap"]
+	sess := MustSession(r)
+	var req struct {
+		RemoveSubsequent bool `json:"remove_subsequent"`
+	}
+	json.NewDecoder(r.Body).Decode(&req) // body is optional; ignore decode errors
+	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
+	job := &lxdJob{Status: "running"}
+	lxdJobs.Store(jobID, job)
+	go func() {
+		err := system.RestoreLXDSnapshot(name, snap, req.RemoveSubsequent)
+		job.mu.Lock()
+		defer job.mu.Unlock()
+		if err != nil {
+			job.Status = "error"
+			job.Error = err.Error()
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDRestore, Target: name + "/" + snap, Result: audit.ResultError, Details: err.Error()})
+		} else {
+			job.Status = "done"
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDRestore, Target: name + "/" + snap, Result: audit.ResultOK})
+		}
+	}()
+	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
+// HandleLXDCloneFromSnapshot creates a new instance from a snapshot copy.
+// POST /api/lxd/instances/{name}/snapshots/{snap}/clone
+func HandleLXDCloneFromSnapshot(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name, snap := vars["name"], vars["snap"]
+	sess := MustSession(r)
+	var req struct {
+		NewName     string `json:"new_name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.NewName) == "" {
+		jsonErr(w, http.StatusBadRequest, "new_name is required")
+		return
+	}
+	newName := strings.TrimSpace(req.NewName)
+	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
+	job := &lxdJob{Status: "running"}
+	lxdJobs.Store(jobID, job)
+	go func() {
+		err := system.CloneLXDFromSnapshot(name, snap, newName, req.Description)
+		job.mu.Lock()
+		defer job.mu.Unlock()
+		if err != nil {
+			job.Status = "error"
+			job.Error = err.Error()
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDClone, Target: name + "/" + snap + " → " + newName, Result: audit.ResultError, Details: err.Error()})
+		} else {
+			job.Status = "done"
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDClone, Target: name + "/" + snap + " → " + newName, Result: audit.ResultOK})
+		}
+	}()
+	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
+// HandleLXDDeleteSnapshot deletes a snapshot from an instance.
+// DELETE /api/lxd/instances/{name}/snapshots/{snap}
+func HandleLXDDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name, snap := vars["name"], vars["snap"]
+	sess := MustSession(r)
+	if err := system.DeleteLXDSnapshot(name, snap); err != nil {
+		audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDDeleteSnapshot, Target: name + "/" + snap, Result: audit.ResultError, Details: err.Error()})
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDDeleteSnapshot, Target: name + "/" + snap, Result: audit.ResultOK})
+	jsonOK(w, map[string]string{"ok": "deleted"})
+}
+
+// HandleLXDInstanceLogs returns recent log entries for the named instance.
+// GET /api/lxd/instances/{name}/logs
+func HandleLXDInstanceLogs(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	entries, err := system.GetLXDInstanceLogs(name)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, entries)
+}
+
+// HandleLXDCloneInstance clones an instance directly (no snapshot required).
+// POST /api/lxd/instances/{name}/clone
+func HandleLXDCloneInstance(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	sess := MustSession(r)
+	var req struct {
+		NewName     string `json:"new_name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.NewName) == "" {
+		jsonErr(w, http.StatusBadRequest, "new_name is required")
+		return
+	}
+	newName := strings.TrimSpace(req.NewName)
+	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
+	job := &lxdJob{Status: "running"}
+	lxdJobs.Store(jobID, job)
+	go func() {
+		err := system.CloneLXDInstance(name, newName, req.Description)
+		job.mu.Lock()
+		defer job.mu.Unlock()
+		if err != nil {
+			job.Status = "error"
+			job.Error = err.Error()
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDClone, Target: name + " → " + newName, Result: audit.ResultError, Details: err.Error()})
+		} else {
+			job.Status = "done"
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDClone, Target: name + " → " + newName, Result: audit.ResultOK})
+		}
+	}()
+	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
+// HandleLXDMoveStorage migrates all instance volumes to a different local storage pool.
+// POST /api/lxd/instances/{name}/move-storage
+func HandleLXDMoveStorage(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	sess := MustSession(r)
+	var req struct {
+		TargetPool string `json:"target_pool"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.TargetPool) == "" {
+		jsonErr(w, http.StatusBadRequest, "target_pool is required")
+		return
+	}
+	targetPool := strings.TrimSpace(req.TargetPool)
+	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
+	job := &lxdJob{Status: "running"}
+	lxdJobs.Store(jobID, job)
+	go func() {
+		err := system.LXDMoveStorage(name, targetPool)
+		job.mu.Lock()
+		defer job.mu.Unlock()
+		if err != nil {
+			job.Status = "error"
+			job.Error = err.Error()
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDMoveStorage, Target: name + " → " + targetPool, Result: audit.ResultError, Details: err.Error()})
+		} else {
+			job.Status = "done"
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDMoveStorage, Target: name + " → " + targetPool, Result: audit.ResultOK})
+		}
+	}()
+	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
 // HandleLXDStart starts an instance.
 // POST /api/lxd/instances/{name}/start
 func HandleLXDStart(w http.ResponseWriter, r *http.Request) {
@@ -155,33 +357,57 @@ func HandleLXDRestart(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"ok": "restarted"})
 }
 
+// HandleListFreeZVols returns ZFS volumes available for VM attachment.
+// GET /api/lxd/free-zvols
+func HandleListFreeZVols(w http.ResponseWriter, r *http.Request) {
+	zvols, err := system.ListFreeZVols()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, zvols)
+}
+
 // HandleListBridges returns available network bridges (LXD managed + OS host bridges).
 // GET /api/lxd/bridges
 func HandleListBridges(w http.ResponseWriter, r *http.Request) {
-	managed, _ := system.LXDListNetworks()
+	infos, _ := system.LXDListNetworkInfos()
 	host, _ := system.ListHostBridges()
-	managedSet := map[string]bool{}
-	for _, n := range managed {
-		managedSet[n] = true
-	}
+
+	managedNames := []string{}
 	seen := map[string]bool{}
-	all := []string{}
-	for _, n := range managed {
-		if !seen[n] {
-			all = append(all, n)
-			seen[n] = true
+	allNames := []string{}
+	objects := []map[string]interface{}{}
+
+	for _, info := range infos {
+		if info.Managed {
+			managedNames = append(managedNames, info.Name)
+		}
+		if !seen[info.Name] {
+			allNames = append(allNames, info.Name)
+			seen[info.Name] = true
+			objects = append(objects, map[string]interface{}{
+				"name":        info.Name,
+				"description": info.Description,
+				"managed":     info.Managed,
+			})
 		}
 	}
 	for _, b := range host {
 		if !seen[b] {
-			all = append(all, b)
+			allNames = append(allNames, b)
 			seen[b] = true
+			objects = append(objects, map[string]interface{}{
+				"name":        b,
+				"description": "",
+				"managed":     false,
+			})
 		}
 	}
-	if all == nil {
-		all = []string{}
+	if allNames == nil {
+		allNames = []string{}
 	}
-	jsonOK(w, map[string]interface{}{"managed": managed, "all": all})
+	jsonOK(w, map[string]interface{}{"managed": managedNames, "all": allNames, "objects": objects})
 }
 
 // HandleLXDGetConfig returns the editable configuration of an instance.
@@ -201,12 +427,51 @@ func HandleLXDGetConfig(w http.ResponseWriter, r *http.Request) {
 func HandleLXDSetConfig(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["name"]
 	sess := MustSession(r)
-	var cfg system.LXDInstanceConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	var req struct {
+		system.LXDInstanceConfig
+		CDROMPool string `json:"cdrom_pool"`
+		CDROMIso  string `json:"cdrom_iso"`
+		CDROMList []struct {
+			Pool string `json:"pool"`
+			Iso  string `json:"iso"`
+		} `json:"cdrom_list"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := system.LXDSetConfig(name, cfg); err != nil {
+	// Multi-drive path: resolve cdrom_list entries to absolute paths.
+	if len(req.CDROMList) > 0 {
+		req.LXDInstanceConfig.ApplyCDROMs = true
+		var paths []string
+		for _, entry := range req.CDROMList {
+			if entry.Pool == "" || entry.Iso == "" {
+				paths = append(paths, "") // empty drive slot
+				continue
+			}
+			isoDir, err := system.LXDISODir(entry.Pool)
+			if err != nil {
+				jsonErr(w, http.StatusBadRequest, "cannot resolve ISO directory: "+err.Error())
+				return
+			}
+			paths = append(paths, filepath.Join(isoDir, entry.Iso))
+		}
+		req.LXDInstanceConfig.CDROMs = paths
+	} else if req.CDROMPool != "" || req.CDROMIso != "" {
+		// Legacy single-drive path.
+		req.LXDInstanceConfig.ApplyCDROM = true
+		if req.CDROMPool != "" && req.CDROMIso != "" {
+			isoDir, err := system.LXDISODir(req.CDROMPool)
+			if err != nil {
+				jsonErr(w, http.StatusBadRequest, "cannot resolve ISO directory: "+err.Error())
+				return
+			}
+			req.LXDInstanceConfig.CDROMPath = filepath.Join(isoDir, req.CDROMIso)
+		} else {
+			req.LXDInstanceConfig.CDROMPath = ""
+		}
+	}
+	if err := system.LXDSetConfig(name, req.LXDInstanceConfig); err != nil {
 		audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDEditConfig, Target: name, Result: audit.ResultError, Details: err.Error()})
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -233,22 +498,48 @@ func HandleLXDDelete(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"ok": "deleted"})
 }
 
+// HandleListRemotes returns all configured LXD image remotes.
+// GET /api/lxd/remotes
+func HandleListRemotes(w http.ResponseWriter, r *http.Request) {
+	remotes, err := system.LXDListRemotes()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, remotes)
+}
+
 // HandleListImages returns images filtered by kind and source.
-// GET /api/lxd/images?kind=virtual-machine|container&source=local|remote
+// GET /api/lxd/images?kind=virtual-machine|container&source=local|<remote-name>
 func HandleListImages(w http.ResponseWriter, r *http.Request) {
 	kind := r.URL.Query().Get("kind")
+	source := r.URL.Query().Get("source")
+	if source == "" {
+		source = "local"
+	}
 	var imgs []system.LXDImage
 	var err error
-	if r.URL.Query().Get("source") == "local" {
+	if source == "local" {
 		imgs, err = system.LXDListLocalImages(kind)
 	} else {
-		imgs, err = system.LXDListRemoteImages("images:", kind)
+		imgs, err = system.LXDListRemoteImages(source+":", kind)
 	}
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonOK(w, imgs)
+	// Only show x86_64 images (amd64 and x86_64 are both names for the same arch).
+	filtered := imgs[:0]
+	for _, img := range imgs {
+		if img.Arch == "amd64" || img.Arch == "x86_64" {
+			filtered = append(filtered, img)
+		}
+	}
+	// Sort most-recent first; serial is YYYYMMDD[_HHMMSS] so lexicographic descending works.
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Serial > filtered[j].Serial
+	})
+	jsonOK(w, filtered)
 }
 
 // HandleListProfiles returns LXD profile names.
@@ -306,17 +597,76 @@ func HandleListPCI(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, devices)
 }
 
+// HandleLXDCPUTopology returns the host CPU topology (P-cores, E-cores, total).
+// GET /api/lxd/cpu-topology
+func HandleLXDCPUTopology(w http.ResponseWriter, r *http.Request) {
+	topo, err := system.GetCPUTopology()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]interface{}{
+		"total_cpus":  topo.TotalCPUs,
+		"p_cores":     topo.PCores,
+		"e_cores":     topo.ECores,
+		"hybrid":      topo.Hybrid,
+		"p_cores_lxd": system.CPUIdsToLXD(topo.PCores),
+		"e_cores_lxd": system.CPUIdsToLXD(topo.ECores),
+	})
+}
+
+// HandleLXDMachineVersions returns the QEMU machine type versions supported by this host.
+// GET /api/lxd/machine-versions
+func HandleLXDMachineVersions(w http.ResponseWriter, r *http.Request) {
+	mv, err := system.GetLXDMachineVersions()
+	if err != nil {
+		jsonErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	jsonOK(w, mv)
+}
+
 // HandleCreateVM starts async VM creation and returns a job_id.
 // POST /api/lxd/vms
 func HandleCreateVM(w http.ResponseWriter, r *http.Request) {
-	var req system.LXDCreateVMRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var body struct {
+		system.LXDCreateVMRequest
+		CDROMList []struct {
+			Pool string `json:"pool"`
+			Iso  string `json:"iso"`
+		} `json:"cdrom_list"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" || req.Image == "" {
-		jsonErr(w, http.StatusBadRequest, "name and image are required")
+	req := body.LXDCreateVMRequest
+	if req.Name == "" {
+		jsonErr(w, http.StatusBadRequest, "name is required")
 		return
+	}
+
+	// Resolve cdrom_list (multi-drive) or fallback to legacy single-drive.
+	if len(body.CDROMList) > 0 {
+		for _, entry := range body.CDROMList {
+			if entry.Pool == "" || entry.Iso == "" {
+				req.CDROMs = append(req.CDROMs, "")
+				continue
+			}
+			dir, err := system.LXDISODir(entry.Pool)
+			if err != nil {
+				jsonErr(w, http.StatusBadRequest, "invalid cdrom pool: "+err.Error())
+				return
+			}
+			req.CDROMs = append(req.CDROMs, filepath.Join(dir, entry.Iso))
+		}
+	} else if req.CDROMPool != "" && req.CDROMIso != "" {
+		dir, err := system.LXDISODir(req.CDROMPool)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid cdrom pool: "+err.Error())
+			return
+		}
+		req.CDROMPath = filepath.Join(dir, req.CDROMIso)
 	}
 
 	sess := MustSession(r)
@@ -417,6 +767,22 @@ func HandleLXDCreateProgress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// lxcRootHasPassword returns true when the container's root account has a
+// real password hash in /etc/shadow (i.e. not locked with * or !).
+func lxcRootHasPassword(name string) bool {
+	out, err := exec.Command("lxc", "exec", name, "--", "grep", "^root:", "/etc/shadow").Output()
+	if err != nil {
+		return false
+	}
+	// Shadow line: root:HASH:...
+	parts := strings.SplitN(strings.TrimSpace(string(out)), ":", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	hash := parts[1]
+	return strings.HasPrefix(hash, "$") // real hashes start with $
+}
+
 var lxdConsoleUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
@@ -442,14 +808,18 @@ func HandleLXDConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Try bash first, fall back to sh.
-	shell := "bash"
-	testCmd := exec.Command("lxc", "exec", name, "--", "which", "bash")
-	if testCmd.Run() != nil {
-		shell = "sh"
+	// If root has a real password, require login authentication.
+	// Otherwise drop straight to a shell (default open-access behaviour).
+	var cmd *exec.Cmd
+	if lxcRootHasPassword(name) {
+		cmd = exec.Command("lxc", "exec", name, "--", "login")
+	} else {
+		shell := "bash"
+		if exec.Command("lxc", "exec", name, "--", "which", "bash").Run() != nil {
+			shell = "sh"
+		}
+		cmd = exec.Command("lxc", "exec", name, "--", shell)
 	}
-
-	cmd := exec.Command("lxc", "exec", name, "--", shell)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 	ptmx, err := pty.Start(cmd)

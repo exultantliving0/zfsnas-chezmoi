@@ -54,7 +54,24 @@ func StartGlobalPerfCollector(configDir string) {
 
 			// Memory
 			if _, cache, arc, app := readMemStats(); app >= 0 {
-				db.Record("mem_app", app, now)
+				vmPct, containerPct := 0.0, 0.0
+				if snap := GetMemProcsSnapshot(); snap != nil {
+					vmPct = snap.VMPct
+					containerPct = snap.ContainerPct
+					// Clamp so subtraction never pushes app below 0.
+					if vmPct+containerPct > app {
+						ratio := app / (vmPct + containerPct)
+						vmPct *= ratio
+						containerPct *= ratio
+					}
+				}
+				appOnly := app - vmPct - containerPct
+			if appOnly < 0 {
+				appOnly = 0
+			}
+			db.Record("mem_app", appOnly, now)
+				db.Record("mem_vm", vmPct, now)
+				db.Record("mem_container", containerPct, now)
 				db.Record("mem_arc", arc, now)
 				db.Record("mem_cache", cache, now)
 			}

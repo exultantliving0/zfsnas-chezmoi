@@ -146,3 +146,117 @@ func HandleSetInterfaceMTU(w http.ResponseWriter, r *http.Request) {
 	audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDNetEdit, Target: name, Result: audit.ResultOK, Details: "mtu=" + fmt.Sprintf("%d", req.MTU)})
 	jsonOK(w, map[string]string{"ok": "mtu updated"})
 }
+
+
+// HandleGetBridgeStats returns cumulative rx/tx byte counters for a bridge interface.
+// GET /api/lxd/network-bridges/{name}/stats
+func HandleGetBridgeStats(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	stats, err := system.GetBridgeStats(name)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, stats)
+}
+
+// HandleListStoragePoolInfos returns all LXD storage pools with detail.
+// GET /api/lxd/storage-pools-detail
+func HandleListStoragePoolInfos(w http.ResponseWriter, r *http.Request) {
+	pools, err := system.LXDListStoragePoolInfos()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if pools == nil {
+		pools = []system.LXDStoragePool{}
+	}
+	jsonOK(w, pools)
+}
+
+// HandleGetStoragePoolMembers returns instances on an LXD storage pool.
+// GET /api/lxd/storage-pools/{name}/members
+func HandleGetStoragePoolMembers(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	members, err := system.GetStoragePoolMembers(name)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if members == nil {
+		members = []system.BridgeMember{}
+	}
+	jsonOK(w, members)
+}
+
+// HandleCreateStoragePool creates a new ZFS-backed LXD storage pool.
+// POST /api/lxd/storage-pools-detail
+func HandleCreateStoragePool(w http.ResponseWriter, r *http.Request) {
+	sess := MustSession(r)
+	var req struct {
+		Name       string `json:"name"`
+		ZFSDataset string `json:"zfs_dataset"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := system.LXDCreateStoragePool(req.Name, req.ZFSDataset); err != nil {
+		audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDStorageCreate, Target: req.Name, Result: audit.ResultError, Details: err.Error()})
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDStorageCreate, Target: req.Name, Result: audit.ResultOK})
+	jsonOK(w, map[string]string{"ok": "created"})
+}
+
+// HandleGetStoragePool returns the detail of a single LXD storage pool.
+// GET /api/lxd/storage-pools/{name}
+func HandleGetStoragePool(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	pools, err := system.LXDListStoragePoolInfos()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, p := range pools {
+		if p.Name == name {
+			jsonOK(w, p)
+			return
+		}
+	}
+	jsonErr(w, http.StatusNotFound, "storage pool not found")
+}
+
+// HandleEditStoragePool updates editable settings on an LXD storage pool.
+// PUT /api/lxd/storage-pools/{name}
+func HandleEditStoragePool(w http.ResponseWriter, r *http.Request) {
+	sess := MustSession(r)
+	name := mux.Vars(r)["name"]
+	var req system.LXDStoragePoolEditRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := system.LXDEditStoragePool(name, req); err != nil {
+		audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDStorageEdit, Target: name, Result: audit.ResultError, Details: err.Error()})
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDStorageEdit, Target: name, Result: audit.ResultOK})
+	jsonOK(w, map[string]string{"ok": "updated"})
+}
+
+// HandleDeleteStoragePool deletes an LXD storage pool.
+// DELETE /api/lxd/storage-pools/{name}
+func HandleDeleteStoragePool(w http.ResponseWriter, r *http.Request) {
+	sess := MustSession(r)
+	name := mux.Vars(r)["name"]
+	if err := system.LXDDeleteStoragePool(name); err != nil {
+		audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDStorageDelete, Target: name, Result: audit.ResultError, Details: err.Error()})
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDStorageDelete, Target: name, Result: audit.ResultOK})
+	jsonOK(w, map[string]string{"ok": "deleted"})
+}

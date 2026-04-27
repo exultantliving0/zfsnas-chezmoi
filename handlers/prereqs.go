@@ -286,10 +286,11 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 		req.Package = strings.TrimSpace(req.Package)
 
 		allowlist := map[string]bool{
-			"targetcli-fb": true,
-			"minio":        true,
-			"nut":          true,
-			"hdparm":       true,
+			"targetcli-fb":         true,
+			"minio":                true,
+			"nut":                  true,
+			"hdparm":               true,
+			"proxmox-import-tools": true,
 		}
 		if !allowlist[req.Package] {
 			jsonErr(w, http.StatusBadRequest, "package not in allowlist")
@@ -378,6 +379,27 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 				"detected": detected,
 			}
 			jsonOK(w, resp)
+			return
+		}
+
+		// Proxmox import tools installs two packages together.
+		if req.Package == "proxmox-import-tools" {
+			pkgCmd := exec.Command("sudo", "apt-get", "install", "-y", "-q",
+				"sshpass", "qemu-utils")
+			pkgCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+			out, err := pkgCmd.CombinedOutput()
+			if err != nil {
+				jsonErr(w, http.StatusInternalServerError, string(out))
+				return
+			}
+			audit.Log(audit.Entry{
+				User:    sess.Username,
+				Role:    sess.Role,
+				Action:  audit.ActionInstallPrereqs,
+				Result:  audit.ResultOK,
+				Details: "installed: sshpass, qemu-utils",
+			})
+			jsonOK(w, map[string]string{"message": "proxmox-import-tools installed"})
 			return
 		}
 

@@ -1,0 +1,1045 @@
+package system
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// ProxmoxSSHConn holds credentials for a remote Proxmox server.
+type ProxmoxSSHConn struct {
+	Host     string
+	User     string
+	Password string
+}
+
+// ProxmoxVMNIC describes one NIC on a Proxmox VM.
+type ProxmoxVMNIC struct {
+	Device string `json:"device"` // "net0", "net1"
+	Driver string `json:"driver"` // "virtio", "e1000"
+	MAC    string `json:"mac"`    // "AA:BB:CC:DD:EE:FF"
+}
+
+// ProxmoxVMDisk describes one disk on a Proxmox VM.
+type ProxmoxVMDisk struct {
+	Device     string `json:"device"`      // "scsi0", "ide0"
+	StorageVol string `json:"storage_vol"` // "local-lvm:vm-100-disk-0"
+	SizeBytes  int64  `json:"size_bytes"`
+	SizeStr    string `json:"size_str"` // "32G"
+}
+
+// ProxmoxVM describes a VM found on a live Proxmox host.
+type ProxmoxVM struct {
+	VMID       int             `json:"vmid"`
+	Name       string          `json:"name"`
+	Status     string          `json:"status"` // "running", "stopped", "paused"
+	CPU        int             `json:"cpu"`
+	MemoryMB   int             `json:"memory_mb"`
+	NICs       []ProxmoxVMNIC  `json:"nics"`
+	Disks      []ProxmoxVMDisk `json:"disks"`
+	IsUEFI     bool            `json:"is_uefi"`      // true when bios: ovmf
+	BootDevice string          `json:"boot_device"`  // first device in boot: order=
+	EFIDisk    *ProxmoxVMDisk  `json:"efi_disk,omitempty"` // efidisk0 entry (OVMF vars)
+	Error      string          `json:"error,omitempty"`
+}
+
+// ProxmoxImportRequest is the full import request body from the frontend.
+type ProxmoxImportRequest struct {
+	Host        string       `json:"host"`
+	User        string       `json:"user"`
+	Password    string       `json:"password"`
+	VMs         []ProxmoxVM  `json:"vms"`
+	LocalBridge string       `json:"local_bridge"`
+	StoragePool string       `json:"storage_pool"`
+	StartAfter  bool         `json:"start_after"`
+}
+
+// SshpassAvailable returns true if sshpass is installed.
+func SshpassAvailable() bool {
+	_, err := exec.LookPath("sshpass")
+	return err == nil
+}
+
+// QemuImgAvailable returns true if qemu-img is installed.
+func QemuImgAvailable() bool {
+	_, err := exec.LookPath("qemu-img")
+	return err == nil
+}
+
+// sudoMkdirTemp creates a uniquely-named temporary directory under base using
+// sudo (for pool roots owned by root), then chowns it to the current user so
+// the portal process can write to it without further privilege.
+func sudoMkdirTemp(base string) (string, error) {
+	path := fmt.Sprintf("%s/.znas-proxmox-%d", base, time.Now().UnixNano())
+
+	whoamiOut, _ := exec.Command("whoami").Output()
+	currentUser := strings.TrimSpace(string(whoamiOut))
+	if currentUser == "" {
+		currentUser = "zfsnas"
+	}
+
+	if out, err := exec.Command("sudo", "mkdir", "-p", path).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("sudo mkdir: %s: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("sudo", "chown", currentUser, path).CombinedOutput(); err != nil {
+		exec.Command("sudo", "rm", "-rf", path).Run() //nolint:errcheck
+		return "", fmt.Errorf("sudo chown: %s: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("sudo", "chmod", "700", path).CombinedOutput(); err != nil {
+		exec.Command("sudo", "rm", "-rf", path).Run() //nolint:errcheck
+		return "", fmt.Errorf("sudo chmod: %s: %s", err, strings.TrimSpace(string(out)))
+	}
+	return path, nil
+}
+
+// diskFreeBytes returns the number of available bytes on the filesystem
+// containing the given path.
+func diskFreeBytes(path string) (uint64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	return st.Bavail * uint64(st.Bsize), nil
+}
+
+// importTempDir returns the best directory to hold large import temp files for
+// the given LXD storage pool. It tries in order:
+//  1. Mounted ZFS ancestor of the dataset backing the LXD pool (walks up the
+//     hierarchy so a "legacy"-mounted dataset finds its mounted parent pool).
+//  2. Well-known LXD snap/apt storage-pools directories.
+//  3. /var/tmp as a last resort.
+func importTempDir(lxdPoolName string) string {
+	// tryZFS returns the mountpoint of a ZFS dataset if it is directly mounted
+	// (i.e. mountpoint is a real path, not "none"/"legacy"/"-").
+	tryZFS := func(dataset string) string {
+		out, err := exec.Command("zfs", "get", "-H", "-o", "value", "mountpoint", dataset).Output()
+		if err != nil {
+			return ""
+		}
+		mp := strings.TrimSpace(string(out))
+		if mp == "" || mp == "none" || mp == "-" || mp == "legacy" || mp == "inherit" {
+			return ""
+		}
+		if _, statErr := os.Stat(mp); statErr != nil {
+			return ""
+		}
+		return mp
+	}
+
+	// tryZFSWithParents walks up the dataset path (e.g. "tank/lxd-base" →
+	// "tank") until it finds an ancestor with a real mountpoint.
+	tryZFSWithParents := func(dataset string) string {
+		parts := strings.Split(dataset, "/")
+		for i := len(parts); i >= 1; i-- {
+			if mp := tryZFS(strings.Join(parts[:i], "/")); mp != "" {
+				return mp
+			}
+		}
+		return ""
+	}
+
+	// 1. Try by LXD pool name directly (covers cases where name == dataset).
+	if mp := tryZFSWithParents(lxdPoolName); mp != "" {
+		return mp
+	}
+
+	// 2. Parse `lxc storage show` config block → get backing ZFS dataset → walk up.
+	// (lxc storage show has a stable YAML format with "source:" under "config:".)
+	for _, subcmd := range []string{"show", "info"} {
+		out, err := exec.Command("lxc", "storage", subcmd, lxdPoolName).Output()
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			kv := strings.SplitN(strings.TrimSpace(line), ":", 2)
+			if len(kv) == 2 && strings.TrimSpace(kv[0]) == "source" {
+				if mp := tryZFSWithParents(strings.TrimSpace(kv[1])); mp != "" {
+					return mp
+				}
+			}
+		}
+	}
+
+	// 3. Well-known LXD storage-pools directories (snap / apt installs).
+	for _, base := range []string{
+		"/var/snap/lxd/common/lxd/storage-pools",
+		"/var/lib/lxd/storage-pools",
+	} {
+		p := fmt.Sprintf("%s/%s", base, lxdPoolName)
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			return p
+		}
+	}
+
+	// 4. Last resort.
+	return "/var/tmp"
+}
+
+// runRemoteSSH executes a single command string on the remote host via sshpass+ssh.
+// The password is passed only via the SSHPASS environment variable.
+func runRemoteSSH(conn ProxmoxSSHConn, cmdStr string) (string, error) {
+	cmd := exec.Command("sshpass", "-e", "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "BatchMode=no",
+		"-o", "ConnectTimeout=15",
+		"-o", "ServerAliveInterval=30",
+		fmt.Sprintf("%s@%s", conn.User, conn.Host),
+		cmdStr,
+	)
+	cmd.Env = append(os.Environ(), "SSHPASS="+conn.Password)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+// ListProxmoxVMs SSHes to the remote Proxmox host, lists all VMs via qm list,
+// then fetches each VM's config via qm config.
+func ListProxmoxVMs(conn ProxmoxSSHConn) ([]ProxmoxVM, error) {
+	if !SshpassAvailable() {
+		return nil, fmt.Errorf("sshpass is not installed; install it from Prerequisites")
+	}
+
+	out, err := runRemoteSSH(conn, "qm list")
+	if err != nil {
+		return nil, fmt.Errorf("SSH connection failed: %w", err)
+	}
+
+	var vms []ProxmoxVM
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		vmid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue // skip header and non-numeric lines
+		}
+		vm := ProxmoxVM{
+			VMID:   vmid,
+			Name:   fields[1],
+			Status: fields[2],
+		}
+		if len(fields) >= 4 {
+			if mem, err := strconv.ParseFloat(fields[3], 64); err == nil {
+				vm.MemoryMB = int(mem)
+			}
+		}
+
+		// Fetch full config.
+		cfgOut, cfgErr := runRemoteSSH(conn, fmt.Sprintf("qm config %d", vmid))
+		if cfgErr != nil {
+			vm.Error = cfgErr.Error()
+		} else {
+			parseQmConfig(cfgOut, &vm)
+		}
+		vms = append(vms, vm)
+	}
+	return vms, nil
+}
+
+// parseQmConfig parses the output of "qm config <vmid>" into a ProxmoxVM.
+func parseQmConfig(raw string, vm *ProxmoxVM) {
+	// efidisk entries are OVMF variable stores, not bootable disks — handle separately.
+	diskDevRe := regexp.MustCompile(`^(?:scsi|ide|virtio|sata)\d+$`)
+	efidiskRe := regexp.MustCompile(`^efidisk\d+$`)
+	nicDevRe := regexp.MustCompile(`^net\d+$`)
+	skipDevRe := regexp.MustCompile(`^(?:usb|hostpci|serial|audio|parallel|unused|tpmstate)\d*$`)
+
+	var cores, sockets int
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.Index(line, ":")
+		if idx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+
+		if skipDevRe.MatchString(key) {
+			continue
+		}
+
+		switch key {
+		case "name":
+			vm.Name = val
+		case "memory":
+			if n, err := strconv.Atoi(val); err == nil {
+				vm.MemoryMB = n
+			}
+		case "cores":
+			if n, err := strconv.Atoi(val); err == nil {
+				cores = n
+			}
+		case "sockets":
+			if n, err := strconv.Atoi(val); err == nil {
+				sockets = n
+			}
+		case "bios":
+			vm.IsUEFI = (val == "ovmf")
+		case "boot":
+			// New format: "order=scsi0;ide2"   Old format: "c" / "dc"
+			for _, part := range strings.Split(val, ";") {
+				part = strings.TrimSpace(part)
+				if strings.HasPrefix(part, "order=") {
+					devs := strings.Split(strings.TrimPrefix(part, "order="), ";")
+					if len(devs) > 0 && devs[0] != "" {
+						vm.BootDevice = strings.TrimSpace(devs[0])
+					}
+					break
+				}
+			}
+		default:
+			if efidiskRe.MatchString(key) {
+				if !strings.Contains(val, "media=cdrom") && !strings.HasPrefix(val, "none") {
+					storageVol := strings.SplitN(val, ",", 2)[0]
+					sizeStr := proxmoxDiskSizeStr(val)
+					vm.EFIDisk = &ProxmoxVMDisk{
+						Device:     key,
+						StorageVol: storageVol,
+						SizeBytes:  proxmoxParseDiskSize(sizeStr),
+						SizeStr:    sizeStr,
+					}
+					vm.IsUEFI = true // efidisk implies UEFI even without explicit bios: ovmf
+				}
+			} else if diskDevRe.MatchString(key) {
+				// Skip cdrom/none entries.
+				if strings.Contains(val, "media=cdrom") || strings.HasPrefix(val, "none") {
+					continue
+				}
+				storageVol := strings.SplitN(val, ",", 2)[0]
+				sizeStr := proxmoxDiskSizeStr(val)
+				vm.Disks = append(vm.Disks, ProxmoxVMDisk{
+					Device:     key,
+					StorageVol: storageVol,
+					SizeBytes:  proxmoxParseDiskSize(sizeStr),
+					SizeStr:    sizeStr,
+				})
+			} else if nicDevRe.MatchString(key) {
+				driver, mac := proxmoxParseNIC(val)
+				vm.NICs = append(vm.NICs, ProxmoxVMNIC{
+					Device: key,
+					Driver: driver,
+					MAC:    mac,
+				})
+			}
+		}
+	}
+
+	if cores < 1 {
+		cores = 1
+	}
+	if sockets < 1 {
+		sockets = 1
+	}
+	vm.CPU = cores * sockets
+
+	if vm.Name == "" {
+		vm.Name = fmt.Sprintf("vm-%d", vm.VMID)
+	}
+	if vm.MemoryMB == 0 {
+		vm.MemoryMB = 512
+	}
+
+	// Ensure the Proxmox boot device is disk index 0 (root disk in LXD).
+	// Without this, alphabetical parsing order (efidisk0 < scsi0) or any other
+	// order could put the wrong volume as the LXD root disk.
+	if vm.BootDevice != "" {
+		for i, d := range vm.Disks {
+			if d.Device == vm.BootDevice && i != 0 {
+				vm.Disks = append([]ProxmoxVMDisk{d}, append(vm.Disks[:i], vm.Disks[i+1:]...)...)
+				break
+			}
+		}
+	}
+}
+
+// proxmoxParseNIC parses a Proxmox NIC value like "virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0".
+func proxmoxParseNIC(val string) (driver, mac string) {
+	knownDrivers := map[string]bool{
+		"virtio": true, "e1000": true, "e1000e": true,
+		"vmxnet3": true, "rtl8139": true, "vmxnet": true,
+	}
+	for _, part := range strings.Split(val, ",") {
+		part = strings.TrimSpace(part)
+		eqIdx := strings.Index(part, "=")
+		if eqIdx < 0 {
+			continue
+		}
+		k := part[:eqIdx]
+		v := part[eqIdx+1:]
+		if knownDrivers[k] {
+			driver = k
+			mac = strings.ToUpper(v)
+		}
+	}
+	return
+}
+
+// proxmoxDiskSizeStr extracts the size value from a Proxmox disk config string.
+func proxmoxDiskSizeStr(val string) string {
+	for _, part := range strings.Split(val, ",") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "size=") {
+			return strings.TrimPrefix(part, "size=")
+		}
+	}
+	return ""
+}
+
+// proxmoxParseDiskSize converts "50G", "512M", "1T" to bytes.
+func proxmoxParseDiskSize(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	s = strings.ToUpper(strings.TrimSpace(s))
+	multipliers := map[byte]int64{
+		'K': 1024,
+		'M': 1024 * 1024,
+		'G': 1024 * 1024 * 1024,
+		'T': 1024 * 1024 * 1024 * 1024,
+	}
+	last := s[len(s)-1]
+	if mul, ok := multipliers[last]; ok {
+		n, err := strconv.ParseFloat(s[:len(s)-1], 64)
+		if err != nil {
+			return 0
+		}
+		return int64(n * float64(mul))
+	}
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n
+}
+
+// sanitiseLXDName converts a Proxmox VM name to a valid LXD instance name.
+func sanitiseLXDName(name string) string {
+	name = strings.ToLower(name)
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == '.' || r == ' ':
+			b.WriteRune('-')
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		result = "imported-vm"
+	}
+	if result[0] >= '0' && result[0] <= '9' {
+		result = "px-" + result
+	}
+	if len(result) > 63 {
+		result = result[:63]
+	}
+	return strings.TrimRight(result, "-")
+}
+
+// lxcNameFree returns true if no LXD instance with the given name exists.
+func lxcNameFree(name string) bool {
+	return exec.Command("lxc", "info", name).Run() != nil
+}
+
+// ImportProxmoxVM imports a single live Proxmox VM as a new LXD VM.
+//
+// Pipeline per disk (no temp space on the remote):
+//   remote: pvesm path → qemu-img convert -O raw → stdout
+//   SSH pipe → local raw file on ZFS pool → lxc storage volume import
+//
+// Progress lines are written to logCh.
+// pxiCountingReader wraps an io.Reader and calls fn with the number of bytes read on each Read.
+type pxiCountingReader struct {
+	r  io.Reader
+	fn func(int64)
+}
+
+func (c *pxiCountingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 && c.fn != nil {
+		c.fn(int64(n))
+	}
+	return n, err
+}
+
+func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req ProxmoxImportRequest, logCh chan<- string, progressFn func(int64)) error {
+	log := func(msg string) {
+		if logCh != nil {
+			logCh <- msg
+		}
+	}
+
+	if !SshpassAvailable() {
+		return fmt.Errorf("sshpass is not installed")
+	}
+
+	// Resolve unique LXD VM name.
+	baseName := sanitiseLXDName(vm.Name)
+	vmName := baseName
+	for attempt := 1; attempt <= 5; attempt++ {
+		if lxcNameFree(vmName) {
+			break
+		}
+		vmName = fmt.Sprintf("%s-%d", baseName, attempt)
+	}
+	log(fmt.Sprintf("Importing VM %d ('%s') as LXD VM '%s'", vm.VMID, vm.Name, vmName))
+	if vm.Status == "running" {
+		log("  ⚠ VM is running — disk snapshot is live and may be inconsistent.")
+	}
+
+	// Step 1: Create empty LXD VM.
+	log(fmt.Sprintf("Creating LXD VM '%s' (vCPU=%d, RAM=%d MB)...", vmName, vm.CPU, vm.MemoryMB))
+	if out, err := exec.Command("lxc", "init", "--empty", vmName, "--vm").CombinedOutput(); err != nil {
+		return fmt.Errorf("lxc init: %s: %s", err.Error(), strings.TrimSpace(string(out)))
+	}
+
+	var createdVolumes []string
+	rollback := func() {
+		exec.Command("lxc", "delete", "--force", vmName).Run() //nolint:errcheck
+		for _, vol := range createdVolumes {
+			exec.Command("lxc", "storage", "volume", "delete", req.StoragePool, vol).Run() //nolint:errcheck
+		}
+	}
+
+	if out, err := exec.Command("lxc", "config", "set", vmName,
+		fmt.Sprintf("limits.cpu=%d", vm.CPU)).CombinedOutput(); err != nil {
+		rollback()
+		return fmt.Errorf("set cpu: %s: %s", err.Error(), strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("lxc", "config", "set", vmName,
+		fmt.Sprintf("limits.memory=%dMB", vm.MemoryMB)).CombinedOutput(); err != nil {
+		rollback()
+		return fmt.Errorf("set memory: %s: %s", err.Error(), strings.TrimSpace(string(out)))
+	}
+
+	if vm.IsUEFI {
+		log("  UEFI VM detected — disabling Secure Boot for compatibility.")
+		exec.Command("lxc", "config", "set", vmName, "security.secureboot=false").Run() //nolint:errcheck
+	} else {
+		// SeaBIOS (legacy BIOS) VM.
+		// Prefer LXD-native CSM support (5.4+/6.x). On LXD 5.0.x the key is
+		// unknown, so fall back to injecting -bios via raw.qemu which tells
+		// QEMU to load SeaBIOS directly instead of OVMF.
+		log("  SeaBIOS (legacy BIOS) VM detected — configuring CSM/SeaBIOS mode.")
+
+		// LXD 5.4+ requires secureboot=false before csm=true.
+		exec.Command("lxc", "config", "set", vmName, "security.secureboot=false").Run() //nolint:errcheck
+		csmOut, csmErr := exec.Command("lxc", "config", "set", vmName, "security.csm=true").CombinedOutput()
+		if csmErr == nil {
+			log("  ✓ CSM (SeaBIOS) mode enabled via security.csm.")
+		} else {
+			// LXD 5.0.x: security.csm is unknown. Undo secureboot=false (UEFI
+			// concept) and force SeaBIOS via raw.qemu -bios flag instead.
+			log(fmt.Sprintf("  security.csm not supported (%s) — using raw.qemu -bios fallback.",
+				strings.TrimSpace(string(csmOut))))
+			exec.Command("lxc", "config", "unset", vmName, "security.secureboot").Run() //nolint:errcheck
+
+			biosPath := seabiosBinPath()
+			if biosPath == "" {
+				log("  ⚠ SeaBIOS binary not found — VM may not boot; install the 'seabios' package.")
+			} else {
+				if out, err := exec.Command("lxc", "config", "set", vmName, "raw.qemu=-bios "+biosPath).CombinedOutput(); err != nil {
+					log(fmt.Sprintf("  ⚠ Could not set raw.qemu=-bios: %s — VM may not boot.", strings.TrimSpace(string(out))))
+				} else {
+					log(fmt.Sprintf("  ✓ SeaBIOS configured via raw.qemu -bios %s.", biosPath))
+				}
+			}
+		}
+	}
+	if vm.BootDevice != "" {
+		log(fmt.Sprintf("  Boot device: %s (disk 0 = root).", vm.BootDevice))
+	}
+
+	// Step 2: For each disk, create the backing zvol first (with no space
+	// reservation), then stream the disk image from Proxmox directly into
+	// the zvol via a local pipe — no temp file, so the pool only ever holds
+	// one copy of the data at a time.
+
+	// Resolve the ZFS dataset that backs the LXD pool.
+	poolSource := getLXDPoolSource(req.StoragePool)
+	if poolSource == "" {
+		rollback()
+		return fmt.Errorf("cannot determine ZFS source dataset for LXD pool '%s'", req.StoragePool)
+	}
+	log(fmt.Sprintf("  LXD pool '%s' backed by ZFS dataset '%s'", req.StoragePool, poolSource))
+
+	for i, disk := range vm.Disks {
+		lxdSize := proxmoxSizeToLXD(disk.SizeStr)
+		volName := fmt.Sprintf("%s-disk-%d", vmName, i)
+
+		var zvolDataset string
+
+		if i == 0 {
+			// Root disk: add device, LXD creates the backing zvol.
+			devArgs := []string{"config", "device", "add", vmName, "root", "disk",
+				"path=/", "pool=" + req.StoragePool, "boot.priority=1",
+			}
+			if lxdSize != "" {
+				devArgs = append(devArgs, "size="+lxdSize)
+			}
+			if out, err := exec.Command("lxc", devArgs...).CombinedOutput(); err != nil {
+				rollback()
+				return fmt.Errorf("add root disk: %s: %s", err.Error(), strings.TrimSpace(string(out)))
+			}
+			// The default profile gives the VM an eth0 NIC on the LXD managed
+			// bridge. Remove the profile now that the root disk is set at instance
+			// level; otherwise adding the imported NICs to the same bridge causes
+			// a DNS-name conflict error.
+			exec.Command("lxc", "profile", "remove", vmName, "default").Run() //nolint:errcheck
+			zvolDataset = fmt.Sprintf("%s/virtual-machines/%s.block", poolSource, vmName)
+		} else {
+			// Additional disk: create a custom block volume.
+			createArgs := []string{"storage", "volume", "create",
+				req.StoragePool, volName, "--type", "block",
+			}
+			if lxdSize != "" {
+				createArgs = append(createArgs, "size="+lxdSize)
+			}
+			if out, err := exec.Command("lxc", createArgs...).CombinedOutput(); err != nil {
+				rollback()
+				return fmt.Errorf("create disk volume %d: %s: %s", i, err.Error(), strings.TrimSpace(string(out)))
+			}
+			createdVolumes = append(createdVolumes, volName)
+			zvolDataset = fmt.Sprintf("%s/custom/default_%s", poolSource, volName)
+		}
+
+		// Remove the ZFS space reservation so writing the zvol doesn't compete
+		// with other data on the pool. The data we stream in IS the reservation.
+		exec.Command("sudo", "zfs", "set", "refreservation=none", zvolDataset).Run() //nolint:errcheck
+
+		// Disable ZFS sync during import so writes are batched rather than
+		// flushed to disk after every block. This is safe: if the import
+		// crashes, the zvol is discarded anyway. Restore sync=standard after.
+		exec.Command("sudo", "zfs", "set", "sync=disabled", zvolDataset).Run() //nolint:errcheck
+
+		// Set the exact volsize from the Proxmox config. ZFS volsize must be a
+		// multiple of volblocksize (LXD default is 16 KiB).
+		if disk.SizeBytes > 0 {
+			volblockOut, _ := exec.Command("sudo", "zfs", "get", "-H", "-o", "value",
+				"volblocksize", zvolDataset).Output()
+			vbs := int64(16384)
+			if vbsStr := strings.TrimSpace(string(volblockOut)); vbsStr != "" {
+				vbs = proxmoxParseDiskSize(vbsStr)
+				if vbs <= 0 {
+					vbs = 16384
+				}
+			}
+			volsizeBytes := ((disk.SizeBytes + vbs - 1) / vbs) * vbs
+			if out, err := exec.Command("sudo", "zfs", "set",
+				fmt.Sprintf("volsize=%d", volsizeBytes),
+				zvolDataset).CombinedOutput(); err != nil {
+				rollback()
+				return fmt.Errorf("set zvol size for disk %d: %s: %s", i, err.Error(), strings.TrimSpace(string(out)))
+			}
+			log(fmt.Sprintf("  Zvol sized to %d bytes (%s)", volsizeBytes, disk.SizeStr))
+		}
+
+		// LXD snap creates zvols with volmode=none (no block device in /dev/).
+		// We set volmode=dev so ZFS creates the /dev/zdX kernel block device.
+		// We bypass /dev/zvol/ symlinks entirely (udev may be blocked by a
+		// stale regular file left by a prior failed import). Instead we snapshot
+		// the existing zd* devices, set volmode=dev, then poll for the new one.
+
+		// Snapshot existing /dev/zd<N> block device nodes (no partitions).
+		zdRe := regexp.MustCompile(`^zd\d+$`)
+		beforeZDs := map[string]bool{}
+		if devEntries, _ := os.ReadDir("/dev"); devEntries != nil {
+			for _, e := range devEntries {
+				if zdRe.MatchString(e.Name()) {
+					beforeZDs[e.Name()] = true
+				}
+			}
+		}
+
+		if out, err := exec.Command("sudo", "zfs", "set", "volmode=dev", zvolDataset).CombinedOutput(); err != nil {
+			rollback()
+			return fmt.Errorf("set volmode=dev for disk %d: %s: %s", i, err.Error(), strings.TrimSpace(string(out)))
+		}
+
+		// Poll up to 10 s for the new /dev/zdX device to appear.
+		blockDev := ""
+		for attempt := 0; attempt < 100 && blockDev == ""; attempt++ {
+			time.Sleep(100 * time.Millisecond)
+			devEntries, _ := os.ReadDir("/dev")
+			for _, e := range devEntries {
+				if zdRe.MatchString(e.Name()) && !beforeZDs[e.Name()] {
+					blockDev = "/dev/" + e.Name()
+					break
+				}
+			}
+		}
+		if blockDev == "" {
+			rollback()
+			return fmt.Errorf("disk %d: no /dev/zdX appeared after setting volmode=dev on %s", i, zvolDataset)
+		}
+		log(fmt.Sprintf("  Disk %d block device: %s", i, blockDev))
+
+		// Stream the disk image from Proxmox directly into the zvol using a
+		// local pipe (SSH stdout → pipe → sudo dd → /dev/zdX). No temp file is
+		// written so the pool only ever allocates the zvol blocks, not a
+		// duplicate copy.
+		log(fmt.Sprintf("Streaming disk %d (%s, %s) → %s...", i, disk.Device, disk.SizeStr, blockDev))
+
+		streamScript := fmt.Sprintf(`
+_p=$(pvesm path %q) || exit 1
+if echo "$_p" | grep -q '^rbd:'; then
+    _rbd=$(echo "$_p" | sed 's/^rbd://;s/:.*//')
+    rbd export "$_rbd" - 2>/dev/null
+elif [ -b "$_p" ]; then
+    dd if="$_p" bs=4M status=none
+else
+    qemu-img convert -O raw "$_p" /dev/stdout
+fi`, disk.StorageVol)
+
+		// Check for cancellation before starting the streaming pipeline.
+		if ctx.Err() != nil {
+			rollback()
+			return fmt.Errorf("import canceled")
+		}
+
+		sshCmd := exec.CommandContext(ctx, "sshpass", "-e", "ssh",
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "BatchMode=no",
+			"-o", "ConnectTimeout=15",
+			"-o", "ServerAliveInterval=30",
+			"-o", "Compression=no",
+			fmt.Sprintf("%s@%s", conn.User, conn.Host),
+			streamScript,
+		)
+		sshCmd.Env = append(os.Environ(), "SSHPASS="+conn.Password)
+
+		ddCmd := exec.CommandContext(ctx, "sudo", "dd", "of="+blockDev, "bs=4M", "conv=notrunc", "oflag=direct")
+
+		pr, pw := io.Pipe()
+		sshCmd.Stdout = pw
+		ddCmd.Stdin = &pxiCountingReader{r: pr, fn: progressFn}
+
+		var sshStderr, ddStderr bytes.Buffer
+		sshCmd.Stderr = &sshStderr
+		ddCmd.Stderr = &ddStderr
+
+		if startErr := sshCmd.Start(); startErr != nil {
+			pr.Close()
+			pw.Close()
+			rollback()
+			return fmt.Errorf("start ssh for disk %d: %w", i, startErr)
+		}
+		if startErr := ddCmd.Start(); startErr != nil {
+			sshCmd.Process.Kill() //nolint:errcheck
+			pr.Close()
+			pw.Close()
+			rollback()
+			return fmt.Errorf("start dd for disk %d: %w", i, startErr)
+		}
+
+		sshRunErr := sshCmd.Wait()
+		pw.Close() // signal EOF to dd
+		ddRunErr := ddCmd.Wait()
+		pr.Close()
+
+		sshErrMsg := strings.TrimSpace(sshStderr.String())
+		ddErrMsg := strings.TrimSpace(ddStderr.String())
+
+		// Restore sync regardless of success or failure — must happen before rollback.
+		exec.Command("sudo", "zfs", "set", "sync=standard", zvolDataset).Run() //nolint:errcheck
+
+		// qemu-img writes all data then fails only on the final ftruncate of a
+		// pipe; tolerate that specific error since all bytes are already written.
+		if sshRunErr != nil && !strings.Contains(sshErrMsg, "Could not resize file") {
+			rollback()
+			if ctx.Err() != nil {
+				return fmt.Errorf("import canceled")
+			}
+			if sshErrMsg == "" {
+				sshErrMsg = sshRunErr.Error()
+			}
+			return fmt.Errorf("stream disk %d (%s): %s", i, disk.Device, sshErrMsg)
+		}
+		if ddRunErr != nil {
+			// Restore volmode regardless, best effort.
+			exec.Command("sudo", "zfs", "set", "volmode=none", zvolDataset).Run() //nolint:errcheck
+			rollback()
+			if ddErrMsg == "" {
+				ddErrMsg = ddRunErr.Error()
+			}
+			return fmt.Errorf("write disk %d (%s): %s", i, disk.Device, ddErrMsg)
+		}
+
+		// For UEFI root disk: fix the fallback GRUB boot path on the ESP while
+		// the block device is still accessible (before volmode=none removes it).
+		if vm.IsUEFI && i == 0 {
+			log("  Repairing UEFI fallback boot path...")
+			fixUEFIGrub(blockDev, log)
+		}
+
+		// Restore volmode=none so LXD finds the zvol in its expected state.
+		// LXD sets volmode=dev itself when the VM starts.
+		exec.Command("sudo", "zfs", "set", "volmode=none", zvolDataset).Run() //nolint:errcheck
+
+		if i > 0 {
+			devArgs := []string{"config", "device", "add", vmName,
+				fmt.Sprintf("disk%d", i), "disk",
+				"pool=" + req.StoragePool,
+				"source=" + volName,
+			}
+			if out, err := exec.Command("lxc", devArgs...).CombinedOutput(); err != nil {
+				rollback()
+				return fmt.Errorf("attach disk %d: %s: %s", i, err.Error(), strings.TrimSpace(string(out)))
+			}
+		}
+
+		log(fmt.Sprintf("  ✓ Disk %d imported.", i))
+	}
+
+	// Step 3: Add NICs with preserved MAC addresses.
+	// nictype=bridged avoids LXD DNS tracking for unmanaged bridges, but LXD 6.x
+	// still enforces uniqueness when the parent happens to be a managed bridge
+	// name — a second NIC on the same managed bridge triggers a DNS-conflict error.
+	// When that happens (or any other add failure), store the NIC in the
+	// user.disconnected_nics.<device> config key so ZNAS shows it as a
+	// disconnected NIC that the user can re-attach to the correct bridge later.
+	for _, nic := range vm.NICs {
+		log(fmt.Sprintf("Adding NIC %s (MAC=%s) on bridge '%s'...", nic.Device, nic.MAC, req.LocalBridge))
+		nicArgs := []string{"config", "device", "add", vmName,
+			nic.Device, "nic",
+			"nictype=bridged",
+			fmt.Sprintf("parent=%s", req.LocalBridge),
+		}
+		if nic.MAC != "" {
+			nicArgs = append(nicArgs, fmt.Sprintf("hwaddr=%s", strings.ToLower(nic.MAC)))
+		}
+		if out, err := exec.Command("lxc", nicArgs...).CombinedOutput(); err != nil {
+			errMsg := strings.TrimSpace(string(out))
+			log(fmt.Sprintf("  ⚠ NIC %s could not be directly attached (%s) — saved as disconnected NIC.", nic.Device, errMsg))
+			// Preserve config so the user can reconnect via ZNAS VM edit UI.
+			mac := strings.ToLower(nic.MAC)
+			disconnConf := fmt.Sprintf(`{"bridge":%q,"mac":%q,"vlan":""}`, req.LocalBridge, mac)
+			disconnKey := "user.disconnected_nics." + nic.Device
+			if setOut, setErr := exec.Command("lxc", "config", "set", vmName, disconnKey, disconnConf).CombinedOutput(); setErr != nil {
+				log(fmt.Sprintf("  ✗ Could not save disconnected NIC config: %s", strings.TrimSpace(string(setOut))))
+			}
+		} else {
+			log(fmt.Sprintf("  ✓ NIC %s connected (MAC=%s).", nic.Device, nic.MAC))
+		}
+	}
+
+	// Step 4: Optionally start.
+	if req.StartAfter {
+		log(fmt.Sprintf("Starting VM '%s'...", vmName))
+		if out, err := exec.Command("lxc", "start", vmName).CombinedOutput(); err != nil {
+			log(fmt.Sprintf("  ⚠ Could not start VM: %s: %s", err.Error(), strings.TrimSpace(string(out))))
+		} else {
+			log("  ✓ VM started.")
+		}
+	}
+
+	log(fmt.Sprintf("✓ VM %d ('%s') imported successfully as LXD VM '%s'.", vm.VMID, vm.Name, vmName))
+	return nil
+}
+
+// getLXDPoolSource parses `lxc storage show <pool>` and returns the ZFS dataset
+// name backing the pool (e.g. "NVMEPool/lxd-base"). Returns "" on any failure.
+func getLXDPoolSource(poolName string) string {
+	out, err := exec.Command("lxc", "storage", "show", poolName).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		kv := strings.SplitN(strings.TrimSpace(line), ":", 2)
+		if len(kv) == 2 && strings.TrimSpace(kv[0]) == "source" {
+			src := strings.TrimSpace(kv[1])
+			src = strings.TrimPrefix(src, "/")
+			src = strings.TrimRight(src, "/")
+			return src
+		}
+	}
+	return ""
+}
+
+// proxmoxSizeToLXD converts a Proxmox disk size string (e.g. "32G", "512M")
+// into the IEC form expected by LXD (e.g. "32GiB", "512MiB").
+func proxmoxSizeToLXD(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	upper := strings.ToUpper(s)
+	for _, unit := range []string{"T", "G", "M", "K"} {
+		if strings.HasSuffix(upper, unit) {
+			return s[:len(s)-1] + unit + "iB"
+		}
+	}
+	return s
+}
+
+// fixUEFIGrub mounts the EFI System Partition on blockDev and copies the
+// distro's grub.cfg to EFI/BOOT/grub.cfg.
+//
+// When LXD starts a VM with a fresh OVMF NVRAM (no imported efidisk), OVMF
+// falls back to \EFI\BOOT\BOOTX64.EFI. That binary has its prefix set to
+// \EFI\BOOT\ — not \EFI\<distro>\ — so GRUB loads but can't find grub.cfg
+// and drops to the grub> prompt. Placing grub.cfg in \EFI\BOOT\ fixes this.
+func fixUEFIGrub(blockDev string, log func(string)) {
+	// Get current user's UID so FAT32 is mounted with uid= and we can
+	// read/write the ESP directly without sudo for file operations.
+	uidOut, _ := exec.Command("id", "-u").Output()
+	uid := strings.TrimSpace(string(uidOut))
+
+	// Expose partition block devices: /dev/zd32 → /dev/zd32p1, /dev/zd32p2 …
+	exec.Command("sudo", "partx", "-a", "-u", blockDev).Run() //nolint:errcheck
+	time.Sleep(300 * time.Millisecond)                        // let kernel create dev nodes
+	defer exec.Command("sudo", "partx", "-d", blockDev).Run() //nolint:errcheck
+
+	tmpDir := fmt.Sprintf("/tmp/.znas-esp-%d", time.Now().UnixNano())
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		log("  ⚠ Could not create ESP mount point — UEFI boot path not repaired.")
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mountOpts := "umask=022"
+	if uid != "" {
+		mountOpts = "uid=" + uid + ",umask=022"
+	}
+
+	// Try partitions p1..p4 — find the FAT32 one with an EFI/ directory.
+	espMounted := false
+	for p := 1; p <= 4; p++ {
+		part := fmt.Sprintf("%sp%d", blockDev, p)
+		if _, err := os.Stat(part); err != nil {
+			continue
+		}
+		if exec.Command("sudo", "mount", "-t", "vfat", "-o", mountOpts, part, tmpDir).Run() != nil {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(tmpDir, "EFI")); err == nil && info.IsDir() {
+			espMounted = true
+			break
+		}
+		exec.Command("sudo", "umount", "-l", tmpDir).Run() //nolint:errcheck
+	}
+	if !espMounted {
+		log("  ⚠ No EFI System Partition found on disk — UEFI boot path not repaired.")
+		return
+	}
+	defer exec.Command("sudo", "umount", "-l", tmpDir).Run() //nolint:errcheck
+
+	// Find the distro's grub.cfg — one level under EFI/, not in EFI/BOOT/.
+	efiDir := filepath.Join(tmpDir, "EFI")
+	entries, err := os.ReadDir(efiDir)
+	if err != nil {
+		log("  ⚠ Could not list EFI/ directory — UEFI boot path not repaired.")
+		return
+	}
+	srcCfg := ""
+	for _, e := range entries {
+		if !e.IsDir() || strings.EqualFold(e.Name(), "BOOT") {
+			continue
+		}
+		candidate := filepath.Join(efiDir, e.Name(), "grub.cfg")
+		if _, err := os.Stat(candidate); err == nil {
+			srcCfg = candidate
+			break
+		}
+	}
+	if srcCfg == "" {
+		log("  ⚠ No distro grub.cfg on ESP (no EFI/<distro>/grub.cfg) — UEFI boot path not repaired.")
+		return
+	}
+
+	// Install it as EFI/BOOT/grub.cfg — the path fallback GRUB will look for.
+	bootDir := filepath.Join(efiDir, "BOOT")
+	if err := os.MkdirAll(bootDir, 0755); err != nil {
+		log(fmt.Sprintf("  ⚠ Could not create EFI/BOOT/: %v", err))
+		return
+	}
+	data, err := os.ReadFile(srcCfg)
+	if err != nil {
+		log(fmt.Sprintf("  ⚠ Could not read %s: %v", srcCfg, err))
+		return
+	}
+	if err := os.WriteFile(filepath.Join(bootDir, "grub.cfg"), data, 0644); err != nil {
+		log(fmt.Sprintf("  ⚠ Could not write EFI/BOOT/grub.cfg: %v", err))
+		return
+	}
+	distro := filepath.Base(filepath.Dir(srcCfg))
+	distroDir := filepath.Dir(srcCfg)
+	log(fmt.Sprintf("  ✓ UEFI fallback boot repaired — EFI/BOOT/grub.cfg installed from EFI/%s/grub.cfg.", distro))
+
+	// Ensure EFI/BOOT/BOOTX64.EFI exists — OVMF needs this for the UEFI
+	// fallback boot path.  Proxmox-imported disks often only have the distro-
+	// specific path; without this binary OVMF reports "no boot target" before
+	// GRUB is ever reached.
+	bootBin := filepath.Join(bootDir, "BOOTX64.EFI")
+	if _, statErr := os.Stat(bootBin); os.IsNotExist(statErr) {
+		findEFI := func(name string) string {
+			efis, _ := os.ReadDir(distroDir)
+			for _, f := range efis {
+				if !f.IsDir() && strings.EqualFold(f.Name(), name) {
+					return filepath.Join(distroDir, f.Name())
+				}
+			}
+			return ""
+		}
+		copyEFI := func(src, dst string) bool {
+			d, readErr := os.ReadFile(src)
+			if readErr != nil {
+				return false
+			}
+			return os.WriteFile(dst, d, 0644) == nil
+		}
+		// Prefer grubx64.efi: GRUB uses its compiled-in prefix to locate
+		// EFI/<distro>/grub.cfg, which is still on disk.  Fall back to
+		// shimx64.efi, then any .efi in the distro directory.
+		if grub := findEFI("grubx64.efi"); grub != "" {
+			if copyEFI(grub, bootBin) {
+				log(fmt.Sprintf("  ✓ EFI/BOOT/BOOTX64.EFI installed from EFI/%s/grubx64.efi.", distro))
+			} else {
+				log("  ⚠ Could not write EFI/BOOT/BOOTX64.EFI.")
+			}
+		} else if shim := findEFI("shimx64.efi"); shim != "" {
+			if copyEFI(shim, bootBin) {
+				log(fmt.Sprintf("  ✓ EFI/BOOT/BOOTX64.EFI installed from EFI/%s/shimx64.efi.", distro))
+			} else {
+				log("  ⚠ Could not write EFI/BOOT/BOOTX64.EFI.")
+			}
+		} else {
+			efis, _ := os.ReadDir(distroDir)
+			for _, f := range efis {
+				if !f.IsDir() && strings.HasSuffix(strings.ToLower(f.Name()), ".efi") {
+					if copyEFI(filepath.Join(distroDir, f.Name()), bootBin) {
+						log(fmt.Sprintf("  ✓ EFI/BOOT/BOOTX64.EFI installed from EFI/%s/%s.", distro, f.Name()))
+						break
+					}
+				}
+			}
+		}
+	}
+}
+
+// seabiosBinPath returns the first SeaBIOS binary found on this system, or "".
+func seabiosBinPath() string {
+	for _, p := range []string{
+		"/usr/share/seabios/bios.bin",
+		"/usr/lib/qemu/bios.bin",
+		"/usr/share/qemu/bios.bin",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}

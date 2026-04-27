@@ -30,6 +30,7 @@ type Job struct {
 	State        State      `json:"state"`
 	BytesSent    int64      `json:"bytes_sent"`
 	TotalBytes   int64      `json:"total_bytes"`
+	Percent      int        `json:"percent,omitempty"` // set when only % is known (no byte counts)
 	StartedAt    time.Time  `json:"started_at"`
 	EndedAt      *time.Time `json:"ended_at,omitempty"`
 	ErrorMsg     string     `json:"error_msg,omitempty"`
@@ -88,6 +89,16 @@ func (m *Manager) UpdateProgress(id string, sent int64) {
 	m.mu.Lock()
 	if j, ok := m.jobs[id]; ok {
 		j.BytesSent = sent
+	}
+	m.mu.Unlock()
+}
+
+// SetPercent records a percentage (0–100) when byte counts are unavailable.
+func (m *Manager) SetPercent(id string, pct int) {
+	m.mu.Lock()
+	if j, ok := m.jobs[id]; ok {
+		j.State = StateRunning
+		j.Percent = pct
 	}
 	m.mu.Unlock()
 }
