@@ -5291,12 +5291,12 @@
 </div>
 
 <div class="modal-backdrop hidden" id="modal-cache-config" onclick="if(event.target===this)closeCacheConfigModal()">
-  <div class="modal" style="max-width:520px;">
+  <div class="modal" style="max-width:780px;width:92vw;max-height:90vh;display:flex;flex-direction:column;">
     <div class="modal-header">
       <h3>⚡ L2ARC Cache Config</h3>
       <button class="modal-close" onclick="closeCacheConfigModal()">✕</button>
     </div>
-    <div class="modal-body" style="padding-top:12px;">
+    <div class="modal-body" style="padding-top:12px;overflow-y:auto;flex:1;">
       <div style="background:rgba(48,209,88,0.10);border:1.5px solid rgba(48,209,88,0.45);border-radius:var(--radius);padding:14px 16px;margin-bottom:18px;display:flex;gap:12px;align-items:flex-start;">
         <span style="font-size:20px;flex-shrink:0;">ℹ️</span>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;">
@@ -5918,6 +5918,62 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeDeleteUser()">Cancel</button>
       <button class="btn" style="background:var(--accent-danger);color:#fff;" onclick="executeDeleteUser()">Delete User</button>
+    </div>
+  </div>
+</div>
+
+<!-- System User Exists Confirmation Modal -->
+<div class="modal-backdrop hidden" id="modal-system-user-exists">
+  <div class="modal" style="max-width:480px;border:1px solid var(--accent-warning);">
+    <div class="modal-header" style="background:rgba(255,159,10,0.08);border-bottom:1px solid var(--accent-warning);">
+      <h3 style="color:var(--accent-warning);">Username already exists on the system</h3>
+      <button class="modal-close" onclick="closeSystemUserExists()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--text-1);margin:0 0 10px;">
+        A Linux account named <strong id="sue-username" style="font-family:monospace;"></strong> already exists on this system with:
+      </p>
+      <div style="background:var(--bg-2);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-family:monospace;font-size:13px;">
+        <div>UID: <strong id="sue-uid"></strong></div>
+        <div>GID: <strong id="sue-gid"></strong></div>
+      </div>
+      <p style="font-size:13px;color:var(--text-2);margin:0;">
+        Continue to create the portal user reusing this existing UID/GID. The Linux account will not be re-created; only the portal user record and Samba password are added. Choose Cancel to pick a different username.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSystemUserExists()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmSystemUserExists()">Continue with existing UID/GID</button>
+    </div>
+  </div>
+</div>
+
+<!-- Force Delete Confirmation Modal (datasets and zvols) -->
+<div class="modal-backdrop hidden" id="modal-force-delete-zfs">
+  <div class="modal" style="max-width:520px;border:1px solid var(--accent-danger);">
+    <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
+      <h3 style="color:var(--accent-danger);"><span id="fd-title">Delete failed</span></h3>
+      <button class="modal-close" onclick="closeForceDeleteModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--text-1);margin:0 0 10px;">
+        ZFS refused to destroy <strong id="fd-target" style="font-family:monospace;"></strong>:
+      </p>
+      <pre id="fd-error" style="background:var(--bg-2);border-radius:6px;padding:10px 12px;margin:0 0 14px;font-size:12px;color:var(--text-1);white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto;"></pre>
+      <p style="font-size:13px;color:var(--text-2);margin:0 0 8px;">
+        <strong>Force delete</strong> runs <code style="font-family:monospace;">zfs destroy -Rf</code> which:
+      </p>
+      <ul style="font-size:13px;color:var(--text-2);margin:0 0 12px 18px;padding:0;">
+        <li>Recursively destroys all child datasets, snapshots, <strong>and clones</strong>.</li>
+        <li>Force-unmounts any active mounts and releases zvol device holds.</li>
+      </ul>
+      <p style="font-size:13px;color:var(--accent-danger);margin:0;font-weight:600;">
+        This cannot be undone. Any clones depending on this dataset will also be destroyed.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeForceDeleteModal()">Cancel</button>
+      <button id="btn-force-delete-confirm" class="btn" style="background:var(--accent-danger);color:#fff;" onclick="confirmForceDelete()">Force Delete</button>
     </div>
   </div>
 </div>
@@ -10556,10 +10612,14 @@ function onNewRoleChange() {
   document.getElementById('new-standard-perms').style.display = isStandard ? '' : 'none';
 }
 
+// Holds the most recent create-user payload so the system-user-exists modal can
+// re-submit with approve_existing_system_user=true after admin confirmation.
+let _pendingCreateUserBody = null;
+
 async function submitCreateUser(e) {
-  e.preventDefault();
+  if (e && typeof e.preventDefault === 'function') e.preventDefault();
   const alertEl = document.getElementById('modal-user-alert');
-  const submitBtn = e.submitter || document.querySelector('#modal-create-user button[type="submit"]');
+  const submitBtn = (e && e.submitter) || document.querySelector('#modal-create-user button[type="submit"]');
   alertEl.classList.add('hidden');
 
   // Disable button immediately so the user knows the request is in flight.
@@ -10595,6 +10655,10 @@ async function submitCreateUser(e) {
   if (uidVal !== '') body.uid = parseInt(uidVal, 10);
   if (gidVal !== '') body.gid = parseInt(gidVal, 10);
 
+  await sendCreateUserBody(body, alertEl, submitBtn);
+}
+
+async function sendCreateUserBody(body, alertEl, submitBtn) {
   try {
     const resp = await fetch('/api/users', {
       method: 'POST',
@@ -10603,6 +10667,17 @@ async function submitCreateUser(e) {
     });
     const data = await resp.json();
     if (!resp.ok) {
+      // Server signals "username matches an existing OS user with UID >= 1000".
+      // Show the confirmation modal so the admin can opt in to reusing the
+      // existing UID/GID, or cancel and pick a different name.
+      if (resp.status === 409 && data && data.code === 'system_user_exists') {
+        _pendingCreateUserBody = body;
+        document.getElementById('sue-username').textContent = data.username || body.username;
+        document.getElementById('sue-uid').textContent = data.uid;
+        document.getElementById('sue-gid').textContent = data.gid;
+        document.getElementById('modal-system-user-exists').classList.remove('hidden');
+        return;
+      }
       alertEl.textContent = data.error || 'Failed to create user.';
       alertEl.classList.remove('hidden');
       return;
@@ -10612,6 +10687,28 @@ async function submitCreateUser(e) {
   } finally {
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create User'; }
   }
+}
+
+function closeSystemUserExists() {
+  document.getElementById('modal-system-user-exists').classList.add('hidden');
+  _pendingCreateUserBody = null;
+  // Re-enable the create button if the create modal is still open.
+  const submitBtn = document.querySelector('#modal-create-user button[type="submit"]');
+  if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create User'; }
+}
+
+async function confirmSystemUserExists() {
+  if (!_pendingCreateUserBody) {
+    closeSystemUserExists();
+    return;
+  }
+  const body = { ..._pendingCreateUserBody, approve_existing_system_user: true };
+  document.getElementById('modal-system-user-exists').classList.add('hidden');
+  _pendingCreateUserBody = null;
+  const alertEl = document.getElementById('modal-user-alert');
+  const submitBtn = document.querySelector('#modal-create-user button[type="submit"]');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Creating…'; }
+  await sendCreateUserBody(body, alertEl, submitBtn);
 }
 
 // ===== API Key Info =====
@@ -15121,13 +15218,12 @@ async function submitRecursiveDelete() {
   btn.disabled = true; btn.textContent = 'Deleting…';
   alertEl.classList.add('hidden');
 
-  const resp = await fetch('/api/datasets/' + encodeURIComponent(_recursiveDeleteName) + '?recursive=true', {method:'DELETE'});
+  const name = _recursiveDeleteName;
+  const resp = await fetch('/api/datasets/' + encodeURIComponent(name) + '?recursive=true', {method:'DELETE'});
   const data = await resp.json();
   if (!resp.ok) {
-    btn.disabled = false; btn.textContent = 'Delete Recursively';
-    checkRecursiveDeleteConfirm();
-    alertEl.textContent = data.error || 'Failed to delete dataset.';
-    alertEl.classList.remove('hidden');
+    closeRecursiveDeleteModal();
+    openForceDeleteModal({ kind: 'dataset', name, error: data.error || 'Failed to delete dataset.' });
     return;
   }
   closeRecursiveDeleteModal();
@@ -15793,10 +15889,27 @@ async function confirmDeleteZVol() {
     loadDatasets();
     return;
   }
-  alertEl.textContent = data.error || 'Failed to delete ZVol.';
-  alertEl.classList.remove('hidden');
-  btn.disabled = false;
-  btn.textContent = 'Delete ZVol';
+  closeDeleteZVolModal();
+  openForceDeleteModal({ kind: 'zvol', name, error: data.error || 'Failed to delete ZVol.' });
+}
+
+// positionRowMenuDropdown places dd just below btn with position:fixed, but flips
+// it above when the viewport doesn't have enough room below — keeps the menu fully
+// visible when a row near the bottom of the screen opens its burger menu.
+function positionRowMenuDropdown(dd, btn) {
+  const rect = btn.getBoundingClientRect();
+  const margin = 4;
+  const edgePad = 8;
+  dd.style.position = 'fixed';
+  dd.style.left = Math.max(edgePad, rect.right - dd.offsetWidth) + 'px';
+  const ddH = dd.offsetHeight;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  if (spaceBelow < ddH + margin + edgePad && spaceAbove > spaceBelow) {
+    dd.style.top = Math.max(edgePad, rect.top - margin - ddH) + 'px';
+  } else {
+    dd.style.top = (rect.bottom + margin) + 'px';
+  }
 }
 
 function toggleZVolMenu(evt) {
@@ -15835,10 +15948,7 @@ function toggleZVolMenu(evt) {
   dd.appendChild(delBtn);
 
   document.body.appendChild(dd);
-  const rect = btn.getBoundingClientRect();
-  dd.style.position = 'fixed';
-  dd.style.top  = (rect.bottom + 4) + 'px';
-  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
+  positionRowMenuDropdown(dd, btn);
 
   _openShareMenu = { btn, dropdown: dd };
 }
@@ -16110,11 +16220,58 @@ async function confirmDeleteDataset() {
     closeDeleteDatasetModal();
     openRecursiveDeleteModal(name);
   } else {
-    alertEl.textContent = errMsg;
-    alertEl.classList.remove('hidden');
-    btn.disabled = false;
-    btn.textContent = 'Delete';
+    closeDeleteDatasetModal();
+    openForceDeleteModal({ kind: 'dataset', name, error: errMsg });
   }
+}
+
+// ===== Force Delete Modal (datasets and zvols) =====
+let _forceDeletePending = null;
+
+function openForceDeleteModal({ kind, name, error }) {
+  _forceDeletePending = { kind, name };
+  document.getElementById('fd-title').textContent =
+    kind === 'zvol' ? 'ZVol delete failed' : 'Dataset delete failed';
+  document.getElementById('fd-target').textContent = name;
+  document.getElementById('fd-error').textContent = error || '(no error message)';
+  const btn = document.getElementById('btn-force-delete-confirm');
+  btn.disabled = false;
+  btn.textContent = 'Force Delete';
+  document.getElementById('modal-force-delete-zfs').classList.remove('hidden');
+}
+
+function closeForceDeleteModal() {
+  document.getElementById('modal-force-delete-zfs').classList.add('hidden');
+  _forceDeletePending = null;
+}
+
+async function confirmForceDelete() {
+  if (!_forceDeletePending) return;
+  const { kind, name } = _forceDeletePending;
+  const btn = document.getElementById('btn-force-delete-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Force deleting…';
+
+  let resp;
+  if (kind === 'zvol') {
+    resp = await fetch('/api/zvol/delete', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name, force: true }),
+    });
+  } else {
+    resp = await fetch('/api/datasets/' + encodeURIComponent(name) + '?force=true', {method:'DELETE'});
+  }
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    document.getElementById('fd-error').textContent =
+      'Force delete also failed: ' + (data.error || resp.status + ' ' + resp.statusText);
+    btn.disabled = false;
+    btn.textContent = 'Retry';
+    return;
+  }
+  closeForceDeleteModal();
+  await refreshPoolBar();
+  loadDatasets();
 }
 
 function openEditDataset(name) {
@@ -18917,10 +19074,7 @@ function toggleDsMenu(evt) {
   dd.appendChild(delBtn);
 
   document.body.appendChild(dd);
-  const rect = btn.getBoundingClientRect();
-  dd.style.position = 'fixed';
-  dd.style.top  = (rect.bottom + 4) + 'px';
-  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
+  positionRowMenuDropdown(dd, btn);
 
   _openShareMenu = { btn, dropdown: dd };
 }
@@ -23697,6 +23851,22 @@ async function buildPerfPoolTabs() {
             <div id="perf-zoom-sel-busy-${pool}" style="position:absolute;pointer-events:none;display:none;top:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
           </div>
         </div>
+        <div id="perf-l2-card-${pool}" class="card-sm hidden" style="margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">L2ARC (cache)</div>
+              <i class="info-tip tip-down" data-tip="Secondary ZFS read cache backed by a fast disk (typically NVMe/SSD), known as L2ARC.&#10;&#10;LEFT axis (▬ purple) — bytes currently held in L2ARC (l2_size from arcstats), sampled every 5 min.&#10;RIGHT axis (▬ amber) — L2 hit ratio over each 5-min window: hits / (hits + misses) × 100.&#10;&#10;A high hit % means L2 is absorbing a meaningful share of reads that would otherwise hit the spinning pool. Values are system-wide arcstats; if multiple pools have cache devices the chart is shared between them."></i>
+            </div>
+            <div style="display:flex;gap:14px;">
+              <span id="perf-max-l2size-${pool}"   style="font-size:11px;color:#bf5af2;"></span>
+              <span id="perf-max-l2hitpct-${pool}" style="font-size:11px;color:#ff9f0a;"></span>
+            </div>
+          </div>
+          <div style="position:relative;height:180px;">
+            <canvas id="perf-chart-l2-${pool}"></canvas>
+            <div id="perf-zoom-sel-l2-${pool}" style="position:absolute;pointer-events:none;display:none;top:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
+          </div>
+        </div>
       </div>`;
     cont.appendChild(div);
   }
@@ -24039,14 +24209,17 @@ async function _loadPoolPerfData(pool) {
     loadEl.classList.add('hidden');
     chartsEl.classList.remove('hidden');
 
-    _renderPerfCharts(pool, devices, series);
+    _renderPerfCharts(pool, devices, series, !!data.has_l2arc);
   } catch (_) {
     if (loadEl) { loadEl.classList.remove('hidden'); loadEl.textContent = 'Error loading data.'; }
   }
 }
 
 // Render all 3 per-device stacked charts for one pool (time-based x-axis).
-function _renderPerfCharts(pool, devices, series) {
+// hasL2arc, when true, also renders the L2ARC dual-axis chart (l2 size +
+// l2 hit %) and reveals its card. The card stays hidden when the pool has
+// no cache devices.
+function _renderPerfCharts(pool, devices, series, hasL2arc) {
   if (!_perfCharts[pool]) _perfCharts[pool] = {};
 
   const since   = _perfSinceTs();
@@ -24127,7 +24300,155 @@ function _renderPerfCharts(pool, devices, series) {
     }).join(' ');
   }
 
+  _renderPerfL2Chart(pool, series, xMin, xMax, tickFmt, !!hasL2arc);
+
   _initPerfZoom(pool);
+}
+
+// Render the L2ARC dual-axis chart (capacity left, hit% right) for one pool.
+// Hides the card when hasL2arc is false (no cache device on this pool).
+function _renderPerfL2Chart(pool, series, xMin, xMax, tickFmt, hasL2arc) {
+  const card = document.getElementById('perf-l2-card-' + pool);
+  if (!card) return;
+  if (!hasL2arc) {
+    card.classList.add('hidden');
+    if (_perfCharts[pool] && _perfCharts[pool].l2) {
+      _perfCharts[pool].l2.destroy();
+      _perfCharts[pool].l2 = null;
+    }
+    return;
+  }
+  card.classList.remove('hidden');
+
+  const canvas = document.getElementById('perf-chart-l2-' + pool);
+  if (!canvas) return;
+  if (_perfCharts[pool].l2) _perfCharts[pool].l2.destroy();
+
+  const sizeColor = '#bf5af2'; // purple — capacity
+  const hitColor  = '#ff9f0a'; // amber  — hit %
+
+  const sizeSamples = series['l2size:' + pool]   || [];
+  const hitSamples  = series['l2hitpct:' + pool] || [];
+  const sizePts = sizeSamples.map(s => ({ x: s.ts * 1000, y: s[_perfAgg] ?? null }));
+  const hitPts  = hitSamples.map(s  => ({ x: s.ts * 1000, y: s[_perfAgg] ?? null }));
+
+  // Max badges (only consider points within the visible x-range).
+  let maxSize = 0, maxHit = 0;
+  for (const p of sizePts) { if (p.x >= xMin && p.x <= xMax && (p.y ?? 0) > maxSize) maxSize = p.y; }
+  for (const p of hitPts)  { if (p.x >= xMin && p.x <= xMax && (p.y ?? 0) > maxHit)  maxHit  = p.y; }
+  const sizeEl = document.getElementById('perf-max-l2size-' + pool);
+  const hitEl  = document.getElementById('perf-max-l2hitpct-' + pool);
+  if (sizeEl) sizeEl.textContent = maxSize > 0 ? 'max ' + fmtBytes(maxSize) : '';
+  if (hitEl)  hitEl.textContent  = maxHit  > 0 ? 'max ' + maxHit.toFixed(1) + '%' : '';
+
+  const style     = getComputedStyle(document.body);
+  const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
+  const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
+  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+  const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
+  const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
+  const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+
+  _perfCharts[pool].l2 = new Chart(canvas, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'L2 size',
+          data: sizePts,
+          yAxisID: 'ySize',
+          borderColor: sizeColor,
+          backgroundColor: sizeColor + '33',
+          borderWidth: 1.5,
+          fill: 'origin',
+          pointRadius: 0,
+          tension: 0.3,
+          spanGaps: true,
+        },
+        {
+          label: 'L2 hit %',
+          data: hitPts,
+          yAxisID: 'yHit',
+          borderColor: hitColor,
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          fill: false,
+          pointRadius: 0,
+          tension: 0.3,
+          spanGaps: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'xDedup', intersect: false },
+      layout: { padding: { top: 24, right: 8, left: 4, bottom: 4 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: tipBg,
+          borderColor: tipBorder,
+          borderWidth: 1,
+          titleColor: tipTitle,
+          bodyColor: tipBody,
+          padding: 10,
+          filter: item => item.parsed.y !== null && item.parsed.y !== undefined,
+          callbacks: {
+            title: items => {
+              if (!items.length) return '';
+              const d = new Date(items[0].parsed.x);
+              const pad = n => String(n).padStart(2, '0');
+              return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+                   + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+            },
+            label: ctx => {
+              if (ctx.parsed.y == null) return null;
+              if (ctx.dataset.yAxisID === 'ySize') {
+                return '  L2 size:  ' + fmtBytes(ctx.parsed.y);
+              }
+              return '  L2 hit:   ' + ctx.parsed.y.toFixed(1) + ' %';
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          min: xMin,
+          max: xMax,
+          ticks: { color: tickColor, font: { size: 10 }, maxTicksLimit: 8, maxRotation: 0, callback: tickFmt },
+          grid:  { color: gridColor },
+        },
+        ySize: {
+          position: 'left',
+          min: 0,
+          ticks: {
+            color: sizeColor,
+            font: { size: 10 },
+            callback: v => fmtBytes(v),
+          },
+          grid: { color: gridColor },
+          title: { display: true, text: 'L2 size', color: sizeColor, font: { size: 10 } },
+        },
+        yHit: {
+          position: 'right',
+          min: 0,
+          max: 100,
+          ticks: {
+            color: hitColor,
+            font: { size: 10 },
+            callback: v => v + '%',
+          },
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: 'L2 hit %', color: hitColor, font: { size: 10 } },
+        },
+      },
+    },
+    plugins: [_perfTooltipPlugin],
+  });
 }
 
 function togglePerfFloor() {
@@ -24822,6 +25143,8 @@ document.addEventListener('click', function(e) {
     'modal-edit-user':        closeEditUser,
     'modal-smb-password':     closeSMBPasswordModal,
     'modal-delete-user':      closeDeleteUser,
+    'modal-system-user-exists': closeSystemUserExists,
+    'modal-force-delete-zfs': closeForceDeleteModal,
     'modal-create-dataset':   closeCreateDataset,
     'modal-edit-dataset':     closeEditDataset,
     'modal-zvol-detail':      closeZVolDetail,

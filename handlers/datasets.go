@@ -218,10 +218,14 @@ func HandleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recursive := r.URL.Query().Get("recursive") == "true"
+	force := r.URL.Query().Get("force") == "true"
 	var destroyErr error
-	if recursive {
+	switch {
+	case force:
+		destroyErr = system.DestroyDatasetForce(path)
+	case recursive:
 		destroyErr = system.DestroyDatasetRecursive(path)
-	} else {
+	default:
 		destroyErr = system.DestroyDataset(path)
 	}
 	if destroyErr != nil {

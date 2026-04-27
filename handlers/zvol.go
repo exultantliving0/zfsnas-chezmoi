@@ -138,7 +138,8 @@ func HandleEditZVol(w http.ResponseWriter, r *http.Request) {
 
 func HandleDeleteZVol(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
+		Name  string `json:"name"`
+		Force bool   `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -150,8 +151,14 @@ func HandleDeleteZVol(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := system.DeleteZVol(req.Name); err != nil {
-		jsonErr(w, http.StatusInternalServerError, err.Error())
+	var delErr error
+	if req.Force {
+		delErr = system.DeleteZVolForce(req.Name)
+	} else {
+		delErr = system.DeleteZVol(req.Name)
+	}
+	if delErr != nil {
+		jsonErr(w, http.StatusInternalServerError, delErr.Error())
 		return
 	}
 

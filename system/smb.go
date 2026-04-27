@@ -882,18 +882,30 @@ func GIDExistsOnSystem(gid int) (bool, error) {
 // UsernameExistsOnSystem returns true if the given username is already present
 // in /etc/passwd (covers root, system service accounts, and regular OS users).
 func UsernameExistsOnSystem(username string) (bool, error) {
-	data, err := os.ReadFile("/etc/passwd")
-	if err != nil {
-		return false, fmt.Errorf("read /etc/passwd: %w", err)
+	_, _, exists, err := LookupSystemUser(username)
+	return exists, err
+}
+
+// LookupSystemUser parses /etc/passwd and returns the UID and GID for username.
+// exists is false (with no error) when the username is not present.
+func LookupSystemUser(username string) (uid, gid int, exists bool, err error) {
+	data, rerr := os.ReadFile("/etc/passwd")
+	if rerr != nil {
+		return 0, 0, false, fmt.Errorf("read /etc/passwd: %w", rerr)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		parts := strings.Split(line, ":")
-		// /etc/passwd format: name:pw:uid:gid:gecos:home:shell — name is field index 0
-		if len(parts) >= 1 && parts[0] == username {
-			return true, nil
+		// /etc/passwd format: name:pw:uid:gid:gecos:home:shell
+		if len(parts) >= 4 && parts[0] == username {
+			u, err1 := strconv.Atoi(parts[2])
+			g, err2 := strconv.Atoi(parts[3])
+			if err1 != nil || err2 != nil {
+				return 0, 0, true, fmt.Errorf("malformed /etc/passwd entry for %s", username)
+			}
+			return u, g, true, nil
 		}
 	}
-	return false, nil
+	return 0, 0, false, nil
 }
 
 // ensureSambashareGroup creates the sambashare group if it does not already

@@ -96,15 +96,16 @@ func HandleListUsers(w http.ResponseWriter, r *http.Request) {
 // HandleCreateUser creates a new user (admin only).
 func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username      string                      `json:"username"`
-		Email         string                      `json:"email"`
-		Password      string                      `json:"password"`
-		SMBPassword   string                      `json:"smb_password"`
-		Role          string                      `json:"role"`
-		SMBHomeFolder bool                        `json:"smb_home_folder"`
-		UID           *int                        `json:"uid"`
-		GID           *int                        `json:"gid"`
-		StandardPerms *config.StandardPermissions `json:"standard_perms"`
+		Username                 string                      `json:"username"`
+		Email                    string                      `json:"email"`
+		Password                 string                      `json:"password"`
+		SMBPassword              string                      `json:"smb_password"`
+		Role                     string                      `json:"role"`
+		SMBHomeFolder            bool                        `json:"smb_home_folder"`
+		UID                      *int                        `json:"uid"`
+		GID                      *int                        `json:"gid"`
+		StandardPerms            *config.StandardPermissions `json:"standard_perms"`
+		ApproveExistingSystemUser bool                       `json:"approve_existing_system_user"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -154,19 +155,44 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject usernames that already exist on the host OS (root, system service
-	// accounts, or any other OS user) — creating a portal user with the same name
-	// would collide with the system account during Linux user provisioning.
-	if osExists, err := system.UsernameExistsOnSystem(req.Username); err != nil {
+	// Reject system usernames (UID < 1000 — root, system service accounts) outright.
+	// Regular OS users (UID >= 1000) may be reused if the admin explicitly approves:
+	// the response carries the existing UID/GID so the frontend can prompt before
+	// re-submitting with approve_existing_system_user=true.
+	osUID, osGID, osExists, err := system.LookupSystemUser(req.Username)
+	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to check OS username: "+err.Error())
 		return
-	} else if osExists {
-		jsonErr(w, http.StatusConflict, fmt.Sprintf("username '%s' is already in use by the operating system", req.Username))
-		return
+	}
+	reuseSystemUser := false
+	if osExists {
+		if osUID < 1000 {
+			jsonErr(w, http.StatusConflict, fmt.Sprintf("username '%s' is a system account (UID %d) and cannot be reused", req.Username, osUID))
+			return
+		}
+		if !req.ApproveExistingSystemUser {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error":    fmt.Sprintf("username '%s' already exists on the system (UID %d, GID %d)", req.Username, osUID, osGID),
+				"code":     "system_user_exists",
+				"username": req.Username,
+				"uid":      osUID,
+				"gid":      osGID,
+			})
+			return
+		}
+		// Approved: adopt the existing UID/GID; subsequent UID/GID-in-use checks
+		// must skip these specific values since reuse is intentional.
+		req.UID = &osUID
+		req.GID = &osGID
+		reuseSystemUser = true
 	}
 
 	// Check that the requested UID/GID are not already in use — first in portal
-	// users, then in the system /etc/passwd and /etc/group.
+	// users, then in the system /etc/passwd and /etc/group. When reusing an
+	// existing OS account, the system-side check is skipped because the UID/GID
+	// collision with that account is the whole point.
 	if req.UID != nil {
 		for _, u := range users {
 			if u.UID != nil && *u.UID == *req.UID {
@@ -174,12 +200,14 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if taken, err := system.UIDExistsOnSystem(*req.UID); err != nil {
-			jsonErr(w, http.StatusInternalServerError, "failed to check UID: "+err.Error())
-			return
-		} else if taken {
-			jsonErr(w, http.StatusConflict, fmt.Sprintf("UID %d is already in use by a system account", *req.UID))
-			return
+		if !reuseSystemUser {
+			if taken, err := system.UIDExistsOnSystem(*req.UID); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "failed to check UID: "+err.Error())
+				return
+			} else if taken {
+				jsonErr(w, http.StatusConflict, fmt.Sprintf("UID %d is already in use by a system account", *req.UID))
+				return
+			}
 		}
 	}
 	if req.GID != nil {
@@ -189,12 +217,14 @@ func HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if taken, err := system.GIDExistsOnSystem(*req.GID); err != nil {
-			jsonErr(w, http.StatusInternalServerError, "failed to check GID: "+err.Error())
-			return
-		} else if taken {
-			jsonErr(w, http.StatusConflict, fmt.Sprintf("GID %d is already in use by a system group", *req.GID))
-			return
+		if !reuseSystemUser {
+			if taken, err := system.GIDExistsOnSystem(*req.GID); err != nil {
+				jsonErr(w, http.StatusInternalServerError, "failed to check GID: "+err.Error())
+				return
+			} else if taken {
+				jsonErr(w, http.StatusConflict, fmt.Sprintf("GID %d is already in use by a system group", *req.GID))
+				return
+			}
 		}
 	}
 

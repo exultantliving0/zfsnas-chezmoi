@@ -2158,6 +2158,17 @@ func DestroyDatasetRecursive(name string) error {
 	return nil
 }
 
+// DestroyDatasetForce removes a dataset using "zfs destroy -Rf": -R recurses
+// through children, snapshots, and clones; -f force-unmounts any active mounts.
+// This is the "last resort" path exposed in the UI when a regular delete fails.
+func DestroyDatasetForce(name string) error {
+	out, err := exec.Command("sudo", "zfs", "destroy", "-Rf", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ── Snapshots ─────────────────────────────────────────────────────────────────
 
 // Snapshot represents a ZFS snapshot.
@@ -2245,6 +2256,47 @@ func strftimeToGo(f string) string {
 		"%S", "05",
 	)
 	return r.Replace(f)
+}
+
+// DatasetForPath resolves a filesystem path (typically a share mountpoint such
+// as "/mnt/tank/testds") to the ZFS dataset name that backs it (e.g. "tank/testds").
+// First tries "zfs list -H -o name <path>" which returns the dataset whose mount
+// area contains the path; falls back to a mountpoint scan via ListAllDatasets so
+// the resolution still works when zfs/sudo paths differ between distributions.
+func DatasetForPath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	if out, err := exec.Command("sudo", "zfs", "list", "-H", "-o", "name", path).Output(); err == nil {
+		name := strings.TrimSpace(string(out))
+		if name != "" {
+			return name, nil
+		}
+	}
+	// Fallback: best mountpoint match (longest prefix wins so nested datasets
+	// resolve to the closest ancestor).
+	datasets, err := ListAllDatasets()
+	if err != nil {
+		return "", err
+	}
+	bestName := ""
+	bestLen := 0
+	for _, d := range datasets {
+		mp := strings.TrimSpace(d.Mountpoint)
+		if mp == "" || mp == "none" || mp == "-" || mp == "legacy" {
+			continue
+		}
+		if path == mp || strings.HasPrefix(path, mp+"/") {
+			if len(mp) > bestLen {
+				bestLen = len(mp)
+				bestName = d.Name
+			}
+		}
+	}
+	if bestName == "" {
+		return "", fmt.Errorf("no ZFS dataset found for path %q", path)
+	}
+	return bestName, nil
 }
 
 // CreateShadowCopySnapshot creates a snapshot whose name matches the given
@@ -2570,6 +2622,17 @@ func EditZVol(req ZVolEditRequest) error {
 // DeleteZVol destroys a ZVol and all its snapshots.
 func DeleteZVol(name string) error {
 	out, err := exec.Command("sudo", "zfs", "destroy", "-r", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// DeleteZVolForce destroys a ZVol using "zfs destroy -Rf": -R also removes any
+// clones; -f releases the device if it is currently held open. Used by the UI
+// after a regular delete fails (e.g. an LXD instance still has the zvol attached).
+func DeleteZVolForce(name string) error {
+	out, err := exec.Command("sudo", "zfs", "destroy", "-Rf", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}

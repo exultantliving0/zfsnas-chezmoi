@@ -16,7 +16,13 @@ func GetPoolPerfDB() *capacityrrd.DB {
 
 // StartPoolPerfCollector opens (or creates) the per-pool disk performance RRD
 // and starts a goroutine that samples disk I/O per pool every 5 minutes.
-// Series keys: read:{pool}:{dev}, write:{pool}:{dev}, busy:{pool}:{dev}
+// Series keys:
+//   read:{pool}:{dev}, write:{pool}:{dev}, busy:{pool}:{dev}
+//   l2size:{pool}      — bytes currently held in L2ARC (system-wide arcstats)
+//   l2hitpct:{pool}    — L2 hit % over the 5-minute window
+// L2 series are emitted only for pools that have at least one cache device.
+// Because arcstats expose system-wide L2 counters (no per-pool breakdown), the
+// same numeric values are written for every pool that has L2ARC.
 func StartPoolPerfCollector(configDir string) {
 	dbPath := filepath.Join(configDir, "pool_perf.rrd.json")
 	db, err := capacityrrd.Open(dbPath)
@@ -44,6 +50,12 @@ func StartPoolPerfCollector(configDir string) {
 		}
 		prevDiskIO, _ := readDiskstats(allDevs)
 		prevDiskTime := time.Now()
+
+		// Prime L2 hit/miss counters so the first tick can compute a delta.
+		var prevL2Hits, prevL2Misses int64
+		if arc, err := GetARCStats(); err == nil {
+			prevL2Hits, prevL2Misses = arc.L2Hits, arc.L2Misses
+		}
 
 		tick := time.NewTicker(5 * time.Minute)
 		defer tick.Stop()
@@ -88,6 +100,38 @@ func StartPoolPerfCollector(configDir string) {
 							db.Record("write:"+pool+":"+dev, writeMBps, now)
 							db.Record("busy:"+pool+":"+dev,  busy,      now)
 						}
+					}
+				}
+			}
+
+			// L2ARC sampling — only when at least one pool has cache devices.
+			// arcstats are system-wide, so the same values are recorded for every
+			// pool that currently exposes L2ARC.
+			if pools, perr := GetAllPools(); perr == nil {
+				var l2Pools []string
+				for _, p := range pools {
+					if p != nil && len(p.CacheDevs) > 0 {
+						l2Pools = append(l2Pools, p.Name)
+					}
+				}
+				if len(l2Pools) > 0 {
+					if arc, aerr := GetARCStats(); aerr == nil {
+						dHits := arc.L2Hits - prevL2Hits
+						dMiss := arc.L2Misses - prevL2Misses
+						var hitPct float64
+						if dHits < 0 || dMiss < 0 {
+							// Counter reset (module reload) — skip this sample.
+							hitPct = -1
+						} else if total := dHits + dMiss; total > 0 {
+							hitPct = float64(dHits) / float64(total) * 100
+						}
+						for _, pool := range l2Pools {
+							db.Record("l2size:"+pool, float64(arc.L2Size), now)
+							if hitPct >= 0 {
+								db.Record("l2hitpct:"+pool, hitPct, now)
+							}
+						}
+						prevL2Hits, prevL2Misses = arc.L2Hits, arc.L2Misses
 					}
 				}
 			}

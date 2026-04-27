@@ -107,7 +107,7 @@ func HandleGetPoolPerfData(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(devices)
 
-	// Build the full key list: read/write/busy × device.
+	// Build the full key list: read/write/busy × device, plus L2ARC series.
 	var keys []string
 	for _, dev := range devices {
 		keys = append(keys,
@@ -116,6 +116,7 @@ func HandleGetPoolPerfData(w http.ResponseWriter, r *http.Request) {
 			"busy:"+pool+":"+dev,
 		)
 	}
+	keys = append(keys, "l2size:"+pool, "l2hitpct:"+pool)
 
 	result := make(map[string][]capacityrrd.CapSample, len(keys))
 	for _, key := range keys {
@@ -136,10 +137,22 @@ func HandleGetPoolPerfData(w http.ResponseWriter, r *http.Request) {
 		result[key] = samples
 	}
 
+	// has_l2arc lets the UI show or hide the L2ARC card. Reflect both the
+	// stored history (any l2size sample ever recorded) and the live state
+	// (the pool currently has a cache device) so the chart appears as soon
+	// as L2 is added, even before the first sample lands.
+	hasL2 := len(result["l2size:"+pool]) > 0
+	if !hasL2 {
+		if p, perr := system.GetPoolByName(pool); perr == nil && p != nil && len(p.CacheDevs) > 0 {
+			hasL2 = true
+		}
+	}
+
 	jsonOK(w, map[string]interface{}{
-		"pool":    pool,
-		"tier":    tier,
-		"devices": devices,
-		"series":  result,
+		"pool":      pool,
+		"tier":      tier,
+		"devices":   devices,
+		"series":    result,
+		"has_l2arc": hasL2,
 	})
 }

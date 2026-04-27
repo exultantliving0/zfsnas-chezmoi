@@ -557,10 +557,17 @@ func HandleCreateVSSSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Convert mount path to dataset name (strip leading /).
-		dataset := strings.TrimPrefix(share.Path, "/")
-		if dataset == "" {
+		if share.Path == "" {
 			jsonErr(w, http.StatusBadRequest, "share has no backing path")
+			return
+		}
+		// Resolve the share's mount path to its ZFS dataset name. The previous
+		// "strip leading /" shortcut produced things like "mnt/tank/testds" which
+		// is a path, not a dataset, and broke "zfs snapshot" for any pool not
+		// mounted at /<poolname>.
+		dataset, err := system.DatasetForPath(share.Path)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, "resolve dataset for share path: "+err.Error())
 			return
 		}
 
