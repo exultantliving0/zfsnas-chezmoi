@@ -22432,6 +22432,44 @@ function applyUpdates() {
   const TERM_MIN = 150, TERM_MAX = 1400, TERM_KEY = 'term-panel-height';
   const AB_MIN   = 38,  AB_MAX   = 600, AB_KEY  = 'activity-bar-height';
 
+  // Dynamic upper bound for terminal panels: clamp so the activity bar's
+  // bottom edge never crosses the viewport bottom. The static maxFn below is
+  // just a coarse upper limit (used for the initial restore from
+  // localStorage); the authoritative limit is enforced live during drag by
+  // post-clamping against the actual rendered layout — see clampToViewport().
+  const TERM_BOTTOM_RESERVE_PX = 4; // tiny safety so the AB border isn't pixel-clipped
+  function termViewportMax() {
+    const ab = document.getElementById('activity-bar');
+    const abH = ab ? ab.getBoundingClientRect().height : 38;
+    return Math.max(TERM_MIN, window.innerHeight - abH - TERM_BOTTOM_RESERVE_PX);
+  }
+  function effectiveMax(opts) {
+    const cap = (typeof opts.maxFn === 'function') ? opts.maxFn() : opts.max;
+    return Math.min(opts.max, cap);
+  }
+  // After a tentative height is applied, measure the activity bar's bottom
+  // edge and pull the target back by however much it overflowed the viewport.
+  // This is correct by construction: it lets flexbox finalise the layout
+  // (topbar + flex:1 page content shrinking, etc.) before deciding what's
+  // actually too tall, instead of trying to predict it from heights alone.
+  function clampToViewport(target, opts) {
+    if (!opts.viewportClamp) return;
+    const ab = document.getElementById('activity-bar');
+    if (!ab) return;
+    const overflow = Math.ceil(ab.getBoundingClientRect().bottom - window.innerHeight + TERM_BOTTOM_RESERVE_PX);
+    if (overflow > 0) {
+      const cur = target.getBoundingClientRect().height;
+      const next = Math.max(opts.min, cur - overflow);
+      if (next !== cur) {
+        target.style.height = next + 'px';
+        if (opts.onDrag) opts.onDrag(next);
+      }
+    }
+  }
+
+  // Track resize handles so the window-resize listener can re-clamp them.
+  const _resizeTargets = [];
+
   function initResizeHandle(handleId, targetId, opts) {
     const handle = document.getElementById(handleId);
     const target = document.getElementById(targetId);
@@ -22451,9 +22489,12 @@ function applyUpdates() {
 
       function onMove(e) {
         const delta = startY - e.clientY;
-        const newH = Math.min(opts.max, Math.max(opts.min, startH + delta));
+        const newH = Math.min(effectiveMax(opts), Math.max(opts.min, startH + delta));
         target.style.height = newH + 'px';
         if (opts.onDrag) opts.onDrag(newH);
+        // Post-clamp against the live layout so the activity bar can never
+        // be pushed below the viewport bottom regardless of what's above.
+        clampToViewport(target, opts);
       }
 
       function onUp() {
@@ -22463,6 +22504,7 @@ function applyUpdates() {
         document.body.style.cursor = '';
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
+        clampToViewport(target, opts);
         const finalH = target.getBoundingClientRect().height;
         if (opts.onDone) opts.onDone(finalH);
       }
@@ -22471,27 +22513,55 @@ function applyUpdates() {
       document.addEventListener('mouseup', onUp);
     });
 
-    // Restore saved height.
+    // Restore saved height (clamped against the live viewport-derived max).
     const saved = localStorage.getItem(opts.key);
     if (saved) {
-      const h = parseInt(saved, 10);
-      if (h >= opts.min && h <= opts.max) {
-        target.style.height = h + 'px';
-        if (opts.onRestore) opts.onRestore(h);
-      }
+      const h = Math.min(effectiveMax(opts), Math.max(opts.min, parseInt(saved, 10) || opts.min));
+      target.style.height = h + 'px';
+      if (opts.onRestore) opts.onRestore(h);
+      // Defer the post-layout clamp until the panel is actually visible —
+      // term-panel starts hidden and getBoundingClientRect on a hidden
+      // element returns 0 so a clamp here would be a no-op.
+      requestAnimationFrame(() => clampToViewport(target, opts));
     }
+    _resizeTargets.push({ target, opts });
   }
+
+  // Re-clamp every panel when the window resizes: anything that's now larger
+  // than its viewport-derived max gets snapped back, then post-clamped
+  // against the live layout. Without this, resizing the browser smaller
+  // leaves the activity bar below the visible area.
+  let _resizeRaf = 0;
+  window.addEventListener('resize', () => {
+    if (_resizeRaf) return;
+    _resizeRaf = requestAnimationFrame(() => {
+      _resizeRaf = 0;
+      for (const { target, opts } of _resizeTargets) {
+        const max = effectiveMax(opts);
+        const cur = target.getBoundingClientRect().height;
+        if (cur > max) {
+          target.style.height = max + 'px';
+          if (opts.onDrag) opts.onDrag(max);
+        }
+        clampToViewport(target, opts);
+        const finalH = target.getBoundingClientRect().height;
+        if (finalH !== cur && opts.onDone) opts.onDone(finalH);
+      }
+    });
+  });
 
   // Terminal resize — callbacks reference _termFit lazily at call time.
   initResizeHandle('term-resize-handle', 'term-panel', {
-    min: TERM_MIN, max: TERM_MAX, key: TERM_KEY,
+    min: TERM_MIN, max: TERM_MAX, maxFn: termViewportMax, key: TERM_KEY,
+    viewportClamp: true,
     onDrag: () => { if (_termFit) _termFit.fit(); },
     onDone: h => { localStorage.setItem(TERM_KEY, h); if (_termFit) _termFit.fit(); },
   });
 
   // CI bottom terminal resize.
   initResizeHandle('ci-term-resize-handle', 'ci-term-panel', {
-    min: TERM_MIN, max: 1400, key: 'ci-term-panel-height',
+    min: TERM_MIN, max: 1400, maxFn: termViewportMax, key: 'ci-term-panel-height',
+    viewportClamp: true,
     onDrag: () => { if (_ciTermFit) _ciTermFit.fit(); },
     onDone: h => { localStorage.setItem('ci-term-panel-height', h); if (_ciTermFit) _ciTermFit.fit(); },
   });
