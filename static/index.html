@@ -1643,17 +1643,13 @@
                       </select>
                     </div>
                   </div>
-                  <!-- Container-only: Swap -->
+                  <!-- Container-only: Swap (LXD only supports allow/disallow, no size knob) -->
                   <div class="form-group" style="margin:0;display:none;" id="lxd-edit-swap-row">
-                    <label class="form-label">Swap <span style="font-size:11px;color:var(--text-3);">(0 = unlimited)</span></label>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                      <input type="number" id="lxd-edit-swap" class="input" style="width:100px;" min="0" value="0">
-                      <select id="lxd-edit-swap-unit" class="input" style="width:72px;">
-                        <option value="MB">MB</option>
-                        <option value="GB">GB</option>
-                      </select>
-                    </div>
-                    <div style="font-size:11px;color:var(--text-3);margin-top:4px;">0 = unlimited</div>
+                    <label class="form-label">Swap</label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                      <input type="checkbox" id="lxd-edit-swap-allow" checked> Allow this container to swap
+                    </label>
+                    <div style="font-size:11px;color:var(--text-3);margin-top:4px;">LXD has no per-instance swap-size limit; this is a yes/no choice.</div>
                   </div>
                 </div>
                 <!-- VM-only: Hugepages -->
@@ -2280,14 +2276,10 @@
                     </div>
                     <div class="form-group" style="margin:0;">
                       <label>Swap</label>
-                      <div style="display:flex;gap:8px;">
-                        <input type="number" class="input" id="lxd-ct-swap" value="0" min="0" placeholder="0 = no swap">
-                        <select id="lxd-ct-swap-unit" class="input" style="width:76px;">
-                          <option value="MB">MB</option>
-                          <option value="GB">GB</option>
-                        </select>
-                      </div>
-                      <div style="font-size:11px;color:var(--text-3);margin-top:4px;">0 = no swap</div>
+                      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                        <input type="checkbox" id="lxd-ct-swap-allow" checked> Allow this container to swap
+                      </label>
+                      <div style="font-size:11px;color:var(--text-3);margin-top:4px;">LXD has no per-instance swap-size limit; this is a yes/no choice.</div>
                     </div>
                   </div>
                 </div>
@@ -30456,20 +30448,14 @@ async function openLXDEditModal(name, type) {
       const priorityEl = document.getElementById('lxd-edit-cpu-priority');
       if (priorityEl) priorityEl.value = cfg.cpu_shares > 0 ? cfg.cpu_shares : '5';
     }
-    // Container-specific: Swap
+    // Container-specific: Swap (LXD only stores allow/disallow, no size).
     if (!cfg.is_vm) {
-      const swapEl = document.getElementById('lxd-edit-swap');
-      const swapUnitEl = document.getElementById('lxd-edit-swap-unit');
-      const swapStr = cfg.swap_limit || '';
-      if (swapStr && swapStr !== 'false') {
-        const swapM = swapStr.match(/^(\d+)\s*(MB|GB)?$/i);
-        if (swapM) {
-          if (swapEl) swapEl.value = swapM[1];
-          if (swapUnitEl) swapUnitEl.value = (swapM[2] || 'MB').toUpperCase();
-        }
-      } else {
-        if (swapEl) swapEl.value = '0';
-        if (swapUnitEl) swapUnitEl.value = 'MB';
+      const allowEl = document.getElementById('lxd-edit-swap-allow');
+      if (allowEl) {
+        // swap_limit comes from limits.memory.swap. "false" means swap is
+        // disallowed; anything else (including empty / "true" / a legacy
+        // size string) is treated as "allow".
+        allowEl.checked = (cfg.swap_limit || '').toLowerCase() !== 'false';
       }
     }
     // Memory reservation (VM-only in edit)
@@ -30558,13 +30544,14 @@ async function submitLXDEdit() {
     .filter(d => !d._deleted && !d.from_profile)
     .map(d => ({name: d.name, pool: d.pool, size: d.size, is_root: d.is_root, boot_priority: d.boot_priority || '', reserve_pct: d.reserve_pct || 0}));
 
-  // Container-specific: build swap_limit string
+  // Container-specific: build swap_limit string. LXD's limits.memory.swap is
+  // a boolean: "true" = allow, "false" = disallow. The default is "allow",
+  // so when the checkbox is checked we send "" (leave the key unset and let
+  // LXD apply its default) to keep the config minimal.
   const _editSwapLimit = () => {
     if (_lxdEditIsVM) return '';
-    const v = parseInt(document.getElementById('lxd-edit-swap')?.value) || 0;
-    const u = document.getElementById('lxd-edit-swap-unit')?.value || 'MB';
-    if (v <= 0) return '';
-    return v + u;
+    const allow = !!document.getElementById('lxd-edit-swap-allow')?.checked;
+    return allow ? '' : 'false';
   };
 
   const body = {
@@ -32576,7 +32563,7 @@ async function openNewContainerModal() {
   document.getElementById('lxd-ct-startup-delay').value   = '0';
   document.getElementById('lxd-ct-cpu-shares').value      = '5';
   document.getElementById('lxd-ct-cpu-limit').value       = '';
-  document.getElementById('lxd-ct-swap').value            = '0';
+  document.getElementById('lxd-ct-swap-allow').checked    = true;
   document.getElementById('lxd-ct-nic0-mac').value        = '';
   document.getElementById('lxd-ct-nic0-vlan').value       = '';
   document.getElementById('lxd-ct-nic0-ip').value         = '';
@@ -32613,7 +32600,6 @@ async function openNewContainerModal() {
     header:'<span>OS</span><span>Release</span><span>Variant</span><span>Build Date</span><span>Description</span>'});
   initCustomSelect('lxd-ct-image-source');
   initCustomSelect('lxd-ct-mem-unit');
-  initCustomSelect('lxd-ct-swap-unit');
   initCustomSelect('lxd-ct-root-pool');
   initCustomSelect('lxd-ct-nic0-bridge');
   initCustomSelect('lxd-ct-nic0-ipv4mode');
@@ -32856,10 +32842,10 @@ async function submitCreateContainer(e) {
   let memMB = parseInt(document.getElementById('lxd-ct-mem').value) || 512;
   if (memUnit === 'GB') memMB *= 1024;
 
-  const swapUnit = document.getElementById('lxd-ct-swap-unit').value;
-  let swapMB = parseInt(document.getElementById('lxd-ct-swap').value) || 0;
-  if (swapMB < 0) swapMB = -1; // -1 means disabled
-  else if (swapMB > 0 && swapUnit === 'GB') swapMB *= 1024;
+  // LXD's limits.memory.swap is a boolean (allow/disallow only). Map the
+  // checkbox to swap_mb=1 (allow) or swap_mb=-1 (disallow). The backend
+  // already treats any positive value as "allow".
+  const swapMB = document.getElementById('lxd-ct-swap-allow').checked ? 1 : -1;
 
   _lxdCTNICs.forEach((n, i) => {
     const sel = document.getElementById('lxd-ct-nic-net-' + i);

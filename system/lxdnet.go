@@ -364,12 +364,14 @@ iface %s inet manual
 
 	newContent := string(existing) + stanza
 
-	// /etc/network/interfaces is written in-process; no sudo entry is granted for
-	// this path, so the portal must be running as root for VLAN management to work.
-	if os.Getuid() != 0 {
-		return fmt.Errorf("writing /etc/network/interfaces requires running as root")
+	// /etc/network/interfaces edits go through writeInterfacesFile (root → direct
+	// I/O; sudo-all → "sudo tee"); the hardened sudoers template grants no entry
+	// for this path, so neither hardened nor "none" mode can write it.
+	sudoMode := CheckSudoAccess().Type
+	if sudoMode != "root" && sudoMode != "all" {
+		return fmt.Errorf("editing /etc/network/interfaces requires running as root or having unrestricted sudo (sudo-all)")
 	}
-	if err := os.WriteFile("/etc/network/interfaces", []byte(newContent), 0644); err != nil {
+	if err := writeInterfacesFile("/etc/network/interfaces", []byte(newContent)); err != nil {
 		return fmt.Errorf("write interfaces: %w", err)
 	}
 
@@ -422,10 +424,9 @@ func removeVLANInterfaceStanza(iface string) {
 		}
 	}
 
-	// Best-effort write; only succeeds when running as root since no sudo entry
-	// is granted for /etc/network/interfaces.
-	if os.Getuid() == 0 {
-		_ = os.WriteFile("/etc/network/interfaces", []byte(content), 0644)
+	// Best-effort write; succeeds when running as root or with sudo-all.
+	if mode := CheckSudoAccess().Type; mode == "root" || mode == "all" {
+		_ = writeInterfacesFile("/etc/network/interfaces", []byte(content))
 	}
 
 	// Best-effort bring-down.

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -1091,6 +1092,68 @@ func vmApplyCDROMs(name string, paths []string, applyConf func(string, string) e
 	applyConf("raw.apparmor", newAA) //nolint:errcheck
 }
 
+// lxdSupportsConfigKey probes whether the running LXD version accepts a given
+// instance config key. Result is cached per process. Used to gate optional
+// keys like security.syscalls.intercept.keyctl that exist on newer LXD but
+// not on LXD 5.0.x. Implementation: try `lxc config set` on a throwaway
+// project-default profile is too invasive — instead we ask LXD's own metadata
+// endpoint, which lists every supported key.
+var (
+	lxdSupportedKeysOnce sync.Once
+	lxdSupportedKeys     map[string]bool
+)
+
+func lxdSupportsConfigKey(key string) bool {
+	lxdSupportedKeysOnce.Do(func() {
+		lxdSupportedKeys = map[string]bool{}
+		out, err := exec.Command("lxc", "query", "/1.0/metadata/configuration").Output()
+		if err != nil {
+			return
+		}
+		// Walk the metadata recursively looking for any field literally
+		// named the config key. The metadata schema is nested and varies
+		// across LXD versions, so a string scan is the most resilient.
+		// We scan for the key embedded in JSON — false positives are
+		// fine because we'll fall back to LXD's own validation if a
+		// caller still tries to set it.
+		s := string(out)
+		// Pre-extract every "key" name; LXD's metadata uses `"<keyname>": {...}`
+		// pattern at the leaves.
+		for _, line := range strings.Split(s, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, `"`) {
+				continue
+			}
+			end := strings.Index(line[1:], `"`)
+			if end < 0 {
+				continue
+			}
+			name := line[1 : 1+end]
+			if strings.Contains(name, ".") {
+				lxdSupportedKeys[name] = true
+			}
+		}
+	})
+	return lxdSupportedKeys[key]
+}
+
+// normalizeSwapLimit normalizes a user-supplied limits.memory.swap value to
+// what LXD actually accepts: a boolean string ("true"/"false"), or empty to
+// leave the key unset. Sizes (e.g. "2GB", "2048MB") are silently coerced to
+// "true" (swap allowed) because LXD has no per-instance swap-size limit —
+// passing the size as-is fails with "Invalid value for a boolean".
+func normalizeSwapLimit(v string) string {
+	t := strings.TrimSpace(strings.ToLower(v))
+	switch t {
+	case "", "true", "false", "0", "1":
+		return t
+	}
+	// Anything else (size strings, bytes literal, etc.) → "true".
+	// "false"-like sentinels handled above; everything that survives means
+	// "user wants swap to exist", which in LXD terms is just "true".
+	return "true"
+}
+
 // lxdPatchConfig sets or unsets a single LXD config key using the REST API,
 // avoiding lxc config set's flag-parsing issues with values that start with '-'.
 func lxdPatchConfig(name, key, val string) {
@@ -1259,7 +1322,8 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 		CPUShares:     cpuShares,
 		SwapLimit:     raw.Config["limits.memory.swap"],
 		Unprivileged:  raw.Config["security.privileged"] != "true",
-		FeatureKeyctl: strings.Contains(raw.Config["security.syscalls.allow"], "keyctl"),
+		FeatureKeyctl: raw.Config["security.syscalls.intercept.keyctl"] == "true" ||
+			strings.Contains(raw.Config["security.syscalls.allow"], "keyctl"),
 	}
 	for devName, devCfg := range raw.ExpandedDevices {
 		_, isInstanceLevel := raw.Devices[devName]
@@ -1664,9 +1728,15 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		return nil
 	}
 	// CPU pinning (range string) takes precedence over bare count.
+	// LXD's limits.cpu uses two different syntaxes selected by presence of
+	// "," or "-": with separators it's a pin set (specific CPUs); without
+	// separators it's a count (number of vCPUs). A user typing a single CPU
+	// index like "5" would otherwise be interpreted as "5 vCPUs", not
+	// "pinned to CPU 5". Normalize a bare positive integer in CPUPin to
+	// "N-N" so the user's intent is preserved.
 	effectiveCPU := cfg.CPULimit
 	if cfg.CPUPin != "" {
-		effectiveCPU = cfg.CPUPin
+		effectiveCPU = normalizeCPUPin(cfg.CPUPin)
 	}
 	if err := applyConf("limits.cpu", effectiveCPU); err != nil {
 		return err
@@ -1797,7 +1867,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		if err := applyConf("limits.cpu.priority", priority); err != nil {
 			return err
 		}
-		if err := applyConf("limits.memory.swap", cfg.SwapLimit); err != nil {
+		if err := applyConf("limits.memory.swap", normalizeSwapLimit(cfg.SwapLimit)); err != nil {
 			return err
 		}
 		privVal := ""
@@ -1807,12 +1877,23 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		if err := applyConf("security.privileged", privVal); err != nil {
 			return err
 		}
-		keyctlVal := ""
+		// "Allow keyctl" must NOT be expressed via security.syscalls.allow:
+		// that key is a *whitelist* — when set to "keyctl" LXD denies every
+		// other syscall (close, read, write, ...) and the container can't
+		// boot. Use the dedicated intercept key when LXD supports it; on
+		// older LXD (5.0.x and below) the intercept key doesn't exist and
+		// the default seccomp profile already permits keyctl, so we leave
+		// the config untouched. Either way, drop any stale allow=keyctl
+		// value left by the old buggy code.
+		exec.Command("lxc", "config", "unset", name, "security.syscalls.allow").Run() //nolint:errcheck
 		if cfg.FeatureKeyctl {
-			keyctlVal = "keyctl"
-		}
-		if err := applyConf("security.syscalls.allow", keyctlVal); err != nil {
-			return err
+			if lxdSupportsConfigKey("security.syscalls.intercept.keyctl") {
+				if err := applyConf("security.syscalls.intercept.keyctl", "true"); err != nil {
+					return err
+				}
+			}
+		} else {
+			exec.Command("lxc", "config", "unset", name, "security.syscalls.intercept.keyctl").Run() //nolint:errcheck
 		}
 	}
 
@@ -1907,7 +1988,41 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				continue
 			}
 			if isProfileOnly {
-				// Profile NIC being reconnected: bring the link back up.
+				// Profile-inherited NIC. Compare the requested settings against the
+				// profile's effective values; if anything the user can edit (bridge,
+				// VLAN, MAC) differs we must add a local instance-level device that
+				// overrides the profile NIC. Without this override the request was
+				// silently swallowed — the audit log showed "lxd_edit_config" success
+				// while the VM kept the profile's old bridge.
+				profDev    := expandedNICs[nic.Name]
+				profBridge := profDev["network"]
+				if profBridge == "" {
+					profBridge = profDev["parent"]
+				}
+				profVlan := profDev["vlan"]
+				profMAC  := strings.ToLower(profDev["hwaddr"])
+				wantVlan := ""
+				if nic.VlanID > 0 {
+					wantVlan = fmt.Sprintf("%d", nic.VlanID)
+				}
+				wantMAC := strings.ToLower(nic.MAC)
+				needsOverride := profBridge != nic.Bridge || profVlan != wantVlan || profMAC != wantMAC
+				if needsOverride {
+					// Always pin overrides as nictype=bridged so we don't end up
+					// double-registering the instance in an LXD-managed bridge's DNS.
+					args := nicBridgedArgs(nic.Name, nic.Bridge)
+					if wantVlan != "" {
+						args = append(args, "vlan="+wantVlan)
+					}
+					if wantMAC != "" {
+						args = append(args, "hwaddr="+wantMAC)
+					}
+					if out, err := lxcNICRun(nic.Bridge, args); err != nil {
+						return fmt.Errorf("override profile NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
+					}
+				}
+				// Bring the link up regardless (best-effort; VMs without lxd-agent
+				// will fail silently, which is the existing pre-fix behaviour).
 				if isRunning {
 					exec.Command("lxc", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run()
 				}
@@ -2910,7 +3025,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 
 	// Apply CPU pinning (overrides vCPU count when set).
 	if req.CPUPin != "" {
-		exec.Command("lxc", "config", "set", req.Name, "limits.cpu", req.CPUPin).Run()
+		exec.Command("lxc", "config", "set", req.Name, "limits.cpu", normalizeCPUPin(req.CPUPin)).Run()
 	}
 
 	// Apply socket topology via raw.qemu.
@@ -3006,10 +3121,16 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	if req.MemoryMB > 0 {
 		args = append(args, "-c", fmt.Sprintf("limits.memory=%dMB", req.MemoryMB))
 	}
+	// LXD's limits.memory.swap is a boolean (allow swapping or not), NOT a
+	// size — there's no per-instance swap-size knob in LXD. Translate the
+	// numeric SwapMB field accordingly: -1 => disable swap, 0 => leave at
+	// the LXD default (allow), any positive value => allow (the size is not
+	// honored by LXD). The UI's MB/GB unit selector is preserved for now to
+	// keep the frontend stable, but only the sign matters here.
 	if req.SwapMB == -1 {
 		args = append(args, "-c", "limits.memory.swap=false")
 	} else if req.SwapMB > 0 {
-		args = append(args, "-c", fmt.Sprintf("limits.memory.swap=%dMB", req.SwapMB))
+		args = append(args, "-c", "limits.memory.swap=true")
 	}
 	if req.AutoStart {
 		args = append(args, "-c", "boot.autostart=true")
@@ -3027,7 +3148,14 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		args = append(args, "-c", "security.nesting=true")
 	}
 	if req.FeatureKeyctl {
-		args = append(args, "-c", "security.syscalls.allow=keyctl")
+		// security.syscalls.allow is a whitelist; setting it to "keyctl"
+		// denies every other syscall and the container can't even boot
+		// (seccomp SIGSYS on close()). Use the dedicated intercept key
+		// when supported; on older LXD it isn't accepted and the default
+		// seccomp profile already permits keyctl, so do nothing.
+		if lxdSupportsConfigKey("security.syscalls.intercept.keyctl") {
+			args = append(args, "-c", "security.syscalls.intercept.keyctl=true")
+		}
 	}
 
 	log("Initialising container " + req.Name + "…")

@@ -442,9 +442,28 @@ func SendLXDCertToRemote(remoteURL, sharedSecret, tlsFP, certPEM, ourID string) 
 	return nil
 }
 
-// LXDSyncInterlinkTrustForPeer performs a bidirectional LXD certificate exchange
-// with a single linked server. Returns error if either direction fails.
+// LXDSyncInterlinkTrustForPeer performs a bidirectional LXD certificate
+// exchange with a single linked server. Self-heals on every call:
+//   - regenerates our own LXD server cert if it lacks public-IP SANs
+//   - pins the listener address to <publicIP>:8444 so migration peers don't
+//     try unreachable internal-bridge addresses first
+//   - exchanges and registers each side's lxc CLI client cert (legacy)
+//   - fetches the peer's server cert and pins it in
+//     <lxd-config-dir>/servercerts/<remote>.crt so the lxc CLI accepts the
+//     self-signed cert (modern LXD ignores skip_tls_verify)
+//   - also adds the peer's server cert to our local LXD trust store so
+//     daemon-to-daemon migration transfers authenticate
+//
+// Returns error if either CLI-cert direction fails. Server-cert work is
+// best-effort — it logs warnings rather than failing the whole sync because
+// older LXD installs without the SAN/pinning issue don't need it.
 func LXDSyncInterlinkTrustForPeer(ls config.LinkedServer, _ string) error {
+	// Step 0 — self-heal our own server cert + listener address.
+	if err := LXDEnsureServerCertSAN(); err != nil {
+		fmt.Printf("lxd interlink: ensure own server cert SAN: %v\n", err)
+	}
+	LXDPinSelfHTTPSAddress()
+
 	if err := LXDEnsureClientCert(); err != nil {
 		return fmt.Errorf("ensure local cert: %w", err)
 	}
@@ -454,7 +473,7 @@ func LXDSyncInterlinkTrustForPeer(ls config.LinkedServer, _ string) error {
 		return fmt.Errorf("read local cert: %w", err)
 	}
 
-	// Fetch the remote's cert.
+	// Fetch the remote's lxc CLI cert (HMAC-authenticated portal endpoint).
 	peerCert, err := GetRemoteLXDCert(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
 	if err != nil {
 		return fmt.Errorf("fetch peer cert: %w", err)
@@ -472,8 +491,26 @@ func LXDSyncInterlinkTrustForPeer(ls config.LinkedServer, _ string) error {
 		return fmt.Errorf("send cert to remote: %w", err)
 	}
 
-	// Now add the lxc remote — peer trusts our cert so no password is needed.
+	// Step 1.5 — fetch peer's SERVER cert via TLS handshake and pin it. Without
+	// this the lxc CLI rejects the connection with "unknown authority" because
+	// modern LXD ignores skip_tls_verify in the remote's config. Also add it
+	// to our LXD trust store so daemon-to-daemon migration transfers work.
 	peerIP := extractHost(ls.URL)
+	if peerServerCert, fetchErr := LXDFetchPeerServerCert(peerIP); fetchErr == nil {
+		remoteName := "znas-" + ls.ID
+		if err := LXDPinPeerServerCert(remoteName, peerServerCert); err != nil {
+			fmt.Printf("lxd interlink: pin peer server cert: %v\n", err)
+		}
+		// Use the SHA-256 fingerprint as the trust-store name; LXDRegisterPeerCert
+		// already de-dupes by fingerprint and tolerates re-runs.
+		if err := LXDRegisterPeerCert(peerServerCert, ls.ID+"-server"); err != nil {
+			fmt.Printf("lxd interlink: register peer server cert in trust: %v\n", err)
+		}
+	} else {
+		fmt.Printf("lxd interlink: fetch peer server cert: %v\n", fetchErr)
+	}
+
+	// Now add the lxc remote — peer trusts our cert so no password is needed.
 	peerLXDAddr := "https://" + peerIP + ":8444"
 	if err := LXDEnsurePeerRemote(ls.ID, peerLXDAddr); err != nil {
 		return fmt.Errorf("add lxc remote: %w", err)
@@ -734,7 +771,45 @@ func lxdCopyWithCompatStrip(ctx context.Context, vmName, destRef, storagePool st
 		}
 	}()
 
-	args := []string{"copy", vmName, destRef, "--storage", storagePool}
+	// --mode push: source initiates the data connection to the destination.
+	// The default (pull) requires the destination daemon to dial back to the
+	// source, which fails when the source's server cert SAN does not include
+	// its public IP. Push only needs the destination's cert to be valid.
+	args := []string{"copy", vmName, destRef, "--storage", storagePool, "--mode", "push"}
+
+	// lxc copy --storage only remaps the root disk to the destination pool;
+	// non-root disks keep their source pool name. When the destination doesn't
+	// have a pool with that name, the create fails with "Storage pool not
+	// found". Pre-emptively rewrite each non-root disk device's pool to the
+	// destination pool via --device <name>,pool=<storagePool> so the data is
+	// copied across instead of dropped.
+	for _, devName := range lxdNonRootDiskDevices(vmName) {
+		args = append(args, "--device", devName+",pool="+storagePool)
+	}
+
+	// Custom-volume disks (source=<volname>, no path) are not copied by
+	// "lxc copy" — only the instance's own root + state are transferred.
+	// Pre-copy each referenced custom volume so the destination has the
+	// volume the disk device will attach to. Best-effort: if a volume
+	// already exists on the destination we ignore the conflict.
+	for _, vol := range lxdCustomVolumesForVM(vmName) {
+		copyArgs := []string{"storage", "volume", "copy",
+			vol + "@" + storagePool + "→" + storagePool, // placeholder; actual args below
+		}
+		_ = copyArgs
+		srcRef := storagePool + "/" + vol
+		dstRef := destRef[:strings.Index(destRef, ":")] + ":" + storagePool + "/" + vol
+		out, err := exec.CommandContext(ctx, "lxc", "storage", "volume", "copy",
+			srcRef, dstRef, "--mode", "push").CombinedOutput()
+		if err != nil {
+			outStr := strings.TrimSpace(string(out))
+			// "already exists" is fine — the volume is already on the destination.
+			if !strings.Contains(outStr, "already exists") {
+				fmt.Printf("lxd push: pre-copy custom volume %q: %v — %s\n", vol, err, outStr)
+			}
+		}
+	}
+
 	for attempt := 0; attempt < 20; attempt++ {
 		out, err := exec.CommandContext(ctx, "lxc", args...).CombinedOutput()
 		if err == nil {
@@ -788,13 +863,89 @@ func lxdCopyWithCompatStrip(ctx context.Context, vmName, destRef, storagePool st
 
 // lxdMissingPoolDevice parses LXD's "Storage pool not found" device validation
 // error and returns the device name, or "" if the error is a different type.
+// The actual error format includes a quoted pool name between the device name
+// and "Storage pool not found", so we use .*? rather than [^"]* to span it:
+//
+//	Failed add validation for device "disk1": Failed to get storage pool "zfspool": Storage pool not found
 func lxdMissingPoolDevice(output string) string {
-	re := regexp.MustCompile(`Failed add validation for device "([^"]+)"[^"]*Storage pool not found`)
+	re := regexp.MustCompile(`Failed add validation for device "([^"]+)".*?Storage pool not found`)
 	m := re.FindStringSubmatch(output)
 	if len(m) < 2 {
 		return ""
 	}
 	return m[1]
+}
+
+// lxdNonRootDiskDevices returns the names of non-root disk devices on a VM that
+// reference a storage pool. The root disk is excluded because lxc copy --storage
+// already remaps it to the destination pool.
+func lxdNonRootDiskDevices(vmName string) []string {
+	out, err := exec.Command("lxc", "query", "/1.0/instances/"+vmName).Output()
+	if err != nil {
+		return nil
+	}
+	var inst struct {
+		Devices         map[string]map[string]string `json:"devices"`
+		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+	}
+	if err := json.Unmarshal(out, &inst); err != nil {
+		return nil
+	}
+	// Only consider instance-local devices — profile-inherited disks are handled
+	// by the destination's own profile and should not be overridden by the copy.
+	var names []string
+	for name, cfg := range inst.Devices {
+		if cfg["type"] != "disk" {
+			continue
+		}
+		if cfg["path"] == "/" {
+			continue // root disk; --storage handles it
+		}
+		if cfg["pool"] == "" {
+			continue // bind-mount / external source — no pool to remap
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// lxdCustomVolumesForVM returns the volume names referenced by non-root disk
+// devices on a VM. These are custom storage volumes (source=<volname>) that
+// must be pre-copied to the destination before the instance copy, because
+// "lxc copy" does not transfer custom volumes — it only copies the instance's
+// own root and state.
+func lxdCustomVolumesForVM(vmName string) []string {
+	out, err := exec.Command("lxc", "query", "/1.0/instances/"+vmName).Output()
+	if err != nil {
+		return nil
+	}
+	var inst struct {
+		Devices map[string]map[string]string `json:"devices"`
+	}
+	if err := json.Unmarshal(out, &inst); err != nil {
+		return nil
+	}
+	var vols []string
+	seen := map[string]bool{}
+	for _, cfg := range inst.Devices {
+		if cfg["type"] != "disk" {
+			continue
+		}
+		if cfg["path"] == "/" {
+			continue
+		}
+		// A custom volume disk references the volume by name in "source".
+		// Bind-mounts use a path (starts with "/") which we skip.
+		src := cfg["source"]
+		if src == "" || strings.HasPrefix(src, "/") {
+			continue
+		}
+		if !seen[src] {
+			seen[src] = true
+			vols = append(vols, src)
+		}
+	}
+	return vols
 }
 
 // lxdGetDeviceConfig returns the config map for a single device on a VM by

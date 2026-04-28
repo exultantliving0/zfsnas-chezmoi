@@ -166,8 +166,13 @@ func fallbackTopology() *CPUTopology {
 	return &CPUTopology{TotalCPUs: count, PCores: ids}
 }
 
-// CPUIdsToLXD converts a slice of CPU IDs to a LXD limits.cpu range string.
+// CPUIdsToLXD converts a slice of CPU IDs to a LXD limits.cpu pin string.
 // e.g. [0,1,2,3,8,9,10,11] → "0-3,8-11"
+//
+// LXD distinguishes a CPU pin from a vCPU count by the presence of "," or "-".
+// A single bare integer like "5" is interpreted as "5 vCPUs", not "pinned to
+// CPU 5". When the input is a single CPU id we emit "N-N" so LXD pins to that
+// one core (giving 1 vCPU) rather than allocating N vCPUs.
 func CPUIdsToLXD(ids []int) string {
 	if len(ids) == 0 {
 		return ""
@@ -178,22 +183,48 @@ func CPUIdsToLXD(ids []int) string {
 
 	var parts []string
 	start, end := sorted[0], sorted[0]
+	flush := func() {
+		if start == end {
+			// Use "N-N" to force pin semantics for a single CPU.
+			parts = append(parts, strconv.Itoa(start)+"-"+strconv.Itoa(end))
+		} else {
+			parts = append(parts, strconv.Itoa(start)+"-"+strconv.Itoa(end))
+		}
+	}
 	for _, id := range sorted[1:] {
 		if id == end+1 {
 			end = id
 		} else {
-			if start == end {
-				parts = append(parts, strconv.Itoa(start))
-			} else {
-				parts = append(parts, strconv.Itoa(start)+"-"+strconv.Itoa(end))
-			}
+			flush()
 			start, end = id, id
 		}
 	}
-	if start == end {
-		parts = append(parts, strconv.Itoa(start))
-	} else {
-		parts = append(parts, strconv.Itoa(start)+"-"+strconv.Itoa(end))
+	flush()
+	out := strings.Join(parts, ",")
+	// Single-CPU case: ensure the result has at least one "-" or "," so LXD
+	// reads it as a pin instead of a count. flush() already does this for a
+	// single element, but guard explicitly in case a future caller bypasses it.
+	if !strings.ContainsAny(out, "-,") {
+		out = out + "-" + out
 	}
-	return strings.Join(parts, ",")
+	return out
+}
+
+// normalizeCPUPin normalizes a user-supplied LXD limits.cpu pin string.
+// LXD interprets a bare integer as a vCPU count rather than a CPU pin, so
+// users typing a single CPU index (e.g. "5") would get "5 vCPUs" instead of
+// "pinned to CPU 5". This helper rewrites a bare positive integer to "N-N";
+// values that already contain "," or "-" pass through unchanged.
+func normalizeCPUPin(s string) string {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return s
+	}
+	if strings.ContainsAny(t, ",-") {
+		return t
+	}
+	if _, err := strconv.Atoi(t); err == nil {
+		return t + "-" + t
+	}
+	return t
 }

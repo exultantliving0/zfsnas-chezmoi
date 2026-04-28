@@ -244,6 +244,23 @@ func LXDEnableFeature(ctx context.Context, storagePool string, job *LXDEnableJob
 }
 
 // runCmdLog runs a sudo command, streaming each output line into job.
+// writeInterfacesFile writes data to path, using direct file I/O when running
+// as root and "sudo tee" otherwise. The hardened sudoers template grants no
+// dedicated entry for /etc/network/interfaces, so this only succeeds when the
+// process is root or has unrestricted sudo (NOPASSWD: ALL).
+func writeInterfacesFile(path string, data []byte) error {
+	if os.Getuid() == 0 {
+		return os.WriteFile(path, data, 0644)
+	}
+	cmd := exec.Command("sudo", "/usr/bin/tee", path)
+	cmd.Stdin = strings.NewReader(string(data))
+	cmd.Stdout = nil
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func runCmdLog(ctx context.Context, job *LXDEnableJob, name string, args ...string) error {
 	full := append([]string{"sudo"}, append([]string{name}, args...)...)
 	job.log("$ " + strings.Join(full, " "))
@@ -520,11 +537,15 @@ func lxdStep3Bridges(ctx context.Context, job *LXDEnableJob) error {
 		job.log(fmt.Sprintf("Will bridge %s → %s (%s/%d gw %s)", c.NIC, c.Bridge, c.IP, c.Prefix, c.Gateway))
 	}
 
-	// /etc/network/interfaces is edited in-process; this requires the portal to
-	// run as root (no sudo entry is granted for this path).
-	if os.Getuid() != 0 {
-		job.setStep(3, "error", "writing /etc/network/interfaces requires running as root")
-		return fmt.Errorf("writing /etc/network/interfaces requires running as root")
+	// /etc/network/interfaces edits go through writeInterfacesFile, which uses
+	// in-process I/O when running as root and falls back to "sudo tee" / "sudo
+	// cp" under blanket NOPASSWD: ALL. There is no dedicated sudo entry for this
+	// path under the hardened template, so hardened deployments must run the
+	// portal as root.
+	sudoMode := CheckSudoAccess().Type
+	if sudoMode != "root" && sudoMode != "all" {
+		job.setStep(3, "error", "editing /etc/network/interfaces requires running as root or having unrestricted sudo (sudo-all)")
+		return fmt.Errorf("editing /etc/network/interfaces requires running as root or having unrestricted sudo (sudo-all)")
 	}
 
 	// Backup existing interfaces file
@@ -535,14 +556,14 @@ func lxdStep3Bridges(ctx context.Context, job *LXDEnableJob) error {
 		job.setStep(3, "error", "read interfaces: "+err.Error())
 		return fmt.Errorf("read /etc/network/interfaces: %w", err)
 	}
-	if err := os.WriteFile(backupPath, content, 0644); err != nil {
+	if err := writeInterfacesFile(backupPath, content); err != nil {
 		job.log("Warning: backup failed: " + err.Error())
 	}
 
 	newContent := rewriteInterfacesForBridges(string(content), candidates)
 
 	job.log("Writing new /etc/network/interfaces…")
-	if err := os.WriteFile("/etc/network/interfaces", []byte(newContent), 0644); err != nil {
+	if err := writeInterfacesFile("/etc/network/interfaces", []byte(newContent)); err != nil {
 		job.setStep(3, "error", "write interfaces: "+err.Error())
 		return fmt.Errorf("write /etc/network/interfaces: %w", err)
 	}

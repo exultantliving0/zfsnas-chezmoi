@@ -127,10 +127,10 @@ The following system packages are required. If any are missing, the **Prerequisi
 One command installs ZFS (if needed), creates a dedicated service account, downloads the latest binary, and registers a systemd service:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/macgaver/zfsnas-chezmoi/main/zfsnas-quickinstall-for-debian.sh)
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/macgaver/zfsnas-chezmoi/main/zfsnas-quickinstall-for-debian.sh)"
 ```
 
-> Run as root or with `sudo`. Supports Debian 13+ and Ubuntu 26.04+.
+> Already root? Drop `sudo`. Supports Debian 13+ and Ubuntu 26.04+. (Avoid `sudo bash <(curl …)` — process substitution opens a file descriptor in your shell that sudo's child can't read, producing `/dev/fd/63: No such file or directory`.)
 
 Once the installer completes, open your browser at the URL it prints (e.g. `https://<your-server-ip>:8443/setup`) and follow the setup wizard.
 

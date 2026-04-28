@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  ZFS NAS Portal — Quick Installer for Debian / Ubuntu
-#  Script version 1.3
+#  Script version 1.4
 #  https://github.com/macgaver/zfsnas-chezmoi
 #
 #  Usage (run as root or with sudo):
-#    bash <(curl -fsSL https://raw.githubusercontent.com/macgaver/zfsnas-chezmoi/main/zfsnas-quickinstall-for-debian.sh)
+#    sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/macgaver/zfsnas-chezmoi/main/zfsnas-quickinstall-for-debian.sh)"
+#
+#  NOTE: do NOT use "sudo bash <(curl …)". Process substitution opens an fd in
+#  your shell which the bash forked by sudo cannot access, yielding the
+#  confusing error: bash: /dev/fd/63: No such file or directory.
 # =============================================================================
 set -euo pipefail
 
@@ -34,7 +38,13 @@ GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 header "ZFS NAS Portal — Quick Installer"
 
 if [[ $EUID -ne 0 ]]; then
-  fatal "This script must be run as root. Try: sudo bash $0"
+  # $0 is unhelpful here when invoked via "bash -c <script>" (it's "bash") or
+  # via process substitution (it's "/dev/fd/63"). Print the canonical
+  # one-liner instead so users can copy/paste it directly.
+  echo -e "${RED}✗  ERROR: This script must be run as root.${RESET}" >&2
+  echo -e "${YELLOW}  Use the recommended one-liner:${RESET}" >&2
+  echo -e "  ${BOLD}sudo bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/macgaver/zfsnas-chezmoi/main/zfsnas-quickinstall-for-debian.sh)\"${RESET}" >&2
+  exit 1
 fi
 
 # Detect Debian/Ubuntu
