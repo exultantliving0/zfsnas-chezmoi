@@ -79,6 +79,12 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// --- Audit log ---
 	r.Handle("/api/audit",
 		RequireAuth(http.HandlerFunc(HandleAuditLog))).Methods("GET")
+	// Multi-host aggregate (v6.4.28): merges local + every InterLink peer.
+	r.Handle("/api/audit/aggregate",
+		RequireAuth(HandleAuditAggregate(appCfg))).Methods("GET")
+	// HMAC-authenticated peer endpoint — invoked by other ZNAS servers
+	// when they aggregate; not for browser use.
+	r.HandleFunc("/api/audit/peer-list", HandleAuditPeerList(appCfg)).Methods("POST")
 
 	// --- Pool ---
 	r.Handle("/api/pools",
@@ -636,6 +642,20 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDEnableCancel)))).Methods("POST")
 	r.Handle("/api/lxd/refresh-status",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDRefreshStatus)))).Methods("POST")
+
+	// Virtualization settings tab + per-instance Monitor tab (v6.4.28).
+	r.Handle("/api/lxd/global-config",
+		RequireAuth(http.HandlerFunc(HandleGetLXDGlobalConfig))).Methods("GET")
+	r.Handle("/api/lxd/global-config",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetLXDGlobalConfig)))).Methods("PUT")
+	r.Handle("/api/lxd/metrics-toggle",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDMetricsToggle)))).Methods("POST")
+	r.Handle("/api/lxd/metrics-status",
+		RequireAuth(http.HandlerFunc(HandleLXDMetricsStatus))).Methods("GET")
+	r.Handle("/api/lxd/instance-perf",
+		RequireAuth(http.HandlerFunc(HandleLXDInstancePerf))).Methods("GET")
+	r.Handle("/api/lxd/instance-realtime",
+		RequireAuth(http.HandlerFunc(HandleLXDInstanceRealtime))).Methods("GET")
 	r.Handle("/api/lxd/instances",
 		RequireAuth(http.HandlerFunc(HandleListInstances))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/stats",
@@ -644,6 +664,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceStatus))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/logs",
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceLogs))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/console-log",
+		RequireAuth(http.HandlerFunc(HandleLXDInstanceConsoleLog))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/snapshots",
 		RequireAuth(http.HandlerFunc(HandleLXDListSnapshots))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/snapshots",

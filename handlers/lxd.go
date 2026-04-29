@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -244,6 +245,21 @@ func HandleLXDInstanceLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, entries)
+}
+
+// HandleLXDInstanceConsoleLog returns the boot/console.log contents for a
+// container (the kernel + init output since the last start). Returns plain
+// text in a JSON envelope so the frontend can render it in a terminal-styled
+// pane.
+// GET /api/lxd/instances/{name}/console-log
+func HandleLXDInstanceConsoleLog(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	text, err := system.GetLXDInstanceConsoleLog(name)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]string{"log": text})
 }
 
 // HandleLXDCloneInstance clones an instance directly (no snapshot required).
@@ -495,6 +511,11 @@ func HandleLXDDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDDelete, Target: name, Result: audit.ResultOK})
+	// Drop any per-instance metrics history (v6.4.28). Non-fatal: losing
+	// history must never block instance deletion itself.
+	if err := system.DeleteLXDInstanceMetrics(name); err != nil {
+		log.Printf("delete metrics history for %q: %v", name, err)
+	}
 	jsonOK(w, map[string]string{"ok": "deleted"})
 }
 

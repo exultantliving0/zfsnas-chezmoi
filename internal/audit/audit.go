@@ -12,6 +12,7 @@ import (
 // Entry represents a single audit log event.
 type Entry struct {
 	Timestamp time.Time `json:"timestamp"`
+	System    string    `json:"system,omitempty"` // hostname of the originating server (v6.4.28+: stamped at Read time for the local host; populated from peer name when merged from /api/audit/aggregate)
 	User      string    `json:"user"`
 	Role      string    `json:"role"`
 	Action    string    `json:"action"`
@@ -145,6 +146,8 @@ const (
 	ActionLXDStorageCreate   = "lxd_storage_create"
 	ActionLXDStorageEdit     = "lxd_storage_edit"
 	ActionLXDStorageDelete   = "lxd_storage_delete"
+	ActionLXDMetricsToggle    = "lxd_metrics_toggle"     // v6.4.28 — enable/disable LXD prometheus endpoint + portal scraper
+	ActionLXDGlobalConfigEdit = "lxd_global_config_edit" // v6.4.28 — admin edited LXD global config keys
 )
 
 var (
@@ -177,7 +180,9 @@ func Log(e Entry) {
 	fmt.Fprintf(f, "%s\n", data)
 }
 
-// Read loads all audit entries from the log file.
+// Read loads all audit entries from the log file. Each entry's System
+// field is stamped with the local hostname so callers (the multi-host
+// aggregate handler in particular) can attribute it correctly.
 func Read() ([]Entry, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -190,6 +195,7 @@ func Read() ([]Entry, error) {
 		return nil, err
 	}
 
+	host, _ := osHostname()
 	var entries []Entry
 	lines := splitLines(data)
 	for _, line := range lines {
@@ -198,11 +204,19 @@ func Read() ([]Entry, error) {
 		}
 		var e Entry
 		if err := json.Unmarshal(line, &e); err == nil {
+			if e.System == "" {
+				e.System = host
+			}
 			entries = append(entries, e)
 		}
 	}
 	return entries, nil
 }
+
+// osHostname is a thin wrapper around os.Hostname so callers always get a
+// non-error path; an empty string means "couldn't resolve hostname" and
+// the System field is left blank for that read.
+var osHostname = func() (string, error) { return os.Hostname() }
 
 func splitLines(data []byte) [][]byte {
 	var lines [][]byte

@@ -276,6 +276,7 @@ type AppConfig struct {
 	Replication          []ReplicationTask `json:"replication,omitempty"`
 	InterLink            []LinkedServer    `json:"inter_link,omitempty"`
 	InterlinkRelayMode   bool              `json:"interlink_relay_mode,omitempty"` // global relay mode: proxy API calls through local server
+	LXDMetricsEnabled    bool              `json:"lxd_metrics_enabled,omitempty"`  // turns on LXD's Prometheus endpoint on 127.0.0.1:9101 + portal scraper for VM/container Monitor tabs (v6.4.28)
 }
 
 // UserPreferences holds per-user UI preferences persisted across sessions.

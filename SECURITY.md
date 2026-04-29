@@ -256,6 +256,24 @@ Cmnd_Alias ZFSNAS_LXDNET = \
 #   pool root (owned by root). mkdir -p creates it, chmod 0775 sets permissions,
 #   and tee writes ISO files into it (directory is root-owned; os.Create denied).
 #   rm -f cleans up a partially-written ISO if tee is interrupted.
+# since v6.4.28 — final cat entry reads /var/log/lxd/<name>/console.log
+#   (root-owned 0600) for the Container Console tab when LXD's
+#   `lxc console --show-log` API errors with "open : no such file or directory".
+#   The portal picks one of two forms at install time, depending on whether
+#   the active sudo is classic sudo or sudo-rs (Ubuntu 26.04+):
+#     classic sudo →  /usr/bin/cat /var/log/lxd/*/console.log
+#                       Tight: the literal /console.log suffix locks the rule
+#                       to that one filename pattern; sudo refuses every other
+#                       path including /etc/shadow, /root/**, traversal
+#                       attempts, and unrelated /var/log/* files (verified).
+#     sudo-rs      →  /usr/bin/cat *
+#                       Wider: sudo-rs only accepts `*` as the entire trailing
+#                       argument and rejects any prefix or suffix around it,
+#                       so the tighter pattern fails visudo on those hosts.
+#                       Path scoping is still enforced server-side: the
+#                       instance name is regex-validated against the live LXD
+#                       instance list before invocation (lxdNameRe in
+#                       system/lxd.go GetLXDInstanceConsoleLog).
 Cmnd_Alias ZFSNAS_LXD = \
     /usr/bin/dd *, \
     /usr/bin/partx *, \
@@ -264,7 +282,8 @@ Cmnd_Alias ZFSNAS_LXD = \
     /usr/bin/mkdir -p *, \
     /usr/bin/chmod 0775 *, \
     /usr/bin/tee *, \
-    /usr/bin/rm -f *
+    /usr/bin/rm -f *, \
+    /usr/bin/cat /var/log/lxd/*/console.log   # or `cat *` on sudo-rs hosts
 
 # ── OS updates & service installation ────────────────────────────────────────
 # since v1.0.0 — prerequisite package install (apt-get install) and

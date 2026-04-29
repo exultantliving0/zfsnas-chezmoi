@@ -509,19 +509,97 @@ func LXDGetInstanceStats(name string) (LXDInstanceStats, error) {
 		uptimeSec = pidUptimeSec(raw2.Pid)
 	}
 
+	memUsed  := raw2.Memory.Usage
+	memPeak  := raw2.Memory.UsagePeak
+	// VMs without lxd-agent: the /state endpoint reports memory.usage = 0
+	// and cpu.usage stuck at 0 because the cgroup doesn't see inside the
+	// QEMU process. LXD's prom endpoint reports real values for both via
+	// QEMU's balloon driver and the host-side qemu cgroup, so fall back
+	// to it whenever /state has nothing useful. The Monitor tab's
+	// realtime row uses the same source via GetLXDInstanceRealtime;
+	// piggy-backing on its rate cache here means the Live Info card,
+	// when it polls every 3 s, reuses whatever baseline the realtime row
+	// last established.
+	if memUsed == 0 {
+		if used, total := lxdPromMemoryFor(name); used > 0 {
+			memUsed = used
+			if memLimit == 0 && total > 0 {
+				memLimit = total
+			}
+		}
+	}
+	if rt, rerr := GetLXDInstanceRealtime(name); rerr == nil && rt != nil {
+		if rt.CPUPct != nil {
+			// Prefer the prom-derived rate. Equally accurate for
+			// containers and the only working source for VMs without
+			// lxd-agent. nil here means "no previous baseline yet" —
+			// keep the /state-derived cpuPct (0 for agent-less VMs).
+			cpuPct = *rt.CPUPct
+		}
+		// Memory: realtime returns the same MemTotal − MemAvailable
+		// derivation, so it's the freshest reading even on the
+		// non-zero-/state path. Use it when it's larger, which avoids
+		// underreporting when /state's value is stale.
+		if rt.MemUsed > 0 && rt.MemUsed > memUsed {
+			memUsed = rt.MemUsed
+		}
+		if memLimit == 0 && rt.MemTotal > 0 {
+			memLimit = rt.MemTotal
+		}
+	}
+
 	return LXDInstanceStats{
 		Status:        raw2.Status,
 		UptimeSec:     uptimeSec,
 		CPUUsageNs:    raw2.CPU.Usage,
 		CPUPct:        cpuPct,
 		CPUCount:      cpuCount,
-		MemUsedBytes:  raw2.Memory.Usage,
-		MemPeakBytes:  raw2.Memory.UsagePeak,
+		MemUsedBytes:  memUsed,
+		MemPeakBytes:  memPeak,
 		MemLimitBytes: memLimit,
 		DiskUsedBytes: disk,
 		DiskSizeBytes: diskSize,
 		Processes:     raw2.Processes,
 	}, nil
+}
+
+// lxdPromMemoryFor scrapes the LXD Prometheus endpoint and returns
+// (used, total) bytes for the named instance. used is derived from
+// MemTotal − MemAvailable (the only formula that works for both
+// containers and VMs without lxd-agent inside the guest).
+// Returns (0, 0) on any error so the caller can keep its existing value.
+func lxdPromMemoryFor(name string) (used, total int64) {
+	body, err := fetchLXDMetricsBody()
+	if err != nil {
+		return 0, 0
+	}
+	var memActiveAnon, memAvail, memTotal float64
+	for _, s := range parsePromText(body) {
+		if s.labels["name"] != name {
+			continue
+		}
+		switch s.metric {
+		case "lxd_memory_Active_anon_bytes":
+			if s.value > memActiveAnon {
+				memActiveAnon = s.value
+			}
+		case "lxd_memory_MemAvailable_bytes":
+			if s.value > memAvail {
+				memAvail = s.value
+			}
+		case "lxd_memory_MemTotal_bytes":
+			if s.value > memTotal {
+				memTotal = s.value
+			}
+		}
+	}
+	u := memActiveAnon
+	if memTotal > 0 && memAvail > 0 && memTotal > memAvail {
+		if v := memTotal - memAvail; v > u {
+			u = v
+		}
+	}
+	return int64(u), int64(memTotal)
 }
 
 // pidUptimeSec returns how long the process with the given host PID has been running,
@@ -2836,6 +2914,34 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 	if req.Firmware == "bios" {
 		args = append(args, "-c", "security.csm=true")
 	}
+	// Root disk: pass pool/size/io.bus inline to "lxc init" via --device.
+	// A previous "lxc config device override" pass after init didn't work
+	// because LXD does NOT re-create or grow the underlying zvol when a
+	// root disk's "size" key changes after the instance has been
+	// initialised — it only updates the config record. Result: every VM
+	// ended up with the LXD default 10 GB volume regardless of the
+	// requested size. Setting size here ensures the volume is created
+	// at the right size on the very first call.
+	if req.RootPool != "" {
+		args = append(args, "-d", "root,pool="+req.RootPool)
+	}
+	if req.RootSizeGB > 0 {
+		// ZFS requires volsize to be a multiple of the pool's volblocksize
+		// (16K by default). LXD prepends a 6144-byte image header to VM
+		// block volumes, so we need (userBytes + 6144) to be 16K-aligned —
+		// otherwise `zfs set volsize=…` fails with "must be a multiple of
+		// volume block size (16K)" (e.g. 20GB → volsize=20000006144,
+		// remainder 8192). Round up so the user always gets at least the
+		// requested size.
+		const headerBytes int64 = 6144
+		const blockSize int64 = 16384
+		sizeBytes := int64(req.RootSizeGB) * 1000 * 1000 * 1000
+		aligned := ((sizeBytes+headerBytes+blockSize-1)/blockSize)*blockSize - headerBytes
+		args = append(args, "-d", fmt.Sprintf("root,size=%dB", aligned))
+	}
+	if req.DiskBus != "" {
+		args = append(args, "-d", "root,io.bus="+req.DiskBus)
+	}
 	log("Initialising VM " + req.Name + "…")
 	if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("lxc init: %s: %w", strings.TrimSpace(string(out)), err)
@@ -2885,29 +2991,9 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 			"--data", fmt.Sprintf(`{"description":%s}`, descJSON)).Run()
 	}
 
-	// Override root disk pool/size, and apply disk bus if requested.
-	{
-		dArgs := []string{"config", "device", "override", req.Name, "root"}
-		needOverride := false
-		if req.RootPool != "" {
-			dArgs = append(dArgs, "pool="+req.RootPool)
-			needOverride = true
-		}
-		if req.RootSizeGB > 0 {
-			dArgs = append(dArgs, fmt.Sprintf("size=%dGB", req.RootSizeGB))
-			needOverride = true
-		}
-		if req.DiskBus != "" {
-			dArgs = append(dArgs, "io.bus="+req.DiskBus)
-			needOverride = true
-		}
-		if needOverride {
-			log("Configuring root disk…")
-			if out, err := exec.Command("lxc", dArgs...).CombinedOutput(); err != nil {
-				log("WARNING: root disk config: " + strings.TrimSpace(string(out)))
-			}
-		}
-	}
+	// (Root disk pool/size/io.bus are now applied inline at "lxc init" time
+	// via --device flags above — see RootPool / RootSizeGB / DiskBus.
+	// Doing it post-init didn't grow the underlying zvol on LXD 5.0.x.)
 
 	// Add extra disks.
 	for i, disk := range req.ExtraDisks {
@@ -3764,6 +3850,54 @@ func GetLXDInstanceLogs(name string) ([]LXDLogEntry, error) {
 		return parseLXDLogAfterMarker(string(raw), "Log:"), nil
 	}
 	return parseLXDLogLines(string(raw)), nil
+}
+
+// GetLXDInstanceConsoleLog returns the contents of
+// /var/log/lxd/<name>/console.log — the boot/console output the kernel
+// + init system has written since the last start of a container.
+//
+// Two paths tried in order:
+//
+//  1. `lxc console <name> --show-log` over the LXD unix socket. Works
+//     when the daemon's console buffer is populated. On LXD 5.0.x with
+//     deb packaging the daemon often errors with "open : no such file
+//     or directory" because of an LXD-internal path bug, so we fall
+//     back to (2).
+//  2. `sudo cat /var/log/lxd/<name>/console.log` — the file is root-
+//     owned mode 0600 so direct read isn't possible from the zfsnas
+//     service user. The ZFSNAS_LXD sudo alias grants either
+//     `cat /var/log/lxd/*/console.log` (classic sudo, tight) or `cat *`
+//     (sudo-rs, wider — required because sudo-rs rejects any prefix
+//     before `*`). Either way, the instance name is regex-validated
+//     by lxdNameRe above before this command runs, so the broader
+//     sudo-rs form isn't reachable via this code path.
+//
+// When neither path produces output the function returns an empty
+// string with no error so the UI can render "(buffer empty)".
+func GetLXDInstanceConsoleLog(name string) (string, error) {
+	if !lxdNameRe.MatchString(name) {
+		return "", fmt.Errorf("invalid instance name")
+	}
+	// 1. lxc console --show-log
+	if out, err := exec.Command("lxc", "console", name, "--show-log").CombinedOutput(); err == nil {
+		s := string(out)
+		if idx := strings.Index(s, "Console log:"); idx >= 0 {
+			s = s[idx+len("Console log:"):]
+		}
+		return strings.TrimLeft(s, "\r\n"), nil
+	}
+	// 2. sudo cat fallback. Path is host-side, name comes from the
+	//    instance list (regex-validated above) so no traversal risk.
+	path := "/var/log/lxd/" + name + "/console.log"
+	out, err := exec.Command("sudo", "/usr/bin/cat", path).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("read console log: %s", msg)
+	}
+	return strings.TrimLeft(string(out), "\r\n"), nil
 }
 
 // lxcLevels is the set of valid liblxc log level tokens.

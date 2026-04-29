@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // SudoersDiff is the result of comparing the installed sudoers file against
@@ -118,9 +119,54 @@ func CanManageSudoers(status SudoStatus) bool {
 // RequiredSudoersContent returns the canonical sudoers file content for this
 // portal. The ZFSNAS_FILES section is generated dynamically: it always includes
 // /mnt/* entries, and also adds entries for any ZFS pool mounted directly under
-// / (i.e. not under /mnt/).
+// / (i.e. not under /mnt/). The LXD console-log read line is also dynamic
+// because sudo-rs and classic sudo accept different wildcard shapes — see
+// lxdConsoleCatLine.
 func RequiredSudoersContent() string {
-	return strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
+	s := strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
+	s = strings.Replace(s, "{{LXD_CAT_LINE}}", lxdConsoleCatLine(), 1)
+	return s
+}
+
+// lxdConsoleCatLine returns the sudoers entry that lets the portal read
+// /var/log/lxd/<name>/console.log for the Container Console tab. Two forms:
+//
+//   - classic sudo: "/usr/bin/cat /var/log/lxd/*/console.log" — sudo's fnmatch
+//     accepts a literal prefix and a literal "/console.log" suffix around the
+//     `*`, so the rule only matches that one filename pattern.
+//   - sudo-rs: "/usr/bin/cat *" — sudo-rs only accepts `*` as the entire
+//     trailing argument; any prefix or suffix is rejected by visudo. We have
+//     to widen the rule to `cat *` (read any file as root) to keep the feature
+//     working. Path is still validated server-side before invocation
+//     (lxdNameRe in system/lxd.go) so the broader rule is only reachable to
+//     someone who can already shell as the zfsnas service account.
+func lxdConsoleCatLine() string {
+	if IsSudoRS() {
+		return "/usr/bin/cat *"
+	}
+	return "/usr/bin/cat /var/log/lxd/*/console.log"
+}
+
+var (
+	sudoIsRS     bool
+	sudoIsRSOnce sync.Once
+)
+
+// IsSudoRS reports whether /usr/bin/sudo on this host is the sudo-rs
+// reimplementation (default on Ubuntu 26.04+). Detected once via
+// `sudo --version` — sudo-rs prints "sudo-rs" in its banner; classic sudo from
+// sudo.ws prints "Sudo version N.N.N".
+func IsSudoRS() bool {
+	sudoIsRSOnce.Do(func() {
+		out, err := exec.Command("sudo", "--version").CombinedOutput()
+		if err != nil {
+			return
+		}
+		if strings.Contains(strings.ToLower(string(out)), "sudo-rs") {
+			sudoIsRS = true
+		}
+	})
+	return sudoIsRS
 }
 
 // buildFilesAlias generates the ZFSNAS_FILES Cmnd_Alias block.
@@ -762,6 +808,8 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/umount *":                                  "Proxmox Import: unmounts the EFI System Partition after the UEFI fallback boot repair is complete (v6.4.21+). Broadened from `umount * /tmp/.znas-esp-*` for sudo-rs compatibility.",
 	"/usr/bin/chmod 0775 *":                             "ISO Management: sets group-write permission on the .isos directory so the zfsnas process user can upload ISO files without requiring root on each transfer (v6.4.22+).",
 	"/usr/bin/rm -f *":                                  "ISO Management: removes a partially-written ISO file if the upload is interrupted (v6.4.22+).",
+	"/usr/bin/cat /var/log/lxd/*/console.log":           "Container Console tab: reads /var/log/lxd/<name>/console.log (root-owned 0600) so the per-container Console pane can show the boot/console output (v6.4.28+). Pattern is locked to /var/log/lxd/<single-segment>/console.log — sudo blocks every other path including /etc/shadow and traversal attempts (verified). Instance name is also regex-validated before invocation. (Used on classic sudo only; on sudo-rs hosts the wider `cat *` form is used because sudo-rs rejects any prefix before `*`.)",
+	"/usr/bin/cat *":                                    "Container Console tab — sudo-rs fallback (Ubuntu 26.04+): reads /var/log/lxd/<name>/console.log for the per-container Console pane. The narrower /var/log/lxd/*/console.log form is preferred but rejected by sudo-rs's stricter wildcard parser (only `*` as a complete trailing argument is accepted). Path scoping is enforced server-side: the instance name is regex-validated against the live LXD instance list before invocation (system/lxd.go GetLXDInstanceConsoleLog).",
 	"/usr/sbin/partprobe *":                              "Refreshes the kernel partition table after disk changes.",
 	"/usr/bin/udevadm settle *":                          "Waits for udev to settle after disk operations before proceeding.",
 	"/usr/sbin/blkid -o export":                         "Reads disk UUIDs and filesystem types after partitioning.",
@@ -1033,6 +1081,13 @@ Cmnd_Alias ZFSNAS_LXDNET = \
 #   root (owned by root). mkdir -p creates it on first upload; chmod 0775 lets
 #   the zfsnas process user write ISO files into it without requiring root for
 #   every upload.
+# since v6.4.28 — the trailing cat line is generated dynamically:
+#     classic sudo →  /usr/bin/cat /var/log/lxd/*/console.log  (tight)
+#     sudo-rs      →  /usr/bin/cat *                           (wider — sudo-rs
+#                                                              rejects any
+#                                                              prefix before *)
+#   Used by the Container Console tab to read /var/log/lxd/<name>/console.log
+#   (root-owned 0600). Instance name is regex-validated server-side regardless.
 # NOTE: partx, mount, umount may live under /usr/bin/ or /sbin/ depending on
 #   the distribution. Verify with "which partx" if a sudoers error occurs.
 Cmnd_Alias ZFSNAS_LXD = \
@@ -1043,7 +1098,8 @@ Cmnd_Alias ZFSNAS_LXD = \
     /usr/bin/mkdir -p *, \
     /usr/bin/chmod 0775 *, \
     /usr/bin/tee *, \
-    /usr/bin/rm -f *
+    /usr/bin/rm -f *, \
+    {{LXD_CAT_LINE}}
 
 # ── VMs & Containers feature setup ───────────────────────────────────────────
 # since v6.4.24 — one-time enablement of LXD compute support:

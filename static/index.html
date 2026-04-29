@@ -187,6 +187,14 @@
     }
     .io-chart-wrap canvas { display: block; width: 100% !important; height: 70px !important; }
 
+    /* Per-instance Monitor tab — realtime row (v6.4.28).
+       Each card grows/shrinks with the viewport like the io-bar above the
+       capacity panel. min-width:0 lets cards shrink below their content's
+       intrinsic min-width so flex:1 actually takes effect on narrow screens. */
+    .ci-mon-rt-card { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+    .ci-mon-rt-spark { position: relative; height: 32px; }
+    .ci-mon-rt-spark canvas { display: block; width: 100% !important; height: 32px !important; }
+
     /* Service installed banner */
     .banner {
       display: flex; align-items: center; gap: 10px;
@@ -3341,7 +3349,9 @@
         <!-- Tab bar -->
         <div style="display:flex;gap:2px;margin:12px -32px 0;border-bottom:1px solid var(--border);padding:0 32px;">
           <button class="cap-tab active" id="ci-tab-summary" onclick="_ciSwitchTab('summary')">Summary</button>
+          <button class="cap-tab" id="ci-tab-monitor" onclick="_ciSwitchTab('monitor')" style="display:none;">Monitor</button>
           <button class="cap-tab" id="ci-tab-logs" onclick="_ciSwitchTab('logs')">Logs</button>
+          <button class="cap-tab" id="ci-tab-console" onclick="_ciSwitchTab('console')" style="display:none;">Console</button>
         </div>
 
         <!-- Summary tab content -->
@@ -3405,6 +3415,134 @@
             <div style="text-align:center;color:var(--text-3);padding:40px 0;">Select the Logs tab to load logs.</div>
           </div>
         </div>
+
+        <!-- ===== Monitor tab content (v6.4.28) ============================ -->
+        <div id="ci-tab-content-monitor" style="padding:20px 0;display:none;">
+
+          <!-- Realtime row — 4 sparkline cards, polled every 3 s -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span id="ci-mon-rt-indicator" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#30d158;"></span>
+              <span style="font-size:13px;font-weight:700;color:var(--text);">Live</span>
+              <i class="info-tip" data-tip="Live numbers polled every 3 seconds from /1.0/instances/<name>/state. The sparkline shows the last ~5 minutes; older points roll off. Pause to freeze the view (useful for screenshots)."></i>
+            </div>
+            <button id="ci-mon-rt-pause" class="btn btn-sm" onclick="_ciMonTogglePause()" style="font-size:11px;padding:3px 10px;">⏸ Pause</button>
+          </div>
+
+          <div style="display:flex;flex-direction:row;gap:12px;margin-bottom:24px;align-items:stretch;flex-wrap:nowrap;">
+            <div class="card ci-mon-rt-card" style="padding:10px 12px;margin:0;">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">CPU
+                <i class="info-tip" data-tip="Live cpu.usage from /1.0/instances/<name>/state. Compared to the previous 3-second sample to derive a percentage. Reads up to (number-of-vCPUs)×100% — a 4-vCPU VM saturating all cores reads 400%."></i>
+              </div>
+              <div style="font-size:16px;font-weight:700;color:var(--text);margin:4px 0;" id="ci-mon-rt-cpu">—</div>
+              <div class="ci-mon-rt-spark"><canvas id="ci-mon-rt-cpu-spark"></canvas></div>
+            </div>
+            <div class="card ci-mon-rt-card" style="padding:10px 12px;margin:0;">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">MEMORY
+                <i class="info-tip" data-tip="Live memory.usage / memory.total. Container 'used' includes page-cache and is normally close to total even when the workload is idle."></i>
+              </div>
+              <div style="font-size:16px;font-weight:700;color:var(--text);margin:4px 0;" id="ci-mon-rt-mem">—</div>
+              <div class="ci-mon-rt-spark"><canvas id="ci-mon-rt-mem-spark"></canvas></div>
+            </div>
+            <div class="card ci-mon-rt-card" style="padding:10px 12px;margin:0;">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">DISK I/O
+                <i class="info-tip" data-tip="Per-second read (↓) and write (↑) bytes summed across every disk device on this instance, computed from the diff of the cumulative counters between two consecutive 3-second polls."></i>
+              </div>
+              <div style="font-size:13px;font-weight:700;color:var(--text);margin:4px 0;" id="ci-mon-rt-disk">—</div>
+              <div class="ci-mon-rt-spark"><canvas id="ci-mon-rt-disk-spark"></canvas></div>
+            </div>
+            <div class="card ci-mon-rt-card" style="padding:10px 12px;margin:0;">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">NETWORK I/O
+                <i class="info-tip" data-tip="Per-second receive (↓) and transmit (↑) bytes summed across every network device on this instance, computed from the diff of the cumulative counters between two consecutive 3-second polls."></i>
+              </div>
+              <div style="font-size:13px;font-weight:700;color:var(--text);margin:4px 0;" id="ci-mon-rt-net">—</div>
+              <div class="ci-mon-rt-spark"><canvas id="ci-mon-rt-net-spark"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Historical row — 4 full-width charts -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;font-weight:700;color:var(--text);">History</span>
+              <i class="info-tip" data-tip="Charts below are populated from the LXD Prometheus endpoint, scraped every 5 minutes. Data accumulates over time; a brand-new instance will show the empty state until the first scrape lands."></i>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <button class="cap-range-btn perf-range-btn active" data-range="all"   onclick="_ciMonSetRange('all')">Since Data</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="4h"    onclick="_ciMonSetRange('4h')">4 Hours</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="day"   onclick="_ciMonSetRange('day')">Day</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="week"  onclick="_ciMonSetRange('week')">Week</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="month" onclick="_ciMonSetRange('month')">Month</button>
+              <button class="cap-range-btn perf-range-btn"        data-range="year"  onclick="_ciMonSetRange('year')">Year</button>
+              <select onchange="_ciMonSetAgg(this.value)" id="ci-mon-agg-sel"
+                      style="padding:3px 20px 3px 4px;font-size:12px;font-weight:600;width:62px;
+                             border-radius:6px;border:1px solid rgba(191,90,242,0.4);
+                             background:rgba(191,90,242,0.12);color:var(--accent-1);cursor:pointer;">
+                <option value="avg">Avg</option>
+                <option value="min">Min</option>
+                <option value="max">Max</option>
+              </select>
+            </div>
+          </div>
+          <div id="ci-mon-hist-empty" style="text-align:center;color:var(--text-3);padding:40px 0;display:none;">
+            No history yet — this instance was created less than 5 minutes ago, or metrics history has not yet been collected.
+          </div>
+          <div id="ci-mon-hist-charts">
+            <div class="card-sm" style="margin-bottom:16px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">CPU usage %</div>
+                <span id="ci-mon-max-cpu" style="font-size:11px;color:var(--text-3);"></span>
+              </div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-cpu"></canvas></div>
+            </div>
+            <div class="card-sm" style="margin-bottom:16px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Memory</div>
+                <span id="ci-mon-max-mem" style="font-size:11px;color:var(--text-3);"></span>
+              </div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-mem"></canvas></div>
+            </div>
+            <div class="card-sm" style="margin-bottom:16px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Network bit/s</div>
+                <span id="ci-mon-max-net" style="font-size:11px;color:var(--text-3);"></span>
+              </div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-net"></canvas></div>
+            </div>
+            <div class="card-sm">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);display:flex;align-items:center;gap:6px;">
+                  Disk MB/s
+                  <i class="info-tip" data-tip="Devices reading 0 B/s are hidden from the hover tooltip so the readout focuses on disks that are actually busy. Idle/empty queues, loop pseudo-devices and unattached firmware blockers (system.flash0/1) typically sit at zero and would otherwise crowd the popup."></i>
+                </div>
+                <span id="ci-mon-max-disk" style="font-size:11px;color:var(--text-3);"></span>
+              </div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-disk"></canvas></div>
+            </div>
+          </div>
+        </div><!-- /ci-tab-content-monitor -->
+
+        <!-- ===== Console tab content (containers only) ============= -->
+        <div id="ci-tab-content-console" style="padding:20px 0;display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;font-weight:700;color:var(--text);">Console output</span>
+              <i class="info-tip" data-tip="Boot/console output captured by LXD since this container was last started — equivalent to /var/log/lxd/<name>/console.log on the host. Refresh to pull the current contents."></i>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-sm" onclick="_ciLoadConsole()" style="font-size:12px;padding:4px 12px;">↻ Refresh</button>
+              <button class="btn btn-sm" onclick="_ciConsoleScrollBottom()" style="font-size:12px;padding:4px 12px;">↓ Scroll to end</button>
+            </div>
+          </div>
+          <pre id="ci-console-body"
+               style="background:#0d0d0f;color:#e6e6e6;border:1px solid var(--border);border-radius:var(--radius-sm);
+                      padding:14px 16px;margin:0;
+                      font-family:'SF Mono','Fira Code','JetBrains Mono',Menlo,monospace;
+                      font-size:12px;line-height:1.5;
+                      max-height:70vh;overflow:auto;
+                      white-space:pre-wrap;word-break:break-word;
+                      tab-size:4;-moz-tab-size:4;">
+Select the Console tab to load.</pre>
+        </div><!-- /ci-tab-content-console -->
 
 
       </div>
@@ -3610,6 +3748,7 @@
           <button class="settings-tab" id="stab-users" onclick="switchSettingsTab('users')">Users</button>
           <button class="settings-tab" id="stab-notifications" onclick="switchSettingsTab('notifications')">Notifications</button>
           <button class="settings-tab" id="stab-security" onclick="switchSettingsTab('security')">Security</button>
+          <button class="settings-tab" id="stab-virt" onclick="switchSettingsTab('virt')" style="display:none;">Virtualization</button>
         </div>
 
         <!-- Tab: General -->
@@ -4057,6 +4196,135 @@
         </div>
 
         </div><!-- /stab-panel-security -->
+
+        <!-- Tab: Virtualization (v6.4.28) — visible only when LXD is available -->
+        <div id="stab-panel-virt" style="display:none;grid-template-columns:repeat(auto-fit,minmax(525px,1fr));gap:20px;">
+
+          <!-- Card 1 — Performance & Metrics (the headline feature) -->
+          <div class="card" style="grid-column:1/-1;">
+            <h3 style="margin-bottom:14px;">Performance &amp; Metrics</h3>
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+              <input type="checkbox" id="virt-metrics-toggle" onchange="onVirtMetricsToggle(event)" style="margin-top:2px;">
+              <div>
+                <div style="font-size:13px;font-weight:600;">
+                  Enable VM and Container Capacity &amp; Performance metrics
+                  <i class="info-tip tip-down" data-tip="Toggling this on runs &quot;lxc config set core.metrics_address 127.0.0.1:9101&quot; so LXD exports Prometheus-format metrics on loopback, and starts a portal scraper. Toggling it off unsets the key — both the LXD listener and the scraper stop, but the historical RRD on disk is kept so re-enabling shows past data."></i>
+                </div>
+                <div style="font-size:12px;color:var(--text-3);margin-top:4px;line-height:1.55;">
+                  Turns on LXD's built-in Prometheus endpoint, bound to <code>127.0.0.1:9101</code> (loopback only — never exposed off-host, no auth tokens to manage). The portal scrapes it every 5 minutes and keeps 5 years of history (5-min for 1 week, 30-min for 1 month, daily after that). When ON, a Monitor tab appears on every running VM and Container with a live 3-second realtime row and long-term history charts (CPU, memory, network, disk I/O) sourced from that endpoint. No extra Prometheus server is installed — LXD provides the metrics, the portal is the only consumer.
+                </div>
+              </div>
+            </label>
+            <div id="virt-metrics-status" style="margin-top:14px;padding:8px 12px;background:var(--surface2);border-radius:6px;font-size:12px;color:var(--text-3);font-family:'SF Mono',monospace;">
+              Endpoint status: <span id="virt-metrics-status-text">loading…</span>
+            </div>
+          </div>
+
+          <!-- Card 2 — Listener / API -->
+          <div class="card">
+            <h3 style="margin-bottom:14px;">Listener / API</h3>
+            <div class="form-group">
+              <label>Listener address (<code>core.https_address</code>)
+                <i class="info-tip" data-tip="Address LXD listens on for the cluster/REST API. Default :8443. Leave blank to disable remote access (unix socket only)."></i>
+              </label>
+              <input type="text" id="virt-https-addr" placeholder=":8443" style="max-width:260px;">
+            </div>
+            <div class="form-group">
+              <label>Shutdown timeout, seconds (<code>core.shutdown_timeout</code>)
+                <i class="info-tip" data-tip="Seconds LXD waits for instances to stop cleanly before forcing them down at host shutdown. Higher = safer for slow-booting workloads, but lengthens reboot time."></i>
+              </label>
+              <input type="number" id="virt-shutdown-timeout" min="0" placeholder="60" style="max-width:160px;">
+            </div>
+          </div>
+
+          <!-- Card 3 — Image management -->
+          <div class="card">
+            <h3 style="margin-bottom:14px;">Image management</h3>
+            <div class="form-group">
+              <label>Auto-update interval, hours (0 = disabled)
+                <i class="info-tip" data-tip="How often LXD checks remote image servers for newer versions of cached images. Default 6h. Set to 0 to never auto-update — useful for air-gapped servers and to keep instance reproducibility."></i>
+              </label>
+              <input type="number" id="virt-auto-update-interval" min="0" placeholder="6" style="max-width:160px;">
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-bottom:10px;">
+              <input type="checkbox" id="virt-auto-update-cached"> Auto-update cached images
+              <i class="info-tip" data-tip="When ON, only images explicitly marked as auto-update get refreshed. When OFF, every cached image is checked. Most setups want OFF (the LXD default)."></i>
+            </label>
+            <div class="form-group">
+              <label>Remote cache expiry, days
+                <i class="info-tip" data-tip="How long an image stays in the local cache after its last use. Default 10 days. Lower values reclaim disk faster on a ZNAS that pulls many one-off test images; raise it on systems that frequently re-launch the same image."></i>
+              </label>
+              <input type="number" id="virt-cache-expiry" min="1" placeholder="10" style="max-width:160px;">
+            </div>
+            <div class="form-group">
+              <label>Compression algorithm
+                <i class="info-tip" data-tip="Compression used when LXD exports images locally. zstd is the best speed/size trade-off on modern hardware; gzip is universally compatible; none is fastest but takes the most disk."></i>
+              </label>
+              <select id="virt-compression-algo" style="max-width:200px;">
+                <option value="">(LXD default)</option>
+                <option value="zstd">zstd</option>
+                <option value="gzip">gzip</option>
+                <option value="xz">xz</option>
+                <option value="bzip2">bzip2</option>
+                <option value="none">none</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Card 4 — Backup compression -->
+          <div class="card">
+            <h3 style="margin-bottom:14px;">Backup compression</h3>
+            <div class="form-group">
+              <label>Compression algorithm (<code>backups.compression_algorithm</code>)
+                <i class="info-tip" data-tip="Compression used when exporting an instance backup tarball. zstd recommended."></i>
+              </label>
+              <select id="virt-backup-compression" style="max-width:200px;">
+                <option value="">(LXD default)</option>
+                <option value="zstd">zstd</option>
+                <option value="gzip">gzip</option>
+                <option value="xz">xz</option>
+                <option value="bzip2">bzip2</option>
+                <option value="none">none</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Card 5 — Outbound proxy (collapsed) -->
+          <div class="card" style="grid-column:1/-1;">
+            <details>
+              <summary style="font-size:14px;font-weight:600;cursor:pointer;">Outbound proxy (rare)</summary>
+              <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;">
+                <div class="form-group" style="margin:0;">
+                  <label><code>core.proxy_https</code>
+                    <i class="info-tip" data-tip="HTTPS proxy URL LXD uses to reach external image registries and the auto-updater. Format: http://user:pass@host:port. Leave blank for direct access."></i>
+                  </label>
+                  <input type="text" id="virt-proxy-https" placeholder="http://proxy:8080">
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label><code>core.proxy_http</code>
+                    <i class="info-tip" data-tip="HTTP proxy URL (same syntax). Used only when the upstream supports HTTP."></i>
+                  </label>
+                  <input type="text" id="virt-proxy-http" placeholder="http://proxy:8080">
+                </div>
+                <div class="form-group" style="margin:0;">
+                  <label><code>core.proxy_ignore_hosts</code>
+                    <i class="info-tip" data-tip="Comma-separated list of hosts to bypass the proxy for. Typically the local network range and any internal mirror you maintain."></i>
+                  </label>
+                  <input type="text" id="virt-proxy-ignore" placeholder="192.168.0.0/16,10.0.0.0/8">
+                </div>
+              </div>
+            </details>
+          </div>
+
+          <!-- Save button (full-width footer) -->
+          <div style="grid-column:1/-1;display:flex;justify-content:flex-end;gap:10px;">
+            <button class="btn btn-ghost" onclick="loadVirtSettings()">Reload</button>
+            <button class="btn btn-primary" onclick="saveVirtSettings()">Save changes</button>
+          </div>
+          <div id="virt-alert" class="alert alert-error hidden" style="grid-column:1/-1;"></div>
+          <div id="virt-ok" class="alert alert-success hidden" style="grid-column:1/-1;"></div>
+        </div><!-- /stab-panel-virt -->
+
       </div>
 
     </div><!-- /pages-container -->
@@ -8903,6 +9171,11 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
     }
     if (d.username) window._serverUsername = d.username;
     if (d.experimental_mode) _experimentalMode = true;
+    // v6.4.28 — feature flags driving the Virtualization tab + Monitor tab visibility.
+    window._lxdAvailable       = !!d.lxd_available;
+    window._lxdMetricsEnabled  = !!d.lxd_metrics_enabled;
+    updateVirtTabVisibility(window._lxdAvailable);
+    if (typeof updateMonitorTabVisibility === 'function') updateMonitorTabVisibility();
     updateSchedReplUserHint();
   }).catch(() => {}).finally(() => { _sidebarVersionCheck(); });
 
@@ -8997,22 +9270,211 @@ function switchPrereqTab(tab) {
 }
 
 function switchSettingsTab(tab) {
-  const gridPanels = new Set(['general','notifications','security']);
-  ['general','users','notifications','security'].forEach(t => {
+  const gridPanels = new Set(['general','notifications','security','virt']);
+  ['general','users','notifications','security','virt'].forEach(t => {
     const panel = document.getElementById('stab-panel-' + t);
     const btn   = document.getElementById('stab-' + t);
+    if (!panel || !btn) return;
     if (t === tab) {
       panel.style.display = gridPanels.has(t) ? 'grid' : 'block';
       btn.classList.add('active');
       if (t === 'users') {
         loadUsers();
         if (currentUser.role === 'admin') { document.getElementById('api-keys-card').style.display = ''; loadAPIKeys(); }
+      } else if (t === 'virt') {
+        loadVirtSettings();
+        loadVirtMetricsStatus();
       }
     } else {
       panel.style.display = 'none';
       btn.classList.remove('active');
     }
   });
+}
+
+// ===== Virtualization settings tab (v6.4.28) =====
+
+let _virtStatusTimer = null;
+
+// updateVirtTabVisibility shows/hides the Virtualization settings tab based
+// on whether LXD is available on this host. Called whenever feature flags
+// refresh (via /api/version which already publishes other gates).
+function updateVirtTabVisibility(lxdAvailable) {
+  const btn = document.getElementById('stab-virt');
+  if (!btn) return;
+  btn.style.display = lxdAvailable ? '' : 'none';
+}
+
+async function loadVirtSettings() {
+  const alertEl = document.getElementById('virt-alert');
+  alertEl.classList.add('hidden');
+  try {
+    const r = await fetch('/api/lxd/global-config');
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    const c = await r.json();
+    document.getElementById('virt-https-addr').value         = c.https_address || '';
+    document.getElementById('virt-shutdown-timeout').value   = c.shutdown_timeout || '';
+    document.getElementById('virt-proxy-https').value        = c.proxy_https || '';
+    document.getElementById('virt-proxy-http').value         = c.proxy_http || '';
+    document.getElementById('virt-proxy-ignore').value       = c.proxy_ignore_hosts || '';
+    document.getElementById('virt-auto-update-interval').value = c.auto_update_interval || '';
+    document.getElementById('virt-auto-update-cached').checked = c.auto_update_cached === true;
+    document.getElementById('virt-cache-expiry').value       = c.remote_cache_expiry || '';
+    document.getElementById('virt-compression-algo').value   = c.compression_algo || '';
+    document.getElementById('virt-backup-compression').value = c.backup_compression || '';
+  } catch (e) {
+    alertEl.textContent = 'Could not load LXD settings: ' + e.message;
+    alertEl.classList.remove('hidden');
+  }
+}
+
+async function saveVirtSettings() {
+  const alertEl = document.getElementById('virt-alert');
+  const okEl    = document.getElementById('virt-ok');
+  alertEl.classList.add('hidden');
+  okEl.classList.add('hidden');
+  const body = {
+    https_address:         document.getElementById('virt-https-addr').value.trim(),
+    shutdown_timeout:      document.getElementById('virt-shutdown-timeout').value.trim(),
+    proxy_https:           document.getElementById('virt-proxy-https').value.trim(),
+    proxy_http:            document.getElementById('virt-proxy-http').value.trim(),
+    proxy_ignore_hosts:    document.getElementById('virt-proxy-ignore').value.trim(),
+    auto_update_interval:  document.getElementById('virt-auto-update-interval').value.trim(),
+    auto_update_cached:    document.getElementById('virt-auto-update-cached').checked,
+    remote_cache_expiry:   document.getElementById('virt-cache-expiry').value.trim(),
+    compression_algo:      document.getElementById('virt-compression-algo').value,
+    backup_compression:    document.getElementById('virt-backup-compression').value,
+  };
+  try {
+    const r = await fetch('/api/lxd/global-config', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'failed');
+    if (data.changed && data.changed.length) {
+      okEl.textContent = 'Saved: ' + data.changed.join(', ');
+    } else {
+      okEl.textContent = 'No changes to save.';
+    }
+    okEl.classList.remove('hidden');
+    setTimeout(() => okEl.classList.add('hidden'), 4000);
+  } catch (e) {
+    alertEl.textContent = 'Save failed: ' + e.message;
+    alertEl.classList.remove('hidden');
+  }
+}
+
+async function loadVirtMetricsStatus() {
+  const cb = document.getElementById('virt-metrics-toggle');
+  const txt = document.getElementById('virt-metrics-status-text');
+  try {
+    const r = await fetch('/api/lxd/metrics-status');
+    if (!r.ok) throw new Error('status fetch failed');
+    const s = await r.json();
+    cb.checked = !!s.enabled;
+    txt.innerHTML = renderVirtMetricsStatus(s);
+  } catch (e) {
+    txt.textContent = 'Status unavailable: ' + e.message;
+  }
+  // Auto-refresh status while the panel is visible so the badge stays live.
+  if (_virtStatusTimer) clearInterval(_virtStatusTimer);
+  _virtStatusTimer = setInterval(async () => {
+    const panel = document.getElementById('stab-panel-virt');
+    if (!panel || panel.style.display === 'none') {
+      clearInterval(_virtStatusTimer);
+      _virtStatusTimer = null;
+      return;
+    }
+    try {
+      const r = await fetch('/api/lxd/metrics-status');
+      if (!r.ok) return;
+      const s = await r.json();
+      txt.innerHTML = renderVirtMetricsStatus(s);
+    } catch (_) {}
+  }, 10000);
+}
+
+function renderVirtMetricsStatus(s) {
+  if (!s.enabled) return 'Disabled';
+  let dotColor = '#30d158';
+  let dotLabel = '✓ active';
+  let lastSeen = 'never';
+  if (s.last_scrape_ts) {
+    const ageS = Math.max(0, Math.floor(Date.now()/1000 - s.last_scrape_ts));
+    lastSeen = ageS < 60 ? ageS + 's ago' :
+               ageS < 3600 ? Math.floor(ageS/60) + 'm ago' :
+               Math.floor(ageS/3600) + 'h ago';
+    if (ageS > 600) { dotColor = '#ff9f0a'; dotLabel = '⚠ stale'; }
+    if (s.last_scrape_error) { dotColor = '#ff453a'; dotLabel = '✗ error'; }
+  } else if (s.last_scrape_error) {
+    dotColor = '#ff453a'; dotLabel = '✗ error';
+  } else {
+    dotColor = '#bf5af2'; dotLabel = '… starting';
+  }
+  let html = '<span style="color:' + dotColor + ';font-weight:700;">' + dotLabel + '</span>';
+  html += ' · <span title="LXD metrics endpoint">' + (s.endpoint || '') + '</span>';
+  html += ' · last scrape ' + lastSeen;
+  if (s.enabled && s.last_scrape_ts) {
+    html += ' · ' + (s.last_instances || 0) + ' instances';
+    html += ' · ' + (s.last_series || 0) + ' series';
+  }
+  if (s.last_scrape_error) {
+    html += '<div style="color:var(--accent-danger);margin-top:4px;white-space:pre-wrap;font-size:11px;">' +
+      esc(s.last_scrape_error) + '</div>';
+  }
+  return html;
+}
+
+async function onVirtMetricsToggle(ev) {
+  const want = ev.target.checked;
+  const alertEl = document.getElementById('virt-alert');
+  alertEl.classList.add('hidden');
+  try {
+    let r = await fetch('/api/lxd/metrics-toggle', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: want, force: false}),
+    });
+    if (r.status === 409) {
+      const d = await r.json();
+      const ok = confirm('LXD is already serving metrics on ' + (d.current || '?') +
+        '. Enabling the portal\'s built-in monitoring would change that to 127.0.0.1:9101 ' +
+        'and break your external scraper. Continue?');
+      if (!ok) {
+        ev.target.checked = !want;
+        return;
+      }
+      r = await fetch('/api/lxd/metrics-toggle', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: want, force: true}),
+      });
+    }
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    // Refresh both panels — the global app config flag has changed.
+    await refreshAppConfigFlags();
+    await loadVirtMetricsStatus();
+  } catch (e) {
+    ev.target.checked = !want;
+    alertEl.textContent = 'Toggle failed: ' + e.message;
+    alertEl.classList.remove('hidden');
+  }
+}
+
+// refreshAppConfigFlags re-reads /api/version and updates UI gates that
+// depend on the feature flags (e.g. Monitor tab visibility on instance detail).
+async function refreshAppConfigFlags() {
+  try {
+    const r = await fetch('/api/version');
+    if (!r.ok) return;
+    const v = await r.json();
+    window._lxdAvailable      = !!v.lxd_available;
+    window._lxdMetricsEnabled = !!v.lxd_metrics_enabled;
+    updateVirtTabVisibility(window._lxdAvailable);
+    if (typeof updateMonitorTabVisibility === 'function') updateMonitorTabVisibility();
+  } catch (_) {}
 }
 
 // ===== Navigation =====
@@ -10843,9 +11305,16 @@ function _renderAuditPage() {
 
   el.innerHTML = slice.map(e => {
     const ev = _auditEventMeta(e);
+    // System column (v6.4.28): right after the timestamp, shows which
+    // InterLink server the entry came from. Empty for older entries
+    // recorded before the field was introduced.
+    const systemCell = e.system
+      ? `<span style="color:var(--accent);white-space:nowrap;min-width:90px;font-size:12px;font-weight:600;" title="Source server">${esc(e.system)}</span>`
+      : `<span style="min-width:90px;"></span>`;
     return `
     <div style="display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;${ev.rowStyle}">
       <span style="color:var(--text-3);white-space:nowrap;min-width:140px;font-size:12px;">${formatDate(e.timestamp)}</span>
+      ${systemCell}
       <span>${ev.icon}</span>
       <div>
         ${ev.isSystem ? '<span style="font-size:11px;color:var(--text-3);font-weight:600;">SYSTEM</span>' : `<span style="font-weight:600;">${esc(e.user)}</span>`}
@@ -10882,13 +11351,31 @@ async function loadAudit() {
   document.getElementById('audit-pagination').style.display = 'none';
   el.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>';
   try {
-    const resp    = await fetch('/api/audit');
-    const entries = await resp.json();
+    // /api/audit/aggregate (v6.4.28+): merges local + every InterLink peer's
+    // entries, sorted newest-first server-side and stamped with the source
+    // hostname in each entry's `system` field. Falls back to the local-only
+    // /api/audit when the aggregate endpoint isn't available (e.g. talking
+    // to an older portal in relay mode).
+    let entries = null;
+    let aggregated = false;
+    try {
+      const ar = await fetch('/api/audit/aggregate');
+      if (ar.ok) {
+        entries = await ar.json();
+        aggregated = true;
+      }
+    } catch (_) {}
+    if (entries === null) {
+      const resp = await fetch('/api/audit');
+      entries = await resp.json();
+    }
     if (!entries || !entries.length) {
       el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><p>No activity recorded yet.</p></div>';
       return;
     }
-    _auditEntries = [...entries].reverse();
+    // Aggregate is already newest-first from the server; the local-only
+    // endpoint returns oldest-first so we reverse it for consistency.
+    _auditEntries = aggregated ? [...entries] : [...entries].reverse();
     _auditPage    = 0;
     _renderAuditPage();
   } catch {
@@ -11782,6 +12269,20 @@ function fmtBytes(n) {
   let val = n, idx = -1;
   while (val >= base && idx < suffixes.length - 1) { val /= base; idx++; }
   return (val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)) + ' ' + suffixes[idx];
+}
+
+// fmtBitsPerSec formats a network rate (input in BYTES per second) as
+// bit/s · Kbit/s · Mbit/s · Gbit/s · Tbit/s. Always 1000-base regardless of
+// the storage_unit preference — networking measurements are universally
+// decimal (a "100 Mbit" link is 100 × 10^6, never 100 × 2^20).
+function fmtBitsPerSec(bytesPerSec) {
+  if (!bytesPerSec || bytesPerSec <= 0) return '0 bit/s';
+  let bits = bytesPerSec * 8;
+  const suffixes = ['bit/s', 'Kbit/s', 'Mbit/s', 'Gbit/s', 'Tbit/s'];
+  let idx = 0;
+  while (bits >= 1000 && idx < suffixes.length - 1) { bits /= 1000; idx++; }
+  return (bits % 1 === 0 ? bits.toFixed(0) : bits < 10 ? bits.toFixed(2) : bits.toFixed(1))
+    + ' ' + suffixes[idx];
 }
 function fmtBytesInt(n) {
   if (!n || n <= 0) return '0 B';
@@ -12822,9 +13323,9 @@ function renderPoolExists(el, pool) {
           <span id="pool-status-tick" style="font-size:11px;color:var(--text-3);">Refreshing every 10s</span>
         </div>
         <pre id="pool-status-output"
-          style="margin:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;
-                 padding:14px 16px;font-size:12px;line-height:1.6;overflow-x:auto;
-                 color:var(--text-1);white-space:pre;">Loading…</pre>
+          style="margin:0;background:transparent;border:0;border-radius:0;
+                 padding:0;font-size:12px;line-height:1.6;overflow:hidden;
+                 color:var(--text-1);white-space:pre-wrap;word-break:break-word;">Loading…</pre>
       </div>
       <div class="card" style="min-width:0;">
         <h3 style="margin-bottom:16px;">Pool Details</h3>
@@ -22613,7 +23114,14 @@ let _termResizeObs = null;
 let _termOpen = false;
 
 function toggleTermPanel() {
-  const hostname = window._serverHostname || 'Host';
+  // Use the *effective* server name at click time so each tab is keyed by
+  // the server its websocket actually streams from. In relay mode the
+  // bridge is established at handshake time and stays bound to the relay
+  // target even if the user later switches to another server, so a key
+  // tied to that target keeps `_ciTermTabs` consistent across switches.
+  const hostname = (typeof _relayActive !== 'undefined' && _relayActive && _relayHostname)
+                   ? _relayHostname
+                   : (window._serverHostname || 'Host');
   const key = '__host__' + hostname;
   if (_ciTermTabs.has(key)) {
     // If tab already open, just activate and show it.
@@ -27639,14 +28147,17 @@ function runReplicationTask(id, name) {
         return;
       }
       if (res.relay) {
-        // Persist the local hostname before reloading — after reload /api/version is
-        // proxied to the remote server and window._serverHostname would be wrong.
+        // Persist the local hostname so external services (MinIO console etc.) can
+        // tell "where am I really running" from the relay target. Done before the
+        // soft refresh because afterwards /api/version is proxied to the remote.
         try { localStorage.setItem('znas_local_hostname', window._serverHostname || _localHostnameFallback || ''); } catch(_) {}
-        // Persist the relay server URL so external services (MinIO console etc.) can
-        // build direct links using the remote hostname instead of window.location.hostname.
         try { if (res.relay_url) localStorage.setItem('znas_relay_url', res.relay_url); } catch(_) {}
-        // Reload so all cached data is fetched fresh from the relay target.
-        location.reload();
+        // Soft refresh instead of location.reload(): keeps the bottom-terminal
+        // panel (and any other long-lived websockets) alive across server
+        // switches. Existing terminal tabs continue talking to whichever
+        // server they were originally bound to; new tabs target the relay.
+        _applyRelayState(true, res.hostname || (res.relay_url || ''));
+        _softRelayRefresh();
       } else {
         window.location.href = res.redirect_url;
       }
@@ -28422,13 +28933,25 @@ let _ciStatsTimer  = null;
 
 function _startCIStatsPolling() {
   _stopCIStatsPolling();
+  // 3-second cadence so the Live Information card refreshes in lockstep
+  // with the Monitor tab's realtime row. The nav-dot status update +
+  // status badge also tick at this rate.
   _ciStatsTimer = setInterval(async () => {
     if (!_ciCurrentName) return;
+    if (document.hidden) return; // skip polls while the browser tab is hidden
     try {
       const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_ciCurrentName) + '/stats');
       if (!res.ok) return;
       const stats = await res.json();
       _ciUpdateStatusBadge(stats.status, _lxdStatusColor(stats.status));
+      // Re-render the Live Information card body whenever the user can
+      // see it (Summary tab visible). When they're on Logs / Monitor, the
+      // body is hidden so we skip the DOM work.
+      if (_ciActiveTab === 'summary' &&
+          document.getElementById('ci-tab-content-summary') &&
+          document.getElementById('ci-tab-content-summary').style.display !== 'none') {
+        _ciRenderLiveInfo(stats, null);
+      }
       // also update the nav dot in the sidebar
       const navBtn = document.getElementById('nav-ci-' + _ciCurrentName);
       if (navBtn) {
@@ -28436,7 +28959,7 @@ function _startCIStatsPolling() {
         if (dot) dot.style.background = _lxdStatusColor(stats.status);
       }
     } catch(_) {}
-  }, 5000);
+  }, 3000);
 }
 
 function _stopCIStatsPolling() {
@@ -28459,6 +28982,13 @@ function openComputeInstance(name, type) {
   const _ciVGASep = document.getElementById('ci-vga-sep');
   if (_ciVGABtn) _ciVGABtn.style.display = isVM ? '' : 'none';
   if (_ciVGASep) _ciVGASep.style.display = isVM ? '' : 'none';
+  // Console tab is container-only — VMs already get the SPICE/serial
+  // console via the dedicated console buttons, and a VM's console.log
+  // is BIOS firmware chatter that's rarely useful.
+  _ciUpdateConsoleTabVisibility(isVM);
+  // Reset the per-instance cache so re-opening the same instance still
+  // re-fetches the latest console buffer.
+  _ciConsoleCache = null;
   const _ciInst = (_lxdInstancesCache || []).find(i => i.name === name);
   document.getElementById('ci-title').textContent = (_ciInst && _ciInst.description) ? _ciInst.description : name;
   document.getElementById('ci-status-label').textContent = '—';
@@ -28841,7 +29371,7 @@ let _ciLogsCache = null; // {name, entries}
 
 function _ciSwitchTab(tab) {
   _ciActiveTab = tab;
-  ['summary', 'logs'].forEach(t => {
+  ['summary', 'monitor', 'logs', 'console'].forEach(t => {
     const btn = document.getElementById('ci-tab-' + t);
     const pnl = document.getElementById('ci-tab-content-' + t);
     if (btn) btn.classList.toggle('active', t === tab);
@@ -28853,6 +29383,440 @@ function _ciSwitchTab(tab) {
       loadCILogs(_ciCurrentName);
     }
   }
+  if (tab === 'console') {
+    if (!_ciConsoleCache || _ciConsoleCache.name !== _ciCurrentName) {
+      _ciLoadConsole();
+    }
+  }
+  if (tab === 'monitor') {
+    _ciMonStart();
+  } else {
+    _ciMonStop();
+  }
+}
+
+// ===== Console tab (containers only) =====
+
+let _ciConsoleCache = null; // { name, text }
+
+// _ciUpdateConsoleTabVisibility shows the Console tab only for containers.
+// Called from openComputeInstance when we know the instance type.
+function _ciUpdateConsoleTabVisibility(isVM) {
+  const btn = document.getElementById('ci-tab-console');
+  if (!btn) return;
+  btn.style.display = isVM ? 'none' : '';
+  if (isVM && _ciActiveTab === 'console') _ciSwitchTab('summary');
+}
+
+async function _ciLoadConsole() {
+  if (!_ciCurrentName) return;
+  const body = document.getElementById('ci-console-body');
+  if (!body) return;
+  body.textContent = 'Loading console output…';
+  try {
+    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_ciCurrentName) + '/console-log');
+    const data = await res.json();
+    if (!res.ok) {
+      body.textContent = 'Could not load console output: ' + (data.error || res.status);
+      return;
+    }
+    const text = (data && data.log) ? data.log : '';
+    _ciConsoleCache = { name: _ciCurrentName, text };
+    body.textContent = text || '(console buffer is empty — the container hasn\'t produced any output since its last start)';
+    // Auto-scroll to the bottom on load so the most recent output is visible.
+    requestAnimationFrame(() => body.scrollTop = body.scrollHeight);
+  } catch (e) {
+    body.textContent = 'Could not load console output: ' + e.message;
+  }
+}
+
+function _ciConsoleScrollBottom() {
+  const body = document.getElementById('ci-console-body');
+  if (body) body.scrollTop = body.scrollHeight;
+}
+
+// ===== Per-instance Monitor tab (v6.4.28) =====
+//
+// Top row: realtime sparklines polled every 3 s from /api/lxd/instance-realtime.
+// Bottom row: long-term charts driven by /api/lxd/instance-perf with the
+// standard Since-Data/4h/Day/Week/Month/Year + Avg/Min/Max controls.
+
+let _ciMonTimer    = null;
+let _ciMonPaused   = false;
+let _ciMonBuffer   = { cpu: [], mem: [], disk: [], net: [] }; // rolling 5-min buffers
+let _ciMonSparks   = {}; // chart instances per metric
+let _ciMonHist     = {}; // historical chart instances per metric
+let _ciMonRange    = 'all';
+let _ciMonAgg      = 'avg';
+
+const CI_MON_BUFFER_MAX = 100; // ~5 min @ 3 s
+
+// updateMonitorTabVisibility shows/hides the Monitor tab based on the
+// LXDMetricsEnabled feature flag and whether LXD is available.
+function updateMonitorTabVisibility() {
+  const btn = document.getElementById('ci-tab-monitor');
+  if (!btn) return;
+  const show = !!window._lxdAvailable && !!window._lxdMetricsEnabled;
+  btn.style.display = show ? '' : 'none';
+  // If the user was on the Monitor tab and it's no longer available,
+  // bounce them to Summary so the page isn't stuck on a hidden tab.
+  if (!show && _ciActiveTab === 'monitor') {
+    _ciSwitchTab('summary');
+  }
+}
+
+function _ciMonStart() {
+  if (!_ciCurrentName) return;
+  // Reset state on entry — even if the same instance, treat as a fresh view.
+  _ciMonBuffer = { cpu: [], mem: [], disk: [], net: [] };
+  _ciMonPaused = false;
+  document.getElementById('ci-mon-rt-pause').textContent = '⏸ Pause';
+  // Build sparklines (lazy — Chart.js may not be ready until first call).
+  _ciMonInitSparks();
+  // Kick off the realtime poller.
+  _ciMonStop(); // safety
+  _ciMonTick();
+  _ciMonTimer = setInterval(_ciMonTick, 3000);
+  // Pause when the browser tab loses visibility.
+  document.addEventListener('visibilitychange', _ciMonVisibility);
+  // Load the historical row.
+  _ciMonLoadHistory();
+}
+
+function _ciMonStop() {
+  if (_ciMonTimer) { clearInterval(_ciMonTimer); _ciMonTimer = null; }
+  document.removeEventListener('visibilitychange', _ciMonVisibility);
+  // Hide the floating sparkline tooltip — leaving it on screen after the
+  // user navigates away looks like a stuck overlay.
+  const tip = document.getElementById('ci-mon-spark-tooltip');
+  if (tip) tip.style.display = 'none';
+}
+
+function _ciMonVisibility() {
+  if (document.hidden) {
+    if (_ciMonTimer) { clearInterval(_ciMonTimer); _ciMonTimer = null; }
+  } else {
+    if (!_ciMonPaused && _ciActiveTab === 'monitor' && !_ciMonTimer) {
+      _ciMonTick();
+      _ciMonTimer = setInterval(_ciMonTick, 3000);
+    }
+  }
+}
+
+function _ciMonTogglePause() {
+  _ciMonPaused = !_ciMonPaused;
+  const btn = document.getElementById('ci-mon-rt-pause');
+  if (_ciMonPaused) {
+    btn.textContent = '▶ Play';
+    if (_ciMonTimer) { clearInterval(_ciMonTimer); _ciMonTimer = null; }
+  } else {
+    btn.textContent = '⏸ Pause';
+    _ciMonTick();
+    _ciMonTimer = setInterval(_ciMonTick, 3000);
+  }
+}
+
+async function _ciMonTick() {
+  if (!_ciCurrentName) return;
+  const ind = document.getElementById('ci-mon-rt-indicator');
+  try {
+    const r = await fetch('/api/lxd/instance-realtime?instance=' + encodeURIComponent(_ciCurrentName));
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    const s = await r.json();
+    if (ind) { ind.style.background = '#30d158'; ind.title = ''; }
+    // First poll for any instance returns null rates → discard.
+    if (s.cpu_pct === null || s.cpu_pct === undefined) return;
+    const t = Date.now();
+    _ciMonPushSample('cpu',  t, s.cpu_pct);
+    _ciMonPushSample('mem',  t, (s.mem_total > 0 ? (s.mem_used / s.mem_total * 100) : 0));
+    _ciMonPushSample('disk', t, (s.disk_r || 0) + (s.disk_w || 0));
+    _ciMonPushSample('net',  t, (s.net_rx || 0) + (s.net_tx || 0));
+    // Update numeric readouts.
+    document.getElementById('ci-mon-rt-cpu').textContent  = s.cpu_pct.toFixed(1) + '%';
+    document.getElementById('ci-mon-rt-mem').textContent  = (s.mem_total > 0)
+      ? (fmtBytes(s.mem_used) + ' / ' + fmtBytes(s.mem_total))
+      : fmtBytes(s.mem_used);
+    document.getElementById('ci-mon-rt-disk').textContent = '↓ ' + fmtBytes(s.disk_r||0) + '/s · ↑ ' + fmtBytes(s.disk_w||0) + '/s';
+    // Network displayed in bits/sec (with dynamic Kbit/Mbit/Gbit) per the
+    // standard networking convention; the API still returns bytes/sec, so
+    // both the live readout and the sparkline buffer are in bytes — only the
+    // rendering switches to bits via fmtBitsPerSec.
+    document.getElementById('ci-mon-rt-net').textContent  = '↓ ' + fmtBitsPerSec(s.net_rx||0) + ' · ↑ ' + fmtBitsPerSec(s.net_tx||0);
+    _ciMonRedrawSparks();
+  } catch (e) {
+    if (ind) { ind.style.background = '#ff9f0a'; ind.title = 'Realtime poll failed: ' + e.message; }
+  }
+}
+
+function _ciMonPushSample(key, t, v) {
+  const buf = _ciMonBuffer[key];
+  buf.push({ x: t, y: v });
+  while (buf.length > CI_MON_BUFFER_MAX) buf.shift();
+}
+
+// Shared floating tooltip element for the realtime sparklines. The default
+// Chart.js tooltip is drawn onto the canvas itself, which clips on a 32 px
+// sparkline. An external tooltip lives on document.body, positioned with
+// fixed coordinates, and is free to overflow any card boundary.
+function _ciMonSparkTooltipEl() {
+  let el = document.getElementById('ci-mon-spark-tooltip');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'ci-mon-spark-tooltip';
+  el.style.cssText = 'position:fixed;z-index:10000;display:none;pointer-events:none;' +
+    'padding:8px 10px;border-radius:6px;border:1px solid;font-size:12px;' +
+    'box-shadow:0 4px 16px rgba(0,0,0,0.25);white-space:nowrap;line-height:1.5;';
+  document.body.appendChild(el);
+  return el;
+}
+
+function _ciMonExternalSparkTooltip(label, fmt) {
+  return function(context) {
+    const tip = _ciMonSparkTooltipEl();
+    const { tooltip, chart } = context;
+    if (!tooltip || tooltip.opacity === 0) { tip.style.display = 'none'; return; }
+    const items = (tooltip.dataPoints || []).filter(p => p.parsed.y != null);
+    if (!items.length) { tip.style.display = 'none'; return; }
+    const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
+    const tipBg     = isLight ? '#ffffff' : '#1c1c1e';
+    const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+    const tipTitle  = isLight ? '#3a3a3c' : '#c7c7cc';
+    const tipBody   = isLight ? '#1c1c1e' : '#f5f5f7';
+    tip.style.background  = tipBg;
+    tip.style.borderColor = tipBorder;
+    tip.style.color       = tipBody;
+    const d   = new Date(items[0].parsed.x);
+    const pad = n => String(n).padStart(2, '0');
+    const ts  = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    const v   = fmt(items[0].parsed.y);
+    tip.innerHTML =
+      '<div style="font-size:11px;color:' + tipTitle + ';margin-bottom:4px;">' + ts + '</div>' +
+      '<div><span style="opacity:.7;">' + label + ':</span> <span style="font-weight:600;">' + v + '</span></div>';
+    // Position: float to the right of the cursor by default; flip to the
+    // left when we'd overflow the right edge of the viewport. Clamp to top
+    // so a sparkline near the top of the page can't push the tooltip
+    // off-screen above.
+    tip.style.display = 'block';
+    const tipW = tip.offsetWidth, tipH = tip.offsetHeight;
+    const rect = chart.canvas.getBoundingClientRect();
+    let left = rect.left + tooltip.caretX + 12;
+    let top  = rect.top  + tooltip.caretY - tipH - 8; // hover above the cursor
+    if (left + tipW + 8 > window.innerWidth) {
+      left = rect.left + tooltip.caretX - tipW - 12;
+    }
+    if (top < 8) top = rect.bottom + 8; // not enough room above → drop below
+    if (left < 8) left = 8;
+    tip.style.left = left + 'px';
+    tip.style.top  = top  + 'px';
+  };
+}
+
+function _ciMonInitSparks() {
+  if (typeof Chart === 'undefined') return;
+  // sparkLabel: how to format the value when the cursor hovers over a point.
+  // Matches the readout above each sparkline so the tooltip is unambiguous.
+  const sparkOpts = (color, label, fmt) => ({
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: 'xDedup', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        // Disable Chart.js's in-canvas drawing; render to an external DOM
+        // element so the tooltip can overflow the 32 px sparkline area.
+        enabled: false,
+        external: _ciMonExternalSparkTooltip(label, fmt),
+      },
+    },
+    scales: { x: { display: false, type: 'linear' }, y: { display: false, beginAtZero: true } },
+    elements: { point: { radius: 0 }, line: { borderWidth: 1.5, tension: 0.3, borderColor: color, fill: true, backgroundColor: color + '33' } },
+  });
+  const make = (id, color, key, label, fmt) => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    if (_ciMonSparks[key]) { _ciMonSparks[key].destroy(); }
+    return new Chart(el, {
+      type: 'line',
+      data: { datasets: [{ data: _ciMonBuffer[key], borderColor: color, backgroundColor: color + '33' }] },
+      options: sparkOpts(color, label, fmt),
+      // Same always-visible overlay used everywhere else in the app.
+      plugins: [_perfTooltipPlugin],
+    });
+  };
+  _ciMonSparks.cpu  = make('ci-mon-rt-cpu-spark',  '#0a84ff', 'cpu',  'CPU',     v => v == null ? '—' : v.toFixed(1) + '%');
+  _ciMonSparks.mem  = make('ci-mon-rt-mem-spark',  '#bf5af2', 'mem',  'Memory',  v => v == null ? '—' : v.toFixed(1) + '%');
+  _ciMonSparks.disk = make('ci-mon-rt-disk-spark', '#30d158', 'disk', 'Disk',    v => v == null ? '—' : fmtBytes(v) + '/s');
+  _ciMonSparks.net  = make('ci-mon-rt-net-spark',  '#ff9f0a', 'net',  'Network', v => v == null ? '—' : fmtBitsPerSec(v));
+}
+
+function _ciMonRedrawSparks() {
+  for (const k of ['cpu','mem','disk','net']) {
+    const c = _ciMonSparks[k];
+    if (!c) continue;
+    c.data.datasets[0].data = _ciMonBuffer[k];
+    c.update('none');
+  }
+}
+
+// ── Historical row ────────────────────────────────────────────────────────
+
+function _ciMonSetRange(r) {
+  _ciMonRange = r;
+  document.querySelectorAll('#ci-tab-content-monitor .perf-range-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === r);
+  });
+  _ciMonLoadHistory();
+}
+
+function _ciMonSetAgg(v) {
+  _ciMonAgg = v;
+  _ciMonLoadHistory();
+}
+
+function _ciMonSinceTs() {
+  const now = Math.floor(Date.now() / 1000);
+  const map = { '4h': 14400, day: 86400, week: 604800, month: 2592000, year: 31536000 };
+  return map[_ciMonRange] ? now - map[_ciMonRange] : 0;
+}
+
+function _ciMonTier() {
+  if (_ciMonRange === '4h' || _ciMonRange === 'day' || _ciMonRange === 'week') return 0;
+  if (_ciMonRange === 'month') return 1;
+  if (_ciMonRange === 'year')  return 2;
+  return 0;
+}
+
+async function _ciMonLoadHistory() {
+  if (!_ciCurrentName) return;
+  const empty = document.getElementById('ci-mon-hist-empty');
+  const charts = document.getElementById('ci-mon-hist-charts');
+  let url = '/api/lxd/instance-perf?instance=' + encodeURIComponent(_ciCurrentName) +
+            '&tier=' + _ciMonTier();
+  const since = _ciMonSinceTs();
+  if (since > 0) url += '&since=' + since;
+  try {
+    const r = await fetch(url);
+    if (r.status === 404) {
+      empty.style.display = ''; charts.style.display = 'none'; return;
+    }
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    const data = await r.json();
+    const series = data.series || {};
+    const keys = Object.keys(series);
+    if (keys.length === 0) {
+      empty.style.display = ''; charts.style.display = 'none'; return;
+    }
+    empty.style.display = 'none'; charts.style.display = '';
+    _ciMonRenderHistChart('cpu',  series, ['cpu'],                       '%',     1);
+    _ciMonRenderHistChart('mem',  series, ['mem'],                       'B',     1);
+    // Network rendered in bits per second (industry standard for network
+    // throughput); the values in the RRD are bytes/sec — the renderer
+    // multiplies by 8 when 'bit/s' is the unit.
+    _ciMonRenderHistChart('net',  series, keys.filter(k => k.startsWith('net_rx:') || k.startsWith('net_tx:')), 'bit/s', 1);
+    _ciMonRenderHistChart('disk', series, keys.filter(k => k.startsWith('disk_r:') || k.startsWith('disk_w:')), 'B/s',   1);
+  } catch (e) {
+    empty.style.display = ''; charts.style.display = 'none';
+    empty.textContent = 'Could not load history: ' + e.message;
+  }
+}
+
+function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor) {
+  const canvasId = 'ci-mon-chart-' + slot;
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  if (_ciMonHist[slot]) { _ciMonHist[slot].destroy(); }
+  const palette = ['#0a84ff','#bf5af2','#30d158','#ff9f0a','#ff453a','#64d2ff','#ffd60a'];
+  const datasets = keys.map((k, i) => {
+    const samples = series[k] || [];
+    const color = palette[i % palette.length];
+    return {
+      label: k,
+      data: samples.map(s => ({ x: s.ts * 1000, y: (s[_ciMonAgg] ?? null) })),
+      borderColor: color,
+      backgroundColor: color + '33',
+      borderWidth: 1.2,
+      pointRadius: 0,
+      tension: 0.3,
+      fill: false,
+      spanGaps: true,
+    };
+  });
+  let peak = 0;
+  for (const ds of datasets) for (const pt of ds.data) if ((pt.y ?? 0) > peak) peak = pt.y;
+  const maxEl = document.getElementById('ci-mon-max-' + slot);
+  if (maxEl) {
+    if (peak <= 0) maxEl.textContent = '';
+    else if (unit === '%') maxEl.textContent = 'max ' + peak.toFixed(1) + '%';
+    else if (unit === 'bit/s') maxEl.textContent = 'max ' + fmtBitsPerSec(peak);
+    else if (unit === 'B' || unit === 'B/s') maxEl.textContent = 'max ' + fmtBytes(peak) + (unit === 'B/s' ? '/s' : '');
+    else maxEl.textContent = 'max ' + peak.toFixed(1) + ' ' + unit;
+  }
+  const isLight = document.body.classList.contains('light') || document.body.classList.contains('dawn');
+  const tickColor = isLight ? '#6c6c70' : '#8e8e93';
+  const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+  const tipBg     = isLight ? '#ffffff' : '#1c1c1e';
+  const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+  const tipTitle  = isLight ? '#3a3a3c' : '#c7c7cc';
+  const tipBody   = isLight ? '#1c1c1e' : '#f5f5f7';
+  _ciMonHist[slot] = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      // xDedup: same hover model as the global Performance page — one
+      // datapoint per dataset, no alternating duplicates between samples.
+      interaction: { mode: 'xDedup', intersect: false },
+      plugins: {
+        legend: { display: keys.length > 1, labels: { color: tickColor, font: { size: 10 } } },
+        tooltip: {
+          backgroundColor: tipBg,
+          borderColor: tipBorder,
+          borderWidth: 1,
+          titleColor: tipTitle,
+          bodyColor: tipBody,
+          padding: 10,
+          // Disk I/O chart: hide rows that read as 0 B/s. Most VMs have
+          // many disk devices that idle at zero (loop pseudo-devices,
+          // unused virtio queues), so the tooltip otherwise gets noisy
+          // with a long list of "0 B/s" lines that crowd out the rates
+          // that actually matter. The 0.5 threshold avoids float-noise
+          // ticks like 0.0003 B/s sneaking in.
+          filter: item => {
+            if (item.parsed.y === null || item.parsed.y === undefined) return false;
+            if (slot === 'disk' && Math.abs(item.parsed.y) < 0.5) return false;
+            return true;
+          },
+          callbacks: {
+            title: items => {
+              if (!items.length) return '';
+              const d = new Date(items[0].parsed.x);
+              const pad = n => String(n).padStart(2, '0');
+              return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+                   + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+            },
+            label: ctx => {
+              if (ctx.parsed.y == null) return null;
+              if (unit === '%')      return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + '%';
+              if (unit === 'bit/s')  return '  ' + ctx.dataset.label + ': ' + fmtBitsPerSec(ctx.parsed.y);
+              if (unit === 'B' || unit === 'B/s') return '  ' + ctx.dataset.label + ': ' + fmtBytes(ctx.parsed.y) + (unit === 'B/s' ? '/s' : '');
+              return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(2) + ' ' + unit;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { type: 'linear', ticks: { color: tickColor, font: { size: 10 }, maxTicksLimit: 8, callback: v => new Date(v).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) }, grid: { color: gridColor } },
+        y: { beginAtZero: true, ticks: { color: tickColor, font: { size: 10 },
+          callback: v => unit === '%'     ? v + '%'
+                       : unit === 'bit/s' ? fmtBitsPerSec(v)
+                       : (unit === 'B' || unit === 'B/s') ? fmtBytes(v)
+                       : v.toFixed(1)
+        }, grid: { color: gridColor } },
+      },
+    },
+    // _perfTooltipPlugin keeps the overlay visible while the cursor is
+    // anywhere over the chart area, matching the global Performance page.
+    plugins: [_perfTooltipPlugin],
+  });
 }
 
 // Raw log entries held so the filter can re-apply without refetching.
@@ -29150,7 +30114,13 @@ function _ciTermBindWS(name, ws) {
   ws.onerror   = () => tab.term.write('\r\n\x1b[31m[connection error]\x1b[0m\r\n\x1b[33m[press Enter to reconnect]\x1b[0m\r\n');
   tab.onDataDisp   = tab.term.onData(data => {
     if (ws.readyState === WebSocket.OPEN) { ws.send(data); }
-    else if (data === '\r') { _ciTermReopenTab(key); }
+    // After a timeout/disconnect, the closed-state hint says "[press
+    // Enter to reconnect]" — wire that to actually re-open. Bug fix
+    // (v6.4.28): the previous closure referenced an undefined `key`
+    // (the parameter here is `name`), so pressing Enter threw a
+    // ReferenceError and did nothing; the user had to close & reopen
+    // the tab to get a fresh shell.
+    else if (data === '\r') { _ciTermReopenTab(name); }
   });
   tab.onResizeDisp = tab.term.onResize(({ cols, rows }) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
@@ -29390,81 +30360,94 @@ async function loadComputeInstanceDetail(name, type) {
   }
 
   // ── Usage card ─────────────────────────────────────────────────
-  const usageEl = document.getElementById('ci-usage-body');
   if (statsRes.ok) {
     const stats = await statsRes.json();
-    const statusColor = stats.status === 'Running' ? '#3fb950' : stats.status === 'Stopped' ? '#6e7681' : stats.status === 'Error' ? '#ff453a' : '#f0b429';
-    const badge = document.getElementById('ci-status-badge');
-    const label = document.getElementById('ci-status-label');
-    if (badge && label) {
-      label.textContent = stats.status;
-      badge.style.background = statusColor + '22';
-      badge.style.color = statusColor;
-      badge.style.borderColor = statusColor + '55';
-    }
-    badge && (badge.dataset.status = stats.status);
-
-    if (stats.status !== 'Running') {
-      usageEl.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 0;gap:8px;">
-        <span style="font-size:28px;opacity:0.4;">⏸</span>
-        <span style="color:var(--text-3);font-size:13px;">Instance is not running</span>
-      </div>`;
-      return;
-    }
-
-    // Find root disk comp_ratio from cfg for the Storage Consumed label.
-    const rootDisk = cfg && cfg.disks ? cfg.disks.find(d => d.is_root) : null;
-    const diskCompRatio = rootDisk && rootDisk.comp_ratio ? _fmtRatio(rootDisk.comp_ratio) : '';
-
-    let html = '';
-
-    // Uptime (first row)
-    if (stats.uptime_sec > 0) {
-      html += _ciRow('Uptime', `<span style="font-family:monospace;font-weight:600;">${_fmtUptime(stats.uptime_sec)}</span>`);
-    }
-
-    // CPU time (cumulative)
-    const cpuSec = stats.cpu_usage_ns / 1e9;
-    const cpuStr = cpuSec < 60
-      ? cpuSec.toFixed(1) + ' s'
-      : cpuSec < 3600
-        ? (cpuSec / 60).toFixed(1) + ' min'
-        : (cpuSec / 3600).toFixed(2) + ' h';
-    html += _ciRow('CPU Time', `<span style="font-family:monospace;font-weight:600;">${cpuStr}</span> <span style="color:var(--text-3);font-size:11px;">cumulative</span>`);
-
-    // Current CPU % gauge (100% = all assigned vCPUs fully busy)
-    const cpuPct = stats.cpu_pct != null ? stats.cpu_pct : 0;
-    const cpuLabel = cpuPct.toFixed(1) + '%' + (stats.cpu_count > 1 ? ` <span style="color:var(--text-3);font-size:11px;">/ ${stats.cpu_count} vCPU</span>` : '');
-    html += `<div style="padding:10px 0;border-bottom:1px solid var(--border);">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;font-size:13px;">
-        <span style="color:var(--text-3);">CPU Usage</span>
-        <span style="color:var(--text);font-weight:600;">${cpuLabel}</span>
-      </div>
-      <div style="height:5px;background:var(--surface2);border-radius:3px;overflow:hidden;">
-        <div style="height:100%;width:${Math.min(100,cpuPct).toFixed(1)}%;background:#3fb950;border-radius:3px;transition:width .4s;"></div>
-      </div>
-    </div>`;
-
-    // Memory — bar goes to configured limit if set, otherwise peak
-    const memMax = stats.mem_limit_bytes > 0 ? stats.mem_limit_bytes : stats.mem_peak_bytes;
-    html += _ciGaugeRow('Memory Used', stats.mem_used_bytes, memMax, '#58a6ff', 'bytes');
-    if (stats.mem_peak_bytes > 0) {
-      html += _ciGaugeRow('Memory Peak', stats.mem_peak_bytes, memMax, 'rgba(88,166,255,0.45)', 'bytes');
-    }
-
-    // Disk — renamed to "Storage Consumed" + compression ratio in parenthesis
-    const diskMax = stats.disk_size_bytes > 0 ? stats.disk_size_bytes : stats.disk_used_bytes;
-    const diskRowLabel = 'Storage Consumed' + (diskCompRatio ? ` <span style="color:var(--text-3);font-size:11px;font-weight:400;">(${esc(diskCompRatio)})</span>` : '');
-    html += _ciGaugeRowLabel(diskRowLabel, stats.disk_used_bytes, diskMax, '#3fb950', 'bytes');
-
-    if (stats.processes > 0) {
-      html += _ciRow('Processes', `<span style="font-family:monospace;font-weight:600;">${stats.processes}</span>`);
-    }
-
-    usageEl.innerHTML = html;
+    _ciRenderLiveInfo(stats, cfg);
   } else {
-    usageEl.innerHTML = '<div style="color:var(--danger);font-size:13px;">Failed to load stats.</div>';
+    document.getElementById('ci-usage-body').innerHTML =
+      '<div style="color:var(--danger);font-size:13px;">Failed to load stats.</div>';
   }
+}
+
+// _ciLastCfg holds the most recent /config response so the periodic Live
+// Info re-render (every 3 s, see _startCIStatsPolling) can keep showing
+// the comp-ratio / vCPU-count details without re-fetching the config.
+let _ciLastCfg = null;
+
+// _ciRenderLiveInfo paints the "Live Information" card body from a /stats
+// response. Called once on page open (with the parsed cfg) and again on
+// every 3-second polling tick (cfg passed through from _ciLastCfg).
+function _ciRenderLiveInfo(stats, cfg) {
+  const usageEl = document.getElementById('ci-usage-body');
+  if (!usageEl) return;
+  if (cfg) _ciLastCfg = cfg; else cfg = _ciLastCfg;
+
+  const statusColor = stats.status === 'Running' ? '#3fb950' :
+                      stats.status === 'Stopped' ? '#6e7681' :
+                      stats.status === 'Error'   ? '#ff453a' : '#f0b429';
+  const badge = document.getElementById('ci-status-badge');
+  const label = document.getElementById('ci-status-label');
+  if (badge && label) {
+    label.textContent = stats.status;
+    badge.style.background  = statusColor + '22';
+    badge.style.color       = statusColor;
+    badge.style.borderColor = statusColor + '55';
+    badge.dataset.status    = stats.status;
+  }
+
+  if (stats.status !== 'Running') {
+    usageEl.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 0;gap:8px;">
+      <span style="font-size:28px;opacity:0.4;">⏸</span>
+      <span style="color:var(--text-3);font-size:13px;">Instance is not running</span>
+    </div>`;
+    return;
+  }
+
+  // Find root disk comp_ratio from cfg for the Storage Consumed label.
+  const rootDisk = cfg && cfg.disks ? cfg.disks.find(d => d.is_root) : null;
+  const diskCompRatio = rootDisk && rootDisk.comp_ratio ? _fmtRatio(rootDisk.comp_ratio) : '';
+
+  let html = '';
+
+  if (stats.uptime_sec > 0) {
+    html += _ciRow('Uptime', `<span style="font-family:monospace;font-weight:600;">${_fmtUptime(stats.uptime_sec)}</span>`);
+  }
+
+  const cpuSec = stats.cpu_usage_ns / 1e9;
+  const cpuStr = cpuSec < 60
+    ? cpuSec.toFixed(1) + ' s'
+    : cpuSec < 3600
+      ? (cpuSec / 60).toFixed(1) + ' min'
+      : (cpuSec / 3600).toFixed(2) + ' h';
+  html += _ciRow('CPU Time', `<span style="font-family:monospace;font-weight:600;">${cpuStr}</span> <span style="color:var(--text-3);font-size:11px;">cumulative</span>`);
+
+  const cpuPct = stats.cpu_pct != null ? stats.cpu_pct : 0;
+  const cpuLabel = cpuPct.toFixed(1) + '%' + (stats.cpu_count > 1 ? ` <span style="color:var(--text-3);font-size:11px;">/ ${stats.cpu_count} vCPU</span>` : '');
+  html += `<div style="padding:10px 0;border-bottom:1px solid var(--border);">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;font-size:13px;">
+      <span style="color:var(--text-3);">CPU Usage</span>
+      <span style="color:var(--text);font-weight:600;">${cpuLabel}</span>
+    </div>
+    <div style="height:5px;background:var(--surface2);border-radius:3px;overflow:hidden;">
+      <div style="height:100%;width:${Math.min(100,cpuPct).toFixed(1)}%;background:#3fb950;border-radius:3px;transition:width .4s;"></div>
+    </div>
+  </div>`;
+
+  const memMax = stats.mem_limit_bytes > 0 ? stats.mem_limit_bytes : stats.mem_peak_bytes;
+  html += _ciGaugeRow('Memory Used', stats.mem_used_bytes, memMax, '#58a6ff', 'bytes');
+  if (stats.mem_peak_bytes > 0) {
+    html += _ciGaugeRow('Memory Peak', stats.mem_peak_bytes, memMax, 'rgba(88,166,255,0.45)', 'bytes');
+  }
+
+  const diskMax = stats.disk_size_bytes > 0 ? stats.disk_size_bytes : stats.disk_used_bytes;
+  const diskRowLabel = 'Storage Consumed' + (diskCompRatio ? ` <span style="color:var(--text-3);font-size:11px;font-weight:400;">(${esc(diskCompRatio)})</span>` : '');
+  html += _ciGaugeRowLabel(diskRowLabel, stats.disk_used_bytes, diskMax, '#3fb950', 'bytes');
+
+  if (stats.processes > 0) {
+    html += _ciRow('Processes', `<span style="font-family:monospace;font-weight:600;">${stats.processes}</span>`);
+  }
+
+  usageEl.innerHTML = html;
 }
 
 // Like _ciGaugeRow but accepts an already-built HTML label string (allows inline spans).
@@ -29693,7 +30676,10 @@ function _lxdRenderRows(instances) {
     const imgTrunc = inst.image && inst.image.length > 25 ? inst.image.slice(0, 25) + '…' : (inst.image || '');
     const imgCell = hasImg ? `<td style="color:var(--text-2);font-size:12px;" title="${esc(inst.image || '')}">${esc(imgTrunc || '—')}</td>` : '';
     const dsLabel = _dsLabel(inst.root_pool);
-    return `<tr id="lxd-row-${esc(inst.name)}">
+    // Row click opens the instance view; per-cell action buttons (power
+    // badge, terminal icon, burger menu) call e.stopPropagation() so they
+    // don't double-trigger.
+    return `<tr id="lxd-row-${esc(inst.name)}" style="cursor:pointer;" onclick='openComputeInstance(${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>
       <td>${typeBadge}</td>
       <td>${esc(inst.description || inst.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(inst.name)}</span></td>
       <td style="font-family:monospace;color:var(--text-2);">${esc(inst.ipv4 || '—')}</td>
@@ -29701,12 +30687,12 @@ function _lxdRenderRows(instances) {
       <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
       <td style="text-align:center;color:var(--text-2);">${esc(inst.cpu_limit || '—')}</td>
       <td style="color:var(--text-2);">${esc(inst.memory_limit || '—')}</td>
-      <td style="text-align:center;">${powerBtn}</td>
+      <td style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
       <td style="text-align:center;">${inst.autostart ? '<span style="color:#3fb950;font-size:13px;font-weight:600;">&#x2714;</span>' : '<span style="color:var(--text-3);font-size:13px;">&#x2014;</span>'}</td>
-      <td><span class="lxd-tbl-icon${inst.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${inst.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${inst.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'`}>
+      <td onclick="event.stopPropagation()"><span class="lxd-tbl-icon${inst.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${inst.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${inst.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'`}>
         <span style="font-size:16px;">🖥️</span>
       </span></td>
-      <td><span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      <td onclick="event.stopPropagation()"><span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>&#x22EE;</span></td>
     </tr>`;
   }).join('');
@@ -33817,7 +34803,97 @@ function _applyRelayState(active, hostname) {
   _relayHostname = hostname || '';
 }
 
-// Exit relay mode — POST to the backend, then reload.
+// _softRelayRefresh re-fetches the data the page depends on after a relay
+// enter/exit, WITHOUT reloading the document.  This is what lets bottom-
+// terminal tabs (and any other long-lived browser-side state) survive when
+// the user switches between InterLink servers — the relay middleware is
+// session-scoped at handshake time, so existing terminal websockets keep
+// streaming to whichever server they were originally bound to.
+//
+// Strategy: invalidate the well-known in-memory caches, re-run /api/version
+// to update window._serverHostname etc., then re-show the current page so
+// it re-fetches via API. If anything goes wrong we fall back to a full
+// page reload so the user is never left in a half-applied state.
+async function _softRelayRefresh() {
+  try {
+    // Reset in-memory caches that hold per-server data. Re-declared with
+    // typeof guards so referencing a not-yet-defined symbol is safe.
+    if (typeof datasetCache       !== 'undefined') datasetCache       = [];
+    if (typeof zvolCache          !== 'undefined') zvolCache          = [];
+    if (typeof _lxdInstancesCache !== 'undefined') _lxdInstancesCache = [];
+    if (typeof _perfPools         !== 'undefined') _perfPools         = [];
+    if (typeof _nfsSharesCache    !== 'undefined') _nfsSharesCache    = [];
+    if (typeof _lxdNetworks       !== 'undefined') _lxdNetworks       = [];
+    if (typeof _lxdPools          !== 'undefined') _lxdPools          = [];
+    if (typeof _lxdNetworksCache  !== 'undefined') _lxdNetworksCache  = [];
+
+    // Re-fetch version + feature flags. This updates window._serverHostname
+    // to the relay target (when entering relay) or back to the local host
+    // (when exiting), so newly-opened terminal tabs use the right name.
+    try {
+      const r = await fetch('/api/version', { cache: 'no-store' });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.hostname) {
+          window._serverHostname = d.hostname;
+          const hl = document.getElementById('sidebar-hostname-label');
+          if (hl) hl.textContent = d.hostname;
+        }
+        if (typeof d.lxd_available === 'boolean')        window._lxdAvailable      = d.lxd_available;
+        if (typeof d.lxd_metrics_enabled === 'boolean')  window._lxdMetricsEnabled = d.lxd_metrics_enabled;
+        if (typeof updateVirtTabVisibility === 'function')   updateVirtTabVisibility(window._lxdAvailable);
+        if (typeof updateMonitorTabVisibility === 'function') updateMonitorTabVisibility();
+      }
+    } catch(_) {}
+
+    // Re-run the boot-time sidebar/topbar wiring so the LEFT nav reflects
+    // what the new server actually has (LXD on/off, iSCSI/MinIO/UPS
+    // installed or not, NFS/SMB share counts, dataset & disk dots).
+    // The sidebar's feature-gated items are otherwise stuck on whatever
+    // the previous server presented.
+    if (typeof refreshPoolBar         === 'function') refreshPoolBar();
+    if (typeof initLXD                === 'function') initLXD();          // sets _lxdAvailable + LXD nav items
+    if (typeof loadISCSINavStatus     === 'function') loadISCSINavStatus();
+    if (typeof loadS3NavStatus        === 'function') loadS3NavStatus();
+    if (typeof updateServiceNavDots   === 'function') updateServiceNavDots();
+    if (typeof updateDatasetNavDot    === 'function') updateDatasetNavDot();
+    if (typeof updateDiskNavDot       === 'function') updateDiskNavDot();
+    if (typeof refreshSnapshotNavDot  === 'function') refreshSnapshotNavDot();
+    if (typeof _navUpsRefresh         === 'function') _navUpsRefresh();   // safe no-op when undefined
+    if (typeof refreshNetworkingNav   === 'function') refreshNetworkingNav();
+    if (typeof refreshDatastoresNav   === 'function') refreshDatastoresNav();
+    // Compute mode: re-fetch the new server's instance list and re-render
+    // the #nav-compute-instances list. The cache was cleared above, so this
+    // forces a fresh API call rather than reusing the previous server's VMs.
+    if (typeof refreshComputeNav      === 'function') refreshComputeNav();
+
+    // The current page's selection may not exist on the new server (e.g.
+    // user was on "Compute → vm-1" on Server A and the new server has no
+    // VM by that name). Bounce to the dashboard so we never show
+    // someone else's instance under the new context. Pages that *do*
+    // exist on both sides — Dashboard, Settings, Activity, etc. — are
+    // re-rendered in place.
+    const visible = document.querySelector('.page:not(.hidden)');
+    const safePages = new Set(['dashboard','capacity','settings','activity','prereqs','updates','users']);
+    if (visible && visible.id && visible.id.indexOf('page-') === 0) {
+      const name = visible.id.slice('page-'.length);
+      if (safePages.has(name)) {
+        showPage(name);
+      } else {
+        showPage('dashboard');
+      }
+    } else {
+      showPage('dashboard');
+    }
+  } catch (err) {
+    // If anything blew up, fall back to the old hard reload so the user
+    // doesn't end up looking at half-stale data.
+    console.error('soft relay switch failed; falling back to reload:', err);
+    location.reload();
+  }
+}
+
+// Exit relay mode — POST to the backend, then soft-refresh.
 async function exitRelayMode() {
   try {
     await fetch('/api/interlink/relay-exit', { method: 'POST', credentials: 'same-origin' });
@@ -33825,7 +34901,7 @@ async function exitRelayMode() {
   try { localStorage.removeItem('znas_local_hostname'); } catch(_) {}
   try { localStorage.removeItem('znas_relay_url'); } catch(_) {}
   _applyRelayState(false, '');
-  location.reload();
+  _softRelayRefresh();
 }
 
 

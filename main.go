@@ -164,6 +164,23 @@ func main() {
 	// ===== Pool performance collector (per-pool disk I/O, 3-tier RRD up to 5 years) =====
 	system.StartPoolPerfCollector(absConfig)
 
+	// ===== LXD VM/Container metrics collector (v6.4.28; gated by LXDMetricsEnabled) =====
+	// Always start the goroutine; on each tick it consults getEnabled() to
+	// decide whether to actually scrape. This lets the user flip the
+	// Virtualization toggle at runtime without restarting the service.
+	system.StartLXDMetricsCollector(absConfig, func() bool {
+		c, _ := config.LoadAppConfig()
+		return c != nil && c.LXDMetricsEnabled && system.LXDAvailable()
+	})
+	// Initial orphan sweep — catches RRD files for instances that were
+	// deleted while the portal was offline.
+	go func() {
+		time.Sleep(10 * time.Second)
+		if system.LXDAvailable() {
+			system.SweepOrphanLXDMetrics()
+		}
+	}()
+
 	// ===== Daily SMART refresh goroutine =====
 	handlers.StartDailySmartRefresh()
 
