@@ -1149,13 +1149,21 @@ func PrepareZFSPartition(device string) (string, error) {
 // CreatePool creates a new ZFS pool.
 // Each device is first wiped and repartitioned (GPT, type BF01) so the pool
 // tracks the partition by its stable PARTUUID rather than by kernel device name.
-// layout: "stripe" | "mirror" | "raidz1" | "raidz2" | "raidz3"
+// layout: "stripe" | "mirror" | "raid10" | "raidz1" | "raidz2" | "raidz3"
+//   raid10: stripe of 2-way mirrors — len(devices) must be even and ≥4. Each
+//   consecutive pair becomes its own mirror vdev, so the resulting top-level
+//   layout is `mirror d0 d1 mirror d2 d3 …`.
 // ashift: 9, 12, or 13
 // compression: "off" | "lz4" | "zstd"
 // dedup: "off" | "on" | "verify"
 // keyFilePath: absolute path to 32-byte raw key file, or "" for no encryption
 // mountRoot: if true, ZFS default mountpoint (/<name>); if false, pool is mounted at /mnt/<name>
 func CreatePool(name, layout string, ashift int, compression, dedup string, devices []string, keyFilePath string, mountRoot bool) error {
+	if layout == "raid10" {
+		if len(devices) < 4 || len(devices)%2 != 0 {
+			return fmt.Errorf("raid10 requires an even number of disks (≥4); got %d", len(devices))
+		}
+	}
 	// Prepare each disk, then resolve the partuuid symlink to the real partition
 	// device path before passing to zpool create.  On some systems the symlink
 	// exists but its target is not yet accessible when zpool create runs,
@@ -1190,10 +1198,20 @@ func CreatePool(name, layout string, ashift int, compression, dedup string, devi
 		args = append(args, "-O", "dedup="+dedup)
 	}
 	args = append(args, name)
-	if layout == "mirror" || layout == "raidz1" || layout == "raidz2" || layout == "raidz3" {
+	switch layout {
+	case "mirror", "raidz1", "raidz2", "raidz3":
 		args = append(args, layout)
+		args = append(args, devPaths...)
+	case "raid10":
+		// Stripe of 2-way mirrors: emit `mirror d0 d1 mirror d2 d3 …` so each
+		// pair becomes its own top-level vdev. zpool stripes across vdevs
+		// automatically.
+		for i := 0; i < len(devPaths); i += 2 {
+			args = append(args, "mirror", devPaths[i], devPaths[i+1])
+		}
+	default: // stripe
+		args = append(args, devPaths...)
 	}
-	args = append(args, devPaths...)
 	debugLog("zpool create: %v", args)
 	out, err := exec.Command("sudo", args...).CombinedOutput()
 	if err != nil {

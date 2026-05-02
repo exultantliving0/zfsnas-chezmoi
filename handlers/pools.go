@@ -80,9 +80,9 @@ func HandleCreatePool(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "at least one device is required")
 		return
 	}
-	validLayouts := map[string]bool{"stripe": true, "mirror": true, "raidz1": true, "raidz2": true, "raidz3": true}
+	validLayouts := map[string]bool{"stripe": true, "mirror": true, "raid10": true, "raidz1": true, "raidz2": true, "raidz3": true}
 	if !validLayouts[req.Layout] {
-		jsonErr(w, http.StatusBadRequest, "layout must be stripe, mirror, raidz1, raidz2, or raidz3")
+		jsonErr(w, http.StatusBadRequest, "layout must be stripe, mirror, raid10, raidz1, raidz2, or raidz3")
 		return
 	}
 	validAshift := map[int]bool{9: true, 12: true, 13: true}
@@ -96,10 +96,14 @@ func HandleCreatePool(w http.ResponseWriter, r *http.Request) {
 	if !validDedup[req.Dedup] {
 		req.Dedup = "off"
 	}
-	min := map[string]int{"stripe": 1, "mirror": 2, "raidz1": 3, "raidz2": 4, "raidz3": 5}
+	min := map[string]int{"stripe": 1, "mirror": 2, "raid10": 4, "raidz1": 3, "raidz2": 4, "raidz3": 5}
 	if len(req.Devices) < min[req.Layout] {
 		jsonErr(w, http.StatusBadRequest,
 			"not enough devices for "+req.Layout+" (need at least "+string(rune('0'+min[req.Layout]))+")")
+		return
+	}
+	if req.Layout == "raid10" && len(req.Devices)%2 != 0 {
+		jsonErr(w, http.StatusBadRequest, "raid10 requires an even number of disks (each pair becomes a 2-way mirror)")
 		return
 	}
 

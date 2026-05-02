@@ -952,6 +952,17 @@ input::placeholder { color: var(--text-3); }
 }
 .lxd-tbl-icon:hover { color: var(--text); }
 .lxd-tbl-icon-busy { opacity: 0.35; cursor: default; pointer-events: none; }
+/* Tighten the per-row terminal + burger pair: shared cell, white-space:nowrap
+   keeps them on one line so the row never grows vertically when columns get
+   crowded, and the horizontal padding shrink matches the lost gap from the
+   merged TDs. */
+.lxd-row-actions {
+  white-space: nowrap;
+  text-align: right;
+  padding-left: 4px !important;
+  padding-right: 8px !important;
+}
+.lxd-row-actions .lxd-tbl-icon { padding: 2px 4px; margin-right: 2px; }
 .lxd-power-badge {
   display: inline-flex;
   align-items: center;

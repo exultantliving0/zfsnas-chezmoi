@@ -777,6 +777,12 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUploadISO)))).Methods("POST")
 	r.Handle("/api/lxd/isos/{filename}",
 	RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteISO)))).Methods("DELETE")
+	// VGA-console drive picker: list configured CDROMs + ISOs available in the
+	// VM's pool, and swap the first drive without leaving the console.
+	r.Handle("/api/lxd/instances/{name}/cdroms",
+		RequireAuth(http.HandlerFunc(HandleLXDListCDROMs))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/cdroms/swap",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDSwapCDROM)))).Methods("POST")
 
 	// --- LXD InterLink push (HMAC-authenticated peer endpoints) ---
 	r.HandleFunc("/api/lxd/interlink-cert",   HandleLXDInterlinkCert(appCfg)).Methods("POST")

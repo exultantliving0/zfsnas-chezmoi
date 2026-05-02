@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,62 @@ import (
 	"sync"
 	"time"
 )
+
+// lxdNormalizeSizeStr converts a raw-bytes LXD size value (e.g. "20000008192B"
+// — what we pass to `lxc init` after rounding for ZFS volblocksize alignment)
+// into a friendlier suffix form like "20GB" so the Edit Disks UI doesn't
+// render the long byte literal in the size input.
+//
+// Strings that already use a friendly suffix (KB/MB/GB/TB or KiB/MiB/GiB/TiB)
+// are passed through unchanged. The bare-bytes form is rounded to the unit
+// where the value is closest to a whole number within 1% — that matches the
+// user's original intent (e.g. they asked for 20 GB; the +8 192 byte ZFS
+// alignment delta is well within tolerance and rounds back to "20GB").
+func lxdNormalizeSizeStr(s string) string {
+	if s == "" {
+		return s
+	}
+	// Already friendly? Anything ending in two letters (B/iB/etc.) passes
+	// through untouched. Bare bytes is exactly digits + final 'B'.
+	if !strings.HasSuffix(s, "B") {
+		return s
+	}
+	stripped := strings.TrimSuffix(s, "B")
+	if stripped == "" {
+		return s
+	}
+	// If the char before 'B' is a letter, this isn't bare bytes (it's KB,
+	// MB, GiB, etc.) — leave it alone.
+	last := stripped[len(stripped)-1]
+	if last < '0' || last > '9' {
+		return s
+	}
+	bytes, err := strconv.ParseInt(stripped, 10, 64)
+	if err != nil || bytes <= 0 {
+		return s
+	}
+	type unit struct {
+		suffix string
+		scale  float64
+	}
+	units := []unit{
+		{"TB", 1e12}, {"TiB", 1 << 40},
+		{"GB", 1e9}, {"GiB", 1 << 30},
+		{"MB", 1e6}, {"MiB", 1 << 20},
+		{"KB", 1e3}, {"KiB", 1 << 10},
+	}
+	for _, u := range units {
+		v := float64(bytes) / u.scale
+		r := math.Round(v)
+		if r < 1 {
+			continue
+		}
+		if math.Abs(v-r)/r <= 0.01 {
+			return fmt.Sprintf("%d%s", int64(r), u.suffix)
+		}
+	}
+	return s
+}
 
 // LXDInstance represents a LXD virtual machine or container.
 type LXDInstance struct {
@@ -27,6 +84,7 @@ type LXDInstance struct {
 	CPULimit    string `json:"cpu_limit"`
 	MemoryLimit string `json:"memory_limit"`
 	RootPool    string `json:"root_pool"` // LXD storage pool name for the root disk
+	Autostart   bool   `json:"autostart"` // boot.autostart=true on the instance or its profile
 }
 
 // LXDImage is an image available for instance creation.
@@ -175,6 +233,14 @@ func lxdVolSizeBytes(s string) int64 {
 			if err == nil {
 				return int64(n * float64(u.mult))
 			}
+		}
+	}
+	// Bare-bytes form, e.g. "20000008192B" — what we now pass to `lxc init` to
+	// land the volsize on a 16K ZFS boundary. The unit loop above doesn't
+	// match it because no K/M/G/T prefix is present.
+	if strings.HasSuffix(s, "B") {
+		if n, err := strconv.ParseInt(strings.TrimSuffix(s, "B"), 10, 64); err == nil {
+			return n
 		}
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
@@ -869,6 +935,10 @@ func ListLXDInstances() ([]LXDInstance, error) {
 			Network map[string]lxdStateNetwork `json:"network"`
 		} `json:"state"`
 	}
+	// boot.autostart can be set either directly on the instance (raw config) or
+	// inherited from a profile (expanded_config). The table column shows the
+	// effective value, so we read expanded_config.
+	autostartTrue := func(v string) bool { return v == "true" || v == "1" }
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("lxc list parse: %w", err)
 	}
@@ -882,6 +952,7 @@ func ListLXDInstances() ([]LXDInstance, error) {
 			Status:      r.Status,
 			CPULimit:    r.Config["limits.cpu"],
 			MemoryLimit: r.Config["limits.memory"],
+			Autostart:   autostartTrue(r.ExpandedConfig["boot.autostart"]),
 		}
 
 		// Derive image description from config.
@@ -1018,6 +1089,19 @@ type LXDDiskConfig struct {
 	ZFSType      string `json:"zfs_type,omitempty"`      // "zvol" | "dataset"
 	CompRatio    string `json:"comp_ratio,omitempty"`    // e.g. "1.23x"
 	BootPriority string `json:"boot_priority,omitempty"` // lxd boot.priority value
+	// VM-only per-disk knobs. Empty string means "leave unset / inherit".
+	IOCache  string `json:"io_cache,omitempty"`  // "" | "none" | "writeback" | "writethrough" | "unsafe" | "directsync"
+	IOBus    string `json:"io_bus,omitempty"`    // "" | "virtio-blk" | "virtio-scsi" | "nvme" — overrides the VM-wide DiskBus when non-empty
+	ReadOnly bool   `json:"readonly,omitempty"`  // attach disk read-only
+}
+
+// LXDCapabilities flags optional disk knobs by LXD's API extension list, so
+// the UI can render only the keys the running LXD will actually accept
+// (LXD 5.0.x lacks `io.bus`/`io.threads`, breaks the dropdown silently).
+type LXDCapabilities struct {
+	DiskIOBus    bool `json:"disk_io_bus"`
+	DiskIOCache  bool `json:"disk_io_cache"`
+	DiskIOThreads bool `json:"disk_io_threads"`
 }
 
 // LXDInstanceConfig holds the editable configuration of an LXD instance.
@@ -1057,6 +1141,9 @@ type LXDInstanceConfig struct {
 	USBDevices         []LXDUSBDevice         `json:"usb_devices"`
 	PCIDevices         []LXDPCIDevice         `json:"pci_devices"`
 	PassthroughDevices []LXDPassthroughDevice `json:"passthrough_devices"`
+	// Daemon-side capability flags (read-only on GET; ignored on PUT). Lets
+	// the editor disable inputs that the running LXD will silently reject.
+	Capabilities       LXDCapabilities        `json:"capabilities,omitempty"`
 }
 
 var lxdDevNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
@@ -1181,6 +1268,43 @@ var (
 	lxdSupportedKeys     map[string]bool
 )
 
+// LXDGetCapabilities returns flags for the optional disk knobs we surface in
+// the Edit modal. Values are derived from the LXD daemon's api_extensions
+// list — LXD 5.0.2 (Debian stable) ships without `disk_io_bus`, so the
+// io.bus dropdown silently fails for users; reading the extensions lets the
+// UI grey out keys that won't apply.
+//
+// Cached for the process lifetime: api_extensions only change with an LXD
+// upgrade and our process restarts on update.
+func LXDGetCapabilities() LXDCapabilities {
+	lxdAPIExtensionsOnce.Do(func() {
+		lxdAPIExtensions = map[string]bool{}
+		out, err := exec.Command("lxc", "query", "/1.0").Output()
+		if err != nil {
+			return
+		}
+		var resp struct {
+			APIExtensions []string `json:"api_extensions"`
+		}
+		if err := json.Unmarshal(out, &resp); err != nil {
+			return
+		}
+		for _, e := range resp.APIExtensions {
+			lxdAPIExtensions[e] = true
+		}
+	})
+	return LXDCapabilities{
+		DiskIOBus:     lxdAPIExtensions["disk_io_bus"],
+		DiskIOCache:   lxdAPIExtensions["disk_io_cache"],
+		DiskIOThreads: lxdAPIExtensions["disk_io_threads"],
+	}
+}
+
+var (
+	lxdAPIExtensionsOnce sync.Once
+	lxdAPIExtensions     map[string]bool
+)
+
 func lxdSupportsConfigKey(key string) bool {
 	lxdSupportedKeysOnce.Do(func() {
 		lxdSupportedKeys = map[string]bool{}
@@ -1234,13 +1358,22 @@ func normalizeSwapLimit(v string) string {
 
 // lxdPatchConfig sets or unsets a single LXD config key using the REST API,
 // avoiding lxc config set's flag-parsing issues with values that start with '-'.
+// lxdPatchConfig sets a single config key on an instance without going through
+// `lxc query -X PATCH /1.0/instances/<name>`. We avoid that PATCH endpoint
+// because LXD treats it as a full-resource patch: any top-level field omitted
+// from the body (notably `description`) is silently reset to its zero value.
+// That bit us when LXDSetConfig sets the description first and then later
+// touches raw.qemu — the second call would wipe the description we just set.
+//
+// Instead, use `lxc config set name key=value` (the equals form), which lets
+// us pass values that begin with "-" (e.g. raw.qemu="-smp …") without lxc
+// interpreting them as CLI flags, and only updates the one config key.
 func lxdPatchConfig(name, key, val string) {
 	if val == "" {
 		exec.Command("lxc", "config", "unset", name, key).Run() //nolint:errcheck
 		return
 	}
-	data, _ := json.Marshal(map[string]interface{}{"config": map[string]string{key: val}})
-	exec.Command("lxc", "query", "-X", "PATCH", "/1.0/instances/"+name, "--data", string(data)).Run() //nolint:errcheck
+	exec.Command("lxc", "config", "set", name, key+"="+val).Run() //nolint:errcheck
 }
 
 // lxdFindZFSVol searches for a ZFS volume whose name ends with /suffix or _suffix.
@@ -1402,6 +1535,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 		Unprivileged:  raw.Config["security.privileged"] != "true",
 		FeatureKeyctl: raw.Config["security.syscalls.intercept.keyctl"] == "true" ||
 			strings.Contains(raw.Config["security.syscalls.allow"], "keyctl"),
+		Capabilities: LXDGetCapabilities(),
 	}
 	for devName, devCfg := range raw.ExpandedDevices {
 		_, isInstanceLevel := raw.Devices[devName]
@@ -1464,10 +1598,13 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 			disk := LXDDiskConfig{
 				Name:         devName,
 				Pool:         lxdPool,
-				Size:         devCfg["size"],
+				Size:         lxdNormalizeSizeStr(devCfg["size"]),
 				IsRoot:       isRoot,
 				FromProfile:  !isInstanceLevel,
 				BootPriority: devCfg["boot.priority"],
+				IOCache:      devCfg["io.cache"],
+				IOBus:        devCfg["io.bus"],
+				ReadOnly:     devCfg["readonly"] == "true",
 			}
 			// Capture the disk bus from the root disk to represent the VM-wide setting.
 			if isRoot && cfg.DiskBus == "" && devCfg["io.bus"] != "" {
@@ -1774,6 +1911,10 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			}
 		}
 	}
+
+	// Capability flags drive whether per-disk io.bus / io.cache writes are
+	// even attempted; on LXD 5.0.x these keys are absent and would error.
+	caps := LXDGetCapabilities()
 
 	// Description via REST PATCH.
 	descJSON, _ := json.Marshal(cfg.Description)
@@ -2293,7 +2434,19 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		} else if disk.IsRoot && disk.Size != "" && cur["size"] != disk.Size {
 			// Only root disks support size quota via LXD device config.
 			// Non-root custom volumes are resized via ZFS zvol directly.
-			if out, err := exec.Command("lxc", "config", "device", "set", name, disk.Name, "size", disk.Size).CombinedOutput(); err != nil {
+			//
+			// Compare in bytes, not as strings: at create time we pass the
+			// 16K-aligned bare-bytes form (e.g. "20000008192B") so the volsize
+			// fits the ZFS volblocksize, and the UI round-trips that as
+			// "20GB" (≈ 19,999,991,808 bytes off — still strictly smaller).
+			// Without this check, simply re-saving the VM (e.g. to update the
+			// description) would call `lxc config device set … size=20GB`,
+			// which LXD rejects with "Block volumes cannot be shrunk".
+			curBytes := lxdVolSizeBytes(cur["size"])
+			newBytes := lxdVolSizeBytes(disk.Size)
+			if newBytes > 0 && curBytes > 0 && newBytes <= curBytes {
+				// Same size or smaller — skip. ZFS volumes can only grow.
+			} else if out, err := exec.Command("lxc", "config", "device", "set", name, disk.Name, "size", disk.Size).CombinedOutput(); err != nil {
 				return fmt.Errorf("resize disk %s: %s", disk.Name, strings.TrimSpace(string(out)))
 			}
 		} else if !disk.IsRoot && disk.Size != "" && cur["size"] == "" {
@@ -2357,18 +2510,60 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 					exec.Command("lxc", "config", "device", "set", name, disk.Name, "boot.priority", disk.BootPriority).Run()
 				}
 			}
-			// Apply io.bus when it differs from what's currently set (VM-only).
-			if isVM && cfg.DiskBus != cur["io.bus"] {
-				if cfg.DiskBus == "" {
-					exec.Command("lxc", "config", "device", "unset", name, disk.Name, "io.bus").Run() //nolint:errcheck
+			// Per-disk bus override beats the VM-wide DiskBus when non-empty.
+			// Skip silently when LXD doesn't ship the disk_io_bus extension
+			// (5.0.x) — `lxc config device set io.bus=…` would error and the
+			// frontend already disables that field for unsupported daemons.
+			if isVM && caps.DiskIOBus {
+				want := disk.IOBus
+				if want == "" {
+					want = cfg.DiskBus
+				}
+				if want != cur["io.bus"] {
+					if want == "" {
+						exec.Command("lxc", "config", "device", "unset", name, disk.Name, "io.bus").Run() //nolint:errcheck
+					} else {
+						exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
+					}
+				}
+			}
+			// io.cache (LXD ≥ 5.0 with disk_io_cache extension; widely available).
+			if isVM && caps.DiskIOCache && disk.IOCache != cur["io.cache"] {
+				if disk.IOCache == "" {
+					exec.Command("lxc", "config", "device", "unset", name, disk.Name, "io.cache").Run() //nolint:errcheck
 				} else {
-					exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.bus", cfg.DiskBus).Run() //nolint:errcheck
+					exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
+				}
+			}
+			// readonly: skip on root disks (LXD rejects readonly=true on /).
+			if !disk.IsRoot {
+				curRO := cur["readonly"] == "true"
+				if curRO != disk.ReadOnly {
+					if disk.ReadOnly {
+						exec.Command("lxc", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
+					} else {
+						exec.Command("lxc", "config", "device", "unset", name, disk.Name, "readonly").Run() //nolint:errcheck
+					}
 				}
 			}
 		}
-		// For newly added disks, set io.bus immediately after device add (VM-only).
-		if !exists && isVM && cfg.DiskBus != "" {
-			exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.bus", cfg.DiskBus).Run() //nolint:errcheck
+		// For newly added disks, apply per-disk knobs immediately after device add (VM-only).
+		if !exists && isVM {
+			if caps.DiskIOBus {
+				want := disk.IOBus
+				if want == "" {
+					want = cfg.DiskBus
+				}
+				if want != "" {
+					exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
+				}
+			}
+			if caps.DiskIOCache && disk.IOCache != "" {
+				exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
+			}
+			if !disk.IsRoot && disk.ReadOnly {
+				exec.Command("lxc", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
+			}
 		}
 	}
 	detachOnly := map[string]bool{}
@@ -2399,7 +2594,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	// Root disks are typically profile-inherited (absent from cfg.Disks/curDisks) and
 	// cannot be changed while the VM is running (LXD rejects hotplug for root disks).
 	// If the VM is running we stop it gracefully, apply, then restart.
-	if isVM {
+	if isVM && caps.DiskIOBus {
 		rootName := ""
 		for n, d := range rawDev.ExpandedDevices {
 			if d["type"] == "disk" && d["path"] == "/" {

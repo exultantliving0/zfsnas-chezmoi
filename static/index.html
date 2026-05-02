@@ -1524,8 +1524,7 @@
                 <th class="lxd-sortable" style="width:80px;" onclick="_lxdSortBy('ram')">RAM<span class="sort-arrow"></span></th>
                 <th class="lxd-sortable" style="width:110px;" onclick="_lxdSortBy('status')">Status<span class="sort-arrow"></span></th>
                 <th class="lxd-sortable" style="width:72px;" onclick="_lxdSortBy('autostart')">Autostart<span class="sort-arrow"></span></th>
-                <th style="width:40px;"></th>
-                <th style="width:40px;"></th>
+                <th style="width:64px;"></th>
               </tr>
             </thead>
             <tbody id="lxd-table-body">
@@ -2907,11 +2906,10 @@
               <th style="width:60px;">vCPU</th>
               <th style="width:80px;">RAM</th>
               <th style="width:110px;">Status</th>
-              <th style="width:40px;"></th>
-              <th style="width:40px;"></th>
+              <th style="width:64px;"></th>
             </tr></thead>
             <tbody id="bridge-members-tbody">
-              <tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
+              <tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -3180,8 +3178,7 @@
             <th style="width:60px;">vCPU</th>
             <th style="width:80px;">RAM</th>
             <th style="width:110px;">Status</th>
-            <th style="width:40px;"></th>
-            <th style="width:40px;"></th>
+            <th style="width:64px;"></th>
           </tr></thead>
           <tbody id="datastore-members-tbody">
             <tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
@@ -8588,6 +8585,37 @@ Select the Console tab to load.</pre>
         </div>
       </div>
 
+      <!-- RAID-10 -->
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:13px;font-weight:700;color:var(--text-1);">RAID-10</span>
+            <span style="font-size:11px;padding:2px 7px;border-radius:20px;background:rgba(48,209,88,0.15);color:#30d158;font-weight:600;">stripe of mirrors</span>
+          </div>
+          <span style="font-size:11px;color:var(--text-3);">Min 4 disks (even) · 50% usable</span>
+        </div>
+        <!-- Disk diagram -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:4px;background:rgba(48,209,88,0.07);border:1px solid rgba(48,209,88,0.2);border-radius:6px;padding:6px 10px;">
+            <div style="width:32px;height:32px;background:#30d158;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;">💾</div>
+            <span style="font-size:14px;color:var(--text-3);">⇄</span>
+            <div style="width:32px;height:32px;background:#30d158;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;">💾</div>
+          </div>
+          <span style="font-size:14px;color:var(--text-3);">+</span>
+          <div style="display:flex;align-items:center;gap:4px;background:rgba(48,209,88,0.07);border:1px solid rgba(48,209,88,0.2);border-radius:6px;padding:6px 10px;">
+            <div style="width:32px;height:32px;background:#30d158;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;">💾</div>
+            <span style="font-size:14px;color:var(--text-3);">⇄</span>
+            <div style="width:32px;height:32px;background:#30d158;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;">💾</div>
+          </div>
+          <span style="margin-left:4px;font-size:12px;color:var(--text-2);">→ pairs striped together</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-3);line-height:1.6;">
+          Multiple 2-way mirrors striped into a single pool. Each pair survives 1 disk failure.
+          Reads scale across all disks; writes scale across pairs. Capacity = half the total raw disk space.
+          Best balance of speed and resilience for VM/database workloads. Disk count must be even.
+        </div>
+      </div>
+
       <!-- RAIDZ-1 -->
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
@@ -13409,11 +13437,11 @@ function renderPoolCreate(el, options) {
         </div>
         <div>
           <label style="font-size:13px;font-weight:500;color:var(--text-2);display:block;margin-bottom:6px;">Layout</label>
-          <div style="display:flex;gap:8px;" id="cp-layout-btns">
-            ${[['stripe','Stripe'],['mirror','Mirror'],['raidz1','RAIDZ-1'],['raidz2','RAIDZ-2'],['raidz3','RAIDZ-3']].map(([l,label],i) => `
+          <div style="display:flex;gap:8px;flex-wrap:wrap;" id="cp-layout-btns">
+            ${[['stripe','Stripe'],['mirror','Mirror'],['raid10','RAID-10'],['raidz1','RAIDZ-1'],['raidz2','RAIDZ-2'],['raidz3','RAIDZ-3']].map(([l,label],i) => `
               <button type="button" onclick="selectLayout('${l}')" id="cp-layout-${l}"
                 class="btn ${i===0?'btn-primary':'btn-ghost'}"
-                style="flex:1;">
+                style="flex:1;min-width:90px;">
                 ${label}
               </button>`).join('')}
           </div>
@@ -13520,6 +13548,7 @@ function renderPoolCreate(el, options) {
 const layoutHints = {
   stripe:  'No redundancy — any disk failure loses data. Min 1 disk.',
   mirror:  'Mirrored disks — survives 1 disk failure per mirror pair. Min 2 disks. (mirror)',
+  raid10:  'Stripe of 2-way mirrors — fast & resilient. Survives 1 disk failure per pair. Even disk count required, min 4. (RAID10)',
   raidz1:  'Single parity — survives 1 disk failure. Min 3 disks. (RAID5)',
   raidz2:  'Double parity — survives 2 disk failures. Min 4 disks. (RAID6)',
   raidz3:  'Triple parity — survives 3 disk failures. Min 5 disks, 9+ recommended. (RAID7)',
@@ -13532,7 +13561,7 @@ function closeAddCapacityGuide()  { document.getElementById('modal-add-capacity-
 
 function selectLayout(l) {
   window._cpLayout = l;
-  ['stripe','mirror','raidz1','raidz2','raidz3'].forEach(x => {
+  ['stripe','mirror','raid10','raidz1','raidz2','raidz3'].forEach(x => {
     document.getElementById('cp-layout-'+x).className = 'btn ' + (x===l?'btn-primary':'btn-ghost');
   });
   document.getElementById('cp-layout-hint').textContent = layoutHints[l];
@@ -13603,9 +13632,13 @@ function submitCreatePool() {
   if (!name) { alertEl.textContent = 'Pool name is required.'; alertEl.classList.remove('hidden'); return; }
   if (!devices.length) { alertEl.textContent = 'Select at least one disk.'; alertEl.classList.remove('hidden'); return; }
 
-  const minDisks = {stripe:1, mirror:2, raidz1:3, raidz2:4, raidz3:5};
+  const minDisks = {stripe:1, mirror:2, raid10:4, raidz1:3, raidz2:4, raidz3:5};
   if (devices.length < minDisks[window._cpLayout]) {
     alertEl.textContent = `${window._cpLayout} requires at least ${minDisks[window._cpLayout]} disks.`;
+    alertEl.classList.remove('hidden'); return;
+  }
+  if (window._cpLayout === 'raid10' && devices.length % 2 !== 0) {
+    alertEl.textContent = 'RAID-10 requires an even number of disks (each pair becomes a 2-way mirror).';
     alertEl.classList.remove('hidden'); return;
   }
 
@@ -23804,6 +23837,19 @@ async function loadDashboard() {
   await _loadGlobalPerfData();
   await buildPerfPoolTabs();
   await buildUPSPerfTab();
+  // Decide which Performance tab to activate. We honor the user's previous
+  // selection when the same tab still exists on this server, otherwise we
+  // fall back to the leftmost tab (Global). Both pool tabs and the UPS tab
+  // can disappear when switching InterLink servers.
+  let target = 'global';
+  if (_perfActiveTab === 'global') {
+    target = 'global';
+  } else if (_perfActiveTab === 'ups' && document.getElementById('perf-tab-btn-ups')) {
+    target = 'ups';
+  } else if (_perfPools.includes(_perfActiveTab)) {
+    target = _perfActiveTab;
+  }
+  switchPerfTab(target);
   _dashRefreshTimer = setInterval(async () => { await buildUPSPerfTab(); _reloadActivePerfTab(); }, 5 * 60 * 1000);
 }
 
@@ -24441,29 +24487,33 @@ async function buildPerfPoolTabs() {
     cont.appendChild(div);
   }
 
-  // Restore the previously active tab (survives left-nav round-trips).
-  // Fall back to global if the saved pool no longer exists.
-  const target = (_perfActiveTab !== 'global' && _perfPools.includes(_perfActiveTab))
-    ? _perfActiveTab : 'global';
-  switchPerfTab(target);
+  // Tab selection (which one to activate) is decided by loadDashboard()
+  // AFTER buildUPSPerfTab() has had a chance to add/remove the UPS button —
+  // otherwise we'd always knock UPS users back to Global on a server switch
+  // even when the new server has UPS too.
 }
 
-// Add/remove the UPS tab button depending on whether UPS is installed.
+// Add/remove the UPS tab button depending on whether UPS is installed,
+// OR a system battery is detected via sysfs (laptop / SBC without NUT — the
+// RRD collector samples /sys/class/power_supply in that case).
 async function buildUPSPerfTab() {
   const bar = document.getElementById('dash-tab-bar');
   if (!bar) return;
 
-  let installed = false;
+  let show = false;
   try {
     const r = await fetch('/api/ups/status');
-    if (r.ok) { const s = await r.json(); installed = !!s.installed; }
+    if (r.ok) {
+      const s = await r.json();
+      show = !!s.installed || !!s.battery_source;
+    }
   } catch (_) {}
 
   // Remove AFTER fetch completes — prevents race where two concurrent calls both
   // pass the "no existing button" check before either fetch returns.
   const existing = document.getElementById('perf-tab-btn-ups');
   if (existing) existing.remove();
-  if (!installed) return;
+  if (!show) return;
 
   const btn = document.createElement('button');
   btn.className = 'cap-tab';
@@ -26969,6 +27019,16 @@ function runReplicationTask(id, name) {
     } catch(e) {}
 
     await renderCapChart();
+
+    // If the user is sitting on the Folders TreeMap sub-tab when the page
+    // (re)loads — e.g. after an InterLink server switch — refresh the tree
+    // for the current server, validating the previously-selected dataset
+    // against the new capMeta and falling back to the saved/leftmost pool
+    // if it's gone.
+    const activeCapTab = document.querySelector('#page-capacity .cap-tab.active');
+    if (activeCapTab && activeCapTab.dataset.tab === 'tree') {
+      _capTreeReloadForCurrentServer();
+    }
   };
 
   function showCapNoData() {
@@ -27640,6 +27700,38 @@ function runReplicationTask(id, name) {
       _capTreeShowState('nodata');
     }
   }
+
+  // Called by loadCapacityPage after an InterLink server switch when the
+  // user is on the Folders TreeMap tab. Validates the in-memory selection
+  // against the freshly-fetched capMeta, falling back to the saved-per-host
+  // dataset or the leftmost pool when it has gone away. Always re-fetches
+  // the folder-usage data so the chart reflects the new server.
+  function _capTreeReloadForCurrentServer() {
+    capTreePopulateSelect(capMeta);
+    const validDs = capTreeCurrentDs && capMeta && capMeta.pools &&
+                    capMeta.pools.some(p => p.name === capTreeCurrentDs);
+    if (!validDs) {
+      capTreeCurrentDs   = '';
+      capTreeCurrentData = null;
+      capTreeDrillStack  = [];
+    }
+    let target = capTreeCurrentDs;
+    if (!target) {
+      const serverSaved = currentUser && currentUser.preferences &&
+                          currentUser.preferences.treemap_selected_ds &&
+                          currentUser.preferences.treemap_selected_ds[_capHostKey()];
+      target = serverSaved || (capMeta.pools[0] && capMeta.pools[0].name) || '';
+    }
+    if (target) {
+      const sel = document.getElementById('cap-tree-ds-select');
+      if (sel) sel.value = target;
+      capTreeSelectDataset(target);
+    } else {
+      _capTreeShowState('nodata');
+    }
+  }
+  // Keep this accessible from loadCapacityPage which is defined inside the
+  // same IIFE — direct reference works, no window export needed.
 
   function capTreePopulateSelect(meta) {
     const sel = document.getElementById('cap-tree-ds-select');
@@ -30689,10 +30781,7 @@ function _lxdRenderRows(instances) {
       <td style="color:var(--text-2);">${esc(inst.memory_limit || '—')}</td>
       <td style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
       <td style="text-align:center;">${inst.autostart ? '<span style="color:#3fb950;font-size:13px;font-weight:600;">&#x2714;</span>' : '<span style="color:var(--text-3);font-size:13px;">&#x2014;</span>'}</td>
-      <td onclick="event.stopPropagation()"><span class="lxd-tbl-icon${inst.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${inst.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${inst.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'`}>
-        <span style="font-size:16px;">🖥️</span>
-      </span></td>
-      <td onclick="event.stopPropagation()"><span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      <td class="lxd-row-actions" onclick="event.stopPropagation()"><span class="lxd-tbl-icon${inst.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${inst.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${inst.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>&#x22EE;</span></td>
     </tr>`;
   }).join('');
@@ -30872,6 +30961,9 @@ let _lxdEditUSBs  = [];  // {device_name, vendor_id, product_id, desc}
 let _lxdEditPCIs  = [];  // {device_name, address, desc}
 let _lxdEditCTDevs = []; // {device_name, type, host_path, extra}
 let _lxdEditIsVM  = false;
+// Daemon capability flags — populated from the GET /config response. Drives
+// which per-disk knobs we render (io.bus / io.cache disabled on LXD 5.0.x).
+let _lxdEditCaps  = { disk_io_bus: false, disk_io_cache: false };
 let _lxdUSBPickerTarget = 'create'; // 'create' | 'edit'
 let _lxdPCIPickerTarget = 'create'; // 'create' | 'edit'
 let _lxdAvailBridges  = {managed: [], all: []};
@@ -31111,6 +31203,30 @@ function lxdEditRenderDisks() {
         `<option value="${v}"${(disk.boot_priority||'')==v?' selected':''}>${l}</option>`).join('')}
     </select>`;
 
+    // Per-disk cache mode — supported on LXD with the disk_io_cache extension
+    // (present in 5.0.x via Debian's patches). Empty option = inherit LXD default
+    // (none). "writeback" boosts Windows guest install/boot perf significantly.
+    const cacheOpts = [['','default'],['none','none'],['writeback','writeback'],['writethrough','writethrough'],['unsafe','unsafe'],['directsync','directsync']];
+    const cacheCell = _lxdEditCaps.disk_io_cache
+      ? `<select class="input" data-di="${i}" data-df="cache" style="width:108px;font-size:12px;" title="QEMU cache mode for this disk">
+          ${cacheOpts.map(([v,l])=>`<option value="${v}"${(disk.io_cache||'')==v?' selected':''}>${l}</option>`).join('')}
+        </select>`
+      : `<span style="font-size:11px;color:var(--text-3);" title="LXD daemon lacks the disk_io_cache extension">n/a</span>`;
+
+    // Per-disk bus override (VM only). Empty = inherit VM-wide DiskBus.
+    const busOpts = [['','inherit'],['virtio-blk','virtio-blk'],['virtio-scsi','virtio-scsi'],['nvme','nvme']];
+    const busCell = (_lxdEditIsVM && _lxdEditCaps.disk_io_bus)
+      ? `<select class="input" data-di="${i}" data-df="iobus" style="width:108px;font-size:12px;" title="Per-disk bus override (overrides the VM-wide controller)">
+          ${busOpts.map(([v,l])=>`<option value="${v}"${(disk.io_bus||'')==v?' selected':''}>${l}</option>`).join('')}
+        </select>`
+      : `<span style="font-size:11px;color:var(--text-3);" title="LXD < 5.21 lacks disk_io_bus — overall controller dropdown is also disabled">n/a</span>`;
+
+    // Read-only toggle — universally supported. Hidden for root disks; LXD
+    // rejects readonly=true on `/`.
+    const roCell = disk.is_root
+      ? `<span style="font-size:11px;color:var(--text-3);">—</span>`
+      : `<input type="checkbox" data-di="${i}" data-df="readonly" ${disk.readonly?'checked':''} title="Attach disk read-only to the guest">`;
+
     const profileBadge = disk.from_profile
       ? `<span style="font-size:10px;background:rgba(56,139,253,0.15);color:#58a6ff;border-radius:3px;padding:2px 5px;margin-right:4px;">${disk.is_root?'Root':'Profile'}</span>`
       : '';
@@ -31132,6 +31248,9 @@ function lxdEditRenderDisks() {
       <td>${sizeCell}</td>
       <td>${reserveCell}</td>
       ${_lxdEditIsVM ? `<td>${bootCell}</td>` : ''}
+      ${_lxdEditIsVM ? `<td>${busCell}</td>` : ''}
+      ${_lxdEditIsVM ? `<td>${cacheCell}</td>` : ''}
+      <td style="text-align:center;">${roCell}</td>
       <td style="text-align:right;">${actionsCell}</td>
     </tr>`;
   });
@@ -31145,6 +31264,9 @@ function lxdEditRenderDisks() {
       <th style="width:140px;">Size</th>
       <th style="width:80px;">Reserve</th>
       ${_lxdEditIsVM ? '<th style="width:68px;">Boot</th>' : ''}
+      ${_lxdEditIsVM ? '<th style="width:108px;" title="Per-disk bus override">Bus</th>' : ''}
+      ${_lxdEditIsVM ? '<th style="width:108px;" title="QEMU cache mode">Cache</th>' : ''}
+      <th style="width:48px;" title="Read-only">RO</th>
       <th style="width:36px;"></th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -31158,6 +31280,9 @@ function lxdEditRenderDisks() {
     if (f === 'pool')   el.addEventListener('change', e => { _lxdEditDisks[i].pool = e.target.value; });
     if (f === 'boot')    el.addEventListener('change', e => { _lxdEditDisks[i].boot_priority = e.target.value; });
     if (f === 'reserve') el.addEventListener('change', e => { _lxdEditDisks[i].reserve_pct = +e.target.value; });
+    if (f === 'cache')   el.addEventListener('change', e => { _lxdEditDisks[i].io_cache = e.target.value; });
+    if (f === 'iobus')   el.addEventListener('change', e => { _lxdEditDisks[i].io_bus   = e.target.value; });
+    if (f === 'readonly')el.addEventListener('change', e => { _lxdEditDisks[i].readonly = e.target.checked; });
     if (f === 'del')    el.addEventListener('click',  () => { _lxdEditDisks[i]._deleted = true; lxdEditRenderDisks(); });
     if (f === 'burger') el.addEventListener('click',  e => _editDiskBurger(e, i));
     if (f === 'size' || f === 'unit') {
@@ -31466,9 +31591,22 @@ async function openLXDEditModal(name, type) {
       document.getElementById('lxd-edit-secureboot').checked = !!cfg.secure_boot;
       const _tpmChk = document.getElementById('lxd-edit-tpm');
       if (_tpmChk) _tpmChk.checked = !!cfg.tpm;
-      // Disk controller
+      // Disk controller. LXD < 5.21 (Debian-stable LXD 5.0.x) has no
+      // disk_io_bus extension, so writes silently fail; mark the dropdown
+      // disabled with a tooltip rather than shipping a non-functional UI.
       const dbSel = document.getElementById('lxd-edit-disk-bus');
-      if (dbSel) dbSel.value = cfg.disk_bus || '';
+      if (dbSel) {
+        const caps = cfg.capabilities || {};
+        _lxdEditCaps = caps;
+        dbSel.value = cfg.disk_bus || '';
+        if (!caps.disk_io_bus) {
+          dbSel.disabled = true;
+          dbSel.title = 'This LXD version does not support changing the disk controller (io.bus added in LXD 5.21 / Incus). Upgrade LXD or Incus to enable.';
+        } else {
+          dbSel.disabled = false;
+          dbSel.title = 'Disk controller bus presented to the guest';
+        }
+      }
       // Machine type/version
       const mt = cfg.machine_type || '';
       let family = '', version = '';
@@ -31598,7 +31736,11 @@ async function submitLXDEdit() {
   // Collect disks: instance-level non-profile only
   const disks = _lxdEditDisks
     .filter(d => !d._deleted && !d.from_profile)
-    .map(d => ({name: d.name, pool: d.pool, size: d.size, is_root: d.is_root, boot_priority: d.boot_priority || '', reserve_pct: d.reserve_pct || 0}));
+    .map(d => ({
+      name: d.name, pool: d.pool, size: d.size, is_root: d.is_root,
+      boot_priority: d.boot_priority || '', reserve_pct: d.reserve_pct || 0,
+      io_cache: d.io_cache || '', io_bus: d.io_bus || '', readonly: !!d.readonly,
+    }));
 
   // Container-specific: build swap_limit string. LXD's limits.memory.swap is
   // a boolean: "true" = allow, "false" = disallow. The default is "allow",
@@ -31663,9 +31805,24 @@ async function submitLXDEdit() {
     });
     if (!res.ok) throw new Error(await res.text());
     document.getElementById('modal-lxd-edit').classList.add('hidden');
-    loadLXDInstances();
+    // Refresh the cache (the table render also keys off it), then propagate
+    // the new description to the title bar and sidebar — both were only set
+    // when the detail page was first opened, so an in-place rename via the
+    // description field would otherwise look like the change didn't take.
+    const newDesc = document.getElementById('lxd-edit-description').value.trim();
+    await loadLXDInstances();
     if (_lxdEditName === _ciCurrentName) {
       loadComputeInstanceDetail(_ciCurrentName, _ciCurrentType);
+      const titleEl = document.getElementById('ci-title');
+      if (titleEl) titleEl.textContent = newDesc || _ciCurrentName;
+    }
+    // Update the compute-mode sidebar entry so the renamed VM/container
+    // shows its new label without needing a full nav rebuild.
+    const navBtn = document.getElementById('nav-ci-' + _lxdEditName);
+    if (navBtn) {
+      const labelSpan = navBtn.querySelector('span:nth-child(2)');
+      if (labelSpan) labelSpan.textContent = newDesc || _lxdEditName;
+      navBtn.title = newDesc ? newDesc + ' (' + _lxdEditName + ')' : _lxdEditName;
     }
   } catch(e) {
     alertEl.textContent = e.message;
@@ -36384,14 +36541,14 @@ async function loadBridgeMembers() {
   const tbody = document.getElementById('bridge-members-tbody');
   const al = document.getElementById('bridge-detail-alert');
   if (!tbody || !_currentBridgeName) return;
-  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
   al.classList.add('hidden');
   try {
     const res = await fetch(`/api/lxd/network-bridges/${encodeURIComponent(_currentBridgeName)}/members`);
     if (!res.ok) throw new Error(await res.text());
     const members = await res.json();
     if (!members || members.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:32px;">No instances attached to this bridge.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">No instances attached to this bridge.</td></tr>';
       return;
     }
     const hasImg = (members || []).some(i => i.image);
@@ -36405,10 +36562,7 @@ async function loadBridgeMembers() {
       const busy = m.status !== 'Running' && m.status !== 'Stopped' && m.status !== 'Error';
       const powerBtn = _lxdPowerBadgeHTML(m.name, m.status, statusColor, busy);
       const imgTrunc = m.image && m.image.length > 25 ? m.image.slice(0, 25) + '…' : (m.image || '');
-      const consoleCell = `<td><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}>
-        <span style="font-size:16px;">🖥️</span>
-      </span></td>`;
-      const burgerCell = `<td><span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      const actionsCell = `<td class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'>&#x22EE;</span></td>`;
       const dsLabel = _dsLabel(m.root_pool);
       return `<tr id="lxd-row-${esc(m.name)}">
@@ -36420,7 +36574,7 @@ async function loadBridgeMembers() {
         <td style="text-align:center;color:var(--text-2);">${esc(m.cpu_limit || '—')}</td>
         <td style="color:var(--text-2);">${esc(m.memory_limit || '—')}</td>
         <td style="text-align:center;">${powerBtn}</td>
-        ${consoleCell}${burgerCell}
+        ${actionsCell}
       </tr>`;
     }).join('');
   } catch(e) {
@@ -36823,14 +36977,14 @@ async function loadDatastoreMembers() {
   const tbody = document.getElementById('datastore-members-tbody');
   const al = document.getElementById('datastore-detail-alert');
   if (!tbody || !_currentDatastoreName) return;
-  tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
   al.classList.add('hidden');
   try {
     const res = await fetch(`/api/lxd/storage-pools/${encodeURIComponent(_currentDatastoreName)}/members`);
     if (!res.ok) throw new Error(await res.text());
     const members = await res.json();
     if (!members || members.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:32px;">No instances on this datastore.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">No instances on this datastore.</td></tr>';
       return;
     }
     const hasImg = (members || []).some(i => i.image);
@@ -36844,10 +36998,7 @@ async function loadDatastoreMembers() {
       const busy = m.status !== 'Running' && m.status !== 'Stopped' && m.status !== 'Error';
       const powerBtn = _lxdPowerBadgeHTML(m.name, m.status, statusColor, busy);
       const imgTrunc = m.image && m.image.length > 25 ? m.image.slice(0, 25) + '…' : (m.image || '');
-      const consoleCell = `<td><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}>
-        <span style="font-size:16px;">🖥️</span>
-      </span></td>`;
-      const burgerCell = `<td><span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      const actionsCell = `<td class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'>&#x22EE;</span></td>`;
       const dsLabel = _dsLabel(m.root_pool);
       return `<tr id="lxd-row-${esc(m.name)}">
@@ -36859,12 +37010,12 @@ async function loadDatastoreMembers() {
         <td style="text-align:center;color:var(--text-2);">${esc(m.cpu_limit || '—')}</td>
         <td style="color:var(--text-2);">${esc(m.memory_limit || '—')}</td>
         <td style="text-align:center;">${powerBtn}</td>
-        ${consoleCell}${burgerCell}
+        ${actionsCell}
       </tr>`;
     }).join('');
   } catch(e) {
     al.textContent = e.message; al.classList.remove('hidden');
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--danger);padding:24px;">'+esc(e.message)+'</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">'+esc(e.message)+'</td></tr>';
   }
 }
 

@@ -39,36 +39,48 @@ func StartUPSRRDCollector(configDir string, appCfg *config.AppConfig) {
 }
 
 func sampleUPSRRD(db *capacityrrd.DB, appCfg *config.AppConfig, now time.Time) {
-	ups := appCfg.UPS
-	if !ups.Enabled {
-		return
-	}
-	if !UPSPrereqsInstalled() {
-		return
-	}
-
-	mode := ups.Mode
-	if mode == "" {
-		mode = "standalone"
-	}
-
 	var status *UPSStatus
-	var err error
-	switch mode {
-	case "network_client":
-		if ups.NUTClient == nil || ups.NUTClient.Host == "" {
+
+	// NUT not installed → sample the sysfs battery whenever one is present.
+	// This mirrors HandleGetUPSStatus, which surfaces the UPS panel based on
+	// battery detection alone (no explicit ups.enabled toggle exists for the
+	// sysfs path — saveUPSConfig only writes shutdown policy in that mode).
+	// Without this, the Performance UPS tab would stay empty on laptop/SBC
+	// hosts even though the panel is visible.
+	if !UPSPrereqsInstalled() {
+		status = QuerySysBattery()
+		if status == nil {
 			return
 		}
-		status, err = QueryUPSClient(ups.NUTClient)
-	default: // standalone or network_server
-		if ups.UPSName == "" {
+	} else {
+		// NUT installed → require explicit ups.enabled (with a configured
+		// device or remote target) before consuming `upsc` cycles every 5 min.
+		ups := appCfg.UPS
+		if !ups.Enabled {
 			return
 		}
-		status, err = QueryUPS(ups.UPSName)
+		mode := ups.Mode
+		if mode == "" {
+			mode = "standalone"
+		}
+		var err error
+		switch mode {
+		case "network_client":
+			if ups.NUTClient == nil || ups.NUTClient.Host == "" {
+				return
+			}
+			status, err = QueryUPSClient(ups.NUTClient)
+		default: // standalone or network_server
+			if ups.UPSName == "" {
+				return
+			}
+			status, err = QueryUPS(ups.UPSName)
+		}
+		if err != nil {
+			return
+		}
 	}
-	if err != nil {
-		return
-	}
+
 	if status.ChargePct != nil {
 		db.Record("ups:charge_pct", *status.ChargePct, now)
 	}
