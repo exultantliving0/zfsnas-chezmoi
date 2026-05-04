@@ -3476,6 +3476,15 @@ SpiceLinkReply.prototype =
         this.error = dv.getUint32(at, true); at += 4;
 
         this.pub_key = create_rsa_from_mb(a, at);
+        // ZNAS v6.5.2: keep the raw 162-byte SubjectPublicKeyInfo DER so we can
+        // hand it to the browser's Web Crypto API. The legacy bn.js-based
+        // OAEP path above produces padding that newer QEMU/Spice (Incus 6.0+
+        // on Debian 13) rejects as "oaep decoding error" — Web Crypto's
+        // native RSA-OAEP-SHA1 matches OpenSSL bit-for-bit.
+        this.pub_key_der = new Uint8Array(SPICE_TICKET_PUBKEY_BYTES);
+        for (i = 0; i < SPICE_TICKET_PUBKEY_BYTES; i++) {
+            this.pub_key_der[i] = (new Uint8Array(a))[at + i];
+        }
         at += SPICE_TICKET_PUBKEY_BYTES;
 
         var num_common_caps = dv.getUint32(at, true); at += 4;
@@ -4989,9 +4998,53 @@ SpiceConn.prototype =
             }
             else
             {
-                this.send_ticket(rsa_encrypt(this.reply_link.pub_key, this.password + String.fromCharCode(0)));
-                this.state = "ticket";
-                this.wire_reader.request(SpiceLinkAuthReply.prototype.buffer_size());
+                // ZNAS v6.5.2: encrypt the auth ticket via Web Crypto API.
+                // The legacy synchronous rsa_encrypt() above is kept as a
+                // fallback (and reused by spiceWebCryptoEncryptTicket) for
+                // browsers without crypto.subtle, but modern QEMU/Spice
+                // (Incus 6.0+) only accepts the OAEP padding that Web Crypto
+                // produces, so we strongly prefer the async path. process_inbound
+                // is otherwise synchronous; we sit in a transient "encrypting"
+                // state until the encryption resolves, then send the ticket
+                // and transition to "ticket" the same way the sync path did.
+                //
+                // Coerce undefined password to '' explicitly: SpiceConn never
+                // initialises this.password unless it was passed as an option,
+                // and the legacy code path's `undefined + '\0'` evaluates to
+                // the literal 10-byte string "undefined\0" — which then gets
+                // encrypted instead of an empty ticket. QEMU/Spice configured
+                // with no password will reject any non-empty decrypted content.
+                //
+                // Incus launches QEMU with `-spice unix=on,disable-ticketing=on`
+                // which sets the SPICE password to the empty string. The
+                // server compares `memcmp(decrypted, "", 0)` so the plaintext
+                // must be empty (0 bytes). The legacy `password + '\0'`
+                // produced a 1-byte ticket which fails on Incus 6.0 (verified
+                // with a Go test using crypto/rsa stdlib OAEP — empty plaintext
+                // returns SPICE_LINK_ERR_OK; 1-byte plaintext returns
+                // SPICE_LINK_ERR_PERMISSION_DENIED). So we encrypt the empty
+                // string when no password is configured, and only append the
+                // null terminator when a password is actually present.
+                var self = this;
+                var pwd = (typeof self.password === 'string') ? self.password : '';
+                var plaintext = pwd === '' ? '' : (pwd + String.fromCharCode(0));
+                self.state = "encrypting";
+                console.log('[znas-spice] encrypting ticket (plaintext length=' + plaintext.length + ', pubkey=' + (self.reply_link.pub_key_der ? self.reply_link.pub_key_der.byteLength : 'none') + ' bytes, channel type=' + self.type + ')');
+                spiceWebCryptoEncryptTicket(
+                    self.reply_link.pub_key_der,
+                    plaintext,
+                    self.reply_link.pub_key
+                ).then(function(ticketBytes) {
+                    if (self.state !== "encrypting") return; // closed mid-flight
+                    console.log('[znas-spice] ticket encrypted, ' + ticketBytes.length + ' bytes — sending');
+                    self.send_ticket(ticketBytes);
+                    self.state = "ticket";
+                    self.wire_reader.request(SpiceLinkAuthReply.prototype.buffer_size());
+                }).catch(function(err) {
+                    console.error('[znas-spice] ticket encryption failed:', err);
+                    self.state = "error";
+                    self.report_error(new Error('SPICE auth ticket encryption failed: ' + err));
+                });
             }
         }
 
@@ -8885,6 +8938,61 @@ function create_rsa_from_mb(mb, at)
     }
 
     return ret;
+}
+
+// ZNAS v6.5.2 — modern OAEP encryption path.
+// Returns a Promise<Array<number>> that resolves to the encrypted ticket as
+// a byte array suitable for send_ticket(). Falls back to the legacy bn.js
+// rsa_encrypt() if Web Crypto is unavailable or import fails (some older
+// browsers / non-secure contexts).
+//
+// pubKeyDer:  raw 162-byte SubjectPublicKeyInfo DER from SPICE_LINK_REPLY.
+// plaintext:  the password+'\0' string sent through the SPICE auth handshake.
+// rsaFallback: pre-parsed RSAKey for the legacy code path.
+function spiceWebCryptoEncryptTicket(pubKeyDer, plaintext, rsaFallback) {
+    var fallback = function () {
+        return new Promise(function (resolve, reject) {
+            try {
+                var legacy = rsa_encrypt(rsaFallback, plaintext);
+                if (!legacy) reject(new Error('rsa_encrypt returned null'));
+                else resolve(legacy);
+            } catch (e) { reject(e); }
+        });
+    };
+
+    if (!(window.crypto && window.crypto.subtle && pubKeyDer)) {
+        return fallback();
+    }
+
+    // Plaintext is a JS string of single-byte chars (chars 0-255 only) —
+    // password+'\0'. Convert to a Uint8Array of those byte values directly
+    // (NOT via TextEncoder, which would UTF-8-encode bytes >=0x80 into two
+    // bytes and corrupt the ticket).
+    var ptBytes = new Uint8Array(plaintext.length);
+    for (var i = 0; i < plaintext.length; i++) {
+        ptBytes[i] = plaintext.charCodeAt(i) & 0xff;
+    }
+
+    return window.crypto.subtle.importKey(
+        'spki',
+        pubKeyDer.buffer.slice(pubKeyDer.byteOffset, pubKeyDer.byteOffset + pubKeyDer.byteLength),
+        { name: 'RSA-OAEP', hash: 'SHA-1' },
+        false,
+        ['encrypt']
+    ).then(function (key) {
+        return window.crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, ptBytes);
+    }).then(function (ctBuf) {
+        var u8 = new Uint8Array(ctBuf);
+        var arr = new Array(u8.length);
+        for (var j = 0; j < u8.length; j++) arr[j] = u8[j];
+        return arr;
+    }).catch(function (err) {
+        // Surface the failure but try the legacy path so users on browsers
+        // without spki support (e.g. very old WebViews) at least get the
+        // pre-existing behaviour rather than a hard fail.
+        console.warn('spice: Web Crypto OAEP failed, falling back to bn.js:', err);
+        return fallback();
+    });
 }
 
 function rsa_encrypt(rsa, str)

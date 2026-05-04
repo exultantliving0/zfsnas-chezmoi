@@ -31,9 +31,9 @@ func StartMetricsCollector(configDir string) {
 	metricsDB = db
 
 	go func() {
-		var prevNet     map[string]netStat
+		var prevNet map[string]netStat
 		var prevNetTime time.Time
-		var prevDiskIO  map[string]diskstatSample
+		var prevDiskIO map[string]diskstatSample
 		var prevDiskTime time.Time
 
 		tick := time.NewTicker(5 * time.Minute)
@@ -50,7 +50,7 @@ func StartMetricsCollector(configDir string) {
 			cpu2 := readCPUStat()
 			if cpu1 != nil && cpu2 != nil {
 				total := float64(cpu2.total - cpu1.total)
-				idle  := float64(cpu2.idle  - cpu1.idle)
+				idle := float64(cpu2.idle - cpu1.idle)
 				if total > 0 {
 					db.Record("cpu_pct", (total-idle)/total*100, now)
 				}
@@ -58,10 +58,26 @@ func StartMetricsCollector(configDir string) {
 
 			// --- Memory (and all other metrics after CPU is recorded) ---
 			if used, cache, arc, app := readMemStats(); used >= 0 {
-				db.Record("mem_used_pct",  used,  now)
+				db.Record("mem_used_pct", used, now)
 				db.Record("mem_cache_pct", cache, now)
-				db.Record("mem_arc_pct",   arc,   now)
-				db.Record("mem_app_pct",   app,   now)
+				db.Record("mem_arc_pct", arc, now)
+				db.Record("mem_app_pct", app, now)
+			}
+			// --- Memory compression (zram-tools), v6.5.3+ ---
+			// Recorded as % of physical RAM so the dashboard chart can stack
+			// the compressed-pool layer above the 100 %-physical line. Three
+			// series: configured pool size, uncompressed bytes held (= RAM
+			// effectively gained), compressed bytes physically in RAM.
+			// All zero when zram is disabled, which matches the chart's
+			// "render the old way" behaviour for pre-zram historical samples.
+			if zc := GetMemCompStatus(); zc.Enabled {
+				memTotalKB, _, _ := readMemInfo()
+				totalKB := float64(memTotalKB)
+				if totalKB > 0 {
+					db.Record("mem_zram_pool_pct", float64(zc.DiskSizeBytes)/1024/totalKB*100, now)
+					db.Record("mem_zram_orig_pct", float64(zc.OrigDataBytes)/1024/totalKB*100, now)
+					db.Record("mem_zram_compr_pct", float64(zc.ComprDataBytes)/1024/totalKB*100, now)
+				}
 			}
 
 			// --- Network ---
@@ -93,7 +109,7 @@ func StartMetricsCollector(configDir string) {
 						count := 0
 						for dev, cur := range curDisk {
 							if prev, ok := prevDiskIO[dev]; ok {
-								readMBps  += float64(cur.sectorsRead-prev.sectorsRead)       * 512 / 1_048_576 / dtSec
+								readMBps += float64(cur.sectorsRead-prev.sectorsRead) * 512 / 1_048_576 / dtSec
 								writeMBps += float64(cur.sectorsWritten-prev.sectorsWritten) * 512 / 1_048_576 / dtSec
 								dtMS := dtSec * 1000
 								busy := float64(cur.msIO-prev.msIO) / dtMS * 100
@@ -104,14 +120,14 @@ func StartMetricsCollector(configDir string) {
 								count++
 							}
 						}
-						db.Record("disk_read_mbps",  readMBps,  now)
+						db.Record("disk_read_mbps", readMBps, now)
 						db.Record("disk_write_mbps", writeMBps, now)
 						if count > 0 {
 							db.Record("disk_busy_pct", busyTotal/float64(count), now)
 						}
 					}
 				}
-				prevDiskIO  = curDisk
+				prevDiskIO = curDisk
 				prevDiskTime = now
 			}
 
@@ -229,10 +245,10 @@ func readMemStats() (used, cache, arc, app float64) {
 		arcKB = appKB
 	}
 
-	used  = float64(total-available) / float64(total) * 100
-	cache = float64(buffers+cached)  / float64(total) * 100
-	arc   = float64(arcKB)           / float64(total) * 100
-	app   = float64(appKB-arcKB)     / float64(total) * 100
+	used = float64(total-available) / float64(total) * 100
+	cache = float64(buffers+cached) / float64(total) * 100
+	arc = float64(arcKB) / float64(total) * 100
+	app = float64(appKB-arcKB) / float64(total) * 100
 	return used, cache, arc, app
 }
 

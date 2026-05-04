@@ -30,20 +30,16 @@ import (
 	"zfsnas/internal/pushinterlink"
 )
 
-// lxdConfigDir returns the directory where the lxc CLI stores its config and certs.
-// For snap LXD installs (most common on modern Ubuntu/Debian), this is
-// ~/snap/lxd/common/config/. Falls back to ~/.config/lxc/ for deb/pkg installs.
+// lxdConfigDir returns the directory where the incus CLI stores its config
+// and remote-server certs. Incus on Debian is deb-only (no snap variant), so
+// the path is always ~/.config/incus/.
 func lxdConfigDir() string {
 	u, _ := user.Lookup("zfsnas")
 	home := "/home/zfsnas"
 	if u != nil {
 		home = u.HomeDir
 	}
-	snapDir := filepath.Join(home, "snap", "lxd", "common", "config")
-	if _, err := os.Stat(snapDir); err == nil {
-		return snapDir
-	}
-	return filepath.Join(home, ".config", "lxc")
+	return filepath.Join(home, ".config", "incus")
 }
 
 // LXDEnsureClientCert ensures a client cert/key exist in the lxc config dir.
@@ -179,14 +175,14 @@ func LXDRegisterPeerCert(peerCertPEM, peerID string) error {
 
 	// Remove any existing cert for this peer (by fingerprint, works in all versions).
 	if fp := lxdCertFingerprint(peerCertPEM); fp != "" {
-		exec.Command("lxc", "config", "trust", "remove", fp).Run() //nolint:errcheck
+		exec.Command("incus", "config", "trust", "remove", fp).Run() //nolint:errcheck
 	}
 	// Also try removing by name (LXD 5.x).
-	exec.Command("lxc", "config", "trust", "remove", "znas-interlink-"+peerID).Run() //nolint:errcheck
+	exec.Command("incus", "config", "trust", "remove", "znas-interlink-"+peerID).Run() //nolint:errcheck
 
 	// Try LXD 5.x syntax with --name first.
 	name := "znas-interlink-" + peerID
-	out, err := exec.Command("lxc", "config", "trust", "add-certificate", tmpPath, "--name", name).CombinedOutput()
+	out, err := exec.Command("incus", "config", "trust", "add-certificate", tmpPath, "--name", name).CombinedOutput()
 	if err == nil {
 		return nil
 	}
@@ -194,7 +190,7 @@ func LXDRegisterPeerCert(peerCertPEM, peerID string) error {
 
 	// Fall back to add-certificate without --name (LXD 5.x, older patch).
 	if strings.Contains(outStr, "--name") || strings.Contains(outStr, "unknown flag") {
-		out, err = exec.Command("lxc", "config", "trust", "add-certificate", tmpPath).CombinedOutput()
+		out, err = exec.Command("incus", "config", "trust", "add-certificate", tmpPath).CombinedOutput()
 		if err == nil {
 			return nil
 		}
@@ -203,7 +199,7 @@ func LXDRegisterPeerCert(peerCertPEM, peerID string) error {
 
 	// Fall back to legacy LXD 4.x syntax.
 	if strings.Contains(outStr, "add-certificate") || strings.Contains(outStr, "unknown command") || strings.Contains(outStr, "unknown sub") {
-		out, err = exec.Command("lxc", "config", "trust", "add", tmpPath).CombinedOutput()
+		out, err = exec.Command("incus", "config", "trust", "add", tmpPath).CombinedOutput()
 		if err != nil {
 			errOut := strings.TrimSpace(string(out))
 			if strings.Contains(errOut, "already") || strings.Contains(errOut, "trust store") {
@@ -230,7 +226,7 @@ func LXDEnsurePeerRemote(serverID, addr string) error {
 	remoteName := "znas-" + serverID
 
 	// Check if remote already exists (lxc remote list reads the config file).
-	out, _ := exec.Command("lxc", "remote", "list", "--format", "json").Output()
+	out, _ := exec.Command("incus", "remote", "list", "--format", "json").Output()
 	var rawRemotes map[string]struct {
 		Addr string `json:"addr"`
 	}
@@ -239,7 +235,7 @@ func LXDEnsurePeerRemote(serverID, addr string) error {
 		if existing.Addr == addr {
 			return nil
 		}
-		if err := exec.Command("lxc", "remote", "set-url", remoteName, addr).Run(); err != nil {
+		if err := exec.Command("incus", "remote", "set-url", remoteName, addr).Run(); err != nil {
 			return fmt.Errorf("lxc remote set-url: %w", err)
 		}
 		return nil
@@ -562,12 +558,12 @@ func LXDGetPeerStatus(interlinks []config.LinkedServer) map[string]LXDPeerStatus
 	result := make(map[string]LXDPeerStatus, len(interlinks))
 
 	// List existing remotes.
-	remoteOut, _ := exec.Command("lxc", "remote", "list", "--format", "json").Output()
+	remoteOut, _ := exec.Command("incus", "remote", "list", "--format", "json").Output()
 	var rawRemotes map[string]interface{}
 	json.Unmarshal(remoteOut, &rawRemotes) //nolint:errcheck
 
 	// List existing trust certs.
-	trustOut, _ := exec.Command("lxc", "config", "trust", "list", "--format", "json").Output()
+	trustOut, _ := exec.Command("incus", "config", "trust", "list", "--format", "json").Output()
 	var rawTrust []struct {
 		Name string `json:"name"`
 	}
@@ -634,7 +630,7 @@ func LXDPushVM(ctx context.Context, req LXDPushVMRequest, job *pushinterlink.Job
 	destRef := remoteName + ":" + req.DestName
 
 	// Pre-flight: check lxc remote exists, try sync if missing.
-	remoteOut, _ := exec.Command("lxc", "remote", "list", "--format", "json").Output()
+	remoteOut, _ := exec.Command("incus", "remote", "list", "--format", "json").Output()
 	var rawRemotes map[string]interface{}
 	json.Unmarshal(remoteOut, &rawRemotes) //nolint:errcheck
 	if rawRemotes == nil || rawRemotes[remoteName] == nil {
@@ -708,18 +704,18 @@ func LXDPushVM(ctx context.Context, req LXDPushVMRequest, job *pushinterlink.Job
 			if conf.MAC != "" {
 				args = append(args, "hwaddr="+conf.MAC)
 			}
-			if out, err := exec.CommandContext(ctx, "lxc", args...).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(ctx, "incus", args...).CombinedOutput(); err != nil {
 				fmt.Printf("lxd push: add disconnected nic %s → %s: %v — %s\n",
 					nicDevice, remoteBridge, err, strings.TrimSpace(string(out)))
 			} else {
 				// Remove the stale disconnected-NIC marker from the destination.
-				exec.CommandContext(ctx, "lxc", "config", "unset", destRef,
+				exec.CommandContext(ctx, "incus", "config", "unset", destRef,
 					"user.disconnected_nics."+nicDevice).Run() //nolint:errcheck
 			}
 		} else {
 			// NIC exists as an active device — just override the bridge parent.
 			overrideArgs := []string{"config", "device", "set", destRef, nicDevice, "parent=" + remoteBridge}
-			if out, err := exec.CommandContext(ctx, "lxc", overrideArgs...).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(ctx, "incus", overrideArgs...).CombinedOutput(); err != nil {
 				fmt.Printf("lxd push nic override %s → %s: %v — %s\n",
 					nicDevice, remoteBridge, err, strings.TrimSpace(string(out)))
 			}
@@ -731,7 +727,7 @@ func LXDPushVM(ctx context.Context, req LXDPushVMRequest, job *pushinterlink.Job
 	if desc == "" {
 		desc = req.DestName
 	}
-	exec.CommandContext(ctx, "lxc", "config", "set", destRef, "description", desc).Run() //nolint:errcheck
+	exec.CommandContext(ctx, "incus", "config", "set", destRef, "description", desc).Run() //nolint:errcheck
 
 	pushinterlink.Default.Finish(job.ID, nil)
 }
@@ -754,20 +750,20 @@ func lxdCopyWithCompatStrip(ctx context.Context, vmName, destRef, storagePool st
 	defer func() {
 		for _, item := range stripped {
 			if item.val != "" {
-				exec.Command("lxc", "config", "set", vmName, item.key, item.val).Run() //nolint:errcheck
+				exec.Command("incus", "config", "set", vmName, item.key, item.val).Run() //nolint:errcheck
 			} else {
-				exec.Command("lxc", "config", "unset", vmName, item.key).Run() //nolint:errcheck
+				exec.Command("incus", "config", "unset", vmName, item.key).Run() //nolint:errcheck
 			}
 		}
 		for _, item := range strippedDevOpts {
-			exec.Command("lxc", "config", "device", "set", vmName, item.devName, item.key+"="+item.val).Run() //nolint:errcheck
+			exec.Command("incus", "config", "device", "set", vmName, item.devName, item.key+"="+item.val).Run() //nolint:errcheck
 		}
 		for _, d := range strippedDevs {
 			args := []string{"config", "device", "add", vmName, d.name}
 			for k, v := range d.config {
 				args = append(args, k+"="+v)
 			}
-			exec.Command("lxc", args...).Run() //nolint:errcheck
+			exec.Command("incus", args...).Run() //nolint:errcheck
 		}
 	}()
 
@@ -799,7 +795,7 @@ func lxdCopyWithCompatStrip(ctx context.Context, vmName, destRef, storagePool st
 		_ = copyArgs
 		srcRef := storagePool + "/" + vol
 		dstRef := destRef[:strings.Index(destRef, ":")] + ":" + storagePool + "/" + vol
-		out, err := exec.CommandContext(ctx, "lxc", "storage", "volume", "copy",
+		out, err := exec.CommandContext(ctx, "incus", "storage", "volume", "copy",
 			srcRef, dstRef, "--mode", "push").CombinedOutput()
 		if err != nil {
 			outStr := strings.TrimSpace(string(out))
@@ -811,7 +807,7 @@ func lxdCopyWithCompatStrip(ctx context.Context, vmName, destRef, storagePool st
 	}
 
 	for attempt := 0; attempt < 20; attempt++ {
-		out, err := exec.CommandContext(ctx, "lxc", args...).CombinedOutput()
+		out, err := exec.CommandContext(ctx, "incus", args...).CombinedOutput()
 		if err == nil {
 			return nil
 		}
@@ -823,7 +819,7 @@ func lxdCopyWithCompatStrip(ctx context.Context, vmName, destRef, storagePool st
 		// Handle devices referencing storage pools that don't exist on the destination.
 		if devName := lxdMissingPoolDevice(outStr); devName != "" {
 			devCfg := lxdGetDeviceConfig(vmName, devName)
-			if out2, err2 := exec.Command("lxc", "config", "device", "remove", vmName, devName).CombinedOutput(); err2 != nil {
+			if out2, err2 := exec.Command("incus", "config", "device", "remove", vmName, devName).CombinedOutput(); err2 != nil {
 				return fmt.Errorf("lxc copy failed (cannot strip device %s): %w — %s", devName, err, strings.TrimSpace(string(out2)))
 			}
 			strippedDevs = append(strippedDevs, dev{devName, devCfg})
@@ -834,9 +830,9 @@ func lxdCopyWithCompatStrip(ctx context.Context, vmName, destRef, storagePool st
 		// Handle device options not supported by the destination LXD version.
 		// Error: Device validation failed for "<dev>": Invalid device option "<key>"
 		if devName, optKey := lxdInvalidDeviceOption(outStr); devName != "" {
-			valOut, _ := exec.Command("lxc", "config", "device", "get", vmName, devName, optKey).Output()
+			valOut, _ := exec.Command("incus", "config", "device", "get", vmName, devName, optKey).Output()
 			val := strings.TrimSpace(string(valOut))
-			if out2, err2 := exec.Command("lxc", "config", "device", "unset", vmName, devName, optKey).CombinedOutput(); err2 != nil {
+			if out2, err2 := exec.Command("incus", "config", "device", "unset", vmName, devName, optKey).CombinedOutput(); err2 != nil {
 				return fmt.Errorf("lxc copy failed (cannot strip device option %s.%s): %w — %s", devName, optKey, err, strings.TrimSpace(string(out2)))
 			}
 			strippedDevOpts = append(strippedDevOpts, devKV{devName, optKey, val})
@@ -849,9 +845,9 @@ func lxdCopyWithCompatStrip(ctx context.Context, vmName, destRef, storagePool st
 			return fmt.Errorf("lxc copy failed: %w — %s", err, outStr)
 		}
 		// Fetch current value so we can restore it afterwards.
-		valOut, _ := exec.Command("lxc", "config", "get", vmName, key).Output()
+		valOut, _ := exec.Command("incus", "config", "get", vmName, key).Output()
 		val := strings.TrimSpace(string(valOut))
-		if err2 := exec.Command("lxc", "config", "unset", vmName, key).Run(); err2 != nil {
+		if err2 := exec.Command("incus", "config", "unset", vmName, key).Run(); err2 != nil {
 			return fmt.Errorf("lxc copy failed (cannot strip %s): %w — %s", key, err, outStr)
 		}
 		stripped = append(stripped, kv{key, val})
@@ -880,7 +876,7 @@ func lxdMissingPoolDevice(output string) string {
 // reference a storage pool. The root disk is excluded because lxc copy --storage
 // already remaps it to the destination pool.
 func lxdNonRootDiskDevices(vmName string) []string {
-	out, err := exec.Command("lxc", "query", "/1.0/instances/"+vmName).Output()
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+vmName).Output()
 	if err != nil {
 		return nil
 	}
@@ -915,7 +911,7 @@ func lxdNonRootDiskDevices(vmName string) []string {
 // "lxc copy" does not transfer custom volumes — it only copies the instance's
 // own root and state.
 func lxdCustomVolumesForVM(vmName string) []string {
-	out, err := exec.Command("lxc", "query", "/1.0/instances/"+vmName).Output()
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+vmName).Output()
 	if err != nil {
 		return nil
 	}
@@ -951,7 +947,7 @@ func lxdCustomVolumesForVM(vmName string) []string {
 // lxdGetDeviceConfig returns the config map for a single device on a VM by
 // querying the LXD REST API. Returns an empty map on any error.
 func lxdGetDeviceConfig(vmName, devName string) map[string]string {
-	out, err := exec.Command("lxc", "query", "/1.0/instances/"+vmName).Output()
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+vmName).Output()
 	if err != nil {
 		return map[string]string{}
 	}
@@ -995,7 +991,7 @@ func lxdUnknownConfigKey(output string) string {
 
 // pollLXDCopyProgress queries the local LXD operations API to extract migration progress.
 func pollLXDCopyProgress(job *pushinterlink.Job) {
-	out, err := exec.Command("lxc", "query", "/1.0/operations?recursion=1").Output()
+	out, err := exec.Command("incus", "query", "/1.0/operations?recursion=1").Output()
 	if err != nil {
 		return
 	}
@@ -1210,7 +1206,7 @@ type LXDInstancesRequest struct {
 
 // LXDListInstanceSummaries returns name+description for every local LXD instance.
 func LXDListInstanceSummaries() ([]LXDInstanceSummary, error) {
-	out, err := exec.Command("lxc", "list", "--format", "json").Output()
+	out, err := exec.Command("incus", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -1265,13 +1261,12 @@ func GetRemoteLXDInstances(remoteURL, sharedSecret, tlsFP string) ([]LXDInstance
 // source OVMF/TPM session and causes QEMU to exit with a TPM fatal error when
 // OVMF sends boot-measurement commands against the foreign state.
 func LXDClearTPMState(vmName string) error {
-	// Try both deb (/var/lib/lxd) and snap (/var/snap/lxd/common/lxd) prefixes,
-	// and both the legacy virtual-machines/ path and the per-pool path.
+	// Incus stores VM state under /var/lib/incus. We probe both the legacy
+	// flat virtual-machines/<name>/ path and the per-pool layout, since
+	// older Incus versions used the flat form.
 	globs := []string{
-		"/var/lib/lxd/storage-pools/*/virtual-machines/" + vmName + "/tpm.tpm/tpm2-00.permall",
-		"/var/lib/lxd/virtual-machines/" + vmName + "/tpm.tpm/tpm2-00.permall",
-		"/var/snap/lxd/common/lxd/storage-pools/*/virtual-machines/" + vmName + "/tpm.tpm/tpm2-00.permall",
-		"/var/snap/lxd/common/lxd/virtual-machines/" + vmName + "/tpm.tpm/tpm2-00.permall",
+		"/var/lib/incus/storage-pools/*/virtual-machines/" + vmName + "/tpm.tpm/tpm2-00.permall",
+		"/var/lib/incus/virtual-machines/" + vmName + "/tpm.tpm/tpm2-00.permall",
 	}
 	for _, g := range globs {
 		// Use shell glob expansion via /bin/sh so we don't need filepath.Glob
@@ -1346,28 +1341,27 @@ func LXDNVRAMResetHMAC(sharedSecret, vmName string, timestamp int64, nonce strin
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// LXDResetVMNVRAM deletes the EFI variable store for a local LXD VM so that
-// OVMF regenerates it from scratch on next boot.
+// LXDResetVMNVRAM deletes the EFI variable store for a local Incus VM so
+// that OVMF regenerates it from scratch on next boot.
 //
-// IMPORTANT: the LXD state directories (e.g. /var/lib/lxd/virtual-machines/)
+// IMPORTANT: the Incus state directories (e.g. /var/lib/incus/virtual-machines/)
 // are root-owned and not traversable by the zfsnas user, so os.Stat cannot be
 // used to check file existence.  We run sudo rm -f unconditionally on every
 // candidate path — rm -f exits 0 whether the file existed or not.
 func LXDResetVMNVRAM(vmName string) error {
-	u, _ := user.Lookup("zfsnas")
-	home := "/home/zfsnas"
-	if u != nil {
-		home = u.HomeDir
-	}
 	paths := []string{
-		"/var/lib/lxd/virtual-machines/" + vmName + "/qemu.nvram",
-		"/var/snap/lxd/common/lxd/virtual-machines/" + vmName + "/qemu.nvram",
-		filepath.Join(home, "snap", "lxd", "common", "mnt", "virtual-machines", vmName, "qemu.nvram"),
+		"/var/lib/incus/virtual-machines/" + vmName + "/qemu.nvram",
+		"/var/lib/incus/storage-pools/*/virtual-machines/" + vmName + "/qemu.nvram",
 	}
 	for _, p := range paths {
-		exec.Command("sudo", "/usr/bin/rm", "-f", p).Run() //nolint:errcheck
+		// Shell out to expand the per-pool glob path; sudo+rm is no-op when no match.
+		if strings.Contains(p, "*") {
+			exec.Command("sudo", "/bin/sh", "-c", "rm -f "+p).Run() //nolint:errcheck
+		} else {
+			exec.Command("sudo", "/usr/bin/rm", "-f", p).Run() //nolint:errcheck
+		}
 	}
-	fmt.Printf("lxd push: NVRAM reset attempted for %s\n", vmName)
+	fmt.Printf("incus push: NVRAM reset attempted for %s\n", vmName)
 	return nil
 }
 
@@ -1391,7 +1385,7 @@ func LXDRepairVMBoot(vmName string) {
 
 	// ── Step 2: EFI fallback repair via ZVol mount ─────────────────────────
 	// Find the storage pool backing the VM's root disk.
-	poolOut, err := exec.Command("lxc", "config", "device", "get", vmName, "root", "pool").Output()
+	poolOut, err := exec.Command("incus", "config", "device", "get", vmName, "root", "pool").Output()
 	if err != nil {
 		fmt.Printf("lxd repair: cannot get root disk pool for %s: %v\n", vmName, err)
 		return
@@ -1547,7 +1541,7 @@ func LXDGetNICsForVM(name string) (LXDInstanceDeviceInfo, error) {
 // lxdGetDisconnectedNICConfigs returns configs for NICs that ZNAS disconnected
 // (stored in user.disconnected_nics.<name> config keys) on the given VM.
 func lxdGetDisconnectedNICConfigs(vmName string) map[string]lxdDisconnNICConf {
-	out, err := exec.Command("lxc", "query", "/1.0/instances/"+vmName).Output()
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+vmName).Output()
 	if err != nil {
 		return nil
 	}
@@ -1575,7 +1569,7 @@ func lxdGetDisconnectedNICConfigs(vmName string) map[string]lxdDisconnNICConf {
 
 // lxdGetNICsViaQuery parses the LXD REST response for an instance.
 func lxdGetNICsViaQuery(name string, bridgeDesc map[string]string) (LXDInstanceDeviceInfo, error) {
-	out, err := exec.Command("lxc", "query", "/1.0/instances/"+name).Output()
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+name).Output()
 	if err != nil {
 		return LXDInstanceDeviceInfo{}, fmt.Errorf("lxc query instance: %w", err)
 	}
@@ -1699,7 +1693,7 @@ func lxdGetNICsViaQuery(name string, bridgeDesc map[string]string) (LXDInstanceD
 // This bypasses all JSON parsing and is a reliable fallback when the REST API
 // returns an unexpected format for NIC devices in expanded_devices.
 func lxdGetNICsViaExpandedShow(name string, bridgeDesc map[string]string) []LXDNICInfo {
-	out, err := exec.Command("lxc", "config", "show", "--expanded", name).Output()
+	out, err := exec.Command("incus", "config", "show", "--expanded", name).Output()
 	if err != nil {
 		return nil
 	}

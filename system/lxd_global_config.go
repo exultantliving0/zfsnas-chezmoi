@@ -66,7 +66,7 @@ var lxdConfigKeys = []struct {
 // GetLXDGlobalConfig fetches the current values for every allow-listed key.
 // Missing keys come back as empty strings / nil booleans.
 func GetLXDGlobalConfig() (*LXDGlobalConfig, error) {
-	out, err := exec.Command("lxc", "query", "/1.0").Output()
+	out, err := exec.Command("incus", "query", "/1.0").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc query /1.0: %w", err)
 	}
@@ -126,7 +126,7 @@ func SetLXDGlobalConfig(cur, want *LXDGlobalConfig) ([]string, error) {
 		} else {
 			args = []string{"config", "set", key, newVal}
 		}
-		out, err := exec.Command("lxc", args...).CombinedOutput()
+		out, err := exec.Command("incus", args...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("%s: %s", key, strings.TrimSpace(string(out)))
 		}
@@ -200,20 +200,20 @@ func EnableLXDMetricsListener() (status, currentVal string, err error) {
 	if cur.MetricsAddress == LXDMetricsAddress {
 		return "ok", LXDMetricsAddress, nil
 	}
-	if out, err := exec.Command("lxc", "config", "set", "core.metrics_address", LXDMetricsAddress).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "config", "set", "core.metrics_address", LXDMetricsAddress).CombinedOutput(); err != nil {
 		return "error", "", fmt.Errorf("set core.metrics_address: %s", strings.TrimSpace(string(out)))
 	}
 	// Loopback-only listener — disable mTLS so the portal can scrape without
 	// also issuing a client cert. Safe because nothing off-host can reach it.
-	exec.Command("lxc", "config", "set", "core.metrics_authentication", "false").Run() //nolint:errcheck
+	exec.Command("incus", "config", "set", "core.metrics_authentication", "false").Run() //nolint:errcheck
 	return "ok", LXDMetricsAddress, nil
 }
 
 // DisableLXDMetricsListener removes core.metrics_address and metrics_auth.
 // No-op when already absent.
 func DisableLXDMetricsListener() error {
-	exec.Command("lxc", "config", "unset", "core.metrics_authentication").Run() //nolint:errcheck
-	out, err := exec.Command("lxc", "config", "unset", "core.metrics_address").CombinedOutput()
+	exec.Command("incus", "config", "unset", "core.metrics_authentication").Run() //nolint:errcheck
+	out, err := exec.Command("incus", "config", "unset", "core.metrics_address").CombinedOutput()
 	if err != nil && !strings.Contains(string(out), "not set") {
 		return fmt.Errorf("unset core.metrics_address: %s", strings.TrimSpace(string(out)))
 	}
@@ -420,14 +420,14 @@ func GetLXDInstanceRealtime(instance string) (*LXDInstanceRealtime, error) {
 // "total" — for VMs the QEMU process can grow up to the configured limit;
 // for containers the cgroup tracks the host's total RAM unless capped.
 func lxdInstanceMemoryTotal(instance string, fallback int64) int64 {
-	out, err := exec.Command("lxc", "config", "get", instance, "limits.memory").Output()
+	out, err := exec.Command("incus", "config", "get", instance, "limits.memory").Output()
 	if err == nil {
 		if v := parseLXDMemorySize(strings.TrimSpace(string(out))); v > 0 {
 			return v
 		}
 	}
 	// Fall back to expanded config (catches values inherited from a profile).
-	out, err = exec.Command("lxc", "query", "/1.0/instances/"+instance).Output()
+	out, err = exec.Command("incus", "query", "/1.0/instances/"+instance).Output()
 	if err == nil {
 		var inst struct {
 			ExpandedConfig map[string]string `json:"expanded_config"`

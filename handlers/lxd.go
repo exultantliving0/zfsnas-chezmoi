@@ -791,7 +791,7 @@ func HandleLXDCreateProgress(w http.ResponseWriter, r *http.Request) {
 // lxcRootHasPassword returns true when the container's root account has a
 // real password hash in /etc/shadow (i.e. not locked with * or !).
 func lxcRootHasPassword(name string) bool {
-	out, err := exec.Command("lxc", "exec", name, "--", "grep", "^root:", "/etc/shadow").Output()
+	out, err := exec.Command("incus", "exec", name, "--", "grep", "^root:", "/etc/shadow").Output()
 	if err != nil {
 		return false
 	}
@@ -833,13 +833,13 @@ func HandleLXDConsole(w http.ResponseWriter, r *http.Request) {
 	// Otherwise drop straight to a shell (default open-access behaviour).
 	var cmd *exec.Cmd
 	if lxcRootHasPassword(name) {
-		cmd = exec.Command("lxc", "exec", name, "--", "login")
+		cmd = exec.Command("incus", "exec", name, "--", "login")
 	} else {
 		shell := "bash"
-		if exec.Command("lxc", "exec", name, "--", "which", "bash").Run() != nil {
+		if exec.Command("incus", "exec", name, "--", "which", "bash").Run() != nil {
 			shell = "sh"
 		}
-		cmd = exec.Command("lxc", "exec", name, "--", shell)
+		cmd = exec.Command("incus", "exec", name, "--", shell)
 	}
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 

@@ -22,13 +22,13 @@ import (
 var aptInstallMu sync.Mutex
 
 var wsUpgrader = websocket.Upgrader{
-    CheckOrigin: func(r *http.Request) bool {
-        origin := r.Header.Get("Origin")
-        if origin == "" {
-            return true // non-browser clients (curl, etc.)
-        }
-        return strings.HasSuffix(origin, "://"+r.Host)
-    },
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // non-browser clients (curl, etc.)
+		}
+		return strings.HasSuffix(origin, "://"+r.Host)
+	},
 }
 
 // HandleCheckPrereqs returns the status of all required packages and the systemd service.
@@ -382,10 +382,14 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 
-		// Proxmox import tools installs two packages together.
+		// Proxmox import tools installs four packages together: sshpass and
+		// qemu-utils handle the SSH+image conversion pipeline; ntfs-3g and
+		// python3-hivex are used by fixUEFIWindows() after the disk lands to
+		// clear the NTFS dirty bit and patch BCD so imported Windows guests
+		// don't boot-loop into Windows RE every other start (v6.5.2+).
 		if req.Package == "proxmox-import-tools" {
 			pkgCmd := exec.Command("sudo", "apt-get", "install", "-y", "-q",
-				"sshpass", "qemu-utils")
+				"sshpass", "qemu-utils", "ntfs-3g", "python3-hivex")
 			pkgCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 			out, err := pkgCmd.CombinedOutput()
 			if err != nil {
@@ -397,7 +401,7 @@ func HandleInstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 				Role:    sess.Role,
 				Action:  audit.ActionInstallPrereqs,
 				Result:  audit.ResultOK,
-				Details: "installed: sshpass, qemu-utils",
+				Details: "installed: sshpass, qemu-utils, ntfs-3g, python3-hivex",
 			})
 			jsonOK(w, map[string]string{"message": "proxmox-import-tools installed"})
 			return

@@ -28,37 +28,41 @@ const (
 
 // Common action names.
 const (
-	ActionLogin        = "login"
-	ActionLogout       = "logout"
-	ActionLoginFailed  = "login_failed"
-	ActionSetupAdmin   = "setup_admin"
-	ActionCreateUser   = "create_user"
-	ActionDeleteUser   = "delete_user"
-	ActionUpdateUser   = "update_user"
-	ActionKillSession  = "kill_session"
-	ActionCreatePool   = "create_pool"
-	ActionImportPool   = "import_pool"
-	ActionCreateDataset = "create_dataset"
-	ActionUpdateDataset = "update_dataset"
-	ActionDeleteDataset = "delete_dataset"
-	ActionCreateShare  = "create_share"
-	ActionDeleteShare  = "delete_share"
-	ActionEnableShare  = "enable_share"
-	ActionDisableShare = "disable_share"
-	ActionCreateSnapshot = "create_snapshot"
-	ActionDeleteSnapshot = "delete_snapshot"
+	ActionLogin           = "login"
+	ActionLogout          = "logout"
+	ActionLoginFailed     = "login_failed"
+	ActionSetupAdmin      = "setup_admin"
+	ActionCreateUser      = "create_user"
+	ActionDeleteUser      = "delete_user"
+	ActionUpdateUser      = "update_user"
+	ActionKillSession     = "kill_session"
+	ActionCreatePool      = "create_pool"
+	ActionImportPool      = "import_pool"
+	ActionCreateDataset   = "create_dataset"
+	ActionUpdateDataset   = "update_dataset"
+	ActionDeleteDataset   = "delete_dataset"
+	ActionCreateShare     = "create_share"
+	ActionDeleteShare     = "delete_share"
+	ActionEnableShare     = "enable_share"
+	ActionDisableShare    = "disable_share"
+	ActionCreateSnapshot  = "create_snapshot"
+	ActionDeleteSnapshot  = "delete_snapshot"
 	ActionRestoreSnapshot = "restore_snapshot"
-	ActionInstallPrereqs = "install_prereqs"
-	ActionInstallService = "install_service"
-	ActionApplyUpdates  = "apply_updates"
-	ActionGrowPool      = "grow_pool"
-	ActionExportPool    = "export_pool"
-	ActionDestroyPool   = "destroy_pool"
-	ActionUpgradePool   = "upgrade_pool"
-	ActionUpdatePool    = "update_pool"
-	ActionSystemReboot  = "system_reboot"
-	ActionSystemShutdown = "system_shutdown"
-	ActionUpdateSettings = "update_settings"
+	ActionInstallPrereqs  = "install_prereqs"
+	ActionInstallService  = "install_service"
+	ActionMemCompEnable   = "mem_comp_enable"
+	ActionMemCompDisable  = "mem_comp_disable"
+	ActionMemCompConfig   = "mem_comp_config"
+	ActionMemCompInstall  = "mem_comp_install"
+	ActionApplyUpdates    = "apply_updates"
+	ActionGrowPool        = "grow_pool"
+	ActionExportPool      = "export_pool"
+	ActionDestroyPool     = "destroy_pool"
+	ActionUpgradePool     = "upgrade_pool"
+	ActionUpdatePool      = "update_pool"
+	ActionSystemReboot    = "system_reboot"
+	ActionSystemShutdown  = "system_shutdown"
+	ActionUpdateSettings  = "update_settings"
 	ActionCreateNFSShare  = "create_nfs_share"
 	ActionUpdateNFSShare  = "update_nfs_share"
 	ActionDeleteNFSShare  = "delete_nfs_share"
@@ -66,11 +70,11 @@ const (
 	ActionUpdateSchedule  = "update_schedule"
 	ActionDeleteSchedule  = "delete_schedule"
 	// Health events — logged automatically by the background health poller.
-	ActionPoolProblem    = "pool_problem"
-	ActionPoolRecovered  = "pool_recovered"
-	ActionDiskProblem    = "disk_problem"
-	ActionDiskRecovered  = "disk_recovered"
-	ActionFolderScan         = "folder_scan"
+	ActionPoolProblem         = "pool_problem"
+	ActionPoolRecovered       = "pool_recovered"
+	ActionDiskProblem         = "disk_problem"
+	ActionDiskRecovered       = "disk_recovered"
+	ActionFolderScan          = "folder_scan"
 	ActionTreeMapScheduleScan = "treemap_schedule_scan"
 	// 2FA events.
 	Action2FAEnabled  = "2fa_enabled"
@@ -120,35 +124,105 @@ const (
 	ActionFileBrowserChown = "filebrowser_chown"
 	ActionFileBrowserChmod = "filebrowser_chmod"
 	// Dataset encryption actions.
-	ActionLockDataset    = "lock_dataset"
-	ActionUnlockDataset  = "unlock_dataset"
+	ActionLockDataset     = "lock_dataset"
+	ActionUnlockDataset   = "unlock_dataset"
 	ActionChangeKeySource = "change_key_source"
 	// Access control.
 	ActionForbidden = "forbidden_access"
-	// LXD / VM events.
-	ActionLXDCreateVM        = "lxd_create_vm"
-	ActionLXDCreateContainer = "lxd_create_container"
-	ActionLXDStart           = "lxd_start"
-	ActionLXDStop            = "lxd_stop"
-	ActionLXDRestart         = "lxd_restart"
-	ActionLXDDelete          = "lxd_delete"
-	ActionLXDEditConfig      = "lxd_edit_config"
-	ActionLXDNetCreate       = "lxd_net_create"
-	ActionLXDNetEdit         = "lxd_net_edit"
-	ActionLXDNetDelete       = "lxd_net_delete"
-	ActionLXDSnapshot        = "lxd_snapshot"
-	ActionLXDRestore         = "lxd_restore"
-	ActionLXDDeleteSnapshot  = "lxd_delete_snapshot"
-	ActionLXDClone           = "lxd_clone"
-	ActionLXDMoveStorage     = "lxd_move_storage"
-	ActionProxmoxImport      = "proxmox_import"
-	ActionLXDEnable          = "lxd_enable"
-	ActionLXDStorageCreate   = "lxd_storage_create"
-	ActionLXDStorageEdit     = "lxd_storage_edit"
-	ActionLXDStorageDelete   = "lxd_storage_delete"
-	ActionLXDMetricsToggle    = "lxd_metrics_toggle"     // v6.4.28 — enable/disable LXD prometheus endpoint + portal scraper
-	ActionLXDGlobalConfigEdit = "lxd_global_config_edit" // v6.4.28 — admin edited LXD global config keys
+	// Incus / VM events. Canonical action strings switched from "lxd_*" to
+	// "incus_*" in v6.5.2. The old constants are kept as Go aliases pointing
+	// to the new strings — old callers continue compiling. Audit log entries
+	// written before 6.5.2 still parse fine (they're plain JSON strings); the
+	// uniform-label helper in NormalizeAction translates them on read so the
+	// Audit page UI shows the new label everywhere.
+	ActionIncusCreateVM         = "incus_create_vm"
+	ActionIncusCreateContainer  = "incus_create_container"
+	ActionIncusStart            = "incus_start"
+	ActionIncusStop             = "incus_stop"
+	ActionIncusRestart          = "incus_restart"
+	ActionIncusDelete           = "incus_delete"
+	ActionIncusEditConfig       = "incus_edit_config"
+	ActionIncusNetCreate        = "incus_net_create"
+	ActionIncusNetEdit          = "incus_net_edit"
+	ActionIncusNetDelete        = "incus_net_delete"
+	ActionIncusSnapshot         = "incus_snapshot"
+	ActionIncusRestore          = "incus_restore"
+	ActionIncusDeleteSnapshot   = "incus_delete_snapshot"
+	ActionIncusClone            = "incus_clone"
+	ActionIncusMoveStorage      = "incus_move_storage"
+	ActionProxmoxImport         = "proxmox_import"
+	ActionIncusEnable           = "incus_enable"
+	ActionIncusStorageCreate    = "incus_storage_create"
+	ActionIncusStorageEdit      = "incus_storage_edit"
+	ActionIncusStorageDelete    = "incus_storage_delete"
+	ActionIncusMetricsToggle    = "incus_metrics_toggle"     // v6.4.28 — enable/disable Incus prometheus endpoint + portal scraper
+	ActionIncusGlobalConfigEdit = "incus_global_config_edit" // v6.4.28 — admin edited Incus global config keys
+	ActionIncusMigrate          = "incus_migrate_from_lxd"   // v6.5.2 — one-shot LXD → Incus migration via lxd-to-incus
+	ActionIncusStateChange      = "incus_state_change"       // v6.5.3 — VM/container changed runtime state (logged by the state watcher, including out-of-band changes)
+
+	// Back-compat Go aliases. Old callers compile unchanged. ZNAS now writes
+	// the new strings, but these aliases let imports that still say e.g.
+	// `audit.ActionLXDStart` resolve to the new value seamlessly. Removed in
+	// 6.5.5.
+	ActionLXDCreateVM         = ActionIncusCreateVM
+	ActionLXDCreateContainer  = ActionIncusCreateContainer
+	ActionLXDStart            = ActionIncusStart
+	ActionLXDStop             = ActionIncusStop
+	ActionLXDRestart          = ActionIncusRestart
+	ActionLXDDelete           = ActionIncusDelete
+	ActionLXDEditConfig       = ActionIncusEditConfig
+	ActionLXDNetCreate        = ActionIncusNetCreate
+	ActionLXDNetEdit          = ActionIncusNetEdit
+	ActionLXDNetDelete        = ActionIncusNetDelete
+	ActionLXDSnapshot         = ActionIncusSnapshot
+	ActionLXDRestore          = ActionIncusRestore
+	ActionLXDDeleteSnapshot   = ActionIncusDeleteSnapshot
+	ActionLXDClone            = ActionIncusClone
+	ActionLXDMoveStorage      = ActionIncusMoveStorage
+	ActionLXDEnable           = ActionIncusEnable
+	ActionLXDStorageCreate    = ActionIncusStorageCreate
+	ActionLXDStorageEdit      = ActionIncusStorageEdit
+	ActionLXDStorageDelete    = ActionIncusStorageDelete
+	ActionLXDMetricsToggle    = ActionIncusMetricsToggle
+	ActionLXDGlobalConfigEdit = ActionIncusGlobalConfigEdit
+	ActionLXDStateChange      = ActionIncusStateChange
 )
+
+// legacyActionMap maps pre-6.5.2 action strings to their canonical 6.5.2 form.
+// Used by NormalizeAction to display old log entries with the new labels.
+var legacyActionMap = map[string]string{
+	"lxd_create_vm":          ActionIncusCreateVM,
+	"lxd_create_container":   ActionIncusCreateContainer,
+	"lxd_start":              ActionIncusStart,
+	"lxd_stop":               ActionIncusStop,
+	"lxd_restart":            ActionIncusRestart,
+	"lxd_delete":             ActionIncusDelete,
+	"lxd_edit_config":        ActionIncusEditConfig,
+	"lxd_net_create":         ActionIncusNetCreate,
+	"lxd_net_edit":           ActionIncusNetEdit,
+	"lxd_net_delete":         ActionIncusNetDelete,
+	"lxd_snapshot":           ActionIncusSnapshot,
+	"lxd_restore":            ActionIncusRestore,
+	"lxd_delete_snapshot":    ActionIncusDeleteSnapshot,
+	"lxd_clone":              ActionIncusClone,
+	"lxd_move_storage":       ActionIncusMoveStorage,
+	"lxd_enable":             ActionIncusEnable,
+	"lxd_storage_create":     ActionIncusStorageCreate,
+	"lxd_storage_edit":       ActionIncusStorageEdit,
+	"lxd_storage_delete":     ActionIncusStorageDelete,
+	"lxd_metrics_toggle":     ActionIncusMetricsToggle,
+	"lxd_global_config_edit": ActionIncusGlobalConfigEdit,
+}
+
+// NormalizeAction returns the canonical (6.5.2+) action string for a logged
+// entry, translating any pre-6.5.2 lxd_* action to its incus_* counterpart.
+// All other strings are returned unchanged.
+func NormalizeAction(action string) string {
+	if v, ok := legacyActionMap[action]; ok {
+		return v
+	}
+	return action
+}
 
 var (
 	logPath string
@@ -207,6 +281,7 @@ func Read() ([]Entry, error) {
 			if e.System == "" {
 				e.System = host
 			}
+			e.Action = NormalizeAction(e.Action)
 			entries = append(entries, e)
 		}
 	}

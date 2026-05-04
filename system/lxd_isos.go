@@ -78,32 +78,15 @@ type LXDISOInfo struct {
 	Modified  time.Time `json:"modified"`
 }
 
-// snapLXDISOBase is the ISO storage root used when snapped LXD is detected.
-// QEMU in the snap runs in a mount namespace where the ZFS pool's host mountpoint
-// (e.g. /NVMEPool) is not visible; only paths under /var/snap/lxd/common/lxd/ are
-// accessible.  Storing ISOs here lets raw.qemu CDROM drives work without fd-passing.
-const snapLXDISOBase = "/var/snap/lxd/common/lxd/isos"
-
-// lxdIsSnap returns true when the running LXD is installed as a snap package.
-func lxdIsSnap() bool {
-	_, err := os.Stat("/snap/lxd")
-	return err == nil
-}
-
-// LXDISODir returns the absolute path of the ISO directory for the given LXD
+// LXDISODir returns the absolute path of the ISO directory for the given Incus
 // storage pool.
 //
-// Snap LXD: ISOs are stored under /var/snap/lxd/common/lxd/isos/<pool>/ — the only
-// path reachable from QEMU's snap mount namespace.
-//
-// Non-snap LXD: For ZFS-backed pools the directory is at the ZFS pool mountpoint;
-// for dir/btrfs pools it is adjacent to the pool source path.
+// For ZFS-backed pools the directory is at the ZFS pool mountpoint; for
+// dir/btrfs pools it is adjacent to the pool source path. Incus on Debian
+// is deb-only (no snap), so QEMU sees the host filesystem directly and the
+// ZFS pool's /<mount>/.isos path is reachable without any fd-passing trick.
 func LXDISODir(lxdPool string) (string, error) {
-	if lxdIsSnap() {
-		return filepath.Join(snapLXDISOBase, lxdPool), nil
-	}
-
-	out, err := exec.Command("lxc", "query", "/1.0/storage-pools/"+lxdPool).Output()
+	out, err := exec.Command("incus", "query", "/1.0/storage-pools/"+lxdPool).Output()
 	if err != nil {
 		return "", fmt.Errorf("query LXD pool %q: %w", lxdPool, err)
 	}

@@ -7,7 +7,21 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"zfsnas/internal/version"
 )
+
+// experimentalSudoersAliases lists Cmnd_Aliases that are only required when
+// the portal runs with --experimental. Memory compression lives inside
+// ZFSNAS_VMSETUP today, so it gates with the rest of the VM-setup block.
+// When --experimental is off these sections are stripped from the required
+// template (and from the trailing User_Alias spec) so they never surface as
+// missing/red lines in Sudoers Review.
+var experimentalSudoersAliases = map[string]bool{
+	"ZFSNAS_INCUSNET": true,
+	"ZFSNAS_INCUS":    true,
+	"ZFSNAS_VMSETUP":  true,
+}
 
 // SudoersDiff is the result of comparing the installed sudoers file against
 // the required template.
@@ -50,17 +64,25 @@ var sudoersSectionInfoMap = map[string]sudoersSectionInfo{
 	"ZFSNAS_FILES":     {Label: "File Browser"},
 	"ZFSNAS_SYSTEM":    {Label: "System Management"},
 	"ZFSNAS_NTP":       {Label: "Network Time (chrony NTP)", Optional: true},
-	"ZFSNAS_LXDNET":    {Label: "LXD Network Bridges (VLAN interfaces)", Optional: true},
-	"ZFSNAS_LXD":       {Label: "LXD Compute (Proxmox Import + ISO Management)", Optional: true},
+	"ZFSNAS_INCUSNET":  {Label: "Incus Network Bridges (VLAN interfaces)", Optional: true},
+	"ZFSNAS_INCUS":     {Label: "Incus Compute (Proxmox Import + ISO Management)", Optional: true},
 	"ZFSNAS_VMSETUP":   {Label: "VMs & Containers Feature Setup", Optional: true},
 	"ZFSNAS_APT":       {Label: "OS Updates & Installation"},
 	"ZFSNAS_SECURITY":  {Label: "Sudoers Self-Management"},
 }
 
-// buildCommandToSectionMap parses the required sudoers template and returns
-// a map of normalized command → Cmnd_Alias name (e.g. "/usr/bin/tee /etc/exports" → "ZFSNAS_NFS").
+// buildCommandToSectionMap parses the *full* required sudoers template
+// (including experimental-gated sections) and returns a map of normalized
+// command → Cmnd_Alias name (e.g. "/usr/bin/tee /etc/exports" → "ZFSNAS_NFS").
+//
+// We use the unfiltered template here on purpose: when --experimental is off
+// the gated sections are stripped from RequiredSudoersContent(), but if the
+// host happens to have those lines lingering in /etc/sudoers.d/zfsnas they
+// surface as Extra Lines and we still want to label them with their proper
+// section so the review UI shows a meaningful badge.
 func buildCommandToSectionMap() map[string]string {
-	required := RequiredSudoersContent()
+	required := strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
+	required = strings.Replace(required, "{{LXD_CAT_LINE}}", lxdConsoleCatLine(), 1)
 	m := make(map[string]string)
 	currentAlias := ""
 	for _, line := range strings.Split(required, "\n") {
@@ -125,15 +147,131 @@ func CanManageSudoers(status SudoStatus) bool {
 func RequiredSudoersContent() string {
 	s := strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
 	s = strings.Replace(s, "{{LXD_CAT_LINE}}", lxdConsoleCatLine(), 1)
+	if !version.IsExperimental() {
+		s = stripExperimentalSudoersSections(s)
+	}
 	return s
 }
 
+// stripExperimentalSudoersSections removes Cmnd_Alias blocks listed in
+// experimentalSudoersAliases and drops their tokens from the trailing
+// `zfsnas ALL=…` User_Spec spec list (which spans the line containing
+// `NOPASSWD:` and any backslash-continuation lines that follow). Used when
+// --experimental is off so the host doesn't surface virtualisation /
+// memory-compression sudoers lines that aren't actually needed.
+func stripExperimentalSudoersSections(content string) string {
+	var out []string
+	lines := strings.Split(content, "\n")
+	skip := false             // inside a gated Cmnd_Alias block
+	inUserSpec := false       // inside the trailing User_Spec (multi-line OK)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		endsContinuation := strings.HasSuffix(strings.TrimRight(line, " "), "\\")
+
+		if skip {
+			// Wait until the current physical line is NOT a continuation; the
+			// next line then closes the block.
+			if !endsContinuation {
+				skip = false
+			}
+			continue
+		}
+
+		if inUserSpec {
+			// We're inside the alias list of the User_Spec — strip gated
+			// tokens here too.
+			out = append(out, filterAliasTokensInLine(line))
+			if !endsContinuation {
+				inUserSpec = false
+			}
+			continue
+		}
+
+		// Detect start of a gated Cmnd_Alias block.
+		if strings.HasPrefix(trimmed, "Cmnd_Alias ") {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 && experimentalSudoersAliases[parts[1]] {
+				if endsContinuation {
+					skip = true
+				}
+				continue
+			}
+		}
+
+		// Detect the User_Spec line. After we strip tokens from this line,
+		// keep filtering subsequent continuation lines until the spec ends.
+		if strings.HasPrefix(trimmed, "zfsnas ") && strings.Contains(line, "NOPASSWD:") {
+			out = append(out, filterAliasTokensInLine(line))
+			if endsContinuation {
+				inUserSpec = true
+			}
+			continue
+		}
+
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// filterAliasTokensInLine drops gated alias names from a comma-separated alias
+// list while preserving the line's prefix, indentation, and trailing
+// continuation marker.
+func filterAliasTokensInLine(line string) string {
+	// Preserve any leading "<prefix>NOPASSWD:" (User_Spec head) verbatim.
+	prefix := ""
+	rest := line
+	if idx := strings.Index(line, "NOPASSWD:"); idx >= 0 {
+		prefix = line[:idx+len("NOPASSWD:")]
+		rest = line[idx+len("NOPASSWD:"):]
+	}
+	// Detect and detach a trailing continuation marker so it survives the
+	// token rewrite.
+	trailing := ""
+	stripped := strings.TrimRight(rest, " ")
+	if strings.HasSuffix(stripped, "\\") {
+		trailing = " \\"
+		// Cut everything from the backslash onwards.
+		bs := strings.LastIndex(rest, "\\")
+		rest = rest[:bs]
+	}
+
+	// Detect a leading whitespace run (indent for continuation lines).
+	indent := ""
+	for i, c := range rest {
+		if c == ' ' || c == '\t' {
+			continue
+		}
+		indent = rest[:i]
+		rest = rest[i:]
+		break
+	}
+
+	tokens := strings.Split(rest, ",")
+	var kept []string
+	for _, t := range tokens {
+		name := strings.TrimSpace(t)
+		if experimentalSudoersAliases[name] {
+			continue
+		}
+		if name == "" && len(kept) > 0 {
+			// Empty trailing token after the last comma — drop it; we'll
+			// re-add the trailing continuation below.
+			continue
+		}
+		kept = append(kept, name)
+	}
+	if len(kept) == 0 {
+		return prefix + trailing
+	}
+	return prefix + indent + strings.Join(kept, ", ") + trailing
+}
+
 // lxdConsoleCatLine returns the sudoers entry that lets the portal read
-// /var/log/lxd/<name>/console.log for the Container Console tab. Two forms:
+// /var/log/incus/<name>/console.log for the Container Console tab. Two forms:
 //
-//   - classic sudo: "/usr/bin/cat /var/log/lxd/*/console.log" — sudo's fnmatch
-//     accepts a literal prefix and a literal "/console.log" suffix around the
-//     `*`, so the rule only matches that one filename pattern.
+//   - classic sudo: "/usr/bin/cat /var/log/incus/*/console.log" — sudo's
+//     fnmatch accepts a literal prefix and a literal "/console.log" suffix
+//     around the `*`, so the rule only matches that one filename pattern.
 //   - sudo-rs: "/usr/bin/cat *" — sudo-rs only accepts `*` as the entire
 //     trailing argument; any prefix or suffix is rejected by visudo. We have
 //     to widen the rule to `cat *` (read any file as root) to keep the feature
@@ -144,7 +282,7 @@ func lxdConsoleCatLine() string {
 	if IsSudoRS() {
 		return "/usr/bin/cat *"
 	}
-	return "/usr/bin/cat /var/log/lxd/*/console.log"
+	return "/usr/bin/cat /var/log/incus/*/console.log"
 }
 
 var (
@@ -182,7 +320,6 @@ func buildFilesAlias() string {
 		"    /usr/bin/chmod *, \\\n" +
 		"    /usr/bin/chmod -R *\n"
 }
-
 
 // GetCurrentSudoersContent reads /etc/sudoers.d/zfsnas.
 // Returns ("", nil) when the file does not exist.
@@ -712,136 +849,151 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/systemctl restart tgt":                 "Restarts the SCSI target framework daemon (tgt).",
 
 	// ── MinIO install / setup ─────────────────────────────────────────────────
-	"/usr/bin/chmod +x /usr/local/bin/minio":                               "Makes the downloaded MinIO server binary executable.",
-	"/usr/bin/chmod +x /usr/local/bin/mc":                                  "Makes the downloaded MinIO client (mc) binary executable.",
-	"/usr/bin/mkdir -p /var/lib/minio":                                     "Creates the MinIO data directory.",
-	"/usr/bin/mkdir -p /var/lib/minio/.minio/certs":                        "Creates the MinIO TLS certificate directory.",
+	"/usr/bin/chmod +x /usr/local/bin/minio":                                "Makes the downloaded MinIO server binary executable.",
+	"/usr/bin/chmod +x /usr/local/bin/mc":                                   "Makes the downloaded MinIO client (mc) binary executable.",
+	"/usr/bin/mkdir -p /var/lib/minio":                                      "Creates the MinIO data directory.",
+	"/usr/bin/mkdir -p /var/lib/minio/.minio/certs":                         "Creates the MinIO TLS certificate directory.",
 	"/usr/bin/mkdir -p *":                                                   "Creates a required directory during feature setup (MinIO data dirs, ISO storage dirs, etc.).",
-	"/usr/bin/chown minio-user\\:minio-user /var/lib/minio":                "Transfers ownership of the MinIO data directory to the minio-user account.",
+	"/usr/bin/chown minio-user\\:minio-user /var/lib/minio":                 "Transfers ownership of the MinIO data directory to the minio-user account.",
 	"/usr/bin/chown -R minio-user\\:minio-user /var/lib/minio/.minio/certs": "Transfers ownership of the MinIO TLS certificate directory to minio-user.",
-	"/usr/bin/chown -R minio-user\\:minio-user *":                          "Transfers ownership of MinIO data directories to the minio-user account.",
-	"/usr/bin/chown root\\:minio-user /etc/default/minio":                  "Sets MinIO environment file ownership so minio-user can read it.",
-	"/usr/bin/chmod 640 /etc/default/minio":                                "Restricts the MinIO environment file to root and minio-user.",
-	"/usr/bin/chmod 640 /var/lib/minio/.minio/certs/private.key":           "Protects the MinIO TLS private key from world-read access.",
+	"/usr/bin/chown -R minio-user\\:minio-user *":                           "Transfers ownership of MinIO data directories to the minio-user account.",
+	"/usr/bin/chown root\\:minio-user /etc/default/minio":                   "Sets MinIO environment file ownership so minio-user can read it.",
+	"/usr/bin/chmod 640 /etc/default/minio":                                 "Restricts the MinIO environment file to root and minio-user.",
+	"/usr/bin/chmod 640 /var/lib/minio/.minio/certs/private.key":            "Protects the MinIO TLS private key from world-read access.",
 	"/usr/bin/tee /var/lib/minio/.minio/certs/public.crt":                   "Installs the MinIO TLS public certificate at a fixed destination. The source is read in-process and piped through sudo tee, so no source-path wildcard is granted.",
 	"/usr/bin/tee /var/lib/minio/.minio/certs/private.key":                  "Installs the MinIO TLS private key at a fixed destination. The source is read in-process and piped through sudo tee, so no source-path wildcard is granted.",
-	"/usr/bin/rm -f /var/lib/minio/.minio/certs/public.crt":                "Removes the MinIO TLS certificate when TLS is disabled.",
-	"/usr/bin/rm -f /var/lib/minio/.minio/certs/private.key":               "Removes the MinIO TLS private key when TLS is disabled.",
-	"/usr/bin/systemctl enable minio":   "Enables MinIO to start automatically at boot.",
-	"/usr/bin/systemctl disable minio":  "Prevents MinIO from starting automatically at boot.",
-	"/usr/bin/systemctl start minio":    "Starts the MinIO S3 object server.",
-	"/usr/bin/systemctl stop minio":     "Stops the MinIO S3 object server.",
-	"/usr/bin/systemctl restart minio":  "Restarts the MinIO S3 object server.",
+	"/usr/bin/rm -f /var/lib/minio/.minio/certs/public.crt":                 "Removes the MinIO TLS certificate when TLS is disabled.",
+	"/usr/bin/rm -f /var/lib/minio/.minio/certs/private.key":                "Removes the MinIO TLS private key when TLS is disabled.",
+	"/usr/bin/systemctl enable minio":                                       "Enables MinIO to start automatically at boot.",
+	"/usr/bin/systemctl disable minio":                                      "Prevents MinIO from starting automatically at boot.",
+	"/usr/bin/systemctl start minio":                                        "Starts the MinIO S3 object server.",
+	"/usr/bin/systemctl stop minio":                                         "Stops the MinIO S3 object server.",
+	"/usr/bin/systemctl restart minio":                                      "Restarts the MinIO S3 object server.",
 
 	// ── UPS / NUT install, config, service control ────────────────────────────
 	"/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get purge -y nut nut-client nut-server": "Removes all NUT UPS packages during feature uninstall.",
 	"/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get remove -y nut nut-client":           "Removes NUT client packages during partial feature removal.",
-	"/usr/bin/udevadm control --reload-rules":        "Reloads udev rules after writing USB rules for UPS device detection.",
-	"/usr/bin/udevadm trigger --subsystem-match=usb": "Re-applies udev USB rules so the UPS device is recognised immediately.",
-	"/usr/bin/systemctl enable nut-server":   "Enables the NUT UPS server daemon at boot.",
-	"/usr/bin/systemctl disable nut-server":  "Prevents the NUT UPS server from starting at boot.",
-	"/usr/bin/systemctl start nut-server":    "Starts the NUT UPS server daemon (upsd).",
-	"/usr/bin/systemctl stop nut-server":     "Stops the NUT UPS server daemon.",
-	"/usr/bin/systemctl restart nut-server":  "Restarts the NUT UPS server daemon.",
-	"/usr/bin/systemctl enable nut-client":   "Enables the NUT UPS monitoring client at boot.",
-	"/usr/bin/systemctl disable nut-client":  "Prevents the NUT UPS client from starting at boot.",
-	"/usr/bin/systemctl start nut-client":    "Starts the NUT UPS monitoring client (upsmon).",
-	"/usr/bin/systemctl stop nut-client":     "Stops the NUT UPS monitoring client.",
-	"/usr/bin/systemctl enable nut-monitor":  "Enables the NUT monitor service at boot.",
-	"/usr/bin/systemctl start nut-monitor":   "Starts the NUT monitor service.",
-	"/usr/bin/systemctl reset-failed":        "Clears systemd failed-unit state so services can be restarted cleanly.",
-	"/usr/bin/chown root\\:nut /etc/nut":         "Sets group ownership of /etc/nut to the nut group.",
-	"/usr/bin/chmod 750 /etc/nut":                "Restricts /etc/nut to root and nut group; prevents world access.",
-	"/usr/bin/chown root\\:nut /etc/nut/nut.conf":    "Sets nut-group ownership on the NUT mode configuration file.",
-	"/usr/bin/chown root\\:nut /etc/nut/ups.conf":    "Sets nut-group ownership on the UPS device configuration file.",
-	"/usr/bin/chown root\\:nut /etc/nut/upsd.conf":   "Sets nut-group ownership on the NUT daemon listen configuration.",
-	"/usr/bin/chown root\\:nut /etc/nut/upsd.users":  "Sets nut-group ownership on the NUT user authentication file.",
-	"/usr/bin/chown root\\:nut /etc/nut/upsmon.conf": "Sets nut-group ownership on the UPS monitor configuration.",
-	"/usr/bin/chmod 640 /etc/nut/nut.conf":    "Restricts the NUT mode config to root and nut group.",
-	"/usr/bin/chmod 640 /etc/nut/ups.conf":    "Restricts the UPS device config to root and nut group.",
-	"/usr/bin/chmod 640 /etc/nut/upsd.conf":   "Restricts the NUT daemon config to root and nut group.",
-	"/usr/bin/chmod 640 /etc/nut/upsd.users":  "Restricts the NUT user auth file to root and nut group.",
-	"/usr/bin/chmod 640 /etc/nut/upsmon.conf": "Restricts the UPS monitor config to root and nut group.",
-	"/usr/bin/rm -rf /etc/nut":                                    "Removes the NUT configuration directory during feature uninstall.",
-	"/usr/bin/rm -rf /etc/systemd/system/nut-driver.target.wants": "Removes NUT driver target symlinks during uninstall.",
-	"/usr/bin/rm -rf /etc/systemd/system/nut-driver@.service.d":   "Removes the NUT driver service drop-in directory during uninstall.",
+	"/usr/bin/udevadm control --reload-rules":                                                "Reloads udev rules after writing USB rules for UPS device detection.",
+	"/usr/bin/udevadm trigger --subsystem-match=usb":                                         "Re-applies udev USB rules so the UPS device is recognised immediately.",
+	"/usr/bin/systemctl enable nut-server":                                                   "Enables the NUT UPS server daemon at boot.",
+	"/usr/bin/systemctl disable nut-server":                                                  "Prevents the NUT UPS server from starting at boot.",
+	"/usr/bin/systemctl start nut-server":                                                    "Starts the NUT UPS server daemon (upsd).",
+	"/usr/bin/systemctl stop nut-server":                                                     "Stops the NUT UPS server daemon.",
+	"/usr/bin/systemctl restart nut-server":                                                  "Restarts the NUT UPS server daemon.",
+	"/usr/bin/systemctl enable nut-client":                                                   "Enables the NUT UPS monitoring client at boot.",
+	"/usr/bin/systemctl disable nut-client":                                                  "Prevents the NUT UPS client from starting at boot.",
+	"/usr/bin/systemctl start nut-client":                                                    "Starts the NUT UPS monitoring client (upsmon).",
+	"/usr/bin/systemctl stop nut-client":                                                     "Stops the NUT UPS monitoring client.",
+	"/usr/bin/systemctl enable nut-monitor":                                                  "Enables the NUT monitor service at boot.",
+	"/usr/bin/systemctl start nut-monitor":                                                   "Starts the NUT monitor service.",
+	"/usr/bin/systemctl reset-failed":                                                        "Clears systemd failed-unit state so services can be restarted cleanly.",
+	"/usr/bin/chown root\\:nut /etc/nut":                                                     "Sets group ownership of /etc/nut to the nut group.",
+	"/usr/bin/chmod 750 /etc/nut":                                                            "Restricts /etc/nut to root and nut group; prevents world access.",
+	"/usr/bin/chown root\\:nut /etc/nut/nut.conf":                                            "Sets nut-group ownership on the NUT mode configuration file.",
+	"/usr/bin/chown root\\:nut /etc/nut/ups.conf":                                            "Sets nut-group ownership on the UPS device configuration file.",
+	"/usr/bin/chown root\\:nut /etc/nut/upsd.conf":                                           "Sets nut-group ownership on the NUT daemon listen configuration.",
+	"/usr/bin/chown root\\:nut /etc/nut/upsd.users":                                          "Sets nut-group ownership on the NUT user authentication file.",
+	"/usr/bin/chown root\\:nut /etc/nut/upsmon.conf":                                         "Sets nut-group ownership on the UPS monitor configuration.",
+	"/usr/bin/chmod 640 /etc/nut/nut.conf":                                                   "Restricts the NUT mode config to root and nut group.",
+	"/usr/bin/chmod 640 /etc/nut/ups.conf":                                                   "Restricts the UPS device config to root and nut group.",
+	"/usr/bin/chmod 640 /etc/nut/upsd.conf":                                                  "Restricts the NUT daemon config to root and nut group.",
+	"/usr/bin/chmod 640 /etc/nut/upsd.users":                                                 "Restricts the NUT user auth file to root and nut group.",
+	"/usr/bin/chmod 640 /etc/nut/upsmon.conf":                                                "Restricts the UPS monitor config to root and nut group.",
+	"/usr/bin/rm -rf /etc/nut":                                                               "Removes the NUT configuration directory during feature uninstall.",
+	"/usr/bin/rm -rf /etc/systemd/system/nut-driver.target.wants":                            "Removes NUT driver target symlinks during uninstall.",
+	"/usr/bin/rm -rf /etc/systemd/system/nut-driver@.service.d":                              "Removes the NUT driver service drop-in directory during uninstall.",
 
 	// ── Service registration (APT / systemd setup) ────────────────────────────
 	"/usr/bin/systemctl daemon-reload": "Reloads systemd unit files after writing the zfsnas service file.",
 	"/usr/bin/systemctl enable zfsnas": "Enables the ZNAS portal to start automatically at boot.",
 
-	"/usr/sbin/zpool *":                                  "All ZFS pool operations: create, import, export, scrub, status, offline/online (v1.0.0+). Covers Pool Fixer Wizard clear/replace actions (v6.3.21+).",
-	"/usr/sbin/zfs *":                                    "All ZFS dataset operations: create, destroy, set, get, snapshot, rollback, load-key/unload-key (encryption v5.0.0+), send/recv (replication v6.1.0+), allow (delegation v6.3.26+).",
-	"/usr/sbin/smartctl *":                               "SMART disk health data for SAS/SATA drives. Required for the Disk Health and SMART detail pages.",
-	"/usr/bin/nvme smart-log -o json *":                  "NVMe drive health and temperature data (v3.0.0+).",
-	"/usr/bin/apt-get *":                                 "Package installation and OS updates. Used by the Prerequisites tab and the Settings > OS Updates page.",
-	"/usr/bin/tee /etc/samba/smb.conf":                   "Writes the Samba configuration file when a share is created, edited, or deleted.",
-	"/usr/bin/tee /etc/exports":                          "Writes the NFS export table; exportfs -ra is called immediately after to apply the change.",
-	"/usr/bin/tee /etc/systemd/system/zfsnas.service":    "Writes the systemd unit file when the portal registers itself as a system service.",
-	"/usr/bin/tee /etc/modprobe.d/zfs.conf":              "Persists ARC size limits across reboots (v6.3.22+).",
+	"/usr/sbin/zpool *":                                   "All ZFS pool operations: create, import, export, scrub, status, offline/online (v1.0.0+). Covers Pool Fixer Wizard clear/replace actions (v6.3.21+).",
+	"/usr/sbin/zfs *":                                     "All ZFS dataset operations: create, destroy, set, get, snapshot, rollback, load-key/unload-key (encryption v5.0.0+), send/recv (replication v6.1.0+), allow (delegation v6.3.26+).",
+	"/usr/sbin/smartctl *":                                "SMART disk health data for SAS/SATA drives. Required for the Disk Health and SMART detail pages.",
+	"/usr/bin/nvme smart-log -o json *":                   "NVMe drive health and temperature data (v3.0.0+).",
+	"/usr/sbin/dmidecode *":                               "Reads DMI/SMBIOS firmware tables for motherboard, BIOS, and per-DIMM memory details (v6.5.3+ SysInfo popup).",
+	"/usr/bin/journalctl -k *":                            "Reads the kernel ring buffer (read-only) so the VMs & Containers state watcher can attribute a Running→Stopped transition to a kernel OOM-kill (v6.5.3+, virtualization-only).",
+	"/usr/bin/journalctl --since=*":                       "Reads the systemd journal (read-only) so the VMs & Containers state watcher can attribute a Running→Stopped transition to a kernel OOM-kill (v6.5.3+, virtualization-only).",
+	"/usr/bin/cat /proc/*/smaps_rollup":                   "Reads /proc/<pid>/smaps_rollup so the MEM topbar gauge can show complete swap usage (incl. shmem) for QEMU/KVM workers — VmSwap in /proc/<pid>/status only counts anonymous private swap (v6.5.3+).",
+	"/usr/bin/apt-get *":                                  "Package installation and OS updates. Used by the Prerequisites tab and the Settings > OS Updates page.",
+	"/usr/bin/tee /etc/samba/smb.conf":                    "Writes the Samba configuration file when a share is created, edited, or deleted.",
+	"/usr/bin/tee /etc/exports":                           "Writes the NFS export table; exportfs -ra is called immediately after to apply the change.",
+	"/usr/bin/tee /etc/systemd/system/zfsnas.service":     "Writes the systemd unit file when the portal registers itself as a system service.",
+	"/usr/bin/tee /etc/modprobe.d/zfs.conf":               "Persists ARC size limits across reboots (v6.3.22+).",
 	"/usr/bin/tee /sys/module/zfs/parameters/zfs_arc_max": "Applies a new ARC maximum immediately via the ZFS sysfs interface without requiring a reboot.",
 	"/usr/bin/tee /sys/module/zfs/parameters/zfs_arc_min": "Applies a new ARC minimum immediately via the ZFS sysfs interface without requiring a reboot.",
-	"/usr/bin/tee /etc/sudoers.d/zfsnas":                 "Lets the portal write its own sudoers file when using the Sudoers Hardening feature. Required so in-app changes continue to work after sudo is restricted.",
-	"/usr/bin/cat /etc/sudoers.d/zfsnas":                 "Lets the portal read its own sudoers file so the Sudoers Review diff is always accurate and detects manual edits (v6.3.32+).",
-	"/usr/bin/chmod 0440 /etc/sudoers.d/zfsnas":          "Sets the correct sudoers file permissions (0440) after each write. Required when the file is newly created — sudo tee inherits the process umask and may produce 0644; this corrects it to the recommended 0440.",
-	"/usr/sbin/useradd *":                                "Creates the Linux account for a new portal user. Wildcards required for optional --uid/--gid/--no-user-group flags (v3.0.0+).",
-	"/usr/sbin/usermod -aG sambashare *":                 "Adds a user to the sambashare group for SMB access.",
-	"/usr/sbin/userdel -f *":                             "Deletes a portal user's Linux account (force flag covers locked accounts).",
-	"/usr/sbin/groupadd *":                               "Creates a Linux group. Used when creating users with a custom primary group (v3.0.0+).",
-	"/usr/sbin/groupdel *":                               "Removes a Linux group when deleting the last user that owned it.",
-	"/usr/bin/gpasswd *":                                 "Manages Linux group membership; used during user deletion to remove users from the sambashare group (and other group-management operations).",
-	"/usr/bin/smbpasswd *":                               "Sets or removes the Samba password for a user.",
-	"/usr/bin/smbstatus -S":                              "Lists active SMB sessions per share (v6.1.0+).",
-	"/usr/bin/chgrp sambashare *":                        "Sets group ownership of a share directory to sambashare (v6.3.27+).",
-	"/usr/sbin/exportfs -ra":                             "Reloads all NFS exports after the export table is updated.",
-	"/usr/bin/timedatectl set-timezone *":                "Sets the system timezone from the Settings > System page.",
-	"/usr/sbin/shutdown *":                               "Allows scheduled shutdown/reboot from the power menu and from the UPS shutdown watcher.",
-	"/usr/sbin/modprobe zfs":                             "Loads the ZFS kernel module after installation if it is not already loaded.",
-	"/usr/bin/systemctl restart zfsnas":                  "Restarts the portal service from the power menu (v3.0.0+).",
-	"/usr/bin/du -b -d 6 *":                              "Powers the Folder TreeMap — scans dataset mount points for per-folder disk usage.",
-	"/usr/sbin/wipefs -a *":                              "Clears all disk signatures before adding a disk to a pool.",
-	"/usr/sbin/sgdisk *":                                 "Wipes the GPT partition table before pool creation. Path may differ by distribution.",
-	"/usr/bin/dd if=/dev/zero *":                         "Zero-fills the first sectors of a disk during the wipe-disk workflow.",
-	"/usr/bin/dd *":                                      "Proxmox Import: streams a raw disk image into a ZFS volume (zvol) backing an LXD VM disk (v6.4.21+). Broadened from `dd of=/dev/zd* *` because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
-	"/usr/bin/partx *":                                   "Proxmox Import: adds/removes partition block devices for a zvol (/dev/zdX → /dev/zdXp1 …) so the EFI System Partition can be mounted and the UEFI fallback boot path repaired after import (v6.4.21+). Broadened from `partx * /dev/zd*` for sudo-rs compatibility.",
-	"/usr/bin/mount *":                                   "Proxmox Import: mounts the EFI System Partition (FAT32) from an imported VM's root zvol into a private /tmp directory so grub.cfg can be installed for UEFI fallback boot repair (v6.4.21+). Broadened from `mount -t vfat * /dev/zd*p* /tmp/.znas-esp-*` for sudo-rs compatibility.",
-	"/usr/bin/umount *":                                  "Proxmox Import: unmounts the EFI System Partition after the UEFI fallback boot repair is complete (v6.4.21+). Broadened from `umount * /tmp/.znas-esp-*` for sudo-rs compatibility.",
-	"/usr/bin/chmod 0775 *":                             "ISO Management: sets group-write permission on the .isos directory so the zfsnas process user can upload ISO files without requiring root on each transfer (v6.4.22+).",
-	"/usr/bin/rm -f *":                                  "ISO Management: removes a partially-written ISO file if the upload is interrupted (v6.4.22+).",
-	"/usr/bin/cat /var/log/lxd/*/console.log":           "Container Console tab: reads /var/log/lxd/<name>/console.log (root-owned 0600) so the per-container Console pane can show the boot/console output (v6.4.28+). Pattern is locked to /var/log/lxd/<single-segment>/console.log — sudo blocks every other path including /etc/shadow and traversal attempts (verified). Instance name is also regex-validated before invocation. (Used on classic sudo only; on sudo-rs hosts the wider `cat *` form is used because sudo-rs rejects any prefix before `*`.)",
-	"/usr/bin/cat *":                                    "Container Console tab — sudo-rs fallback (Ubuntu 26.04+): reads /var/log/lxd/<name>/console.log for the per-container Console pane. The narrower /var/log/lxd/*/console.log form is preferred but rejected by sudo-rs's stricter wildcard parser (only `*` as a complete trailing argument is accepted). Path scoping is enforced server-side: the instance name is regex-validated against the live LXD instance list before invocation (system/lxd.go GetLXDInstanceConsoleLog).",
-	"/usr/sbin/partprobe *":                              "Refreshes the kernel partition table after disk changes.",
-	"/usr/bin/udevadm settle *":                          "Waits for udev to settle after disk operations before proceeding.",
-	"/usr/sbin/blkid -o export":                         "Reads disk UUIDs and filesystem types after partitioning.",
-	"/usr/bin/targetcli":                                 "Configures iSCSI LIO targets, backstores, and ACLs (v6.1.0+).",
-	"/usr/sbin/nut-scanner *":                            "Scans USB and SNMP buses for attached UPS devices. Requires raw USB access.",
-	"/usr/bin/nut-scanner":                               "Scans for attached UPS devices (Debian/Ubuntu path for nut-scanner binary).",
-	"/usr/bin/systemctl stop nut-monitor":                "Stops the NUT monitor service (nut-monitor) during UPS config changes or uninstall.",
-	"/usr/bin/systemctl disable nut-monitor":             "Disables the NUT monitor service from starting at boot during uninstall.",
-	"/usr/bin/tee /etc/nut/ups.conf":                     "Writes the NUT UPS device configuration file.",
-	"/usr/bin/tee /etc/nut/nut.conf":                     "Writes the NUT mode configuration file (MODE=standalone or MODE=none).",
-	"/usr/bin/tee /etc/nut/upsd.conf":                    "Writes the NUT daemon configuration (listen address, port).",
-	"/usr/bin/tee /etc/nut/upsd.users":                   "Writes the NUT user authentication file for upsmon.",
-	"/usr/bin/tee /etc/nut/upsmon.conf":                  "Writes the UPS monitor configuration.",
-	"/usr/bin/find *":                                    "File Browser: lists directory contents (v6.4.4+). The portal validates the target path against known dataset mountpoints and share roots before calling this command. Path-scoping moved from sudoers to Go because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
-	"/usr/bin/chown *":                                   "File Browser: non-recursive ownership change (v6.4.3+). Path validation enforced in Go (SafeJoin against dataset/share roots). Broadened from `chown * /mnt/*` for sudo-rs compatibility.",
-	"/usr/bin/chown -R *":                                "File Browser: recursive ownership change on a directory tree (v6.4.3+). Path validation enforced in Go.",
-	"/usr/bin/chmod *":                                   "File Browser: non-recursive permission change (v6.4.3+). Path validation enforced in Go.",
-	"/usr/bin/chmod -R *":                                "File Browser: recursive permission change on a directory tree (v6.4.3+). Path validation enforced in Go.",
-	"/usr/bin/wget -q -O /usr/local/bin/minio *":         "Downloads the MinIO binary during feature install.",
-	"/usr/bin/wget -q -O /usr/local/bin/mc *":            "Downloads the MinIO client (mc) binary during feature install.",
-	"/usr/bin/tee /etc/systemd/system/minio.service":     "Writes the MinIO systemd service unit file.",
-	"/usr/bin/tee /etc/default/minio":                    "Writes the MinIO environment configuration file.",
-	"/usr/sbin/hdparm *":                                 "Disk Power Management: applies APM, spindown, write-cache, and acoustic settings immediately to SATA/SAS drives (optional feature, v6.3.22+).",
-	"/usr/bin/tee /etc/hdparm.conf":                      "Disk Power Management: persists hdparm settings across reboots via /etc/hdparm.conf (optional feature, v6.3.22+).",
-	"/usr/bin/tee *":                                                       "Writes feature config files where the path is determined at runtime: per-CPU scaling governor (/sys/devices/system/cpu/cpu*/...), PCIe ASPM policy, USB autosuspend, /etc/rc.local persistence block, and ISO Management uploads. Single trailing wildcard required because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
-	"/usr/bin/chmod +x /etc/rc.local":                                     "System Power Management: ensures /etc/rc.local is executable after writing the persistence block (v6.3.22+).",
-	"/usr/bin/systemctl enable rc-local":                                   "System Power Management: enables the rc-local systemd service so /etc/rc.local runs at boot. Only called once when the file is first created (v6.3.22+).",
-	"/usr/bin/systemctl start rc-local":                                    "System Power Management: starts rc-local immediately after creation so power settings take effect without a reboot (v6.3.22+).",
+	"/usr/bin/tee /etc/sudoers.d/zfsnas":                  "Lets the portal write its own sudoers file when using the Sudoers Hardening feature. Required so in-app changes continue to work after sudo is restricted.",
+	"/usr/bin/cat /etc/sudoers.d/zfsnas":                  "Lets the portal read its own sudoers file so the Sudoers Review diff is always accurate and detects manual edits (v6.3.32+).",
+	"/usr/bin/chmod 0440 /etc/sudoers.d/zfsnas":           "Sets the correct sudoers file permissions (0440) after each write. Required when the file is newly created — sudo tee inherits the process umask and may produce 0644; this corrects it to the recommended 0440.",
+	"/usr/sbin/useradd *":                                 "Creates the Linux account for a new portal user. Wildcards required for optional --uid/--gid/--no-user-group flags (v3.0.0+).",
+	"/usr/sbin/usermod -aG sambashare *":                  "Adds a user to the sambashare group for SMB access.",
+	"/usr/sbin/userdel -f *":                              "Deletes a portal user's Linux account (force flag covers locked accounts).",
+	"/usr/sbin/groupadd *":                                "Creates a Linux group. Used when creating users with a custom primary group (v3.0.0+).",
+	"/usr/sbin/groupdel *":                                "Removes a Linux group when deleting the last user that owned it.",
+	"/usr/bin/gpasswd *":                                  "Manages Linux group membership; used during user deletion to remove users from the sambashare group (and other group-management operations).",
+	"/usr/bin/smbpasswd *":                                "Sets or removes the Samba password for a user.",
+	"/usr/bin/smbstatus -S":                               "Lists active SMB sessions per share (v6.1.0+).",
+	"/usr/bin/chgrp sambashare *":                         "Sets group ownership of a share directory to sambashare (v6.3.27+).",
+	"/usr/sbin/exportfs -ra":                              "Reloads all NFS exports after the export table is updated.",
+	"/usr/bin/timedatectl set-timezone *":                 "Sets the system timezone from the Settings > System page.",
+	"/usr/sbin/shutdown *":                                "Allows scheduled shutdown/reboot from the power menu and from the UPS shutdown watcher.",
+	"/usr/sbin/modprobe zfs":                              "Loads the ZFS kernel module after installation if it is not already loaded.",
+	"/usr/bin/systemctl restart zfsnas":                   "Restarts the portal service from the power menu (v3.0.0+).",
+	"/usr/bin/du -b -d 6 *":                               "Powers the Folder TreeMap — scans dataset mount points for per-folder disk usage.",
+	"/usr/sbin/wipefs -a *":                               "Clears all disk signatures before adding a disk to a pool.",
+	"/usr/sbin/sgdisk *":                                  "Wipes the GPT partition table before pool creation. Path may differ by distribution.",
+	"/usr/bin/dd if=/dev/zero *":                          "Zero-fills the first sectors of a disk during the wipe-disk workflow.",
+	"/usr/bin/dd *":                                       "Proxmox Import: streams a raw disk image into a ZFS volume (zvol) backing an Incus VM disk (v6.4.21+; switched from LXD in v6.5.2). Broadened from `dd of=/dev/zd* *` because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
+	"/usr/bin/partx *":                                    "Proxmox Import: adds/removes partition block devices for a zvol (/dev/zdX → /dev/zdXp1 …) so the EFI System Partition can be mounted and the UEFI fallback boot path repaired after import (v6.4.21+). Broadened from `partx * /dev/zd*` for sudo-rs compatibility.",
+	"/usr/bin/ntfsfix *":                                  "Proxmox Import (v6.5.2+): clears the NTFS dirty bit and journal on a Windows partition before its first Incus boot. Without this, a Windows guest captured during fast-startup arrives with the volume marked \"kept in cache\" and alternates between normal boot and Windows RE on every second start. Targets a /dev/loop* device that fixUEFIWindows() attaches with offset+sizelimit over a single partition of the imported zvol.",
+	"/usr/bin/blkid -o value -s TYPE *":                   "Proxmox Import (v6.5.2+): reads the filesystem type of a single zvol partition so fixUEFIWindows() only runs ntfsfix against NTFS volumes (skipping ESP/MSR partitions on the same disk).",
+	"/usr/bin/python3 - *":                                "Proxmox Import (v6.5.2+): runs a fixed-content libhivex (python3-hivex) script piped via stdin to patch the Windows BCD on the imported ESP — removes BootMgr's resumeobject and sets bootstatuspolicy=IgnoreAllFailures so first-boot doesn't loop into Windows RE. The trailing `-` forces python3 to read its program from stdin; the wildcard accepts only the BCD path argument. The script body is a Go string constant (system/proxmox_import.go patchWindowsBCD), not user input.",
+	"/usr/sbin/losetup *":                                 "Proxmox Import (v6.5.2+): attaches/detaches loop devices over individual partitions of an imported zvol so fixUEFIWindows() can mount the ESP and each NTFS partition without relying on `partx -a` — partx fails on zvols whose 16 KiB volblocksize doesn't line up with the GPT's 512-byte sector arithmetic.",
+	"/usr/bin/tee /etc/default/zramswap":                  "Memory Compression (v6.5.3+): writes the zram-tools persistent config (PERCENT, ALGO, PRIORITY) at the only path the package reads. Narrow path, no wildcard.",
+	"/usr/bin/systemctl start zramswap":                   "Memory Compression (v6.5.3+): starts the zram-tools systemd unit so /dev/zram0 comes up and the swap activates.",
+	"/usr/bin/systemctl stop zramswap":                    "Memory Compression (v6.5.3+): stops the zram-tools unit; runs swapoff /dev/zram0 and releases the device.",
+	"/usr/bin/systemctl restart zramswap":                 "Memory Compression (v6.5.3+): restarts after a config change so the new PERCENT/ALGO take effect (briefly tears the swap down — ZNAS guards this with a free-RAM safety check).",
+	"/usr/bin/systemctl enable zramswap":                  "Memory Compression (v6.5.3+): persists the unit across reboots after the first enable.",
+	"/usr/bin/systemctl disable zramswap":                 "Memory Compression (v6.5.3+): clears the unit from boot so a Disable in the UI is durable across reboots.",
+	"/usr/bin/mount *":                                    "Proxmox Import: mounts the EFI System Partition (FAT32) from an imported VM's root zvol into a private /tmp directory so grub.cfg can be installed for UEFI fallback boot repair (v6.4.21+). Broadened from `mount -t vfat * /dev/zd*p* /tmp/.znas-esp-*` for sudo-rs compatibility.",
+	"/usr/bin/umount *":                                   "Proxmox Import: unmounts the EFI System Partition after the UEFI fallback boot repair is complete (v6.4.21+). Broadened from `umount * /tmp/.znas-esp-*` for sudo-rs compatibility.",
+	"/usr/bin/chmod 0775 *":                               "ISO Management: sets group-write permission on the .isos directory so the zfsnas process user can upload ISO files without requiring root on each transfer (v6.4.22+).",
+	"/usr/bin/rm -f *":                                    "ISO Management: removes a partially-written ISO file if the upload is interrupted (v6.4.22+).",
+	"/usr/bin/cat /var/log/incus/*/console.log":           "Container Console tab: reads /var/log/incus/<name>/console.log (root-owned 0600) so the per-container Console pane can show the boot/console output (v6.4.28+). Pattern is locked to /var/log/incus/<single-segment>/console.log — sudo blocks every other path including /etc/shadow and traversal attempts (verified). Instance name is also regex-validated before invocation. (Used on classic sudo only; on sudo-rs hosts the wider `cat *` form is used because sudo-rs rejects any prefix before `*`.)",
+	"/usr/bin/cat *":                                      "Container Console tab — sudo-rs fallback (Ubuntu 26.04+): reads /var/log/incus/<name>/console.log for the per-container Console pane. The narrower /var/log/incus/*/console.log form is preferred but rejected by sudo-rs's stricter wildcard parser (only `*` as a complete trailing argument is accepted). Path scoping is enforced server-side: the instance name is regex-validated against the live Incus instance list before invocation (system/lxd.go GetLXDInstanceConsoleLog).",
+	"/usr/bin/lxd-to-incus *":                             "LXD → Incus one-shot migration helper (v6.5.2+): the upstream incus-tools package's `lxd-to-incus` migrates an existing LXD install (database, certs, profiles, networks, storage-pool refs, instance configs) to Incus in place. Run by the in-portal Migrate from LXD wizard; idempotent.",
+	"/usr/sbin/partprobe *":                               "Refreshes the kernel partition table after disk changes.",
+	"/usr/bin/udevadm settle *":                           "Waits for udev to settle after disk operations before proceeding.",
+	"/usr/sbin/blkid -o export":                           "Reads disk UUIDs and filesystem types after partitioning.",
+	"/usr/bin/targetcli":                                  "Configures iSCSI LIO targets, backstores, and ACLs (v6.1.0+).",
+	"/usr/sbin/nut-scanner *":                             "Scans USB and SNMP buses for attached UPS devices. Requires raw USB access.",
+	"/usr/bin/nut-scanner":                                "Scans for attached UPS devices (Debian/Ubuntu path for nut-scanner binary).",
+	"/usr/bin/systemctl stop nut-monitor":                 "Stops the NUT monitor service (nut-monitor) during UPS config changes or uninstall.",
+	"/usr/bin/systemctl disable nut-monitor":              "Disables the NUT monitor service from starting at boot during uninstall.",
+	"/usr/bin/tee /etc/nut/ups.conf":                      "Writes the NUT UPS device configuration file.",
+	"/usr/bin/tee /etc/nut/nut.conf":                      "Writes the NUT mode configuration file (MODE=standalone or MODE=none).",
+	"/usr/bin/tee /etc/nut/upsd.conf":                     "Writes the NUT daemon configuration (listen address, port).",
+	"/usr/bin/tee /etc/nut/upsd.users":                    "Writes the NUT user authentication file for upsmon.",
+	"/usr/bin/tee /etc/nut/upsmon.conf":                   "Writes the UPS monitor configuration.",
+	"/usr/bin/find *":                                     "File Browser: lists directory contents (v6.4.4+). The portal validates the target path against known dataset mountpoints and share roots before calling this command. Path-scoping moved from sudoers to Go because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
+	"/usr/bin/chown *":                                    "File Browser: non-recursive ownership change (v6.4.3+). Path validation enforced in Go (SafeJoin against dataset/share roots). Broadened from `chown * /mnt/*` for sudo-rs compatibility.",
+	"/usr/bin/chown -R *":                                 "File Browser: recursive ownership change on a directory tree (v6.4.3+). Path validation enforced in Go.",
+	"/usr/bin/chmod *":                                    "File Browser: non-recursive permission change (v6.4.3+). Path validation enforced in Go.",
+	"/usr/bin/chmod -R *":                                 "File Browser: recursive permission change on a directory tree (v6.4.3+). Path validation enforced in Go.",
+	"/usr/bin/wget -q -O /usr/local/bin/minio *":          "Downloads the MinIO binary during feature install.",
+	"/usr/bin/wget -q -O /usr/local/bin/mc *":             "Downloads the MinIO client (mc) binary during feature install.",
+	"/usr/bin/tee /etc/systemd/system/minio.service":      "Writes the MinIO systemd service unit file.",
+	"/usr/bin/tee /etc/default/minio":                     "Writes the MinIO environment configuration file.",
+	"/usr/sbin/hdparm *":                                  "Disk Power Management: applies APM, spindown, write-cache, and acoustic settings immediately to SATA/SAS drives (optional feature, v6.3.22+).",
+	"/usr/bin/tee /etc/hdparm.conf":                       "Disk Power Management: persists hdparm settings across reboots via /etc/hdparm.conf (optional feature, v6.3.22+).",
+	"/usr/bin/tee *":                                      "Writes feature config files where the path is determined at runtime: per-CPU scaling governor (/sys/devices/system/cpu/cpu*/...), PCIe ASPM policy, USB autosuspend, /etc/rc.local persistence block, and ISO Management uploads. Single trailing wildcard required because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
+	"/usr/bin/chmod +x /etc/rc.local":                     "System Power Management: ensures /etc/rc.local is executable after writing the persistence block (v6.3.22+).",
+	"/usr/bin/systemctl enable rc-local":                  "System Power Management: enables the rc-local systemd service so /etc/rc.local runs at boot. Only called once when the file is first created (v6.3.22+).",
+	"/usr/bin/systemctl start rc-local":                   "System Power Management: starts rc-local immediately after creation so power settings take effect without a reboot (v6.3.22+).",
 
 	// ── Network Time (chrony NTP) ─────────────────────────────────────────────
-	"/usr/bin/tee /etc/chrony/chrony.conf":  "Network Time: writes updated NTP server/pool configuration to chrony.conf (v6.4.18+).",
-	"/usr/bin/systemctl restart chronyd":    "Network Time: restarts the chrony daemon to apply new NTP server configuration (v6.4.18+).",
+	"/usr/bin/tee /etc/chrony/chrony.conf": "Network Time: writes updated NTP server/pool configuration to chrony.conf (v6.4.18+).",
+	"/usr/bin/systemctl restart chronyd":   "Network Time: restarts the chrony daemon to apply new NTP server configuration (v6.4.18+).",
 }
 
 // requiredSudoersTemplate is the canonical sudoers file content for ZFS NAS Portal.
@@ -899,7 +1051,9 @@ Cmnd_Alias ZFSNAS_NFS = \
 # since v3.0.0 — NVMe health and temperature monitoring
 Cmnd_Alias ZFSNAS_SMART = \
     /usr/sbin/smartctl *, \
-    /usr/bin/nvme smart-log -o json *
+    /usr/bin/nvme smart-log -o json *, \
+    /usr/sbin/dmidecode *, \
+    /usr/bin/cat /proc/*/smaps_rollup
 
 # ── Disk preparation & wipe ───────────────────────────────────────────────────
 # since v1.0.0 — wipe and partition a disk before adding it to a pool;
@@ -1060,18 +1214,18 @@ Cmnd_Alias ZFSNAS_NTP = \
     /usr/bin/tee /etc/chrony/chrony.conf, \
     /usr/bin/systemctl restart chronyd
 
-# ── LXD Network Bridges — VLAN interface management ─────────────────────────
+# ── Incus Network Bridges — VLAN interface management ──────────────────────
 # since v6.4.19 — ifup/ifdown bring VLAN sub-interfaces up/down without reboot.
 # /etc/network/interfaces edits are performed in-process (root only); no sudo entry
 # is granted for that path.
 #   Only needed when using the Networking mode in the Compute section.
-Cmnd_Alias ZFSNAS_LXDNET = \
+Cmnd_Alias ZFSNAS_INCUSNET = \
     /usr/sbin/ifup *, \
     /usr/sbin/ifdown *
 
-# ── LXD Compute (Proxmox Import + ISO Management) ────────────────────────────
+# ── Incus Compute (Proxmox Import + ISO Management + Migration) ────────────
 # since v6.4.21 — Proxmox live VM import streams raw disk images directly into
-#   the ZFS volumes (zvols) that back LXD VM instance disks.
+#   the ZFS volumes (zvols) that back Incus VM instance disks.
 #   volmode=dev is set on each zvol so ZFS creates a /dev/zdX block device.
 #   dd reads from stdin and writes to /dev/zdX (bypasses /dev/zvol/ symlinks
 #   which may be blocked by stale files from a prior failed import).
@@ -1082,15 +1236,21 @@ Cmnd_Alias ZFSNAS_LXDNET = \
 #   the zfsnas process user write ISO files into it without requiring root for
 #   every upload.
 # since v6.4.28 — the trailing cat line is generated dynamically:
-#     classic sudo →  /usr/bin/cat /var/log/lxd/*/console.log  (tight)
+#     classic sudo →  /usr/bin/cat /var/log/incus/*/console.log  (tight)
 #     sudo-rs      →  /usr/bin/cat *                           (wider — sudo-rs
 #                                                              rejects any
 #                                                              prefix before *)
-#   Used by the Container Console tab to read /var/log/lxd/<name>/console.log
+#   Used by the Container Console tab to read /var/log/incus/<name>/console.log
 #   (root-owned 0600). Instance name is regex-validated server-side regardless.
+# since v6.5.2 — lxd-to-incus is the upstream one-shot migration tool. Allowed
+#   here so the in-portal "Migrate from LXD" wizard can run it under sudo.
+# since v6.5.3 — journalctl reads (kernel ring buffer + systemd journal) let
+#   the state watcher attribute a Running→Stopped VM/container transition to
+#   a kernel OOM-kill. Read-only and confined to this virtualization-gated
+#   block so non-VM hosts don't see them surfaced in Sudoers Review.
 # NOTE: partx, mount, umount may live under /usr/bin/ or /sbin/ depending on
 #   the distribution. Verify with "which partx" if a sudoers error occurs.
-Cmnd_Alias ZFSNAS_LXD = \
+Cmnd_Alias ZFSNAS_INCUS = \
     /usr/bin/dd *, \
     /usr/bin/partx *, \
     /usr/bin/mount *, \
@@ -1099,27 +1259,41 @@ Cmnd_Alias ZFSNAS_LXD = \
     /usr/bin/chmod 0775 *, \
     /usr/bin/tee *, \
     /usr/bin/rm -f *, \
+    /usr/bin/lxd-to-incus *, \
+    /usr/bin/ntfsfix *, \
+    /usr/bin/blkid -o value -s TYPE *, \
+    /usr/bin/python3 - *, \
+    /usr/sbin/losetup *, \
+    /usr/bin/journalctl -k *, \
+    /usr/bin/journalctl --since=*, \
     {{LXD_CAT_LINE}}
 
 # ── VMs & Containers feature setup ───────────────────────────────────────────
-# since v6.4.24 — one-time enablement of LXD compute support:
-#   lxd init: initialises the LXD daemon from a preseed YAML.
-#   usermod:  adds the zfsnas service account to the lxd group.
+# since v6.5.2 — one-time enablement of Incus compute support (replaces the
+#   v6.4.24 LXD setup commands):
+#   incus admin init: initialises the Incus daemon from a preseed YAML.
+#   usermod:  adds the zfsnas service account to the incus-admin group.
 #   systemctl restart networking: applies bridge config after rewrite.
-#   systemctl {enable,start,restart} lxd: service lifecycle during setup.
+#   systemctl {enable,start,restart} incus: service lifecycle during setup.
 #   ln -sf /usr/share/OVMF/*: creates cross-distro OVMF firmware symlinks so
 #       VMs pushed between Ubuntu (OVMF_CODE.4MB.fd) and Debian (OVMF_CODE_4M.fd)
 #       can start on either host without manual intervention.
 # /etc/network/interfaces edits and backups are performed in-process (root only);
 # no sudo entry is granted for that path.
 Cmnd_Alias ZFSNAS_VMSETUP = \
-    /usr/bin/lxd init --preseed, \
-    /usr/sbin/lxd init --preseed, \
-    /usr/sbin/usermod -a -G lxd zfsnas, \
+    /usr/bin/incus admin init --preseed, \
+    /usr/sbin/incus admin init --preseed, \
+    /usr/sbin/usermod -a -G incus-admin zfsnas, \
     /usr/bin/systemctl restart networking, \
-    /usr/bin/systemctl enable lxd, \
-    /usr/bin/systemctl start lxd, \
-    /usr/bin/systemctl restart lxd, \
+    /usr/bin/systemctl enable incus, \
+    /usr/bin/systemctl start incus, \
+    /usr/bin/systemctl restart incus, \
+    /usr/bin/systemctl start zramswap, \
+    /usr/bin/systemctl stop zramswap, \
+    /usr/bin/systemctl restart zramswap, \
+    /usr/bin/systemctl enable zramswap, \
+    /usr/bin/systemctl disable zramswap, \
+    /usr/bin/tee /etc/default/zramswap, \
     /usr/bin/ln -sf *
 
 # ── OS updates & service installation ────────────────────────────────────────
@@ -1148,5 +1322,5 @@ Cmnd_Alias ZFSNAS_SECURITY = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_LXDNET, ZFSNAS_LXD, ZFSNAS_VMSETUP, ZFSNAS_APT, ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_INCUSNET, ZFSNAS_INCUS, ZFSNAS_VMSETUP, ZFSNAS_APT, ZFSNAS_SECURITY
 `

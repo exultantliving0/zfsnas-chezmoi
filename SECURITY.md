@@ -34,7 +34,7 @@ Run `sudo visudo -f /etc/sudoers.d/zfsnas` and paste the block below.
 
 > **Note:** Paths are correct for Ubuntu 22.04 / 24.04 LTS. Verify with `which <command>` if you are on a different distribution.
 >
-> **sudo-rs (Ubuntu 26.04+):** Ubuntu 26.04 ships **sudo-rs** (the Rust rewrite of sudo) as the default. sudo-rs is stricter about wildcards in command arguments — `*` may only appear as the **entire trailing argument** (e.g. `cmd *` is allowed; `cmd /path/*`, `cmd /a*/b`, and `cmd * literal` are rejected with "wildcards are not allowed in command arguments"). When sudo-rs rejects an entry, every line that follows it in the file is silently dropped, which manifests as "missing" entries in the Prerequisites > Sudoers Hardening view. The template below is written to satisfy sudo-rs; path scoping that previously lived in the sudoers file (e.g. `/mnt/*`) has moved into the Go code (see `handlers/filebrowser.go` `SafeJoin` and dataset/share root validation).
+> **sudo-rs (Ubuntu 26.04+):** Ubuntu 26.04 ships **sudo-rs** (the Rust rewrite of sudo) as the default. sudo-rs is stricter about wildcards in command arguments — `*` may only appear as the **entire trailing argument** (e.g. `cmd *` is allowed; `cmd /path/*`, `cmd /a*/b`, and `cmd * literal` are rejected with "wildcards are not allowed in command arguments"). When sudo-rs rejects an entry, every line that follows it in the file is silently dropped, which manifests as "missing" entries in the **Prerequisites → Sudoers Hardening** view. The template below is written to satisfy sudo-rs; path scoping that previously lived in the sudoers file (e.g. `/mnt/*`) has moved into the portal itself, which validates every File Browser target against known dataset mountpoints and share roots before invoking the underlying command.
 
 ```sudoers
 # ── ZFS pool & dataset management ────────────────────────────────────────────
@@ -88,9 +88,13 @@ Cmnd_Alias ZFSNAS_NFS = \
 # ── SMART & hardware monitoring ───────────────────────────────────────────────
 # since v1.0.0 — SMART disk health data (SAS/SATA)
 # since v3.0.0 — NVMe health and temperature monitoring
+# since v6.5.3 — DMI/SMBIOS reads for motherboard, BIOS, and per-DIMM memory
+#   inventory shown in the SysInfo popup
 Cmnd_Alias ZFSNAS_SMART = \
     /usr/sbin/smartctl *, \
-    /usr/bin/nvme smart-log -o json *
+    /usr/bin/nvme smart-log -o json *, \
+    /usr/sbin/dmidecode *, \
+    /usr/bin/cat /proc/*/smaps_rollup
 
 # ── Disk preparation & wipe ───────────────────────────────────────────────────
 # since v1.0.0 — wipe and partition a disk before adding it to a pool;
@@ -206,10 +210,11 @@ Cmnd_Alias ZFSNAS_SCAN = \
 # ── File Browser (v6.4.3+) ────────────────────────────────────────────────────
 # since v6.4.3 — chown/chmod on files and folders within dataset mountpoints via File Browser.
 # since v6.4.4 — find used for directory listing.
-# since v6.4.25 — path scoping moved from sudoers to Go because sudo-rs (Ubuntu 26.04+)
-#   does not allow wildcards in non-trailing argument positions. The portal validates
-#   the target path against known dataset mountpoints and share roots before invoking
-#   these commands (see SafeJoin in handlers/filebrowser.go).
+# since v6.4.25 — path scoping moved from sudoers into the portal because sudo-rs
+#   (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.
+#   The portal validates every target path against known dataset mountpoints
+#   and share roots before invoking these commands; arbitrary paths cannot be
+#   targeted from the UI.
 Cmnd_Alias ZFSNAS_FILES = \
     /usr/bin/find *, \
     /usr/bin/chown *, \
@@ -237,44 +242,63 @@ Cmnd_Alias ZFSNAS_NTP = \
     /usr/bin/tee /etc/chrony/chrony.conf, \
     /usr/bin/systemctl restart chronyd
 
-# ── LXD Network Bridges — VLAN interface management ─────────────────────────
-# since v6.4.19 — ifup/ifdown bring VLAN sub-interfaces up/down without reboot.
-#   Only needed when using the Networking mode in the Compute section (experimental).
-# /etc/network/interfaces edits are performed in-process (root only); no sudo entry
-# is granted for that path.
-Cmnd_Alias ZFSNAS_LXDNET = \
+# ── Virtualization (Incus VMs & Containers) — OPTIONAL ──────────────────────
+#
+# This single block contains every sudoers entry needed by the optional
+# **VMs & Containers** feature (Incus). It is *not* required for storage-only
+# ZNAS deployments. Pure-NAS hosts can omit the entire `ZFSNAS_INCUS` alias
+# below AND drop `ZFSNAS_INCUS` from the trailing User_Spec line on the
+# `zfsnas ALL=(ALL) NOPASSWD:` row — the portal will still install, run, and
+# manage every storage feature (ZFS pools, datasets, SMB, NFS, iSCSI, S3,
+# UPS, replication) without it.
+#
+# Coverage (history):
+#   • since v6.4.19 — ifup/ifdown for VLAN bridges (Networking mode of the
+#     Compute section). /etc/network/interfaces edits are performed
+#     in-process (root only); no sudo entry exists for that path.
+#   • since v6.4.21 — Proxmox live VM import streams raw disk images into
+#     ZFS volumes that back Incus VM disks. volmode=dev exposes a /dev/zdX
+#     kernel block device; dd writes to it (bypassing /dev/zvol symlinks
+#     which can be blocked by stale files from a prior failed import).
+#     partx, mount, umount handle UEFI ESP fix-up.
+#   • since v6.4.22 — ISO Management: .isos directory inside the ZFS pool
+#     root is created with mkdir -p, chmod 0775, then tee writes the ISO
+#     uploads (directory is root-owned). rm -f cleans up partial uploads.
+#   • since v6.4.28 — final cat entry reads /var/log/incus/<name>/console.log
+#     (root-owned 0600) for the container Output tab when Incus'
+#     `incus console --show-log` API errors with "open : no such file or
+#     directory". The portal picks one of two forms at install time
+#     depending on whether the active sudo is classic sudo or sudo-rs
+#     (Ubuntu 26.04+):
+#       classic sudo →  /usr/bin/cat /var/log/incus/*/console.log
+#                         Tight: the literal /console.log suffix locks the
+#                         rule to that one filename pattern.
+#       sudo-rs      →  /usr/bin/cat *
+#                         Wider: sudo-rs only accepts `*` as the entire
+#                         trailing argument. Path scoping is still enforced
+#                         server-side: the portal regex-validates the
+#                         instance name against the live Incus instance
+#                         list before invoking cat.
+#   • since v6.5.2 — `incus admin init --preseed` initialises the Incus
+#     daemon from a generated YAML; usermod adds the service account to
+#     `incus-admin`; service lifecycle entries cover daemon start/restart;
+#     ln -sf creates cross-distro OVMF firmware symlinks so VMs pushed
+#     between Ubuntu (OVMF_CODE.4MB.fd) and Debian (OVMF_CODE_4M.fd) start
+#     on either host. lxd-to-incus is the upstream one-shot migration
+#     helper used by the Migrate-from-LXD wizard.
+#   • since v6.5.3 — Memory Compression (zram-tools) entries: tee writes
+#     /etc/default/zramswap; systemctl {start,stop,restart,enable,disable}
+#     zramswap controls the unit. journalctl -k / --since let the state
+#     watcher attribute a Running→Stopped instance transition to a kernel
+#     OOM-kill (read-only). ntfsfix, blkid, python3, losetup support the
+#     Windows-import boot fix-up flow.
+#
+# NOTE: partx, mount, umount, sgdisk live under /usr/bin/ or /sbin/
+# depending on distribution. Verify with `which <command>` if a sudoers
+# error occurs.
+Cmnd_Alias ZFSNAS_INCUS = \
     /usr/sbin/ifup *, \
-    /usr/sbin/ifdown *
-
-# ── LXD Compute (Proxmox Import + ISO Management) ────────────────────────────
-# since v6.4.21 — Proxmox live VM import streams raw disk images directly into
-#   the ZFS volumes (zvols) that back LXD VM instance disks.
-#   volmode=dev is set on each zvol so ZFS creates a /dev/zdX block device.
-#   dd reads from stdin and writes to /dev/zdX (bypasses /dev/zvol/ symlinks
-#   which may be blocked by stale files from a prior failed import).
-# since v6.4.22 — ISO Management: the .isos directory is created inside the ZFS
-#   pool root (owned by root). mkdir -p creates it, chmod 0775 sets permissions,
-#   and tee writes ISO files into it (directory is root-owned; os.Create denied).
-#   rm -f cleans up a partially-written ISO if tee is interrupted.
-# since v6.4.28 — final cat entry reads /var/log/lxd/<name>/console.log
-#   (root-owned 0600) for the Container Console tab when LXD's
-#   `lxc console --show-log` API errors with "open : no such file or directory".
-#   The portal picks one of two forms at install time, depending on whether
-#   the active sudo is classic sudo or sudo-rs (Ubuntu 26.04+):
-#     classic sudo →  /usr/bin/cat /var/log/lxd/*/console.log
-#                       Tight: the literal /console.log suffix locks the rule
-#                       to that one filename pattern; sudo refuses every other
-#                       path including /etc/shadow, /root/**, traversal
-#                       attempts, and unrelated /var/log/* files (verified).
-#     sudo-rs      →  /usr/bin/cat *
-#                       Wider: sudo-rs only accepts `*` as the entire trailing
-#                       argument and rejects any prefix or suffix around it,
-#                       so the tighter pattern fails visudo on those hosts.
-#                       Path scoping is still enforced server-side: the
-#                       instance name is regex-validated against the live LXD
-#                       instance list before invocation (lxdNameRe in
-#                       system/lxd.go GetLXDInstanceConsoleLog).
-Cmnd_Alias ZFSNAS_LXD = \
+    /usr/sbin/ifdown *, \
     /usr/bin/dd *, \
     /usr/bin/partx *, \
     /usr/bin/mount *, \
@@ -283,7 +307,28 @@ Cmnd_Alias ZFSNAS_LXD = \
     /usr/bin/chmod 0775 *, \
     /usr/bin/tee *, \
     /usr/bin/rm -f *, \
-    /usr/bin/cat /var/log/lxd/*/console.log   # or `cat *` on sudo-rs hosts
+    /usr/bin/ntfsfix *, \
+    /usr/bin/blkid -o value -s TYPE *, \
+    /usr/bin/python3 - *, \
+    /usr/sbin/losetup *, \
+    /usr/bin/journalctl -k *, \
+    /usr/bin/journalctl --since=*, \
+    /usr/bin/lxd-to-incus *, \
+    /usr/bin/incus admin init --preseed, \
+    /usr/sbin/incus admin init --preseed, \
+    /usr/sbin/usermod -a -G incus-admin zfsnas, \
+    /usr/bin/systemctl restart networking, \
+    /usr/bin/systemctl enable incus, \
+    /usr/bin/systemctl start incus, \
+    /usr/bin/systemctl restart incus, \
+    /usr/bin/systemctl start zramswap, \
+    /usr/bin/systemctl stop zramswap, \
+    /usr/bin/systemctl restart zramswap, \
+    /usr/bin/systemctl enable zramswap, \
+    /usr/bin/systemctl disable zramswap, \
+    /usr/bin/tee /etc/default/zramswap, \
+    /usr/bin/ln -sf *, \
+    /usr/bin/cat /var/log/incus/*/console.log   # or `cat *` on sudo-rs hosts
 
 # ── OS updates & service installation ────────────────────────────────────────
 # since v1.0.0 — prerequisite package install (apt-get install) and
@@ -328,31 +373,13 @@ Cmnd_Alias ZFSNAS_SYSPOWER = \
 #    /usr/bin/cat /etc/sudoers.d/zfsnas, \
 #    /usr/bin/chmod 0440 /etc/sudoers.d/zfsnas
 
-# ── VMs & Containers feature setup ───────────────────────────────────────────
-# since v6.4.24 — one-time enablement of LXD compute support:
-#   lxd init: initialises the LXD daemon from a preseed YAML.
-#   usermod:  adds the zfsnas service account to the lxd group.
-#   systemctl restart networking: applies bridge config after rewrite.
-#   systemctl {enable,start,restart} lxd: service lifecycle during setup.
-#   ln -sf /usr/share/OVMF/*: creates cross-distro OVMF firmware symlinks so
-#       VMs pushed between Ubuntu (OVMF_CODE.4MB.fd) and Debian (OVMF_CODE_4M.fd)
-#       can start on either host without manual intervention.
-# /etc/network/interfaces edits and backups are performed in-process (root only);
-# no sudo entry is granted for that path.
-Cmnd_Alias ZFSNAS_VMSETUP = \
-    /usr/bin/lxd init --preseed, \
-    /usr/sbin/lxd init --preseed, \
-    /usr/sbin/usermod -a -G lxd zfsnas, \
-    /usr/bin/systemctl restart networking, \
-    /usr/bin/systemctl enable lxd, \
-    /usr/bin/systemctl start lxd, \
-    /usr/bin/systemctl restart lxd, \
-    /usr/bin/ln -sf *
-
 # ── Grant all of the above, passwordless, to the service account ──────────────
+#
+# Storage-only deployments — drop `ZFSNAS_INCUS` from the list below; the
+# entire `Cmnd_Alias ZFSNAS_INCUS = …` block above can also be removed.
+# To enable the optional Sudoers Hardening UI feature, also add `ZFSNAS_SECURITY`.
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_LXDNET, ZFSNAS_LXD, ZFSNAS_VMSETUP, ZFSNAS_APT, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER
-# To enable the optional Sudoers Hardening UI feature, also add: ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_INCUS, ZFSNAS_APT, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER
 ```
 
 ### 3 — Run the portal as the service account
@@ -370,10 +397,10 @@ ExecStart=/opt/zfsnas/zfsnas
 
 - **Web terminal** — the browser terminal runs a shell as the `zfsnas` user. With the restricted sudoers entry above, any `sudo` command typed in that terminal is still limited to the whitelist. If you do not use the web terminal feature you can remove the `/ws/terminal` route or simply accept that a logged-in admin can run a shell with the same restrictions.
 - **`chgrp sambashare *`** (in `ZFSNAS_SMB`) — sets group ownership of every newly created SMB share directory to `sambashare`. The path wildcard is required because share directories can live at any path within your ZFS mount hierarchy.
-- **`chmod *` / `chmod -R *`** (in `ZFSNAS_FILES`) — covers all permission changes: 0777 for NFS share paths, 0770 for SMB share directories, and 0700 for user home directories. Path scoping is enforced in Go (the portal validates the target against known dataset mountpoints and share roots before invoking) because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions. The previous `chmod * /mnt/*` form is no longer expressible.
-- **`tee` for config files** — `tee` is granted as `tee *` in `ZFSNAS_LXD` and `ZFSNAS_SYSPOWER` (where the target paths are dynamic — per-CPU scaling governor, per-USB-device autosuspend, ISO Management uploads). Specific tee paths (`smb.conf`, `exports`, `zfsnas.service`, `zfs.conf`, ARC sysfs paths, `/etc/hdparm.conf`, `/etc/network/interfaces`, `/etc/chrony/chrony.conf`) remain in their feature-specific aliases for clarity, even though `tee *` would cover them.
+- **`chmod *` / `chmod -R *`** (in `ZFSNAS_FILES`) — covers all permission changes: 0777 for NFS share paths, 0770 for SMB share directories, and 0700 for user home directories. The portal itself enforces path scoping (every target is validated against known dataset mountpoints and share roots before the command runs) because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions. The previous `chmod * /mnt/*` form is no longer expressible.
+- **`tee` for config files** — `tee` is granted as `tee *` in `ZFSNAS_INCUS` and `ZFSNAS_SYSPOWER` (where the target paths are dynamic — per-CPU scaling governor, per-USB-device autosuspend, ISO Management uploads, zramswap config). Specific tee paths (`smb.conf`, `exports`, `zfsnas.service`, `zfs.conf`, ARC sysfs paths, `/etc/hdparm.conf`, `/etc/network/interfaces`, `/etc/chrony/chrony.conf`) remain in their feature-specific aliases for clarity, even though `tee *` would cover them.
 - **`dd` / `wipefs` / `sgdisk`** — used by the "Wipe Disk" feature before adding a disk to a pool. These are destructive by design; ensure only trusted admins have access to the portal.
-- **`dd *`** (in `ZFSNAS_LXD`) — used by the Proxmox live VM import feature (v6.4.21+) to stream raw disk images into ZFS volume block devices. Before writing, `volmode=dev` is set on each zvol so ZFS creates a `/dev/zdX` kernel block device. dd writes directly to that device (bypassing `/dev/zvol/` symlinks, which may be blocked by stale regular files from prior failed imports). Broadened from `dd of=/dev/zd* *` to `dd *` because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.
+- **`dd *`** (in `ZFSNAS_INCUS`) — used by the Proxmox live VM import feature (v6.4.21+) to stream raw disk images into ZFS volume block devices. Before writing, `volmode=dev` is set on each zvol so ZFS creates a `/dev/zdX` kernel block device. dd writes directly to that device (bypassing `/dev/zvol/` symlinks, which may be blocked by stale regular files from prior failed imports). Broadened from `dd of=/dev/zd* *` to `dd *` because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.
 - **`zfs load-key` / `zfs unload-key`** — used for ZFS native encryption (v5.0.0+). Key files are stored in `config/keystore/` and are only readable by the `zfsnas` user.
 - **Force-disconnect & Lock (v6.4.13+)** — when a user clicks "Force Disconnect & Lock" on an encrypted dataset, the portal checks the SMB share config for any shares backed by that dataset's mountpoint. If found, `systemctl stop smbd` is issued (already in `ZFSNAS_SMB`), the dataset is unmounted and its key unloaded, then `systemctl start smbd` restarts the service. The stop/start is brief (typically under a second) and only occurs when needed. Other SMB shares are briefly unavailable during this window.
 - **`systemctl restart zfsnas`** — used by the "Restart Portal" option in the power menu (v3.0.0+). Only available to admin-role users.
@@ -390,7 +417,7 @@ ExecStart=/opt/zfsnas/zfsnas
 - **`tee /etc/sudoers.d/zfsnas`** — used by the Sudoers Hardening feature (v6.3.31+) to apply in-portal sudoers changes. Only the portal's own drop-in file is writable; the main `/etc/sudoers` file is never touched.
 - **`cat /etc/sudoers.d/zfsnas`** — used by the Sudoers Review diff (v6.3.32+) to read the portal's own sudoers file so the review always shows the accurate current state, including manual edits. Without this, the portal can only compare against the last content it wrote.
 - **`chmod 0440 /etc/sudoers.d/zfsnas`** — corrects file permissions after each write (v6.4.25+). `sudo tee` creates new files with umask-derived permissions (typically 0644); this restores the recommended 0440 so the file has no write bits beyond the owner. If you do not use the Sudoers Hardening feature you can omit the entire `ZFSNAS_SECURITY` alias.
-- **`find *`, `chown *`, `chown -R *`, `chmod *`, `chmod -R *`** (in `ZFSNAS_FILES`) — used by the File Browser (v6.4.3+/v6.4.4+) for directory listing, ownership changes, and permission changes. sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions, so the previous `chown * /mnt/*` style is no longer expressible. Path scoping is now enforced entirely in Go: every File Browser handler validates the target path with `SafeJoin` against known dataset mountpoints and share roots before invoking these commands; arbitrary paths cannot be targeted via the UI.
+- **`find *`, `chown *`, `chown -R *`, `chmod *`, `chmod -R *`** (in `ZFSNAS_FILES`) — used by the File Browser (v6.4.3+/v6.4.4+) for directory listing, ownership changes, and permission changes. sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions, so the previous `chown * /mnt/*` style is no longer expressible. The portal now enforces path scoping itself: every File Browser request is validated against known dataset mountpoints and share roots before any of these commands run; arbitrary paths cannot be targeted from the UI.
 - **`tee /etc/modprobe.d/zfs.conf` and sysfs tee entries** — used by the ARC Level 1 tuning feature (v6.3.22+) to persist ZFS ARC size limits across reboots and to apply them immediately via kernel sysfs. These are write-only paths; the portal only ever pipes well-formed `options zfs ...` lines or numeric byte values through `tee`.
 - **`zfs send *` / `zfs recv *` / `zfs receive *`** — used by the remote replication feature (snapshot policies and standalone replication tasks) and the local dataset-to-dataset replication feature. `zfs send` streams a snapshot to stdout; `zfs recv`/`zfs receive` reads a stream from stdin. Both are required locally for local replication (`zfs send | zfs recv` piped on the same host). For remote replication and InterLink push, only `zfs send` is run locally — the remote side runs `zfs recv` via SSH under its own service account (no local sudo required for that side). Including both forms (`recv` and `receive`) is necessary because OpenZFS accepts either spelling.
 - **`zfs allow *`** — used by the InterLink push feature and scheduled replication via InterLink servers to delegate ZFS permissions (`snapshot,send,receive,create,mount`) to the service account on every pool. This is required so that `zfs send` / `zfs recv` can be invoked without sudo when the remote side accepts the SSH connection as the non-root service user. The portal always restricts delegation to the service account's own username and to the specific permission set shown above.
@@ -402,28 +429,28 @@ ExecStart=/opt/zfsnas/zfsnas
 
 ---
 
-## LXD InterLink trust (VM Push)
+## Incus InterLink trust (VM Push)
 
-When the VMs & Containers feature is enabled and two ZNAS servers are linked via InterLink, ZNAS automatically registers each server's `lxc` client certificate in the other server's LXD trust store. This enables `lxc copy` to migrate VMs directly between LXD daemons (port 8444) without user-managed tokens or passwords.
+When the VMs & Containers feature is enabled and two ZNAS servers are linked via InterLink, ZNAS automatically registers each server's `incus` client certificate in the other server's Incus trust store. This enables `incus copy` to migrate VMs directly between Incus daemons (port 8444) without user-managed tokens or passwords.
 
 **How it works:**
 
-1. Each server generates a self-signed RSA-2048 client certificate at `/home/zfsnas/.config/lxc/client.crt` during the LXD enable flow.
-2. When two linked servers both have LXD enabled, they exchange their certificates through the existing HMAC-authenticated InterLink channel (`POST /api/lxd/interlink-cert`, `POST /api/lxd/interlink-trust`).
-3. Each server registers the peer's certificate under the name `znas-interlink-<peer-id>` in its LXD trust store and adds an `lxc` remote named `znas-<peer-id>`.
+1. Each server generates a self-signed RSA-2048 client certificate at `/home/zfsnas/.config/incus/client.crt` during the Incus enable flow.
+2. When two linked servers both have Incus enabled, they exchange their certificates through the existing HMAC-authenticated InterLink channel (`POST /api/lxd/interlink-cert`, `POST /api/lxd/interlink-trust` — endpoint paths kept for backward compatibility with pre-v6.5.2 builds).
+3. Each server registers the peer's certificate under the name `znas-interlink-<peer-id>` in its Incus trust store and adds an `incus` remote named `znas-<peer-id>`.
 
 **Revoking access:**
 
-To revoke a peer's LXD trust (e.g. after unlinking servers), run on the target host:
+To revoke a peer's Incus trust (e.g. after unlinking servers), run on the target host:
 
 ```bash
-lxc config trust remove znas-interlink-<peer-id>
-lxc remote remove znas-<peer-id>
+incus config trust remove znas-interlink-<peer-id>
+incus remote remove znas-<peer-id>
 ```
 
-Replace `<peer-id>` with the linked server's ID (visible in InterLink settings). No sudo is required — these commands run as the `zfsnas` user, which is a member of the `lxd` group.
+Replace `<peer-id>` with the linked server's ID (visible in InterLink settings). No sudo is required — these commands run as the `zfsnas` user, which is a member of the `incus-admin` group.
 
-**Port:** LXD listens on `0.0.0.0:8444` after the enable flow. VM migration traffic flows through this port via WebSocket. Ensure port 8444 is reachable between ZNAS servers if a firewall is in place.
+**Port:** Incus listens on `0.0.0.0:8444` after the enable flow. VM migration traffic flows through this port via WebSocket. Ensure port 8444 is reachable between ZNAS servers if a firewall is in place.
 
 ---
 

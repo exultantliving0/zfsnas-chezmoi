@@ -39,8 +39,8 @@ import (
 	"time"
 )
 
-const lxdServerCertPath = "/var/lib/lxd/server.crt"
-const lxdServerKeyPath  = "/var/lib/lxd/server.key"
+const lxdServerCertPath = "/var/lib/incus/server.crt"
+const lxdServerKeyPath  = "/var/lib/incus/server.key"
 
 // defaultRouteIface returns the name of the interface used by the default IPv4
 // route. This is the most reliable signal of "the address peers reach us on".
@@ -143,7 +143,7 @@ func ipsOf(iface net.Interface) []net.IP {
 
 // readLXDServerCert reads the live LXD server.crt; returns the parsed cert.
 func readLXDServerCert() (*x509.Certificate, error) {
-	// /var/lib/lxd/server.crt is mode 0644 root-owned, world-readable in
+	// /var/lib/incus/server.crt is mode 0644 root-owned, world-readable in
 	// practice, but on some installs it isn't traversable as zfsnas. Try a
 	// direct read first, fall back to "sudo cat".
 	data, err := os.ReadFile(lxdServerCertPath)
@@ -176,7 +176,7 @@ func certCoversIPs(cert *x509.Certificate, want []net.IP) bool {
 	return true
 }
 
-// LXDEnsureServerCertSAN regenerates /var/lib/lxd/server.{crt,key} when the
+// LXDEnsureServerCertSAN regenerates /var/lib/incus/server.{crt,key} when the
 // existing cert is missing any of the host's public IPs in its SAN. No-op
 // when the cert is already complete. Requires root or unrestricted sudo
 // (NOPASSWD: ALL); under hardened sudoers it logs a warning and returns nil
@@ -264,7 +264,7 @@ func LXDEnsureServerCertSAN() error {
 	}
 	// Give LXD a moment to come back before downstream calls hit it.
 	for i := 0; i < 20; i++ {
-		if exec.Command("lxc", "info").Run() == nil {
+		if exec.Command("incus", "info").Run() == nil {
 			break
 		}
 		time.Sleep(time.Second)
@@ -358,7 +358,7 @@ func LXDPinPeerServerCert(remoteName, certPEM string) error {
 // public one. Pinning the listener to the public IP eliminates that.
 // Best-effort: errors are logged but never fatal.
 func LXDPinSelfHTTPSAddress() {
-	out, err := exec.Command("lxc", "config", "get", "core.https_address").Output()
+	out, err := exec.Command("incus", "config", "get", "core.https_address").Output()
 	if err != nil {
 		return
 	}
@@ -373,7 +373,7 @@ func LXDPinSelfHTTPSAddress() {
 			continue // pin IPv4 only — most peers reach via v4
 		}
 		addr := ip.String() + ":8444"
-		if err := exec.Command("lxc", "config", "set", "core.https_address", addr).Run(); err != nil {
+		if err := exec.Command("incus", "config", "set", "core.https_address", addr).Run(); err != nil {
 			fmt.Printf("lxd cert: pin core.https_address to %s: %v\n", addr, err)
 		}
 		return

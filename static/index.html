@@ -351,9 +351,13 @@
           </a>
           <span id="logo-lxd-badge" title="Compute (LXD) available" onclick="switchSidebarMode('compute')" style="display:none;position:absolute;top:11px;left:142px;font-size:24px;font-weight:900;color:#fbbf24;line-height:1;cursor:pointer;text-shadow:0 0 8px #fbbf24,0 0 16px #f59e0b,0 0 2px #fff;">+</span>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;padding-left:4px;margin-top:0;">
+        <div style="display:flex;align-items:center;gap:6px;padding-left:4px;padding-right:4px;margin-top:0;width:100%;">
           <span id="app-version" style="font-size:11px;font-family:'SF Mono',monospace;color:var(--text-2);letter-spacing:.02em;">v…</span>
           <span id="app-version-latest" style="font-size:11px;font-family:'SF Mono',monospace;color:var(--accent-warn);letter-spacing:.02em;display:none;">→ v…</span>
+          <button id="sysinfo-btn" onclick="openSysInfo()" title="View hardware details"
+            style="margin-left:auto;background:none;border:none;padding:0;cursor:pointer;font-size:11px;font-style:italic;font-weight:600;letter-spacing:.02em;color:#0a84ff;text-decoration:none;line-height:1;transition:color .15s,text-decoration-color .15s;"
+            onmouseover="this.style.color='#3aa0ff';this.style.textDecoration='underline'"
+            onmouseout="this.style.color='#0a84ff';this.style.textDecoration='none'">SysInfo</button>
         </div>
       </div>
 
@@ -460,13 +464,17 @@
         <div class="cpu-gauge-seg" id="cpu-seg-container" style="background:#34d399;height:0%"></div>
         <div class="cpu-gauge-seg" id="cpu-seg-vm"        style="background:#f472b6;height:0%"></div>
       </div>
+      <!-- v6.5.3+: traffic-light readout under the bar. Green <60 %, yellow
+           60-80 %, red >80 %. Driven by _updateCpuGauge() / _updateMemGauge()
+           via _setBarPctReadout(). -->
+      <div id="cpu-pct-readout" class="bar-pct-readout">—</div>
     </div>
     <div id="cpu-gauge-tooltip"></div>
 
     <!-- MEM process vertical gauge -->
     <div id="mem-gauge-panel">
       <div class="cpu-gauge-title">MEM</div>
-      <div class="cpu-gauge-bar" id="mem-gauge-bar">
+      <div class="cpu-gauge-bar" id="mem-gauge-bar" style="position:relative;">
         <!-- segments stack bottom-up via flex-direction:column-reverse -->
         <div class="cpu-gauge-seg" id="mem-seg-other"     style="background:#6b7280;height:0%"></div>
         <div class="cpu-gauge-seg" id="mem-seg-minio"     style="background:#f59e0b;height:0%"></div>
@@ -477,8 +485,41 @@
         <div class="cpu-gauge-seg" id="mem-seg-container" style="background:#34d399;height:0%"></div>
         <div class="cpu-gauge-seg" id="mem-seg-vm"        style="background:#f472b6;height:0%"></div>
       </div>
+      <!-- v6.5.3+: percentage readout under the bar. Mirrors the CPU
+           readout: green <60 %, yellow 60-80 %, red >80 %.
+           When zram compression is enabled, the percentage is computed as
+           (used + total_swap_used) / physical RAM × 100 — so values can
+           exceed 100 %, signalling the working set has spilled into swap
+           (zram + any disk-swap fall-through) above the white tick line.
+           The thresholds shift accordingly: green up to 80 %, yellow
+           80-110 %, red ≥ 110 %. -->
+      <div id="mem-pct-readout" class="bar-pct-readout">—</div>
     </div>
     <div id="mem-gauge-tooltip"></div>
+
+    <!-- SWAP process vertical gauge (v6.5.3+). Hidden when no swap device
+         is configured (SwapTotal == 0). Same per-process category colours
+         as the CPU + MEM bars; the readout uses the CPU-style 60/80
+         thresholds (no over-100 case — pct here is "% of swap capacity in
+         use", capped at 100). -->
+    <div id="swap-gauge-panel" style="display:none;">
+      <div class="cpu-gauge-title">SWAP</div>
+      <div class="cpu-gauge-bar" id="swap-gauge-bar">
+        <div class="cpu-gauge-seg" id="swap-seg-other"     style="background:#6b7280;height:0%"></div>
+        <div class="cpu-gauge-seg" id="swap-seg-minio"     style="background:#f59e0b;height:0%"></div>
+        <div class="cpu-gauge-seg" id="swap-seg-iscsi"     style="background:#06b6d4;height:0%"></div>
+        <div class="cpu-gauge-seg" id="swap-seg-zfs"       style="background:#a78bfa;height:0%"></div>
+        <div class="cpu-gauge-seg" id="swap-seg-nfs"       style="background:#60a5fa;height:0%"></div>
+        <div class="cpu-gauge-seg" id="swap-seg-smb"       style="background:#fb923c;height:0%"></div>
+        <div class="cpu-gauge-seg" id="swap-seg-container" style="background:#34d399;height:0%"></div>
+        <div class="cpu-gauge-seg" id="swap-seg-vm"        style="background:#f472b6;height:0%"></div>
+      </div>
+      <div id="swap-pct-readout" class="bar-pct-readout">—</div>
+    </div>
+    <!-- v6.5.3+: hover tooltip for the SWAP gauge — mirrors the MEM
+         tooltip. Shows per-category swap split + the top 10 swap-using
+         processes ranked by VmSwap. -->
+    <div id="swap-gauge-tooltip"></div>
 
     <!-- Right side: topbar + io-bar -->
     <div style="flex:1;min-width:0;display:flex;flex-direction:column;">
@@ -1511,12 +1552,12 @@
           </div>
         </div>
         <div id="lxd-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
-        <div class="card" style="padding:0;overflow:hidden;">
+        <div class="card lxd-table-card" style="padding:0;">
           <table class="table" id="lxd-table">
             <thead>
               <tr>
-                <th class="lxd-sortable" style="width:60px;" onclick="_lxdSortBy('type')">Type<span class="sort-arrow"></span></th>
-                <th class="lxd-sortable" onclick="_lxdSortBy('name')">Name<span class="sort-arrow"></span></th>
+                <th class="lxd-sortable" style="width:34px;padding-left:10px;padding-right:4px;" onclick="_lxdSortBy('type')">Type<span class="sort-arrow"></span></th>
+                <th class="lxd-sortable" style="padding-left:6px;" onclick="_lxdSortBy('name')">Name<span class="sort-arrow"></span></th>
                 <th class="lxd-sortable" style="width:130px;" onclick="_lxdSortBy('ipv4')">IPv4<span class="sort-arrow"></span></th>
                 <th id="lxd-main-th-image" class="lxd-sortable" onclick="_lxdSortBy('image')">Image<span class="sort-arrow"></span></th>
                 <th class="lxd-sortable" onclick="_lxdSortBy('datastore')">Datastore<span class="sort-arrow"></span></th>
@@ -2012,17 +2053,17 @@
                 <div class="vm-hw-head" onclick="_vmhwToggle('vmhw-mem')">
                   <span class="vm-hw-chevron">▶</span>
                   <span class="vm-hw-title">Memory</span>
-                  <span class="vm-hw-summary" id="vmhw-mem-summary">4096 MB</span>
+                  <span class="vm-hw-summary" id="vmhw-mem-summary">2 GB</span>
                 </div>
                 <div class="vm-hw-body" style="display:none;">
                   <div class="form-group" style="margin:0 0 10px 0;">
                     <label>Assigned Memory</label>
                     <div style="display:flex;gap:8px;">
-                      <input type="number" class="input" id="lxd-vm-mem" value="4096" min="128"
+                      <input type="number" class="input" id="lxd-vm-mem" value="2" min="1"
                         oninput="_vmhwSyncMem()">
                       <select id="lxd-vm-mem-unit" class="input" style="width:80px;" onchange="_vmhwSyncMem();document.getElementById('lxd-vm-mem').min=this.value==='GB'?'1':'128'">
                         <option value="MB">MB</option>
-                        <option value="GB">GB</option>
+                        <option value="GB" selected>GB</option>
                       </select>
                     </div>
                   </div>
@@ -2267,17 +2308,17 @@
                 <div class="vm-hw-head" onclick="_vmhwToggle('cthw-mem')">
                   <span class="vm-hw-chevron">▶</span>
                   <span class="vm-hw-title">Memory</span>
-                  <span class="vm-hw-summary" id="cthw-mem-summary">2048 MB</span>
+                  <span class="vm-hw-summary" id="cthw-mem-summary">2 GB</span>
                 </div>
                 <div class="vm-hw-body" style="display:none;">
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                     <div class="form-group" style="margin:0;">
                       <label>Memory</label>
                       <div style="display:flex;gap:8px;">
-                        <input type="number" class="input" id="lxd-ct-mem" value="2048" min="64" oninput="_cthwSyncMem()">
+                        <input type="number" class="input" id="lxd-ct-mem" value="2" min="1" oninput="_cthwSyncMem()">
                         <select id="lxd-ct-mem-unit" class="input" style="width:76px;" onchange="_cthwSyncMem();document.getElementById('lxd-ct-mem').min=this.value==='GB'?'1':'64'">
                           <option value="MB">MB</option>
-                          <option value="GB">GB</option>
+                          <option value="GB" selected>GB</option>
                         </select>
                       </div>
                     </div>
@@ -3203,9 +3244,17 @@
               <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Only ZFS pools not already configured as a datastore are shown. One datastore per ZFS pool.</div>
             </div>
             <div class="form-group" style="margin-bottom:14px;">
+              <label class="form-label">Root Dataset <span style="color:var(--danger);">*</span></label>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span id="add-ds-root-prefix" style="font-family:monospace;color:var(--text-3);">pool/</span>
+                <input type="text" id="add-ds-root" class="input" style="flex:1;" placeholder="incus-hostname" pattern="[a-zA-Z0-9_\-]+" maxlength="128">
+              </div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Dataset created under the ZFS pool to hold this datastore's instances and volumes. Default <code>incus-&lt;hostname&gt;</code>.</div>
+            </div>
+            <div class="form-group" style="margin-bottom:14px;">
               <label class="form-label">Datastore Name <span style="color:var(--danger);">*</span></label>
               <input type="text" id="add-ds-name" class="input" placeholder="e.g. pool2" pattern="[a-zA-Z0-9_\-]+" maxlength="64">
-              <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Identifier used by LXD for this storage pool</div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Identifier used by Incus for this storage pool</div>
             </div>
           </div>
           <div class="modal-footer">
@@ -3348,7 +3397,7 @@
           <button class="cap-tab active" id="ci-tab-summary" onclick="_ciSwitchTab('summary')">Summary</button>
           <button class="cap-tab" id="ci-tab-monitor" onclick="_ciSwitchTab('monitor')" style="display:none;">Monitor</button>
           <button class="cap-tab" id="ci-tab-logs" onclick="_ciSwitchTab('logs')">Logs</button>
-          <button class="cap-tab" id="ci-tab-console" onclick="_ciSwitchTab('console')" style="display:none;">Console</button>
+          <button class="cap-tab" id="ci-tab-console" onclick="_ciSwitchTab('console')" style="display:none;">Output</button>
         </div>
 
         <!-- Summary tab content -->
@@ -3393,6 +3442,22 @@
 
         <!-- Logs tab content -->
         <div id="ci-tab-content-logs" style="padding:20px 0;display:none;">
+
+          <!-- Activity & Events for THIS instance — sourced from the
+               local audit log via /api/audit/by-target. Shows every
+               start/stop/state-change/snapshot/etc. tied to this name,
+               including OOM-kill annotations from the state watcher. -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-weight:700;font-size:14px;color:var(--text);">Activity &amp; Events</span>
+              <i class="info-tip" data-tip="All audit-log entries with this VM/container as the target — start, stop, restart, edit, snapshot, state changes (including out-of-memory kills detected by the kernel), and admin actions. Pulls from /api/audit/by-target."></i>
+            </div>
+            <button class="btn btn-sm" onclick="loadCIActivity(_ciCurrentName)" style="font-size:12px;padding:4px 12px;">Refresh</button>
+          </div>
+          <div id="ci-activity-body" style="margin-bottom:22px;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+            <div style="text-align:center;color:var(--text-3);padding:24px 0;font-size:12px;">Loading…</div>
+          </div>
+
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
             <div style="display:flex;align-items:center;gap:10px;">
               <span style="font-weight:700;font-size:14px;color:var(--text);">Instance Logs</span>
@@ -3522,7 +3587,7 @@
         <div id="ci-tab-content-console" style="padding:20px 0;display:none;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;">
             <div style="display:flex;align-items:center;gap:8px;">
-              <span style="font-size:14px;font-weight:700;color:var(--text);">Console output</span>
+              <span style="font-size:14px;font-weight:700;color:var(--text);">Boot output</span>
               <i class="info-tip" data-tip="Boot/console output captured by LXD since this container was last started — equivalent to /var/log/lxd/<name>/console.log on the host. Refresh to pull the current contents."></i>
             </div>
             <div style="display:flex;gap:8px;">
@@ -4194,14 +4259,22 @@ Select the Console tab to load.</pre>
 
         </div><!-- /stab-panel-security -->
 
-        <!-- Tab: Virtualization (v6.4.28) — visible only when LXD is available -->
-        <div id="stab-panel-virt" style="display:none;grid-template-columns:repeat(auto-fit,minmax(525px,1fr));gap:20px;">
+        <!-- Tab: Virtualization (v6.4.28) — visible only when LXD is available.
+             Layout: auto-fit grid at 480 px min so cards land on a 2-column row
+             on any viewport ≳ 1000 px and gracefully collapse to one column
+             below that. v6.5.3+: every card carries its own Apply button —
+             there is no global Save / Reload footer. Each Apply is scoped to
+             that card's fields only (sends a full-state PUT but with the
+             other cards' fields kept at their last-loaded values, so a
+             pending edit in card B can't be silently committed by clicking
+             Apply on card A). -->
+        <div id="stab-panel-virt" style="display:none;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:20px;align-items:start;">
 
-          <!-- Card 1 — Performance & Metrics (the headline feature) -->
-          <div class="card" style="grid-column:1/-1;">
-            <h3 style="margin-bottom:14px;">Performance &amp; Metrics</h3>
+          <!-- Card 1 — VMs & Container Metrics -->
+          <div class="card">
+            <h3 style="margin-bottom:14px;">VMs &amp; Container Metrics</h3>
             <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
-              <input type="checkbox" id="virt-metrics-toggle" onchange="onVirtMetricsToggle(event)" style="margin-top:2px;">
+              <input type="checkbox" id="virt-metrics-toggle" style="margin-top:2px;">
               <div>
                 <div style="font-size:13px;font-weight:600;">
                   Enable VM and Container Capacity &amp; Performance metrics
@@ -4214,6 +4287,10 @@ Select the Console tab to load.</pre>
             </label>
             <div id="virt-metrics-status" style="margin-top:14px;padding:8px 12px;background:var(--surface2);border-radius:6px;font-size:12px;color:var(--text-3);font-family:'SF Mono',monospace;">
               Endpoint status: <span id="virt-metrics-status-text">loading…</span>
+            </div>
+            <div class="virt-card-footer">
+              <span id="virt-metrics-msg" class="virt-card-msg"></span>
+              <button class="btn btn-primary btn-sm" onclick="applyVirtCard('metrics')">Apply</button>
             </div>
           </div>
 
@@ -4231,6 +4308,10 @@ Select the Console tab to load.</pre>
                 <i class="info-tip" data-tip="Seconds LXD waits for instances to stop cleanly before forcing them down at host shutdown. Higher = safer for slow-booting workloads, but lengthens reboot time."></i>
               </label>
               <input type="number" id="virt-shutdown-timeout" min="0" placeholder="60" style="max-width:160px;">
+            </div>
+            <div class="virt-card-footer">
+              <span id="virt-listener-msg" class="virt-card-msg"></span>
+              <button class="btn btn-primary btn-sm" onclick="applyVirtCard('listener')">Apply</button>
             </div>
           </div>
 
@@ -4266,6 +4347,10 @@ Select the Console tab to load.</pre>
                 <option value="none">none</option>
               </select>
             </div>
+            <div class="virt-card-footer">
+              <span id="virt-images-msg" class="virt-card-msg"></span>
+              <button class="btn btn-primary btn-sm" onclick="applyVirtCard('images')">Apply</button>
+            </div>
           </div>
 
           <!-- Card 4 — Backup compression -->
@@ -4284,42 +4369,152 @@ Select the Console tab to load.</pre>
                 <option value="none">none</option>
               </select>
             </div>
+            <div class="virt-card-footer">
+              <span id="virt-backup-msg" class="virt-card-msg"></span>
+              <button class="btn btn-primary btn-sm" onclick="applyVirtCard('backup')">Apply</button>
+            </div>
           </div>
 
-          <!-- Card 5 — Outbound proxy (collapsed) -->
-          <div class="card" style="grid-column:1/-1;">
-            <details>
-              <summary style="font-size:14px;font-weight:600;cursor:pointer;">Outbound proxy (rare)</summary>
-              <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;">
-                <div class="form-group" style="margin:0;">
-                  <label><code>core.proxy_https</code>
-                    <i class="info-tip" data-tip="HTTPS proxy URL LXD uses to reach external image registries and the auto-updater. Format: http://user:pass@host:port. Leave blank for direct access."></i>
+          <!-- Card 5 — Memory Compression (zram-tools), v6.5.3+. Self-contained:
+               has its own Apply / Disable buttons and doesn't participate in
+               the panel's "Save changes" flow. Lives in the 2-col grid like
+               every other config card. -->
+          <div class="card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <h3 style="margin:0;">Memory Compression
+                <i class="info-tip tip-down" data-tip="Allocates a portion of physical RAM as compressed swap (zram). Used by the kernel before any disk swap, so cold pages from VMs stay in RAM in compressed form instead of hitting NVMe. Best when VMs are over-committed; harmless when RAM is plentiful (zram only consumes RAM when actually swapping)."></i>
+              </h3>
+              <span id="memcomp-state-badge" style="font-size:11px;font-weight:600;padding:3px 8px;border-radius:10px;background:rgba(110,118,129,0.15);color:#8b949e;">unknown</span>
+            </div>
+
+            <!-- Status block -->
+            <div id="memcomp-status-box" style="background:var(--surface2);padding:12px 14px;border-radius:6px;font-size:13px;line-height:1.6;margin-bottom:14px;">
+              Loading…
+            </div>
+
+            <!-- Recommendation banner (computed from live state) -->
+            <div id="memcomp-reco" style="display:none;margin-bottom:14px;padding:10px 14px;border-left:3px solid #3fb950;background:rgba(63,185,80,0.08);border-radius:4px;font-size:12px;line-height:1.55;color:var(--text-2);"></div>
+
+            <!-- Install prereq prompt -->
+            <div id="memcomp-install-block" style="display:none;margin-bottom:14px;padding:14px;border:1px dashed var(--border);border-radius:6px;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">zram-tools is not installed</div>
+              <div style="font-size:12px;color:var(--text-3);margin-bottom:10px;line-height:1.55;">This card needs the Debian <code>zram-tools</code> package (~30 KB) to manage the compressed swap device. The package only adds a systemd unit and a config file; it doesn't change kernel parameters by itself.</div>
+              <button class="btn btn-primary btn-sm" onclick="memcompInstall()">Install zram-tools</button>
+              <pre id="memcomp-install-log" style="display:none;margin-top:10px;background:#000;color:#0f0;padding:8px;border-radius:4px;max-height:200px;overflow:auto;font-size:11px;line-height:1.4;"></pre>
+            </div>
+
+            <!-- Toggle + profile picker -->
+            <div id="memcomp-config-block">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;margin-bottom:14px;">
+                <input type="checkbox" id="memcomp-enabled" onchange="memcompUiSync()">
+                <strong>Enable Memory Compression (zram)</strong>
+              </label>
+
+              <div id="memcomp-profile-block" style="margin-left:24px;display:none;">
+                <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Profile</div>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+                  <label class="memcomp-profile" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:6px;cursor:pointer;border:1px solid transparent;">
+                    <input type="radio" name="memcomp-profile" value="conservative" onchange="memcompUiSync()" style="margin-top:2px;">
+                    <div>
+                      <div style="font-size:13px;font-weight:600;">Conservative — 10 % RAM, lz4</div>
+                      <div style="font-size:12px;color:var(--text-3);">Light cushion. Effective RAM ≈ 1.20× physical. Lowest CPU overhead.</div>
+                    </div>
                   </label>
-                  <input type="text" id="virt-proxy-https" placeholder="http://proxy:8080">
-                </div>
-                <div class="form-group" style="margin:0;">
-                  <label><code>core.proxy_http</code>
-                    <i class="info-tip" data-tip="HTTP proxy URL (same syntax). Used only when the upstream supports HTTP."></i>
+                  <label class="memcomp-profile" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:6px;cursor:pointer;border:1px solid transparent;">
+                    <input type="radio" name="memcomp-profile" value="balanced" onchange="memcompUiSync()" style="margin-top:2px;">
+                    <div>
+                      <div style="font-size:13px;font-weight:600;">Balanced — 25 % RAM, zstd</div>
+                      <div style="font-size:12px;color:var(--text-3);">Best for most. Effective RAM ≈ 1.50× physical. Negligible CPU when idle.</div>
+                    </div>
                   </label>
-                  <input type="text" id="virt-proxy-http" placeholder="http://proxy:8080">
-                </div>
-                <div class="form-group" style="margin:0;">
-                  <label><code>core.proxy_ignore_hosts</code>
-                    <i class="info-tip" data-tip="Comma-separated list of hosts to bypass the proxy for. Typically the local network range and any internal mirror you maintain."></i>
+                  <label class="memcomp-profile" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:6px;cursor:pointer;border:1px solid transparent;">
+                    <input type="radio" name="memcomp-profile" value="maximum" onchange="memcompUiSync()" style="margin-top:2px;">
+                    <div>
+                      <div style="font-size:13px;font-weight:600;">Maximum — 50 % RAM, zstd</div>
+                      <div style="font-size:12px;color:var(--text-3);">VM-heavy hosts. Effective RAM ≈ 2.00× physical. Use when over-committed.</div>
+                    </div>
                   </label>
-                  <input type="text" id="virt-proxy-ignore" placeholder="192.168.0.0/16,10.0.0.0/8">
+                  <label class="memcomp-profile" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:6px;cursor:pointer;border:1px solid transparent;">
+                    <input type="radio" name="memcomp-profile" value="custom" onchange="memcompUiSync()" style="margin-top:2px;">
+                    <div style="flex:1;">
+                      <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Custom</div>
+                      <div id="memcomp-custom-fields" style="display:none;display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+                        <label style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                          % RAM: <input type="number" id="memcomp-custom-pct" value="25" min="5" max="75" style="width:70px;" oninput="memcompUiSync()">
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                          Algorithm:
+                          <select id="memcomp-custom-algo" onchange="memcompUiSync()">
+                            <option value="zstd">zstd</option>
+                            <option value="lz4">lz4</option>
+                            <option value="lzo">lzo</option>
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                  </label>
                 </div>
+              </div>
+
+              <div style="display:flex;gap:10px;align-items:center;">
+                <button class="btn btn-primary" id="memcomp-apply" onclick="memcompApply()">Apply</button>
+                <button class="btn btn-ghost" id="memcomp-disable" onclick="memcompDisable()" style="display:none;">Disable</button>
+                <span id="memcomp-msg" style="font-size:12px;color:var(--text-3);"></span>
+              </div>
+            </div>
+
+            <!-- Live stats (only when enabled and the pool has data) -->
+            <div id="memcomp-stats-block" style="display:none;margin-top:14px;padding:12px 14px;background:var(--surface2);border-radius:6px;">
+              <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Live stats</div>
+              <div id="memcomp-stats-body" style="font-family:'SF Mono',monospace;font-size:12px;line-height:1.6;color:var(--text-2);"></div>
+            </div>
+
+            <!-- Collapsible "How to choose" guide -->
+            <details style="margin-top:16px;">
+              <summary style="cursor:pointer;font-size:12px;color:var(--text-2);">ⓘ Why this matters / how to choose</summary>
+              <div style="margin-top:10px;padding:12px 14px;background:var(--surface2);border-radius:6px;font-size:12px;line-height:1.7;color:var(--text-2);">
+                <p style="margin:0 0 8px 0;"><strong>What it does.</strong> Allocates a percentage of physical RAM as a compressed swap device (<code>/dev/zram0</code>). The kernel uses it before any disk swap, so cold pages from VMs end up compressed in RAM instead of hitting NVMe.</p>
+                <p style="margin:0 0 8px 0;"><strong>When to enable.</strong> If your VMs rarely peak past their allocations, leave it off. If you've seen the host swap to disk or VMs OOM-killed, turn it on.</p>
+                <p style="margin:0 0 8px 0;"><strong>Picking the percentage.</strong> Allocate more % when you want to over-commit RAM (run more VMs than physical RAM allows); allocate less when you only want a small safety net. Idle systems pay almost nothing — the % is the <em>maximum</em> pool size, not the running cost.</p>
+                <p style="margin:0 0 8px 0;"><strong>Algorithm.</strong> <code>zstd</code> is the default — best ratio (~3.5:1 typical), tiny CPU cost. <code>lz4</code> is the fastest with a worse ratio (~2:1), pick it only if CPU is constrained. <code>lzo</code> is legacy.</p>
+                <p style="margin:0 0 8px 0;"><strong>Costs.</strong> CPU: zstd uses ~2–4 % of one core under steady swap pressure, basically zero when idle. Latency: ~10 µs per page from zram vs ~100 µs–1 ms from disk swap, so this is always faster than disk. RAM: only used when the kernel actually swaps.</p>
+                <p style="margin:0;"><strong>What it doesn't fix.</strong> It can't replace adding RAM if your workload genuinely needs more — watch the swap-in rate. It can't help with memory leaks inside guests. It doesn't affect ZFS ARC (which lives in unswappable kernel memory).</p>
               </div>
             </details>
           </div>
 
-          <!-- Save button (full-width footer) -->
-          <div style="grid-column:1/-1;display:flex;justify-content:flex-end;gap:10px;">
-            <button class="btn btn-ghost" onclick="loadVirtSettings()">Reload</button>
-            <button class="btn btn-primary" onclick="saveVirtSettings()">Save changes</button>
+          <!-- Card 6 — Outbound proxy. Now a regular 50 %-width card with its
+               own Apply button; the three fields stack vertically inside the
+               narrower column instead of using the previous full-width inner
+               grid. Wrapped in <details> so it stays collapsed by default
+               (rare setting), but the title still has its info icon. -->
+          <div class="card">
+            <h3 style="margin-bottom:14px;">Outbound proxy
+              <i class="info-tip tip-down" data-tip="Configure an HTTPS/HTTP proxy LXD should use to reach external image registries and the auto-updater. Most home/lab setups don't need this — leave blank for direct access."></i>
+            </h3>
+            <div class="form-group">
+              <label><code>core.proxy_https</code>
+                <i class="info-tip" data-tip="HTTPS proxy URL LXD uses to reach external image registries and the auto-updater. Format: http://user:pass@host:port. Leave blank for direct access."></i>
+              </label>
+              <input type="text" id="virt-proxy-https" placeholder="http://proxy:8080">
+            </div>
+            <div class="form-group">
+              <label><code>core.proxy_http</code>
+                <i class="info-tip" data-tip="HTTP proxy URL (same syntax). Used only when the upstream supports HTTP."></i>
+              </label>
+              <input type="text" id="virt-proxy-http" placeholder="http://proxy:8080">
+            </div>
+            <div class="form-group">
+              <label><code>core.proxy_ignore_hosts</code>
+                <i class="info-tip" data-tip="Comma-separated list of hosts to bypass the proxy for. Typically the local network range and any internal mirror you maintain."></i>
+              </label>
+              <input type="text" id="virt-proxy-ignore" placeholder="192.168.0.0/16,10.0.0.0/8">
+            </div>
+            <div class="virt-card-footer">
+              <span id="virt-proxy-msg" class="virt-card-msg"></span>
+              <button class="btn btn-primary btn-sm" onclick="applyVirtCard('proxy')">Apply</button>
+            </div>
           </div>
-          <div id="virt-alert" class="alert alert-error hidden" style="grid-column:1/-1;"></div>
-          <div id="virt-ok" class="alert alert-success hidden" style="grid-column:1/-1;"></div>
         </div><!-- /stab-panel-virt -->
 
       </div>
@@ -8414,6 +8609,23 @@ Select the Console tab to load.</pre>
   </div>
 </div>
 
+<!-- ===== SysInfo Modal — visual hardware overview ===== -->
+<div class="modal-backdrop hidden" id="modal-sysinfo" onclick="if(event.target===this)closeSysInfo()">
+  <div class="modal sysinfo-modal" style="max-width:1100px;width:96vw;max-height:94vh;display:flex;flex-direction:column;padding:0;overflow:hidden;">
+    <div class="modal-header" style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,rgba(102,51,153,0.12) 0%,rgba(0,180,216,0.12) 50%,rgba(48,209,88,0.12) 100%);">
+      <h3 style="margin:0;display:flex;align-items:center;gap:10px;font-size:17px;">
+        <span class="sysinfo-title-icon">🖥️</span>
+        <span>System Hardware</span>
+        <span id="sysinfo-host-label" style="margin-left:8px;font-family:'SF Mono',monospace;font-size:13px;font-weight:500;color:var(--text-3);"></span>
+      </h3>
+      <button class="modal-close" onclick="closeSysInfo()" style="background:none;border:none;color:var(--text-2);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px;">✕</button>
+    </div>
+    <div id="sysinfo-body" style="overflow-y:auto;flex:1;padding:18px 24px 22px;">
+      <div style="text-align:center;color:var(--text-3);padding:60px 0;">Reading hardware…</div>
+    </div>
+  </div>
+</div>
+
 <!-- Add Capacity Guide Modal -->
 <div class="modal-backdrop hidden" id="modal-add-capacity-guide" onclick="if(event.target===this)closeAddCapacityGuide()">
   <div class="modal" style="max-width:660px;padding:0;overflow:hidden;max-height:90vh;display:flex;flex-direction:column;">
@@ -9333,13 +9545,20 @@ function updateVirtTabVisibility(lxdAvailable) {
   btn.style.display = lxdAvailable ? '' : 'none';
 }
 
+// v6.5.3+: cached snapshot of the last-loaded server state. Each card's
+// Apply button merges its own form fields into this object, then PUTs the
+// whole thing — that keeps the API call full-state (the backend treats
+// missing/empty fields as "unset") while preventing a card's Apply from
+// silently committing pending edits in another card. loadVirtSettings()
+// refreshes both the snapshot and the form inputs.
+let _virtConfig = {};
+
 async function loadVirtSettings() {
-  const alertEl = document.getElementById('virt-alert');
-  alertEl.classList.add('hidden');
   try {
-    const r = await fetch('/api/lxd/global-config');
+    const r = await fetch('/api/incus/global-config');
     if (!r.ok) throw new Error((await r.json()).error || 'failed');
     const c = await r.json();
+    _virtConfig = c || {};
     document.getElementById('virt-https-addr').value         = c.https_address || '';
     document.getElementById('virt-shutdown-timeout').value   = c.shutdown_timeout || '';
     document.getElementById('virt-proxy-https').value        = c.proxy_https || '';
@@ -9351,46 +9570,363 @@ async function loadVirtSettings() {
     document.getElementById('virt-compression-algo').value   = c.compression_algo || '';
     document.getElementById('virt-backup-compression').value = c.backup_compression || '';
   } catch (e) {
-    alertEl.textContent = 'Could not load LXD settings: ' + e.message;
-    alertEl.classList.remove('hidden');
+    // No global alert anymore — surface the error in every card's message
+    // slot so the failure is visible regardless of which card the user is
+    // looking at.
+    ['listener','images','backup','proxy'].forEach(card => {
+      _setVirtCardMsg(card, 'Could not load: ' + e.message, 'error');
+    });
+  }
+  // Memory Compression card refresh runs on its own cadence; trigger an
+  // immediate load when the tab opens so we don't wait the full 10 s.
+  loadMemCompCard();
+}
+
+// ── Memory Compression card (zram-tools) ──────────────────────────────────
+let _memCompCardTimer = null;
+let _memCompLastStatus = null;
+
+async function loadMemCompCard() {
+  try {
+    const r = await fetch('/api/memcomp/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    _memCompLastStatus = s;
+    renderMemCompCard(s);
+  } catch (_) {}
+}
+
+// Pull running-VM memory commit total from the /api/incus/instances list so
+// the recommendation engine can compare physical RAM to allocated VM RAM.
+async function _memCompComputeVMCommit() {
+  try {
+    const r = await fetch('/api/incus/instances');
+    if (!r.ok) return 0;
+    const list = await r.json();
+    let mb = 0;
+    for (const i of (list || [])) {
+      if (String(i.status) !== 'Running') continue;
+      const m = String(i.memory_limit || '').match(/^([\d.]+)\s*(MB|GB)?$/i);
+      if (!m) continue;
+      const n = parseFloat(m[1]);
+      mb += (m[2] || '').toUpperCase() === 'GB' ? n*1024 : n;
+    }
+    return mb;
+  } catch (_) { return 0; }
+}
+
+function _memCompPickProfile(s, vmCommitMB, totalMB) {
+  if (totalMB <= 0) return 'off';
+  const ratio = vmCommitMB / totalMB;
+  // The thresholds match the plan's decision-guidance algorithm.
+  if (ratio < 0.6) return 'off';
+  if (ratio < 0.9) return 'conservative';
+  if (ratio < 1.2) return 'balanced';
+  return 'maximum';
+}
+
+function _memCompProfilePreset(name) {
+  switch (name) {
+    case 'conservative': return { pct: 10, algo: 'lz4'  };
+    case 'balanced':     return { pct: 25, algo: 'zstd' };
+    case 'maximum':      return { pct: 50, algo: 'zstd' };
+    default:             return null;
   }
 }
 
-async function saveVirtSettings() {
-  const alertEl = document.getElementById('virt-alert');
-  const okEl    = document.getElementById('virt-ok');
-  alertEl.classList.add('hidden');
-  okEl.classList.add('hidden');
-  const body = {
-    https_address:         document.getElementById('virt-https-addr').value.trim(),
-    shutdown_timeout:      document.getElementById('virt-shutdown-timeout').value.trim(),
-    proxy_https:           document.getElementById('virt-proxy-https').value.trim(),
-    proxy_http:            document.getElementById('virt-proxy-http').value.trim(),
-    proxy_ignore_hosts:    document.getElementById('virt-proxy-ignore').value.trim(),
-    auto_update_interval:  document.getElementById('virt-auto-update-interval').value.trim(),
-    auto_update_cached:    document.getElementById('virt-auto-update-cached').checked,
-    remote_cache_expiry:   document.getElementById('virt-cache-expiry').value.trim(),
-    compression_algo:      document.getElementById('virt-compression-algo').value,
-    backup_compression:    document.getElementById('virt-backup-compression').value,
-  };
+async function renderMemCompCard(s) {
+  const installBlock = document.getElementById('memcomp-install-block');
+  const cfgBlock     = document.getElementById('memcomp-config-block');
+  const statusBox    = document.getElementById('memcomp-status-box');
+  const stateBadge   = document.getElementById('memcomp-state-badge');
+  if (!installBlock || !cfgBlock || !statusBox) return;
+
+  // Status badge
+  if (!s.available) {
+    stateBadge.textContent = 'not installed';
+    stateBadge.style.background = 'rgba(110,118,129,0.15)';
+    stateBadge.style.color = '#8b949e';
+  } else if (s.enabled) {
+    stateBadge.textContent = 'active · ' + s.percent_ram + '% · ' + s.algorithm;
+    stateBadge.style.background = 'rgba(63,185,80,0.15)';
+    stateBadge.style.color = '#3fb950';
+  } else {
+    stateBadge.textContent = 'disabled';
+    stateBadge.style.background = 'rgba(240,180,41,0.15)';
+    stateBadge.style.color = '#f0b429';
+  }
+
+  installBlock.style.display = s.available ? 'none' : 'block';
+  cfgBlock.style.display     = s.available ? 'block' : 'none';
+  if (!s.available) {
+    // The user hasn't installed zram-tools yet; pull live RAM info anyway so
+    // they can see the system characteristics that drive the recommendation.
+    try {
+      const m = await (await fetch('/api/sysinfo/mem-procs')).json();
+      if (m && m.total_mb > 0) {
+        const totalGB = (m.total_mb/1024).toFixed(1);
+        const usedGB  = (m.used_mb/1024).toFixed(1);
+        const usedPct = (m.used_mb/m.total_mb*100).toFixed(0);
+        statusBox.innerHTML =
+          `<div><strong>Physical RAM:</strong> ${totalGB} GB · <strong>Currently used:</strong> ${usedGB} GB (${usedPct}%)</div>` +
+          `<div style="margin-top:6px;color:var(--text-3);font-size:12px;">Install <code>zram-tools</code> below to enable memory compression.</div>`;
+      }
+    } catch(_){}
+    return;
+  }
+
+  // Status text — pull live mem from /api/sysinfo/mem-procs
+  let memData = null;
+  try { memData = await (await fetch('/api/sysinfo/mem-procs')).json(); } catch(_) {}
+  const totalMB = memData ? memData.total_mb : 0;
+  const usedMB  = memData ? memData.used_mb  : 0;
+  const usedPct = totalMB > 0 ? (usedMB/totalMB*100) : 0;
+  const vmCommitMB = await _memCompComputeVMCommit();
+
+  const totalGB = (totalMB/1024).toFixed(1);
+  const usedGB  = (usedMB/1024).toFixed(1);
+  const vmGB    = (vmCommitMB/1024).toFixed(1);
+  let html = `<div><strong>Physical RAM:</strong> ${totalGB} GB · <strong>Currently used:</strong> ${usedGB} GB (${usedPct.toFixed(0)}%)</div>`;
+  if (vmCommitMB > 0) {
+    html += `<div style="margin-top:4px;"><strong>Running VMs allocated:</strong> ${vmGB} GB total (` +
+            `${(vmCommitMB/totalMB*100).toFixed(0)}% of physical)</div>`;
+  }
+  statusBox.innerHTML = html;
+
+  // Recommendation banner
+  const recoEl = document.getElementById('memcomp-reco');
+  const reco = _memCompPickProfile(s, vmCommitMB, totalMB);
+  if (reco === 'off') {
+    if (s.enabled) {
+      recoEl.innerHTML = `<strong>Tip:</strong> your VM allocation (${vmGB} GB) is well under physical RAM, so memory compression isn't strictly needed. Leaving it on is fine — it costs nothing while idle.`;
+    } else {
+      recoEl.innerHTML = `<strong>Recommendation:</strong> your running VMs have ${vmGB} GB allocated against ${totalGB} GB physical — you have headroom, leaving compression off is fine.`;
+    }
+    recoEl.style.borderLeftColor = '#8b949e';
+    recoEl.style.background = 'rgba(110,118,129,0.08)';
+  } else {
+    const preset = _memCompProfilePreset(reco);
+    recoEl.innerHTML = `<strong>Recommendation:</strong> running VMs have ${vmGB} GB allocated against ${totalGB} GB physical — pick <strong>${reco.charAt(0).toUpperCase()+reco.slice(1)}</strong> (${preset.pct}% RAM, ${preset.algo}) for best fit.`;
+    recoEl.style.borderLeftColor = '#3fb950';
+    recoEl.style.background = 'rgba(63,185,80,0.08)';
+  }
+  recoEl.style.display = 'block';
+
+  // Sync form to current state
+  const enabledCb = document.getElementById('memcomp-enabled');
+  enabledCb.checked = !!s.enabled;
+  // Pick the radio that matches s.percent_ram + s.algorithm if it does.
+  const presets = { conservative:[10,'lz4'], balanced:[25,'zstd'], maximum:[50,'zstd'] };
+  let matched = 'custom';
+  for (const [name, [p, a]] of Object.entries(presets)) {
+    if (s.percent_ram === p && s.algorithm === a) { matched = name; break; }
+  }
+  // If nothing's enabled yet, pre-select the recommendation; otherwise
+  // reflect the current persisted profile.
+  const wantSel = s.enabled ? matched : (reco === 'off' ? 'balanced' : reco);
+  document.querySelectorAll('input[name="memcomp-profile"]').forEach(r => r.checked = (r.value === wantSel));
+  document.getElementById('memcomp-custom-pct').value  = s.percent_ram || (s.enabled ? 25 : 25);
+  document.getElementById('memcomp-custom-algo').value = s.algorithm || 'zstd';
+  memcompUiSync();
+
+  // Disable button visible only when currently enabled.
+  document.getElementById('memcomp-disable').style.display = s.enabled ? '' : 'none';
+
+  // Live stats panel
+  const statsBlock = document.getElementById('memcomp-stats-block');
+  const statsBody  = document.getElementById('memcomp-stats-body');
+  if (s.enabled && s.disk_size_bytes > 0) {
+    const fmt = (n) => {
+      if (n >= 1e9) return (n/1e9).toFixed(2) + ' GB';
+      if (n >= 1e6) return (n/1e6).toFixed(0) + ' MB';
+      if (n >= 1e3) return (n/1e3).toFixed(0) + ' KB';
+      return n + ' B';
+    };
+    const saved = Math.max(0, s.orig_data_bytes - s.compr_data_bytes);
+    statsBody.innerHTML =
+      `Pool size: ${fmt(s.disk_size_bytes)} (${s.percent_ram}% of physical) · ${s.algorithm}<br>` +
+      `Stored uncompressed: ${fmt(s.orig_data_bytes)}<br>` +
+      `Stored compressed:   ${fmt(s.compr_data_bytes)} <span style="color:var(--text-3);">(${fmt(saved)} saved)</span><br>` +
+      `Ratio: <strong>${s.ratio ? s.ratio.toFixed(2) : '0.00'}×</strong>` +
+      `<br>Swap-used: ${fmt(s.swap_used_bytes)}`;
+    statsBlock.style.display = 'block';
+  } else {
+    statsBlock.style.display = 'none';
+  }
+}
+
+function memcompUiSync() {
+  const enabled = document.getElementById('memcomp-enabled').checked;
+  document.getElementById('memcomp-profile-block').style.display = enabled ? '' : 'none';
+  // Highlight selected profile card; show custom fields only when "custom".
+  const sel = document.querySelector('input[name="memcomp-profile"]:checked');
+  document.querySelectorAll('label.memcomp-profile').forEach(l => {
+    const r = l.querySelector('input[type=radio]');
+    l.style.borderColor = (sel && r === sel) ? 'var(--accent)' : 'transparent';
+  });
+  document.getElementById('memcomp-custom-fields').style.display =
+    (sel && sel.value === 'custom') ? 'flex' : 'none';
+}
+
+function _memcompCollectConfig() {
+  const enabled = document.getElementById('memcomp-enabled').checked;
+  if (!enabled) return { enabled:false, percent_ram:0, algorithm:'zstd' };
+  const sel = document.querySelector('input[name="memcomp-profile"]:checked');
+  if (!sel || sel.value === 'custom') {
+    return {
+      enabled: true,
+      percent_ram: parseInt(document.getElementById('memcomp-custom-pct').value, 10) || 25,
+      algorithm: document.getElementById('memcomp-custom-algo').value || 'zstd',
+    };
+  }
+  const p = _memCompProfilePreset(sel.value);
+  return { enabled:true, percent_ram:p.pct, algorithm:p.algo };
+}
+
+async function memcompApply() {
+  const msg = document.getElementById('memcomp-msg');
+  msg.style.color = ''; msg.textContent = 'Applying…';
+  const cfg = _memcompCollectConfig();
   try {
-    const r = await fetch('/api/lxd/global-config', {
+    const r = await fetch('/api/memcomp/config', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(cfg),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(()=>({error:'apply failed'}));
+      throw new Error(d.error || 'apply failed');
+    }
+    msg.style.color = '#3fb950';
+    msg.textContent = 'Applied.';
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+    loadMemCompCard();
+  } catch(e) {
+    msg.style.color = 'var(--accent-danger)';
+    msg.textContent = e.message;
+  }
+}
+
+async function memcompDisable() {
+  if (!confirm('Disable memory compression? Pages currently held in zram will be paged back into physical RAM (this can take a few seconds).')) return;
+  document.getElementById('memcomp-enabled').checked = false;
+  await memcompApply();
+}
+
+async function memcompInstall() {
+  const log = document.getElementById('memcomp-install-log');
+  log.style.display = 'block';
+  log.textContent = '';
+  const wsURL = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws/memcomp-install';
+  const ws = new WebSocket(wsURL);
+  ws.onmessage = (ev) => {
+    try {
+      const m = JSON.parse(ev.data);
+      if (m.line) { log.textContent += m.line + '\n'; log.scrollTop = log.scrollHeight; }
+      if (m.done) {
+        log.textContent += (m.success ? '\n✓ ' : '\n✗ ') + m.message + '\n';
+        if (m.success) setTimeout(loadMemCompCard, 600);
+      }
+    } catch(_) {}
+  };
+  ws.onerror = () => { log.textContent += '\n[connection error]\n'; };
+}
+
+// Auto-refresh card while the Virtualization tab is visible.
+function _memCompTabRefreshTick() {
+  const panel = document.getElementById('stab-panel-virt');
+  if (panel && panel.style.display !== 'none' && document.visibilityState === 'visible') {
+    loadMemCompCard();
+  }
+}
+if (!_memCompCardTimer) _memCompCardTimer = setInterval(_memCompTabRefreshTick, 10000);
+
+// _setVirtCardMsg writes a small message in the named card's footer slot,
+// styled green (ok) / red (error) / muted (info). Auto-clears OK/info
+// after 4 s; errors stick until the next Apply.
+function _setVirtCardMsg(card, msg, kind) {
+  const el = document.getElementById('virt-' + card + '-msg');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove('ok', 'error');
+  if (kind === 'ok')    el.classList.add('ok');
+  if (kind === 'error') el.classList.add('error');
+  if (kind !== 'error') {
+    setTimeout(() => {
+      if (el.textContent === msg) { el.textContent = ''; el.classList.remove('ok'); }
+    }, 4000);
+  }
+}
+
+// applyVirtCard sends a per-card update to /api/incus/global-config. The
+// backend treats every field in the body as authoritative — missing or
+// empty fields cause keys to be unset — so we always send the FULL body
+// but build it from `_virtConfig` (the last-loaded server state) and only
+// override the fields owned by the card being applied. That way clicking
+// Apply on one card never silently commits a pending edit in another.
+async function applyVirtCard(card) {
+  // Metrics card uses a separate endpoint (toggles the LXD metrics listener
+  // + portal scraper). Route it first and short-circuit so the
+  // global-config snapshot dance below stays focused on Incus config keys.
+  if (card === 'metrics') {
+    return applyVirtMetricsCard();
+  }
+  // Refresh the snapshot from the server immediately before applying so
+  // we don't fight a parallel edit through some other channel and don't
+  // re-set fields that were already at their server-side value. The
+  // backend treats every key in the body as authoritative (empty string
+  // = unset, null = leave alone), so the snapshot has to be exactly
+  // what the server reports — including the original nil/null
+  // distinction for the *bool fields.
+  try {
+    const r = await fetch('/api/incus/global-config');
+    if (r.ok) _virtConfig = await r.json();
+  } catch (_) {}
+  // Build the body from the snapshot, preserving each value's exact
+  // type (string vs null vs true/false). Spread+JSON-roundtrip to
+  // avoid leaking any client-side mutations back into _virtConfig.
+  const body = JSON.parse(JSON.stringify(_virtConfig || {}));
+  // Card → owned fields. Override only those from the live form values.
+  switch (card) {
+    case 'listener':
+      body.https_address    = document.getElementById('virt-https-addr').value.trim();
+      body.shutdown_timeout = document.getElementById('virt-shutdown-timeout').value.trim();
+      break;
+    case 'images':
+      body.auto_update_interval = document.getElementById('virt-auto-update-interval').value.trim();
+      body.auto_update_cached   = document.getElementById('virt-auto-update-cached').checked;
+      body.remote_cache_expiry  = document.getElementById('virt-cache-expiry').value.trim();
+      body.compression_algo     = document.getElementById('virt-compression-algo').value;
+      break;
+    case 'backup':
+      body.backup_compression = document.getElementById('virt-backup-compression').value;
+      break;
+    case 'proxy':
+      body.proxy_https        = document.getElementById('virt-proxy-https').value.trim();
+      body.proxy_http         = document.getElementById('virt-proxy-http').value.trim();
+      body.proxy_ignore_hosts = document.getElementById('virt-proxy-ignore').value.trim();
+      break;
+    default:
+      return;
+  }
+  _setVirtCardMsg(card, 'Applying…', 'info');
+  try {
+    const r = await fetch('/api/incus/global-config', {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'failed');
+    // Refresh the cached snapshot with the new server-side truth so the
+    // next per-card Apply sees up-to-date values for the other cards.
+    _virtConfig = body;
     if (data.changed && data.changed.length) {
-      okEl.textContent = 'Saved: ' + data.changed.join(', ');
+      _setVirtCardMsg(card, 'Saved: ' + data.changed.join(', '), 'ok');
     } else {
-      okEl.textContent = 'No changes to save.';
+      _setVirtCardMsg(card, 'No changes.', 'info');
     }
-    okEl.classList.remove('hidden');
-    setTimeout(() => okEl.classList.add('hidden'), 4000);
   } catch (e) {
-    alertEl.textContent = 'Save failed: ' + e.message;
-    alertEl.classList.remove('hidden');
+    _setVirtCardMsg(card, 'Save failed: ' + e.message, 'error');
   }
 }
 
@@ -9398,7 +9934,7 @@ async function loadVirtMetricsStatus() {
   const cb = document.getElementById('virt-metrics-toggle');
   const txt = document.getElementById('virt-metrics-status-text');
   try {
-    const r = await fetch('/api/lxd/metrics-status');
+    const r = await fetch('/api/incus/metrics-status');
     if (!r.ok) throw new Error('status fetch failed');
     const s = await r.json();
     cb.checked = !!s.enabled;
@@ -9416,7 +9952,7 @@ async function loadVirtMetricsStatus() {
       return;
     }
     try {
-      const r = await fetch('/api/lxd/metrics-status');
+      const r = await fetch('/api/incus/metrics-status');
       if (!r.ok) return;
       const s = await r.json();
       txt.innerHTML = renderVirtMetricsStatus(s);
@@ -9455,12 +9991,18 @@ function renderVirtMetricsStatus(s) {
   return html;
 }
 
-async function onVirtMetricsToggle(ev) {
-  const want = ev.target.checked;
-  const alertEl = document.getElementById('virt-alert');
-  alertEl.classList.add('hidden');
+// applyVirtMetricsCard commits the staged checkbox state to the metrics
+// listener. Runs on Apply click so the card matches the deferred-edit pattern
+// of every other Virtualization card. The 409 conflict path (LXD already
+// listening on a non-default address) still triggers a confirm dialog before
+// forcing the change.
+async function applyVirtMetricsCard() {
+  const cb = document.getElementById('virt-metrics-toggle');
+  if (!cb) return;
+  const want = cb.checked;
+  _setVirtCardMsg('metrics', 'Applying…', 'info');
   try {
-    let r = await fetch('/api/lxd/metrics-toggle', {
+    let r = await fetch('/api/incus/metrics-toggle', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({enabled: want, force: false}),
@@ -9471,23 +10013,27 @@ async function onVirtMetricsToggle(ev) {
         '. Enabling the portal\'s built-in monitoring would change that to 127.0.0.1:9101 ' +
         'and break your external scraper. Continue?');
       if (!ok) {
-        ev.target.checked = !want;
+        // User backed out — restore the checkbox to the live server state and
+        // clear the inline message.
+        await loadVirtMetricsStatus();
+        _setVirtCardMsg('metrics', '', 'info');
         return;
       }
-      r = await fetch('/api/lxd/metrics-toggle', {
+      r = await fetch('/api/incus/metrics-toggle', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({enabled: want, force: true}),
       });
     }
     if (!r.ok) throw new Error((await r.json()).error || 'failed');
-    // Refresh both panels — the global app config flag has changed.
     await refreshAppConfigFlags();
     await loadVirtMetricsStatus();
+    _setVirtCardMsg('metrics', want ? 'Metrics endpoint enabled.' : 'Metrics endpoint disabled.', 'ok');
   } catch (e) {
-    ev.target.checked = !want;
-    alertEl.textContent = 'Toggle failed: ' + e.message;
-    alertEl.classList.remove('hidden');
+    // Snap the checkbox back to the live state on failure so it doesn't lie
+    // about the actual listener state.
+    await loadVirtMetricsStatus();
+    _setVirtCardMsg('metrics', 'Apply failed: ' + e.message, 'error');
   }
 }
 
@@ -9587,6 +10133,203 @@ function openAbout() {
 }
 function closeAbout() {
   document.getElementById('modal-about').classList.add('hidden');
+}
+
+// ===== SysInfo modal — visual hardware overview =============================
+function openSysInfo() {
+  const m = document.getElementById('modal-sysinfo');
+  m.classList.remove('hidden');
+  document.getElementById('sysinfo-body').innerHTML =
+    '<div style="text-align:center;color:var(--text-3);padding:60px 0;">' +
+    '<div style="display:inline-block;width:24px;height:24px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;"></div>' +
+    '<div style="margin-top:14px;">Reading hardware…</div></div>';
+  fetch('/api/sysinfo/hardware-detailed')
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(data => _renderSysInfo(data))
+    .catch(err => {
+      document.getElementById('sysinfo-body').innerHTML =
+        '<div style="color:var(--accent-danger);padding:24px;text-align:center;">Failed to read hardware info: ' + esc(err.message) + '</div>';
+    });
+}
+function closeSysInfo() {
+  document.getElementById('modal-sysinfo').classList.add('hidden');
+}
+
+function _sysinfoBytesPretty(n) {
+  if (!n || n <= 0) return '—';
+  const units = ['B','KB','MB','GB','TB','PB'];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  const dec = (v >= 100 || i <= 1) ? 0 : (v >= 10 ? 1 : 2);
+  return v.toFixed(dec) + ' ' + units[i];
+}
+
+function _renderSysInfo(data) {
+  const cpu  = data.cpu  || {};
+  const mem  = data.memory || {};
+  const mb   = data.motherboard || {};
+  const bios = data.bios || {};
+  const sys  = data.system || {};
+  const ctrls = data.controllers || [];
+
+  // Title hostname / chassis identity
+  const hostLbl = document.getElementById('sysinfo-host-label');
+  if (hostLbl) {
+    const id = sys.product_name || mb.product || sys.hostname || '';
+    hostLbl.textContent = id ? '· ' + id : '';
+  }
+
+  // CPU chip
+  const cpuVendor = cpu.vendor || '';
+  const cpuModel  = cpu.model  || 'Unknown CPU';
+  const cpuFreq   = cpu.max_ghz ? cpu.max_ghz.toFixed(2) + ' GHz' : (cpu.base_ghz ? cpu.base_ghz.toFixed(2) + ' GHz' : '—');
+  const cpuBase   = cpu.base_ghz ? cpu.base_ghz.toFixed(2) + ' GHz' : '—';
+  // Cores cell: hybrid CPUs (Intel Alder Lake+ etc.) get a P/E breakdown.
+  // Single-line format keeps the spec grid tidy:
+  //   6P + 8E: 14 Cores (12P + 8E: 20 Threads)
+  let coresCell;
+  if (cpu.hybrid && (cpu.p_cores > 0 || cpu.e_cores > 0)) {
+    const p  = '<span class="sysinfo-pcore">' + cpu.p_cores + 'P</span>';
+    const e  = '<span class="sysinfo-ecore">' + cpu.e_cores + 'E</span>';
+    const pT = '<span class="sysinfo-pcore">' + cpu.p_threads + 'P</span>';
+    const eT = '<span class="sysinfo-ecore">' + cpu.e_threads + 'E</span>';
+    coresCell = `${p} + ${e}: ${cpu.cores || '—'} Cores ` +
+      `<span style="color:var(--text-3);">(${pT} + ${eT}: ${cpu.threads || 0} Threads)</span>`;
+  } else {
+    coresCell = `${cpu.cores || '—'} Cores${cpu.threads ? ' <span style="color:var(--text-3);">(' + cpu.threads + ' Threads)</span>' : ''}`;
+  }
+  const cpuChip = `
+    <div class="sysinfo-chip is-cpu">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">⚙️</span>CPU</div>
+      <div class="sysinfo-headline">${esc(cpuModel)}</div>
+      <div class="sysinfo-subline">${cpuVendor ? esc(cpuVendor) + ' · ' : ''}${cpu.arch ? esc(cpu.arch) : ''}${cpu.hybrid ? ' <span class="sysinfo-hybrid-badge">Hybrid</span>' : ''}</div>
+      <dl class="sysinfo-specs">
+        <dt>Sockets</dt><dd>${cpu.sockets || 1}</dd>
+        <dt>Cores</dt><dd>${coresCell}</dd>
+        <dt>Base</dt><dd>${cpuBase}</dd>
+        <dt>Max</dt><dd>${cpuFreq}</dd>
+      </dl>
+    </div>`;
+
+  // RAM chip with DIMM stick visualisation
+  const totalGB = (mem.total_bytes || 0) / (1024*1024*1024);
+  const dimms = mem.dimms || [];
+  // Speed range (lowest, highest) when there's >1 unique speed.
+  const speeds = [...new Set(dimms.map(d => d.speed_mts).filter(s => s > 0))];
+  const speedSummary = speeds.length === 0 ? '—'
+    : speeds.length === 1 ? (speeds[0] + ' MT/s')
+    : Math.min(...speeds) + '–' + Math.max(...speeds) + ' MT/s';
+  const dimmTypes = [...new Set(dimms.map(d => d.type).filter(Boolean))];
+  let dimmGrid = '';
+  if (dimms.length > 0) {
+    dimmGrid = '<div class="sysinfo-dimm-grid">' + dimms.map(d => {
+      const sizeStr = _sysinfoBytesPretty(d.size_bytes);
+      const speed = d.speed_mts ? d.speed_mts + ' MT/s' : '';
+      return `<div class="sysinfo-dimm" title="${esc(d.locator || '')}${d.part_number ? ' — ' + esc(d.part_number) : ''}">
+        <span class="sysinfo-dimm-locator">${esc(d.locator || '')}</span>
+        <div class="sysinfo-dimm-size">${sizeStr}</div>
+        <div class="sysinfo-dimm-speed">${esc(speed)}</div>
+        <div class="sysinfo-dimm-vendor">${esc(d.manufacturer || d.type || '')}</div>
+      </div>`;
+    }).join('') + '</div>';
+  } else {
+    dimmGrid = '<div style="margin-top:10px;font-size:12px;color:var(--text-3);font-style:italic;">Per-DIMM detail unavailable (dmidecode access required).</div>';
+  }
+  const ramSublineParts = [];
+  if (dimms.length > 0) ramSublineParts.push(dimms.length + ' module' + (dimms.length === 1 ? '' : 's'));
+  if (dimmTypes.length > 0) ramSublineParts.push(dimmTypes.join('/'));
+  if (speedSummary !== '—') ramSublineParts.push(speedSummary);
+  const ramChip = `
+    <div class="sysinfo-chip is-ram">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">🧠</span>Memory</div>
+      <div class="sysinfo-headline">${totalGB > 0 ? totalGB.toFixed(1) + ' GB total' : '—'}</div>
+      <div class="sysinfo-subline">${esc(ramSublineParts.join(' · '))}</div>
+      ${dimmGrid}
+    </div>`;
+
+  // Motherboard chip
+  const mbChip = `
+    <div class="sysinfo-chip is-mobo">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">🟩</span>Motherboard</div>
+      <div class="sysinfo-headline">${esc(mb.product || 'Unknown')}</div>
+      <div class="sysinfo-subline">${esc(mb.manufacturer || '')}</div>
+      <dl class="sysinfo-specs">
+        ${mb.version ? `<dt>Revision</dt><dd>${esc(mb.version)}</dd>` : ''}
+        ${mb.serial  ? `<dt>Serial</dt><dd>${esc(mb.serial)}</dd>`    : ''}
+      </dl>
+    </div>`;
+
+  // BIOS chip
+  const biosChip = `
+    <div class="sysinfo-chip is-bios">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">📜</span>BIOS / Firmware</div>
+      <div class="sysinfo-headline">${esc(bios.version || '—')}</div>
+      <div class="sysinfo-subline">${esc(bios.vendor || '')}</div>
+      ${bios.release_date ? `<dl class="sysinfo-specs"><dt>Release</dt><dd>${esc(bios.release_date)}</dd></dl>` : ''}
+    </div>`;
+
+  // System / chassis chip — spans the full row so it doesn't sit alone in
+  // an empty column.
+  const sysChip = `
+    <div class="sysinfo-chip is-system sysinfo-grid-row">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">🖥️</span>System</div>
+      <div class="sysinfo-headline">${esc(sys.product_name || sys.hostname || '—')}</div>
+      <div class="sysinfo-subline">${esc(sys.manufacturer || '')}</div>
+      <dl class="sysinfo-specs">
+        ${sys.hostname ? `<dt>Hostname</dt><dd>${esc(sys.hostname)}</dd>` : ''}
+        ${sys.serial   ? `<dt>Serial</dt><dd>${esc(sys.serial)}</dd>`     : ''}
+      </dl>
+    </div>`;
+
+  // Storage controllers — full-row block listing each controller card.
+  let ctrlBlock = '';
+  if (ctrls.length === 0) {
+    ctrlBlock = `<div class="sysinfo-chip is-ctrl sysinfo-grid-row">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">💽</span>Storage Controllers</div>
+      <div class="sysinfo-subline" style="margin-top:8px;">No storage controllers detected.</div>
+    </div>`;
+  } else {
+    const cards = ctrls.map(c => {
+      const disks = (c.disks || []).map(d => {
+        const sz = _sysinfoBytesPretty(d.size_bytes);
+        const ico = d.rotation === 'hdd' ? '💽' : (d.device.startsWith('nvme') ? '⚡' : '💾');
+        return `<div class="sysinfo-disk">
+          <span class="sysinfo-disk-icon">${ico}</span>
+          <div class="sysinfo-disk-info">
+            <span class="sysinfo-disk-dev">/dev/${esc(d.device)}</span>
+            <span class="sysinfo-disk-meta" title="${esc(d.model || '')}">${esc(d.model || '—')}${d.size_bytes ? ' · ' + sz : ''}</span>
+          </div>
+        </div>`;
+      }).join('') || '<div style="font-size:12px;color:var(--text-3);font-style:italic;padding:6px 2px;">No disks attached</div>';
+      const diskCount = (c.disks || []).length;
+      return `<div class="sysinfo-ctrl-card">
+        <div class="sysinfo-ctrl-head">
+          <span class="sysinfo-ctrl-model">${esc(c.model || c.vendor || 'Unknown controller')}</span>
+          <span class="sysinfo-ctrl-class">${esc(c.class || '')}</span>
+          <span class="sysinfo-ctrl-slot" style="margin-left:auto;">${esc(c.slot || '')}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:8px;">${esc(c.vendor || '')} · ${diskCount} disk${diskCount === 1 ? '' : 's'}</div>
+        <div class="sysinfo-ctrl-disks">${disks}</div>
+      </div>`;
+    }).join('');
+    ctrlBlock = `<div class="sysinfo-chip is-ctrl sysinfo-grid-row">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">💽</span>Storage Controllers</div>
+      <div class="sysinfo-ctrl" style="margin-top:10px;">${cards}</div>
+    </div>`;
+  }
+
+  document.getElementById('sysinfo-body').innerHTML = `
+    <div class="sysinfo-board">
+      <div class="sysinfo-grid">
+        ${cpuChip}
+        ${ramChip}
+        ${mbChip}
+        ${biosChip}
+        ${sysChip}
+        ${ctrlBlock}
+      </div>
+    </div>
+  `;
 }
 
 // ===== Activity Bar =====
@@ -9734,6 +10477,32 @@ function _auditEventMeta(e) {
       return { icon:'🟢', label:'Disk recovered', labelStyle:'color:var(--accent-3);font-weight:600;', rowStyle:'border-left:2px solid var(--accent-3);padding-left:6px;', isSystem:true };
     case 'proxmox_import':
       return { icon: e.result === 'ok' ? '📥' : '❌', label:'Proxmox VM import', labelStyle: e.result === 'ok' ? 'color:var(--accent-3);' : 'color:var(--accent-danger);', rowStyle:'', isSystem:false };
+    case 'incus_state_change': {
+      // OOM kills always render with a red bullet + red side-rail regardless
+      // of the next state — losing a VM to the kernel OOM-killer is a
+      // problem the operator needs to see, not just a generic state change.
+      if (/out of memory/i.test(e.details || '')) {
+        return {
+          icon: '🔴',
+          label: 'VM/Container killed (out of memory)',
+          labelStyle: 'color:var(--accent-danger);font-weight:600;',
+          rowStyle: 'border-left:2px solid var(--accent-danger);padding-left:6px;',
+          isSystem: true,
+        };
+      }
+      // Otherwise pick an icon from the new state in the details
+      // (which is "Old → New"). Running gets a green dot, Stopped a grey
+      // circle, anything else a yellow dot to surface transient/unknown
+      // states for review.
+      const m = (e.details || '').match(/→\s*([A-Za-z]+)/);
+      const next = m ? m[1] : '';
+      let icon = '🔄';
+      if (next === 'Running')        icon = '🟢';
+      else if (next === 'Stopped')   icon = '⚪';
+      else if (next === 'Frozen')    icon = '🟦';
+      else if (next === 'Crashed' || next === 'Error') icon = '🔴';
+      return { icon, label:'VM/Container state change', labelStyle:'color:var(--text-2);', rowStyle:'', isSystem:true };
+    }
     default:
       return { icon: e.result === 'ok' ? '✅' : '❌', label: e.action.replace(/_/g,' '), labelStyle:'', rowStyle:'', isSystem: e.user === 'system' };
   }
@@ -21693,7 +22462,7 @@ function renderUPSPanel(body, s, cfg) {
         <div style="position:absolute;left:0;top:0;height:100%;width:${fillPct}%;background:${fillColor};transition:width 0.6s;border-radius:6px 0 0 6px;opacity:0.8;"></div>
         <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;">${charge != null ? charge + '%' : '—'}</div>
       </div>
-      <div style="font-size:12px;color:var(--text-3);margin-top:5px;">${runtimeMins != null ? runtimeMins + ' min remaining' : (s.battery_source && st.on_battery ? 'Estimating runtime…' : '')}</div>
+      ${_upsRuntimeRow(st, s)}
       <div style="margin-top:8px;">${statusBadge}</div>
     </div>
 
@@ -21703,6 +22472,35 @@ function renderUPSPanel(body, s, cfg) {
     ${shutdownSection}
   `;
   if (document.getElementById('ups-mode-select')) { initCustomSelect('ups-mode-select'); csRefresh('ups-mode-select'); }
+}
+
+// _upsRuntimeRow renders the "runtime if AC drops" estimate beneath the
+// battery bar. The value is firmware-reported by NUT (battery.runtime, almost
+// universally available on NUT-supported UPSes) and recorded to RRD as
+// ups:runtime_secs by StartUPSRRDCollector — already plotted on the UPS chart
+// as the "Time Remaining" series. We just render it prominently here so the
+// information is visible at a glance.
+function _upsRuntimeRow(st, s) {
+  const runtimeSecs = st && st.runtime_secs != null ? st.runtime_secs : null;
+  if (runtimeSecs == null) {
+    if (s && s.battery_source && st && !st.on_battery) {
+      return '<div style="font-size:11px;color:var(--text-3);margin-top:6px;">Runtime estimate available only while discharging.</div>';
+    }
+    return '';
+  }
+  const totalMin = Math.max(0, Math.round(runtimeSecs / 60));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const pretty = h > 0 ? `${h}h ${m}m` : `${m} min`;
+  // Colour the duration like the battery icon: green ≥ 30 min, amber 10-30, red < 10.
+  const col = totalMin >= 30 ? '#30d158' : totalMin >= 10 ? '#ff9f0a' : '#ff453a';
+  const onBatt = st && st.on_battery;
+  const label  = onBatt ? 'remaining on battery' : 'on battery if AC drops';
+  return `
+    <div style="margin-top:8px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;color:var(--text-2);">
+      <span style="font-size:14px;line-height:1;">⏱</span>
+      <span><strong style="color:${col};font-size:14px;">${pretty}</strong> ${label}</span>
+    </div>`;
 }
 
 function _upsShutdownForm(upsEnabled, policy, trigType, pct, mins, cfg, isBatSource) {
@@ -23586,8 +24384,43 @@ function _updateCpuGauge(data) {
   setH('cpu-seg-vm',        data.vm_pct);
   setH('cpu-seg-container', data.container_pct);
   setH('cpu-seg-other',     data.other_pct);
+  // v6.5.3+: traffic-light readout. Total % = sum of category percentages
+  // (no over-100 case for CPU). Thresholds: <60 green, 60-80 yellow, ≥80 red.
+  const cpuTotal = ['smb','nfs','zfs','minio','iscsi','vm','container','other']
+    .reduce((s, k) => s + (data[k+'_pct'] || 0), 0);
+  _setBarPctReadout('cpu-pct-readout', cpuTotal, 60, 80);
   // Refresh tooltip content in-place if the user is currently hovering.
   if (_cpuGaugeHovered) _renderCpuTooltip();
+}
+
+// v6.5.3+: shared helper for the small percentage readout under each
+// gauge. Thresholds are passed in by the caller — the same readout chrome
+// is reused with different cut-offs for CPU, MEM (zram off / zram on),
+// and SWAP. warnAt is the green→yellow boundary, critAt the yellow→red.
+//
+// Current callsites:
+//   CPU         → 60 / 80
+//   MEM (off)   → 75 / 90
+//   MEM (zram)  → 125 / 150     (pct can exceed 100 % when working set
+//                                spills into compressed swap)
+//   SWAP        → 60 / 80
+//
+// We render whole numbers throughout — keeps the readout to ≤4 chars so
+// the bar column doesn't shift as the value ticks.
+function _setBarPctReadout(elId, pct, warnAt, critAt) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (pct == null || !isFinite(pct)) {
+    el.textContent = '—';
+    el.classList.remove('pct-ok', 'pct-warn', 'pct-crit');
+    return;
+  }
+  const v = Math.max(0, pct);
+  el.textContent = Math.round(v).toString() + '%';
+  el.classList.remove('pct-ok', 'pct-warn', 'pct-crit');
+  if      (v < warnAt) el.classList.add('pct-ok');
+  else if (v < critAt) el.classList.add('pct-warn');
+  else                 el.classList.add('pct-crit');
 }
 
 async function _fetchCpuProcs() {
@@ -23694,6 +24527,13 @@ let _memProcsData = null;
 function _updateMemGauge(data) {
   if (!data) return;
   _memProcsData = data;
+
+  // The bar's vertical scale is exactly (0 → 100 % of physical RAM). Any
+  // compression / over-commit signal lives in the readout colour and the
+  // tooltip's "Compressed" line — the bar itself stays a clean physical-RAM
+  // gauge so a glance reads as "how full is real memory".
+  const totalMB = data.total_mb || 1;
+
   function setH(id, pct) {
     const el = document.getElementById(id);
     if (el) el.style.height = Math.min(100, Math.max(0, pct || 0)).toFixed(2) + '%';
@@ -23706,8 +24546,173 @@ function _updateMemGauge(data) {
   setH('mem-seg-vm',        data.vm_pct);
   setH('mem-seg-container', data.container_pct);
   setH('mem-seg-other',     data.other_pct);
+
+  // Traffic-light readout under the bar: always physical %used
+  // (used_mb / total_mb × 100, capped 0-100). The compression "borrowed
+  // capacity" is conveyed visually by the hatched zram segment above the
+  // 100%-physical tick line and numerically by the tooltip's first row;
+  // the readout itself stays a clean 0-100 % view of physical RAM so the
+  // colour bands (75 yellow / 90 red) stay meaningful.
+  const pct = totalMB > 0 ? ((data.used_mb || 0) / totalMB * 100) : 0;
+  _setBarPctReadout('mem-pct-readout', pct, 75, 90);
+
+  // v6.5.3+: drive the third (SWAP) bar from the same payload. The mem-procs
+  // sampler now also returns swap_total_mb / swap_used_mb / per-category
+  // *_swap_pct fields. We hide the bar entirely when no swap device exists
+  // (swap_total_mb == 0); otherwise it mirrors the MEM bar's layout but
+  // each segment is the share of TOTAL SWAP CAPACITY held by that
+  // category, and the readout uses the CPU-style 60/80 thresholds.
+  _updateSwapGauge(data);
+
   if (_memGaugeHovered) _renderMemTooltip();
 }
+
+// Latest snapshot used by the SWAP tooltip. Updated each time
+// _updateSwapGauge runs, so the tooltip stays in sync with the bar.
+let _swapProcsData = null;
+
+function _updateSwapGauge(data) {
+  const panel = document.getElementById('swap-gauge-panel');
+  if (!panel) return;
+  // The SWAP bar is dedicated to real disk swap. zram-only hosts have
+  // disk_swap_total_mb == 0 and the bar is hidden — compressed-memory
+  // activity is conveyed on the MEM bar's compressed segment + tooltip.
+  const diskTotal = data && data.disk_swap_total_mb || 0;
+  if (diskTotal <= 0) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+  _swapProcsData = data;
+  function setH(id, pct) {
+    const el = document.getElementById(id);
+    if (el) el.style.height = Math.min(100, Math.max(0, pct || 0)).toFixed(2) + '%';
+  }
+  // Per-category swap pct values are now disk-only (backend
+  // proportionally rescaled VmSwap to fit within disk_swap_used_mb).
+  setH('swap-seg-smb',       data.smb_swap_pct);
+  setH('swap-seg-nfs',       data.nfs_swap_pct);
+  setH('swap-seg-zfs',       data.zfs_swap_pct);
+  setH('swap-seg-minio',     data.minio_swap_pct);
+  setH('swap-seg-iscsi',     data.iscsi_swap_pct);
+  setH('swap-seg-vm',        data.vm_swap_pct);
+  setH('swap-seg-container', data.container_swap_pct);
+  setH('swap-seg-other',     data.other_swap_pct);
+  // Readout: % of disk swap capacity in use. CPU-style 60/80 thresholds.
+  const usedPct = (data.disk_swap_used_mb || 0) / diskTotal * 100;
+  _setBarPctReadout('swap-pct-readout', usedPct, 60, 80);
+  // Refresh tooltip in-place if the user is hovering.
+  if (_swapGaugeHovered) _renderSwapTooltip();
+}
+
+// SWAP gauge hover tooltip — mirrors the MEM tooltip. State variables
+// are kept separate so hovering one bar doesn't toggle the other's state.
+let _swapGaugeHovered = false;
+let _swapLastMouseX   = 0;
+let _swapLastMouseY   = 0;
+let _swapLeaveTimer   = null;
+
+function _buildSwapTooltipHTML() {
+  const data = _swapProcsData;
+  if (!data || !data.disk_swap_total_mb) {
+    return `<div style="color:var(--text-3);font-size:12px;">No disk swap configured</div>`;
+  }
+  // Row 1: real disk swap — what the bar itself represents.
+  const dUsedGB  = (data.disk_swap_used_mb  / 1024).toFixed(2);
+  const dTotalGB = (data.disk_swap_total_mb / 1024).toFixed(2);
+  const dPct     = data.disk_swap_used_mb / data.disk_swap_total_mb * 100;
+  let html = `<div style="font-weight:600;margin-bottom:4px;color:var(--text-2);font-size:13px;">Disk swap ${dPct.toFixed(1)}% &mdash; ${dUsedGB} / ${dTotalGB} GB</div>`;
+
+  // Row 2: compressed memory swap (zram). Cyan to match the MEM tooltip's
+  // compressed segment so the user can spot the relationship.
+  if (data.zram_active && data.zram_swap_total_mb > 0) {
+    const zUsedGB  = (data.zram_swap_used_mb  / 1024).toFixed(2);
+    const zTotalGB = (data.zram_swap_total_mb / 1024).toFixed(2);
+    const zPct     = data.zram_swap_total_mb > 0 ? data.zram_swap_used_mb / data.zram_swap_total_mb * 100 : 0;
+    html += `<div style="font-weight:600;margin-bottom:8px;font-size:12px;"><span class="mem-tooltip-compressed">Compressed Mem swap ${zPct.toFixed(1)}% &mdash; ${zUsedGB} / ${zTotalGB} GB</span></div>`;
+  } else {
+    html += `<div style="margin-bottom:8px;"></div>`;
+  }
+
+  // Per-category breakdown (% of disk swap capacity), same palette as MEM.
+  html += `<div style="margin-bottom:4px;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;">`;
+  [['vm','VMs'],['container','Containers'],['smb','SMB'],['nfs','NFS'],['zfs','ZFS'],['minio','MinIO'],['iscsi','iSCSI'],['other','Other']].forEach(([k,label]) => {
+    const pct = data[k+'_swap_pct'] || 0;
+    if (pct >= 0.05) html += `<span style="color:${CPU_CAT_COLORS[k]};">■ ${label} ${pct.toFixed(1)}%</span>`;
+  });
+  html += `</div>`;
+
+  // Top 10 swap-using processes. Each row: category swatch · cmd · MB · % of swap.
+  if (data.top_swap_procs && data.top_swap_procs.length > 0) {
+    html += `<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">`;
+    html += `<div style="color:var(--text-3);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Top 10 Swap Processes</div>`;
+    data.top_swap_procs.forEach(p => {
+      const color = CPU_CAT_COLORS[p.category] || CPU_CAT_COLORS.other;
+      const fullCmd = p.cmd || p.name;
+      const stripped = fullCmd.replace(/^(?:\/[^/\s]+)+\//, '');
+      const displayCmd = stripped.length > 60 ? stripped.slice(0, 60) + '…' : stripped;
+      const mb = p.swap_mb != null ? p.swap_mb.toFixed(0) + ' MB' : '';
+      const pct = p.swap_pct != null ? p.swap_pct.toFixed(1) + '%' : '';
+      html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+        <span style="color:${color};font-size:10px;flex-shrink:0;">■</span>
+        <span style="color:var(--text);font-size:12px;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(fullCmd)}">${esc(displayCmd)}</span>
+        <span style="color:var(--text-3);font-size:10px;flex-shrink:0;min-width:60px;text-align:right;">${mb}</span>
+        <span style="color:var(--text-2);font-size:11px;flex-shrink:0;min-width:40px;text-align:right;">${pct}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  } else {
+    html += `<div style="color:var(--text-3);font-size:12px;margin-top:6px;">No process is currently using swap.</div>`;
+  }
+  return html;
+}
+
+function _renderSwapTooltip() {
+  const tt = document.getElementById('swap-gauge-tooltip');
+  if (!tt) return;
+  tt.innerHTML = _buildSwapTooltipHTML();
+  tt.style.display = 'block';
+  const tw = tt.offsetWidth || 440;
+  const th = tt.offsetHeight || 120;
+  const x = Math.min(_swapLastMouseX + 14, window.innerWidth  - tw - 10);
+  const y = Math.max(10, Math.min(_swapLastMouseY - 10, window.innerHeight - th - 10));
+  tt.style.left = x + 'px';
+  tt.style.top  = y + 'px';
+}
+
+(function() {
+  function initSwapGaugeTooltip() {
+    const panel = document.getElementById('swap-gauge-panel');
+    const tt    = document.getElementById('swap-gauge-tooltip');
+    if (!panel || !tt) return;
+
+    panel.addEventListener('mouseenter', () => {
+      _swapGaugeHovered = true;
+      if (_swapLeaveTimer) { clearTimeout(_swapLeaveTimer); _swapLeaveTimer = null; }
+      _renderSwapTooltip();
+    });
+    panel.addEventListener('mousemove', (e) => {
+      _swapLastMouseX = e.clientX;
+      _swapLastMouseY = e.clientY;
+      _swapGaugeHovered = true;
+      if (_swapLeaveTimer) { clearTimeout(_swapLeaveTimer); _swapLeaveTimer = null; }
+      _renderSwapTooltip();
+    });
+    panel.addEventListener('mouseleave', () => {
+      _swapLeaveTimer = setTimeout(() => {
+        _swapGaugeHovered = false;
+        const tt2 = document.getElementById('swap-gauge-tooltip');
+        if (tt2) tt2.style.display = 'none';
+        _swapLeaveTimer = null;
+      }, 80);
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initSwapGaugeTooltip);
+  } else {
+    initSwapGaugeTooltip();
+  }
+})();
 
 async function _fetchMemProcs() {
   try {
@@ -23726,11 +24731,39 @@ let _memLeaveTimer   = null;
 
 function _buildMemTooltipHTML() {
   const data = _memProcsData;
-  const usedPct = data && data.total_mb > 0 ? ((data.used_mb / data.total_mb) * 100) : 0;
+  const physPct = data && data.total_mb > 0 ? ((data.used_mb / data.total_mb) * 100) : 0;
   const usedGB  = data ? (data.used_mb / 1024).toFixed(1) : '—';
   const totalGB = data ? (data.total_mb / 1024).toFixed(1) : '—';
   const arcGB   = data ? (data.arc_mb  / 1024).toFixed(2) : '—';
-  let html = `<div style="font-weight:600;margin-bottom:8px;color:var(--text-2);font-size:13px;">MEM ${usedPct.toFixed(1)}% &mdash; ${usedGB} / ${totalGB} GB</div>`;
+
+  // First row: always show Physical %used. When zram is active, append the
+  // logical (compression-extended) view alongside it — same line so the
+  // user sees both the real RAM picture and the "feels like" picture.
+  let firstRow = `Physical ${physPct.toFixed(1)}% &mdash; ${usedGB} / ${totalGB} GB`;
+  if (data && data.zram_active && data.zram_pool_mb > 0) {
+    // Effective working set / capacity = physical + swap (kernel-visible).
+    //   used_total  = physical_used + swap_used        (across zram + disk)
+    //   total_total = physical_total + swap_total      (RAM + zram pool size
+    //                                                   + disk swap size)
+    // This matches what /proc/meminfo + /proc/swaps actually expose to
+    // the kernel — no compression-ratio multiplication. Compression is
+    // surfaced as the (Nx) badge for context.
+    const usedLogMB  = (data.used_mb  || 0) + (data.swap_used_mb  || 0);
+    const totalLogMB = (data.total_mb || 0) + (data.swap_total_mb || 0);
+    const usedLogGB   = (usedLogMB  / 1024).toFixed(1);
+    const totalLogGB  = (totalLogMB / 1024).toFixed(1);
+    const logPct      = totalLogMB > 0 ? (usedLogMB / totalLogMB * 100) : 0;
+    // Display: keep raw ratio precision when below 3×, mark "~3×" once
+    // the kernel-reported ratio exceeds it (compressor's headline ratio
+    // tends to spike on tiny, highly-compressible buffers and isn't a
+    // sustainable figure to brandish). The ratio is informational here
+    // — the totals above are the authoritative ceiling.
+    const ratioRaw   = data.zram_ratio || 0;
+    const RATIO_CAP  = 3;
+    const ratioLabel = ratioRaw > RATIO_CAP ? '~' + RATIO_CAP + '&times;' : ratioRaw.toFixed(2) + '&times;';
+    firstRow += ` &middot; <span class="mem-tooltip-compressed">Compressed ${logPct.toFixed(1)}% &mdash; ${usedLogGB} / ${totalLogGB} GB (${ratioLabel})</span>`;
+  }
+  let html = `<div style="font-weight:600;margin-bottom:8px;color:var(--text-2);font-size:13px;">${firstRow}</div>`;
   html += `<div style="margin-bottom:4px;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;">`;
   if (data) {
     [['vm','VMs'],['container','Containers'],['smb','SMB'],['nfs','NFS'],['zfs','ZFS (incl. ARC)'],['minio','MinIO'],['iscsi','iSCSI'],['other','Other']].forEach(([k,label]) => {
@@ -23750,11 +24783,32 @@ function _buildMemTooltipHTML() {
       const fullCmd = p.cmd || p.name;
       const stripped = fullCmd.replace(/^(?:\/[^/\s]+)+\//, '');
       const displayCmd = stripped.length > 60 ? stripped.slice(0, 60) + '…' : stripped;
-      const mb = p.mem_mb != null ? p.mem_mb.toFixed(0) + ' MB' : '';
+      // Per-process memory column: <phys>+<swap>:<total>
+      // phys  = RSS in MB (var(--text-3) muted)
+      // swap  = VmSwap in MB (highlighted in the same flashy
+      //         green/Tron-cyan as the "Compressed" header so it visually
+      //         lines up with the first-row compressed total). Hidden
+      //         when zero so the typical row stays compact.
+      // total = phys + swap (var(--text) bright) — what the working set
+      //         actually weighs, including paged-out bytes.
+      const physMB = p.mem_mb != null ? p.mem_mb : 0;
+      const swapMB = p.swap_mb != null ? p.swap_mb : 0;
+      const totalMB = physMB + swapMB;
+      const physStr  = physMB.toFixed(0);
+      const swapStr  = swapMB.toFixed(0);
+      const totalStr = totalMB.toFixed(0);
+      const memCell = swapMB > 0
+        ? `<span style="color:var(--text-3);">${physStr}</span>` +
+          `<span style="color:var(--text-3);">+</span>` +
+          `<span class="mem-tooltip-compressed">${swapStr}</span>` +
+          `<span style="color:var(--text-3);">:</span>` +
+          `<span style="color:var(--text);">${totalStr}</span>` +
+          `<span style="color:var(--text-3);"> MB</span>`
+        : `<span style="color:var(--text-3);">${physStr} MB</span>`;
       html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
         <span style="color:${color};font-size:10px;flex-shrink:0;">■</span>
         <span style="color:var(--text);font-size:12px;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(fullCmd)}">${esc(displayCmd)}</span>
-        <span style="color:var(--text-3);font-size:10px;flex-shrink:0;min-width:60px;text-align:right;">${mb}</span>
+        <span style="font-size:10px;flex-shrink:0;min-width:115px;text-align:right;font-family:monospace;">${memCell}</span>
         <span style="color:var(--text-2);font-size:11px;flex-shrink:0;min-width:40px;text-align:right;">${p.mem_pct.toFixed(1)}%</span>
       </div>`;
     });
@@ -24192,7 +25246,7 @@ function _dashChartOpts(yLabel, yMax, stacked = false) {
   };
 }
 
-function _makeDashChartStacked(canvasId, datasets, labels, yLabel, yMax) {
+function _makeDashChartStacked(canvasId, datasets, labels, yLabel, yMax, drawPhysRefLine) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
   if (_dashCharts[canvasId]) { _dashCharts[canvasId].destroy(); }
@@ -24205,11 +25259,43 @@ function _makeDashChartStacked(canvasId, datasets, labels, yLabel, yMax) {
       ds.backgroundColor = ds.backgroundColor.slice(0, 7) + 'bf';
     }
   });
+  // v6.5.3+: optional dashed reference line at y=100 ("Physical RAM ceiling")
+  // for the memory chart when zram has stacked anything above 100 %.
+  // Implemented as a per-chart afterDatasetsDraw hook so it lays on top of the
+  // stack but stays under tooltips. Idempotent: if drawPhysRefLine is false,
+  // we don't pass the plugin so no line is drawn.
+  const refLinePlugin = {
+    id: 'physRefLine',
+    afterDatasetsDraw(chart) {
+      const yScale = chart.scales.y;
+      if (!yScale) return;
+      const ctx = chart.ctx;
+      const y = yScale.getPixelForValue(100);
+      if (!isFinite(y)) return;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 1.25;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(chart.chartArea.left,  y);
+      ctx.lineTo(chart.chartArea.right, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Tiny label so it's clear what the line means.
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('100 % physical', chart.chartArea.right - 4, y - 3);
+      ctx.restore();
+    },
+  };
+  const plugins = [_perfTooltipPlugin];
+  if (drawPhysRefLine) plugins.push(refLinePlugin);
   const chart = new Chart(canvas, {
     type: 'line',
     data: { labels, datasets },
     options: _dashChartOpts(yLabel, yMax, true),
-    plugins: [_perfTooltipPlugin],
+    plugins,
   });
   _dashCharts[canvasId] = chart;
   return chart;
@@ -24274,6 +25360,12 @@ function _renderDashboardCharts(data, ifaceIPs = {}) {
   const memApp   = data.mem_app_pct    || [];
   const memArc   = data.mem_arc_pct    || [];
   const memCache = data.mem_cache_pct  || [];
+  // v6.5.3+ memory compression series. mem_zram_orig_pct and
+  // mem_zram_compr_pct are % of MemTotal; the chart's "compressed pages"
+  // layer is orig − compr (= effective bytes gained by compression).
+  const memZramPool  = data.mem_zram_pool_pct  || [];
+  const memZramOrig  = data.mem_zram_orig_pct  || [];
+  const memZramCompr = data.mem_zram_compr_pct || [];
 
   // Discover per-NIC series from response keys (net_{iface}_rx)
   const nicNames = Object.keys(data)
@@ -24296,16 +25388,36 @@ function _renderDashboardCharts(data, ifaceIPs = {}) {
   chartsEl.classList.remove('hidden');
 
   const cpuD  = _dashBuild24h([cpu]);
-  const memD  = _dashBuild24h([memApp, memArc, memCache]);
+  // v6.5.3+: build memory series including zram. The "saved" series stacks
+  // on top of App/ARC/Cache and represents over-commit capacity earned from
+  // compression — its value is (orig − compr) per sample, in %-of-MemTotal.
+  const memD  = _dashBuild24h([memApp, memArc, memCache, memZramOrig, memZramCompr, memZramPool]);
+  const memSaved = memD.dataArrays[3].map((o, i) => {
+    const c = memD.dataArrays[4][i];
+    if (o == null && c == null) return null;
+    return Math.max(0, (o || 0) - (c || 0));
+  });
+  // Detect whether zram contributed anything in this 24 h window. If not we
+  // render the chart in its pre-v6.5.3 shape (3 datasets, 100 % cap, no
+  // physical-RAM reference line). The transition to "zram on" then shows up
+  // as an obvious step in the chart history.
+  const memHasZram   = memSaved.some(v => v != null && v > 0);
+  const memMaxPool   = memD.dataArrays[5].reduce((m, v) => (v != null && v > m ? v : m), 0);
+  const memCeilZram  = Math.max(110, Math.ceil((100 + memMaxPool) / 5) * 5); // round up to 5%
   const dskD  = _dashBuild24h([diskR, diskW]);
   const busyD = _dashBuild24h([diskB]);
 
   _makeDashChart('dash-chart-cpu', [_dashDS('CPU %', '#0a84ff', cpuD.dataArrays[0], true)], cpuD.labels, '%', 100);
-  _makeDashChartStacked('dash-chart-mem', [
+  const memDatasets = [
     _dashDS('App %',       '#0a84ff', memD.dataArrays[0], true),
     _dashDS('ARC Cache %', '#ff9f0a', memD.dataArrays[1], true),
     _dashDS('Cache %',     '#bf5af2', memD.dataArrays[2], true),
-  ], memD.labels, '%', 100);
+  ];
+  if (memHasZram) {
+    memDatasets.push(_dashDS('Compressed (zram) %', '#f472b6', memSaved, true));
+  }
+  _makeDashChartStacked('dash-chart-mem', memDatasets, memD.labels, '%',
+    memHasZram ? memCeilZram : 100, memHasZram);
 
   // Network: one RX + one TX dataset per NIC, shared time grid
   let netDatasets = [];
@@ -25790,6 +26902,7 @@ document.addEventListener('click', function(e) {
     'modal-delete-replication':  closeDeleteReplicationModal,
     'modal-install':          closeInstallModal,
     'modal-about':            closeAbout,
+    'modal-sysinfo':          closeSysInfo,
     'modal-sig-invalid-help': () => document.getElementById('modal-sig-invalid-help').classList.add('hidden'),
     'modal-bup-settings':     closeBinaryUpdateSettings,
     'modal-fb-edit':          closeFbEditModal,
@@ -28319,7 +29432,7 @@ function runReplicationTask(id, name) {
     const orig = btn.textContent;
     btn.disabled = true; btn.textContent = 'Syncing…';
     try {
-      await _apiFetch('/api/lxd/interlink-sync-trust/' + encodeURIComponent(serverID), { method: 'POST' });
+      await _apiFetch('/api/incus/interlink-sync-trust/' + encodeURIComponent(serverID), { method: 'POST' });
       btn.textContent = '✓ Synced';
       btn.style.color = '#22c55e';
     } catch(e) {
@@ -28978,7 +30091,7 @@ function refreshComputeNav() {
   if (_lxdInstancesCache.length > 0) {
     renderComputeNav(_lxdInstancesCache);
   } else {
-    fetch('/api/lxd/instances').then(r => r.ok ? r.json() : []).then(instances => {
+    fetch('/api/incus/instances').then(r => r.ok ? r.json() : []).then(instances => {
       _lxdInstancesCache = instances || [];
       renderComputeNav(_lxdInstancesCache);
     }).catch(() => {});
@@ -29032,7 +30145,7 @@ function _startCIStatsPolling() {
     if (!_ciCurrentName) return;
     if (document.hidden) return; // skip polls while the browser tab is hidden
     try {
-      const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_ciCurrentName) + '/stats');
+      const res = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/stats');
       if (!res.ok) return;
       const stats = await res.json();
       _ciUpdateStatusBadge(stats.status, _lxdStatusColor(stats.status));
@@ -29130,7 +30243,7 @@ let _ciSnapActionTarget = null; // snapshot name being acted on
 async function loadCISnapshots(name) {
   if (!name) return;
   try {
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/snapshots');
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/snapshots');
     if (!res.ok) return;
     _ciSnapshots = await res.json() || [];
   } catch(_) { _ciSnapshots = []; }
@@ -29198,7 +30311,7 @@ function _bgPollSnapJob(jobId, label, onDone) {
   addActiveJob(key, label);
   (async function poll() {
     try {
-      const res = await fetch('/api/lxd/create-progress?job_id=' + encodeURIComponent(jobId));
+      const res = await fetch('/api/incus/create-progress?job_id=' + encodeURIComponent(jobId));
       if (!res.ok) { removeActiveJob(key); showToast(label + ' — error polling status', 'error'); return; }
       const data = await res.json();
       if (data.status === 'done') {
@@ -29232,7 +30345,7 @@ async function ciSubmitSnapshot() {
   alertEl.classList.add('hidden');
   btn.disabled = true; btn.textContent = 'Starting…';
   try {
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/snapshots', {
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/snapshots', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({name: snapName, stateful})
     });
@@ -29292,7 +30405,7 @@ async function ciSubmitRevert() {
   actionsView.style.opacity = '0.5';
   const snap = _ciSnapActionTarget, instName = _ciCurrentName, instType = _ciCurrentType;
   try {
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(instName) + '/snapshots/' + encodeURIComponent(snap) + '/restore', {
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(instName) + '/snapshots/' + encodeURIComponent(snap) + '/restore', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({remove_subsequent: removeSubsequent})
@@ -29342,7 +30455,7 @@ async function ciSubmitClone() {
   btn.disabled = true; btn.textContent = 'Starting…';
   try {
     const res = await fetch(
-      '/api/lxd/instances/' + encodeURIComponent(_ciCurrentName) +
+      '/api/incus/instances/' + encodeURIComponent(_ciCurrentName) +
       '/snapshots/' + encodeURIComponent(_ciSnapActionTarget) + '/clone',
       { method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({new_name: newName, description: desc || newName}) }
@@ -29367,7 +30480,7 @@ async function ciSubmitClone() {
 
 async function _ciDeleteSnapshot(snapName) {
   try {
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_ciCurrentName) + '/snapshots/' + encodeURIComponent(snapName), {
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/snapshots/' + encodeURIComponent(snapName), {
       method: 'DELETE'
     });
     const d = await res.json();
@@ -29443,7 +30556,7 @@ function ciManageDeleteSelected() {
       let errors = [];
       for (const snapName of checked) {
         try {
-          const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_ciCurrentName) + '/snapshots/' + encodeURIComponent(snapName), { method: 'DELETE' });
+          const res = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/snapshots/' + encodeURIComponent(snapName), { method: 'DELETE' });
           const d = await res.json();
           if (!res.ok) errors.push(snapName + ': ' + (d.error || 'failed'));
         } catch(e) { errors.push(snapName + ': ' + String(e)); }
@@ -29470,7 +30583,11 @@ function _ciSwitchTab(tab) {
     if (pnl) pnl.style.display = t === tab ? '' : 'none';
   });
   if (tab === 'logs') {
-    // Load logs if not already loaded for this instance.
+    // Always refresh the activity table — it's cheap (audit log is local
+    // disk reads) and keeps the panel current as state changes happen
+    // while the user has the tab open.
+    loadCIActivity(_ciCurrentName);
+    // Load Incus' own log file once per instance.
     if (!_ciLogsCache || _ciLogsCache.name !== _ciCurrentName) {
       loadCILogs(_ciCurrentName);
     }
@@ -29506,7 +30623,7 @@ async function _ciLoadConsole() {
   if (!body) return;
   body.textContent = 'Loading console output…';
   try {
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_ciCurrentName) + '/console-log');
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/console-log');
     const data = await res.json();
     if (!res.ok) {
       body.textContent = 'Could not load console output: ' + (data.error || res.status);
@@ -29529,8 +30646,8 @@ function _ciConsoleScrollBottom() {
 
 // ===== Per-instance Monitor tab (v6.4.28) =====
 //
-// Top row: realtime sparklines polled every 3 s from /api/lxd/instance-realtime.
-// Bottom row: long-term charts driven by /api/lxd/instance-perf with the
+// Top row: realtime sparklines polled every 3 s from /api/incus/instance-realtime.
+// Bottom row: long-term charts driven by /api/incus/instance-perf with the
 // standard Since-Data/4h/Day/Week/Month/Year + Avg/Min/Max controls.
 
 let _ciMonTimer    = null;
@@ -29612,7 +30729,7 @@ async function _ciMonTick() {
   if (!_ciCurrentName) return;
   const ind = document.getElementById('ci-mon-rt-indicator');
   try {
-    const r = await fetch('/api/lxd/instance-realtime?instance=' + encodeURIComponent(_ciCurrentName));
+    const r = await fetch('/api/incus/instance-realtime?instance=' + encodeURIComponent(_ciCurrentName));
     if (!r.ok) throw new Error((await r.json()).error || 'failed');
     const s = await r.json();
     if (ind) { ind.style.background = '#30d158'; ind.title = ''; }
@@ -29781,7 +30898,7 @@ async function _ciMonLoadHistory() {
   if (!_ciCurrentName) return;
   const empty = document.getElementById('ci-mon-hist-empty');
   const charts = document.getElementById('ci-mon-hist-charts');
-  let url = '/api/lxd/instance-perf?instance=' + encodeURIComponent(_ciCurrentName) +
+  let url = '/api/incus/instance-perf?instance=' + encodeURIComponent(_ciCurrentName) +
             '&tier=' + _ciMonTier();
   const since = _ciMonSinceTs();
   if (since > 0) url += '&since=' + since;
@@ -29911,6 +31028,96 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor) {
   });
 }
 
+// Activity & Events panel — fetches audit entries scoped to this instance
+// and renders them as a compact paginated table at the top of the Logs tab.
+const CI_ACTIVITY_PAGE_SIZE = 15;
+let _ciActivityEntries = [];
+let _ciActivityPage = 0;
+
+async function loadCIActivity(name) {
+  if (!name) return;
+  const body = document.getElementById('ci-activity-body');
+  if (!body) return;
+  body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:18px 0;font-size:12px;">Loading…</div>';
+  try {
+    const res = await fetch('/api/audit/by-target?target=' + encodeURIComponent(name) + '&limit=500');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _ciActivityEntries = await res.json() || [];
+    _ciActivityPage = 0;
+    _ciRenderActivity();
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--accent-danger);padding:14px 18px;font-size:12px;">Could not load activity: ${esc(String(e.message || e))}</div>`;
+  }
+}
+
+function _ciActivityGo(page) {
+  _ciActivityPage = page;
+  _ciRenderActivity();
+}
+
+function _ciRenderActivity() {
+  const body = document.getElementById('ci-activity-body');
+  if (!body) return;
+  const entries = _ciActivityEntries || [];
+  if (!entries.length) {
+    body.innerHTML = `<div style="color:var(--text-3);padding:18px;font-size:12px;text-align:center;">No activity recorded yet for this instance.</div>`;
+    return;
+  }
+  const total = entries.length;
+  const pages = Math.max(1, Math.ceil(total / CI_ACTIVITY_PAGE_SIZE));
+  _ciActivityPage = Math.min(Math.max(0, _ciActivityPage), pages - 1);
+  const start = _ciActivityPage * CI_ACTIVITY_PAGE_SIZE;
+  const slice = entries.slice(start, start + CI_ACTIVITY_PAGE_SIZE);
+  const rows = slice.map(e => {
+    const ev = (typeof _auditEventMeta === 'function') ? _auditEventMeta(e) : { icon: '·', label: (e.action || '').replace(/_/g, ' '), labelStyle: '', rowStyle: '', isSystem: e.user === 'system' };
+    const det = e.details || '';
+    // Highlight OOM annotations in red so they stand out at a glance.
+    const oom = /out of memory/i.test(det);
+    const detHTML = oom
+      ? det.replace(/\(system out of memory\)/i, '<span style="color:var(--accent-danger);font-weight:700;">$&</span>')
+      : esc(det);
+    const ts   = (typeof formatDate === 'function') ? formatDate(e.timestamp) : new Date(e.timestamp).toLocaleString();
+    const user = ev.isSystem ? '<span style="color:var(--text-3);font-size:11px;">SYSTEM</span>' : esc(e.user || '');
+    return `<tr style="border-top:1px solid var(--border);${ev.rowStyle || ''}">
+      <td style="padding:6px 10px;color:var(--text-3);font-size:11px;white-space:nowrap;font-family:monospace;">${esc(ts)}</td>
+      <td style="padding:6px 10px;font-size:14px;width:24px;">${ev.icon}</td>
+      <td style="padding:6px 10px;font-size:12px;">${user}</td>
+      <td style="padding:6px 10px;font-size:12px;color:var(--text-2);${ev.labelStyle || ''}">${esc(ev.label || '')}</td>
+      <td style="padding:6px 10px;font-size:12px;color:var(--text-3);">${detHTML}</td>
+    </tr>`;
+  }).join('');
+
+  // Pagination footer — only when there are >1 page.
+  let pager = '';
+  if (pages > 1) {
+    const btn = (disabled) =>
+      `style="padding:4px 10px;border-radius:4px;border:1px solid var(--border);background:var(--surface2);color:var(--text-2);cursor:${disabled?'default':'pointer'};opacity:${disabled?'0.4':'1'};font-size:11px;"`;
+    const cur = _ciActivityPage;
+    pager = `
+      <div style="display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0;border-top:1px solid var(--border);background:var(--surface2);">
+        <button ${btn(cur===0)} onclick="_ciActivityGo(0)" ${cur===0?'disabled':''}>«</button>
+        <button ${btn(cur===0)} onclick="_ciActivityGo(${cur-1})" ${cur===0?'disabled':''}>‹ Newer</button>
+        <span style="font-size:11px;color:var(--text-3);min-width:120px;text-align:center;">Page ${cur+1} of ${pages} · ${total} events</span>
+        <button ${btn(cur>=pages-1)} onclick="_ciActivityGo(${cur+1})" ${cur>=pages-1?'disabled':''}>Older ›</button>
+        <button ${btn(cur>=pages-1)} onclick="_ciActivityGo(${pages-1})" ${cur>=pages-1?'disabled':''}>»</button>
+      </div>`;
+  }
+
+  body.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead>
+        <tr style="background:var(--surface2);">
+          <th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;width:160px;">When</th>
+          <th style="padding:6px 10px;width:24px;"></th>
+          <th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;">User</th>
+          <th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;">Action</th>
+          <th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;">Details</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>${pager}`;
+}
+
 // Raw log entries held so the filter can re-apply without refetching.
 let _ciLogsAll = [];
 
@@ -29920,7 +31127,7 @@ async function loadCILogs(name) {
   if (!body) return;
   body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:40px 0;">Loading logs…</div>';
   try {
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/logs');
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/logs');
     if (!res.ok) {
       const d = await res.json().catch(() => ({error: 'Request failed'}));
       body.innerHTML = `<div style="color:var(--danger);padding:20px 0;">${esc(d.error || 'Failed to load logs')}</div>`;
@@ -30020,8 +31227,8 @@ function ciToggleTermMenu(e) {
 function _ciCloseTermMenu() { document.getElementById('ci-term-menu').classList.add('hidden'); }
 
 function ciTerminalNewTab()    { _ciCloseTermMenu(); if (_ciCurrentName) openLXDConsole(_ciCurrentName); }
-function ciTerminalNewWindow() { _ciCloseTermMenu(); if (_ciCurrentName) window.open('/lxd-console/' + encodeURIComponent(_ciCurrentName), 'lxdterm_' + _ciCurrentName, 'width=1080,height=680,noopener'); }
-function ciVGAConsole()       { _ciCloseTermMenu(); if (_ciCurrentName) window.open('/lxd-vga-console/' + encodeURIComponent(_ciCurrentName), 'lxdvga_' + _ciCurrentName, 'width=1280,height=800,noopener'); }
+function ciTerminalNewWindow() { _ciCloseTermMenu(); if (_ciCurrentName) window.open('/incus-console/' + encodeURIComponent(_ciCurrentName), 'lxdterm_' + _ciCurrentName, 'width=1080,height=680,noopener'); }
+function ciVGAConsole()       { _ciCloseTermMenu(); if (_ciCurrentName) window.open('/incus-vga-console/' + encodeURIComponent(_ciCurrentName), 'lxdvga_' + _ciCurrentName, 'width=1280,height=800,noopener'); }
 
 function ciTerminalBottom() {
   _ciCloseTermMenu();
@@ -30049,10 +31256,10 @@ function _ciTermEnsureVisible() {
 }
 
 function _ciTermOpenTab(name) {
-  _ciTermOpenCustomTab(name, name, '/ws/lxd-console?name=' + encodeURIComponent(name));
+  _ciTermOpenCustomTab(name, name, '/ws/incus-console?name=' + encodeURIComponent(name));
 }
 
-// Generic tab opener — wsPath is the full WS path (e.g. '/ws/terminal' or '/ws/lxd-console?name=foo').
+// Generic tab opener — wsPath is the full WS path (e.g. '/ws/terminal' or '/ws/incus-console?name=foo').
 // label is the human-readable tab title.
 function _ciTermOpenCustomTab(key, label, wsPath) {
   const containers = document.getElementById('ci-term-containers');
@@ -30224,7 +31431,7 @@ function _ciTermReopenTab(key) {
   if (!tab) return;
   tab.term.write('\r\n\x1b[33m[reconnecting…]\x1b[0m\r\n');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsPath = tab.wsPath || ('/ws/lxd-console?name=' + encodeURIComponent(key));
+  const wsPath = tab.wsPath || ('/ws/incus-console?name=' + encodeURIComponent(key));
   const ws = new WebSocket(proto + '//' + location.host + wsPath);
   _ciTermBindWS(key, ws);
   _ciTermRenderTabs();
@@ -30323,8 +31530,8 @@ async function loadComputeInstanceDetail(name, type) {
   ]);
 
   const [cfgRes, statsRes] = await Promise.all([
-    fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/config'),
-    fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/stats')
+    fetch('/api/incus/instances/' + encodeURIComponent(name) + '/config'),
+    fetch('/api/incus/instances/' + encodeURIComponent(name) + '/stats')
   ]);
 
   // Parse cfg once so both hardware and usage cards can use it.
@@ -30635,7 +31842,7 @@ function _hideLXDLandingOptions() {
 
 async function initLXD() {
   try {
-    const res = await fetch('/api/lxd/status');
+    const res = await fetch('/api/incus/status');
     if (!res.ok) {
       _hideLXDLandingOptions();
       if (_sidebarMode !== 'storage') { _applySidebarModeUI('storage'); showPage('dashboard'); }
@@ -30671,7 +31878,7 @@ async function initLXD() {
           switchToLXDTable();
         } else if (target.startsWith('compute/')) {
           const instName = decodeURIComponent(target.slice('compute/'.length));
-          const r = await fetch('/api/lxd/instances');
+          const r = await fetch('/api/incus/instances');
           if (r.ok) {
             const instances = await r.json();
             _lxdInstancesCache = instances || [];
@@ -30711,13 +31918,13 @@ async function loadLXDInstances() {
     .catch(() => {});
   // Ensure storage pool cache is warm for the Datastore column.
   if (!_lxdStorageCacheDS || _lxdStorageCacheDS.length === 0) {
-    fetch('/api/lxd/storage-pools-detail', {credentials:'same-origin'})
+    fetch('/api/incus/storage-pools-detail', {credentials:'same-origin'})
       .then(r => r.ok ? r.json() : null)
       .then(pools => { if (pools) { _lxdStorageCacheDS = pools; _lxdRenderSorted(); } })
       .catch(() => {});
   }
   try {
-    const res = await fetch('/api/lxd/instances');
+    const res = await fetch('/api/incus/instances');
     if (res.status === 404) {
       tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:32px;">No VMs or Containers</td></tr>';
       return;
@@ -30772,8 +31979,8 @@ function _lxdRenderRows(instances) {
     // badge, terminal icon, burger menu) call e.stopPropagation() so they
     // don't double-trigger.
     return `<tr id="lxd-row-${esc(inst.name)}" style="cursor:pointer;" onclick='openComputeInstance(${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>
-      <td>${typeBadge}</td>
-      <td>${esc(inst.description || inst.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(inst.name)}</span></td>
+      <td style="padding-left:10px;padding-right:4px;text-align:center;">${typeBadge}</td>
+      <td style="padding-left:6px;">${esc(inst.description || inst.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(inst.name)}</span></td>
       <td style="font-family:monospace;color:var(--text-2);">${esc(inst.ipv4 || '—')}</td>
       ${imgCell}
       <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
@@ -30804,7 +32011,7 @@ function toggleLXDTermMenu(e, name, type) {
   };
   const isVM = type === 'virtual-machine';
   if (isVM) {
-    mkItem('VGA Console Window', () => window.open('/lxd-vga-console/' + encodeURIComponent(name), 'lxdvga_' + name, 'width=1280,height=800,noopener'));
+    mkItem('VGA Console Window', () => window.open('/incus-vga-console/' + encodeURIComponent(name), 'lxdvga_' + name, 'width=1280,height=800,noopener'));
     const sep = document.createElement('hr'); sep.className = 'menu-sep'; dd.appendChild(sep);
   }
   mkItem('LXD Bottom Terminal', () => {
@@ -30813,7 +32020,7 @@ function toggleLXDTermMenu(e, name, type) {
     _ciTermOpenTab(name);
   });
   mkItem('LXD Tab Terminal',    () => openLXDConsole(name));
-  mkItem('LXD Window Terminal', () => window.open('/lxd-console/' + encodeURIComponent(name), 'lxdterm_' + name, 'width=1080,height=680,noopener'));
+  mkItem('LXD Window Terminal', () => window.open('/incus-console/' + encodeURIComponent(name), 'lxdterm_' + name, 'width=1080,height=680,noopener'));
   document.body.appendChild(dd);
   const rect = btn.getBoundingClientRect();
   dd.style.position = 'fixed';
@@ -30971,7 +32178,7 @@ let _lxdBridgeObjects = []; // [{name, description, managed}] for label renderin
 let _lxdAvailPools    = [];
 
 async function _lxdResetNVRAM(name) {
-  const r = await _apiFetch(`/api/lxd/instances/${encodeURIComponent(name)}/reset-nvram`, { method: 'POST' });
+  const r = await _apiFetch(`/api/incus/instances/${encodeURIComponent(name)}/reset-nvram`, { method: 'POST' });
   if (r.ok) {
     showToast(`EFI boot repair started for ${name}. Start the VM in a few seconds.`, 'success');
   } else {
@@ -31332,7 +32539,7 @@ function lxdEditAddDisk() {
 async function lxdEditAddExistingDisk() {
   if (_lxdEditFreeZVols.length === 0) {
     try {
-      const res = await fetch('/api/lxd/free-zvols');
+      const res = await fetch('/api/incus/free-zvols');
       if (res.ok) _lxdEditFreeZVols = await res.json();
     } catch(_) {}
   }
@@ -31551,9 +32758,9 @@ async function openLXDEditModal(name, type) {
   document.getElementById('modal-lxd-edit').classList.remove('hidden');
   try {
     const [cfgRes, bridgesRes, poolsRes] = await Promise.all([
-      fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/config'),
-      fetch('/api/lxd/bridges'),
-      fetch('/api/lxd/storage-pools'),
+      fetch('/api/incus/instances/' + encodeURIComponent(name) + '/config'),
+      fetch('/api/incus/bridges'),
+      fetch('/api/incus/storage-pools'),
     ]);
     if (!cfgRes.ok) throw new Error(await cfgRes.text());
     const cfg = await cfgRes.json();
@@ -31798,7 +33005,7 @@ async function submitLXDEdit() {
     }));
   }
   try {
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_lxdEditName) + '/config', {
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(_lxdEditName) + '/config', {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
@@ -31886,16 +33093,16 @@ async function lxdPowerAction(name, action) {
   try {
     let url, opts;
     if (action === 'start') {
-      url = '/api/lxd/instances/' + encodeURIComponent(name) + '/start';
+      url = '/api/incus/instances/' + encodeURIComponent(name) + '/start';
       opts = { method: 'POST' };
     } else if (action === 'restart') {
-      url = '/api/lxd/instances/' + encodeURIComponent(name) + '/restart';
+      url = '/api/incus/instances/' + encodeURIComponent(name) + '/restart';
       opts = { method: 'POST' };
     } else if (action === 'shutdown') {
-      url = '/api/lxd/instances/' + encodeURIComponent(name) + '/stop';
+      url = '/api/incus/instances/' + encodeURIComponent(name) + '/stop';
       opts = { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({force:false}) };
     } else if (action === 'poweroff') {
-      url = '/api/lxd/instances/' + encodeURIComponent(name) + '/stop';
+      url = '/api/incus/instances/' + encodeURIComponent(name) + '/stop';
       opts = { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({force:true}) };
     }
     const res = await fetch(url, opts);
@@ -31913,7 +33120,7 @@ async function pollLXDInstanceStatus(name, targetStatus, jobId) {
   const maxTries = 60;
   const poll = async () => {
     try {
-      const res = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/status');
+      const res = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/status');
       if (!res.ok) { _finishLXDPoll(name, jobId); return; }
       const data = await res.json();
 
@@ -31974,7 +33181,7 @@ async function lxdShutdownOrKillConfirm() {
   // Fire-and-forget graceful shutdown. Do NOT await — lxc stop blocks on the
   // server until the VM responds or its internal timeout expires. Starting the
   // countdown here means the deadline and force-kill run independently.
-  fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/stop',
+  fetch('/api/incus/instances/' + encodeURIComponent(name) + '/stop',
     { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({force: false}) })
     .catch(() => {}); // errors are handled by the force-stop path below
 
@@ -31984,7 +33191,7 @@ async function lxdShutdownOrKillConfirm() {
     secsLeft = Math.max(0, Math.round((deadline - Date.now()) / 1000));
     updateActiveJob(jobId, 'Shutting down ' + name + ' (' + secsLeft + 's)');
     try {
-      const r = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/status');
+      const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/status');
       if (r.ok) {
         const d = await r.json();
         const row2 = document.getElementById('lxd-row-' + name);
@@ -31999,7 +33206,7 @@ async function lxdShutdownOrKillConfirm() {
     if (Date.now() >= deadline) {
       updateActiveJob(jobId, 'Force-stopping ' + name + '…');
       try {
-        await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/stop',
+        await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/stop',
           { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({force: true}) });
       } catch(_) {}
       setTimeout(() => _finishLXDPoll(name, jobId), 2000);
@@ -32115,7 +33322,7 @@ async function _vmpushLoadRemote(serverID) {
     const [poolsRes, bridgesRes, statusRes, instancesRes] = await Promise.all([
       _apiFetch('/api/interlink/remote-lxd-storage/' + encodeURIComponent(serverID)),
       _apiFetch('/api/interlink/remote-lxd-bridges/' + encodeURIComponent(serverID)),
-      _apiFetch('/api/lxd/interlink-lxd-status'),
+      _apiFetch('/api/incus/interlink-lxd-status'),
       _apiFetch('/api/interlink/remote-lxd-instances/' + encodeURIComponent(serverID)).catch(() => null),
     ]);
 
@@ -32387,7 +33594,7 @@ async function _vmpushRenderNICTable(remoteBridges) {
 
   let nics = [];
   try {
-    const data = await _apiFetch('/api/lxd/instances/' + encodeURIComponent(_vmpushVMName) + '/nics');
+    const data = await _apiFetch('/api/incus/instances/' + encodeURIComponent(_vmpushVMName) + '/nics');
     nics = data.nics || [];
     if (data.has_tpm) document.getElementById('vmpush-tpm-warn').style.display = '';
   } catch(e) {
@@ -32445,7 +33652,7 @@ async function _vmpushSyncTrust() {
   const btn = warn.querySelector('button');
   btn.disabled = true; btn.textContent = 'Syncing…';
   try {
-    await _apiFetch('/api/lxd/interlink-sync-trust/' + encodeURIComponent(serverID), { method: 'POST' });
+    await _apiFetch('/api/incus/interlink-sync-trust/' + encodeURIComponent(serverID), { method: 'POST' });
     warn.style.display = 'none';
     _showToast('LXD trust synced successfully', 'success');
   } catch(e) {
@@ -32479,7 +33686,7 @@ async function _vmpushStart() {
 
   document.getElementById('vmpush-push-btn').disabled = true;
   try {
-    const res = await _apiFetch('/api/lxd/push-interlink/start', {
+    const res = await _apiFetch('/api/incus/push-interlink/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -32562,7 +33769,7 @@ function _vmpushDone(errMsg, successMsg, cancelled) {
 async function _vmpushCancel() {
   if (!_vmpushJobID) { closeVMPushModal(); return; }
   try {
-    await _apiFetch('/api/lxd/push-interlink/cancel/' + encodeURIComponent(_vmpushJobID), { method: 'POST' });
+    await _apiFetch('/api/incus/push-interlink/cancel/' + encodeURIComponent(_vmpushJobID), { method: 'POST' });
   } catch(_) {}
   _vmpushDone(null, null, true);
 }
@@ -32602,12 +33809,12 @@ async function submitLXDDelete() {
   const wasCI = _lxdDeleteName === _ciCurrentName;
   try {
     if (force) {
-      await fetch('/api/lxd/instances/' + encodeURIComponent(_lxdDeleteName) + '/stop', {
+      await fetch('/api/incus/instances/' + encodeURIComponent(_lxdDeleteName) + '/stop', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ force: true })
       });
     }
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_lxdDeleteName), {
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(_lxdDeleteName), {
       method: 'DELETE',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ delete_volumes: document.getElementById('lxd-delete-volumes').checked })
@@ -32624,7 +33831,7 @@ async function submitLXDDelete() {
 }
 
 function openLXDConsole(name) {
-  window.open('/lxd-console/' + encodeURIComponent(name), '_blank');
+  window.open('/incus-console/' + encodeURIComponent(name), '_blank');
 }
 
 // Returns the next available label like "vm-1", "vm-2", ... based on existing instance descriptions.
@@ -32650,7 +33857,8 @@ async function openNewVMModal() {
   document.getElementById('lxd-vm-name').value        = _vmLabel;
   document.getElementById('lxd-vm-description').value = _vmLabel;
   document.getElementById('lxd-vm-vcpu').value        = '2';
-  document.getElementById('lxd-vm-mem').value         = '4096';
+  document.getElementById('lxd-vm-mem').value         = '2';
+  { const u = document.getElementById('lxd-vm-mem-unit'); if (u) u.value = 'GB'; }
   document.getElementById('lxd-vm-cpu-pin').value     = '';
   const vmCoreTypeSel = document.getElementById('lxd-vm-coretype');
   if (vmCoreTypeSel) vmCoreTypeSel.value = 'auto';
@@ -32669,7 +33877,7 @@ async function openNewVMModal() {
   document.getElementById('lxd-vm-submit-btn').disabled = false;
   // Reset hardware panel summaries
   document.getElementById('vmhw-cpu-summary').textContent   = '2 vCPUs';
-  document.getElementById('vmhw-mem-summary').textContent   = '4096 MB';
+  document.getElementById('vmhw-mem-summary').textContent   = '2 GB';
   document.getElementById('vmhw-disk0-summary').textContent = '20 GB';
   document.getElementById('vmhw-cdrom-summary').textContent = 'None';
   document.getElementById('vmhw-nic0-summary').textContent  = '—';
@@ -32708,8 +33916,8 @@ async function openNewVMModal() {
   initCustomSelect('lxd-vm-root-pool');
 
   const [pools, networks] = await Promise.all([
-    fetch('/api/lxd/storage-pools').then(r=>r.json()).catch(()=>[]),
-    fetch('/api/lxd/bridges').then(r=>r.json()).catch(()=>({managed:[],all:[]}))
+    fetch('/api/incus/storage-pools').then(r=>r.json()).catch(()=>[]),
+    fetch('/api/incus/bridges').then(r=>r.json()).catch(()=>({managed:[],all:[]}))
   ]);
   _lxdPools    = pools || [];
   const bridgesData = networks || {managed:[], all:[]};
@@ -32844,7 +34052,7 @@ async function submitLXDClone() {
   btn.disabled = true; btn.textContent = 'Starting…';
   try {
     // Clone without a specific snapshot — LXD copies the current state.
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_lxdCloneSourceName) + '/clone', {
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(_lxdCloneSourceName) + '/clone', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({new_name: newName, description: desc || newName})
@@ -32871,8 +34079,8 @@ async function openLXDMoveStorageModal(name) {
   try {
     // Fetch all pools and the instance's current root pool to exclude it.
     const [poolsRes, cfgRes] = await Promise.all([
-      fetch('/api/lxd/storage-pools', {credentials: 'same-origin'}),
-      fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/config', {credentials: 'same-origin'})
+      fetch('/api/incus/storage-pools', {credentials: 'same-origin'}),
+      fetch('/api/incus/instances/' + encodeURIComponent(name) + '/config', {credentials: 'same-origin'})
     ]);
     const pools = poolsRes.ok ? await poolsRes.json() : [];
     const cfg = cfgRes.ok ? await cfgRes.json() : {};
@@ -32903,7 +34111,7 @@ async function submitLXDMoveStorage() {
   alertEl.classList.add('hidden');
   btn.disabled = true; btn.textContent = 'Starting…';
   try {
-    const res = await fetch('/api/lxd/instances/' + encodeURIComponent(_lxdMoveStorageName) + '/move-storage', {
+    const res = await fetch('/api/incus/instances/' + encodeURIComponent(_lxdMoveStorageName) + '/move-storage', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({target_pool: targetPool})
@@ -32986,7 +34194,7 @@ async function _fetchISOsForPool(pool) {
   if (!pool) return [];
   if (_isoCache[pool]) return _isoCache[pool];
   try {
-    const res = await fetch('/api/lxd/isos?pool=' + encodeURIComponent(pool));
+    const res = await fetch('/api/incus/isos?pool=' + encodeURIComponent(pool));
     _isoCache[pool] = res.ok ? (await res.json() || []) : [];
   } catch(_) { _isoCache[pool] = []; }
   return _isoCache[pool];
@@ -33131,7 +34339,7 @@ function _vmhwSyncMem() {
 async function _fetchMachineVersions() {
   if (_lxdMachineVersions) return _lxdMachineVersions;
   try {
-    const r = await fetch('/api/lxd/machine-versions');
+    const r = await fetch('/api/incus/machine-versions');
     if (r.ok) _lxdMachineVersions = await r.json();
   } catch(_) {}
   return _lxdMachineVersions;
@@ -33324,7 +34532,7 @@ let _cpuTopologyCache = null;
 async function _loadCPUTopology() {
   if (_cpuTopologyCache) return _cpuTopologyCache;
   try {
-    const res = await fetch('/api/lxd/cpu-topology');
+    const res = await fetch('/api/incus/cpu-topology');
     if (res.ok) _cpuTopologyCache = await res.json();
   } catch(_) {}
   return _cpuTopologyCache;
@@ -33517,7 +34725,7 @@ async function addVMExistingDiskRow() {
   // Fetch free zvols only once per modal open
   if (_lxdFreeZVols.length === 0) {
     try {
-      const res = await fetch('/api/lxd/free-zvols');
+      const res = await fetch('/api/incus/free-zvols');
       if (res.ok) _lxdFreeZVols = await res.json();
     } catch(_) {}
   }
@@ -33591,7 +34799,7 @@ async function openUSBPicker() {
   const tbody = document.getElementById('lxd-usb-picker-body');
   tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-3);">Loading…</td></tr>';
   try {
-    const res = await fetch('/api/lxd/usb-devices');
+    const res = await fetch('/api/incus/usb-devices');
     if (!res.ok) throw new Error(await res.text());
     const devices = await res.json();
     if (!devices || devices.length === 0) {
@@ -33639,7 +34847,7 @@ async function openPCIPicker() {
   const tbody = document.getElementById('lxd-pci-picker-body');
   tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-3);">Loading…</td></tr>';
   try {
-    const res = await fetch('/api/lxd/pci-devices');
+    const res = await fetch('/api/incus/pci-devices');
     if (!res.ok) throw new Error(await res.text());
     const devices = await res.json();
     if (!devices || devices.length === 0) {
@@ -33741,7 +34949,7 @@ async function submitCreateVM(e) {
   };
 
   try {
-    const res = await fetch('/api/lxd/vms', {
+    const res = await fetch('/api/incus/vms', {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error(await res.text());
@@ -33767,7 +34975,8 @@ async function openNewContainerModal() {
   document.getElementById('lxd-ct-name').value        = _ctLabel;
   document.getElementById('lxd-ct-description').value = _ctLabel;
   document.getElementById('lxd-ct-cpu').value         = '1';
-  document.getElementById('lxd-ct-mem').value         = '2048';
+  document.getElementById('lxd-ct-mem').value         = '2';
+  { const u = document.getElementById('lxd-ct-mem-unit'); if (u) u.value = 'GB'; }
   document.getElementById('lxd-ct-disk').value        = '10';
   document.getElementById('lxd-ct-autostart').checked     = false;
   document.getElementById('lxd-ct-unprivileged').checked  = true;
@@ -33797,7 +35006,7 @@ async function openNewContainerModal() {
   if (_ctdisk) _ctdisk.style.display = 'none';
   // Reset summaries + collapse
   document.getElementById('cthw-cpu-summary').textContent   = '1 core';
-  document.getElementById('cthw-mem-summary').textContent   = '2048 MB';
+  document.getElementById('cthw-mem-summary').textContent   = '2 GB';
   document.getElementById('cthw-disk0-summary').textContent = '10 GB';
   document.getElementById('cthw-nic0-summary').textContent  = '—';
   ['cthw-cpu','cthw-mem','cthw-disk0','cthw-nic0'].forEach(id => {
@@ -33818,8 +35027,8 @@ async function openNewContainerModal() {
   initCustomSelect('lxd-ct-nic0-ipv4mode');
 
   const [pools, bridgesData] = await Promise.all([
-    fetch('/api/lxd/storage-pools').then(r=>r.json()).catch(()=>[]),
-    fetch('/api/lxd/bridges').then(r=>r.json()).catch(()=>({managed:[],all:[]}))
+    fetch('/api/incus/storage-pools').then(r=>r.json()).catch(()=>[]),
+    fetch('/api/incus/bridges').then(r=>r.json()).catch(()=>({managed:[],all:[]}))
   ]);
   _lxdPools         = pools || [];
   _lxdAvailBridges  = bridgesData || {managed:[],all:[]};
@@ -33873,7 +35082,7 @@ function _ctAddHW(type) {
     _ctShowDiskSection();
   } else if (type === 'existingdisk') {
     if (_lxdCTFreeZVols == null) {
-      fetch('/api/lxd/free-zvols').then(r => r.ok ? r.json() : []).then(d => {
+      fetch('/api/incus/free-zvols').then(r => r.ok ? r.json() : []).then(d => {
         _lxdCTFreeZVols = d || [];
         const usedNames = new Set(_lxdCTExistingDisks.map(d => d.device_name));
         let n = 1;
@@ -34114,7 +35323,7 @@ async function submitCreateContainer(e) {
   if (cpuLimit) body.cpu_limit_pct = parseInt(cpuLimit) || 0;
 
   try {
-    const res = await fetch('/api/lxd/containers', {
+    const res = await fetch('/api/incus/containers', {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error(await res.text());
@@ -34135,7 +35344,7 @@ async function openManageISOsModal() {
   document.getElementById('lxd-isos-alert').classList.add('hidden');
   document.getElementById('lxd-iso-upload-progress').classList.add('hidden');
   // Populate pool selector
-  const pools = await fetch('/api/lxd/storage-pools').then(r=>r.json()).catch(()=>[]);
+  const pools = await fetch('/api/incus/storage-pools').then(r=>r.json()).catch(()=>[]);
   const sel = document.getElementById('lxd-isos-pool-sel');
   sel.innerHTML = '<option value="">— select pool —</option>' +
     (pools||[]).map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
@@ -34155,7 +35364,7 @@ async function _isoPoolChanged() {
   }
   body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:20px;">Loading…</div>';
   try {
-    const res  = await fetch('/api/lxd/isos?pool=' + encodeURIComponent(pool));
+    const res  = await fetch('/api/incus/isos?pool=' + encodeURIComponent(pool));
     if (!res.ok) throw new Error(await res.text());
     const isos = await res.json();
     if (!isos || isos.length === 0) {
@@ -34183,7 +35392,7 @@ async function _isoPoolChanged() {
 async function _isoDelete(pool, filename) {
   if (!confirm('Delete ' + filename + '?')) return;
   try {
-    const res = await fetch('/api/lxd/isos/' + encodeURIComponent(filename) + '?pool=' + encodeURIComponent(pool), {method:'DELETE'});
+    const res = await fetch('/api/incus/isos/' + encodeURIComponent(filename) + '?pool=' + encodeURIComponent(pool), {method:'DELETE'});
     if (!res.ok) throw new Error(await res.text());
     _isoPoolChanged();
   } catch(e) {
@@ -34216,7 +35425,7 @@ function _isoUploadFile(input) {
   const fd = new FormData();
   fd.append('file', file);
   const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/lxd/isos/upload?pool=' + encodeURIComponent(pool));
+  xhr.open('POST', '/api/incus/isos/upload?pool=' + encodeURIComponent(pool));
   xhr.upload.onprogress = e => {
     if (e.lengthComputable) {
       const pct = Math.round(e.loaded / e.total * 100);
@@ -34280,7 +35489,7 @@ async function loadLXDImages(kind, selectId, source) {
   csRefresh(selectId);
   const cols = '100px 75px 80px 105px 1fr';
   try {
-    const res = await fetch('/api/lxd/images?kind=' + encodeURIComponent(kind) + '&source=' + encodeURIComponent(source));
+    const res = await fetch('/api/incus/images?kind=' + encodeURIComponent(kind) + '&source=' + encodeURIComponent(source));
     if (!res.ok) throw new Error(await res.text());
     const imgs = await res.json();
     if (!imgs || imgs.length === 0) {
@@ -34317,7 +35526,7 @@ async function loadLXDImages(kind, selectId, source) {
 async function loadLXDImageSources(sourceSelectId, imageSelectId, kind) {
   const sel = document.getElementById(sourceSelectId);
   if (!sel) return;
-  const remotes = await fetch('/api/lxd/remotes').then(r => r.ok ? r.json() : []).catch(() => []);
+  const remotes = await fetch('/api/incus/remotes').then(r => r.ok ? r.json() : []).catch(() => []);
   const list = Array.isArray(remotes) ? remotes : [];
   sel.innerHTML = '<option value="local">Local</option>' +
     list.map(r => `<option value="${esc(r.name)}">${esc(r.name)}${r.url ? ' (' + esc(r.url) + ')' : ''}</option>`).join('');
@@ -34335,7 +35544,7 @@ function _bgPollLXDJob(jobId, label) {
   const baseLabel = label;
   (async function poll() {
     try {
-      const res = await fetch('/api/lxd/create-progress?job_id=' + encodeURIComponent(jobId));
+      const res = await fetch('/api/incus/create-progress?job_id=' + encodeURIComponent(jobId));
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       // Show last meaningful log line as a subtitle in the activity bar.
@@ -34373,7 +35582,7 @@ function openLXDProgressModal(title, jobId) {
 
 async function pollLXDProgress(jobId, seenLines) {
   try {
-    const res = await fetch('/api/lxd/create-progress?job_id=' + encodeURIComponent(jobId));
+    const res = await fetch('/api/incus/create-progress?job_id=' + encodeURIComponent(jobId));
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     const logEl = document.getElementById('lxd-progress-log');
@@ -34515,7 +35724,7 @@ async function pxiConnect() {
   btn.textContent = 'Connecting…';
 
   try {
-    const res = await fetch('/api/lxd/proxmox-import/list', {
+    const res = await fetch('/api/incus/proxmox-import/list', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({host, user, password}),
@@ -34533,8 +35742,8 @@ async function pxiConnect() {
     _pxiConn = {host, user, password};
 
     const [bridges, pools] = await Promise.all([
-      fetch('/api/lxd/networks').then(r => r.json()).catch(() => []),
-      fetch('/api/lxd/storage-pools').then(r => r.json()).catch(() => []),
+      fetch('/api/incus/networks').then(r => r.json()).catch(() => []),
+      fetch('/api/incus/storage-pools').then(r => r.json()).catch(() => []),
     ]);
     const bridgeSel = document.getElementById('pxi-bridge');
     bridgeSel.innerHTML = (bridges || []).map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('') ||
@@ -34635,7 +35844,7 @@ async function pxiStartImport() {
   document.getElementById('pxi-running-footer').style.display = '';
 
   try {
-    const res = await fetch('/api/lxd/proxmox-import/start', {
+    const res = await fetch('/api/incus/proxmox-import/start', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
@@ -34671,13 +35880,13 @@ async function pxiStartImport() {
 
 async function pxiCancelJob(jobId) {
   try {
-    await fetch('/api/lxd/proxmox-import/cancel?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
+    await fetch('/api/incus/proxmox-import/cancel?job_id=' + encodeURIComponent(jobId), { method: 'POST' });
   } catch(_) {}
 }
 
 async function pxiPollJob(jobId) {
   try {
-    const res = await fetch('/api/lxd/proxmox-import/progress?job_id=' + encodeURIComponent(jobId));
+    const res = await fetch('/api/incus/proxmox-import/progress?job_id=' + encodeURIComponent(jobId));
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
 
@@ -34743,7 +35952,7 @@ async function _updateLXDEnableStatus() {
   if (!_experimentalMode) { row.style.display = 'none'; return; }
   row.style.display = 'flex';
   try {
-    const r = await fetch('/api/lxd/enable/status');
+    const r = await fetch('/api/incus/enable/status');
     if (!r.ok) return;
     const s = await r.json();
     if (s.enabled) {
@@ -34790,7 +35999,7 @@ async function lxdEnableLoadPrereqs() {
   const startBtn = document.getElementById('lxd-enable-start-btn');
   if (startBtn) startBtn.disabled = true;
   try {
-    const r = await fetch('/api/lxd/enable/prereqs');
+    const r = await fetch('/api/incus/enable/prereqs');
     if (!r.ok) { showToast('Failed to check prerequisites', 'error'); return; }
     const p = await r.json();
 
@@ -34847,7 +36056,7 @@ async function lxdEnableStart() {
   ]);
 
   try {
-    const r = await fetch('/api/lxd/enable/start', {
+    const r = await fetch('/api/incus/enable/start', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({storage_pool: pool}),
@@ -34863,7 +36072,7 @@ async function lxdEnableStart() {
 
 async function lxdEnablePoll(jobId) {
   try {
-    const r = await fetch('/api/lxd/enable/progress?job_id=' + jobId);
+    const r = await fetch('/api/incus/enable/progress?job_id=' + jobId);
     if (!r.ok) return;
     const d = await r.json();
 
@@ -34934,7 +36143,7 @@ async function lxdEnableCancel() {
   if (!_lxdEnableJobId) { closeLXDEnableModal(); return; }
   clearInterval(_lxdEnablePollTmr); _lxdEnablePollTmr = null;
   try {
-    await fetch('/api/lxd/enable/cancel?job_id=' + _lxdEnableJobId, {method:'POST'});
+    await fetch('/api/incus/enable/cancel?job_id=' + _lxdEnableJobId, {method:'POST'});
   } catch (_) {}
   _lxdEnableError('Job cancelled by user.');
 }
@@ -34942,7 +36151,7 @@ async function lxdEnableCancel() {
 async function lxdEnableDone() {
   closeLXDEnableModal();
   // Trigger LXD status re-probe then reload
-  try { await fetch('/api/lxd/refresh-status', {method:'POST'}); } catch (_) {}
+  try { await fetch('/api/incus/refresh-status', {method:'POST'}); } catch (_) {}
   window.location.reload();
 }
 
@@ -36087,7 +37296,7 @@ async function loadLXDNetworks() {
   if (!tbodyBridges) return;
   tbodyBridges.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px;">Loading…</td></tr>';
   try {
-    const res = await fetch('/api/lxd/network-bridges');
+    const res = await fetch('/api/incus/network-bridges');
     if (res.status === 404) {
       const al = document.getElementById('lxd-networks-alert');
       if (al) { al.textContent = 'No VM Networking detected'; al.classList.remove('hidden'); }
@@ -36268,7 +37477,7 @@ function _bmReset() {
 
 function _bmFetch() {
   if (!_currentBridgeName) return;
-  fetch('/api/lxd/network-bridges/' + encodeURIComponent(_currentBridgeName) + '/stats')
+  fetch('/api/incus/network-bridges/' + encodeURIComponent(_currentBridgeName) + '/stats')
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       if (!data || data.error) return;
@@ -36501,7 +37710,7 @@ function refreshNetworkingNav() {
   if (_lxdNetworksCache.length > 0) {
     renderNetworkingNav(_lxdNetworksCache);
   } else {
-    fetch('/api/lxd/network-bridges').then(r => r.ok ? r.json() : []).then(nets => {
+    fetch('/api/incus/network-bridges').then(r => r.ok ? r.json() : []).then(nets => {
       _lxdNetworksCache = nets || [];
       renderNetworkingNav(_lxdNetworksCache);
     }).catch(() => {});
@@ -36544,7 +37753,7 @@ async function loadBridgeMembers() {
   tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
   al.classList.add('hidden');
   try {
-    const res = await fetch(`/api/lxd/network-bridges/${encodeURIComponent(_currentBridgeName)}/members`);
+    const res = await fetch(`/api/incus/network-bridges/${encodeURIComponent(_currentBridgeName)}/members`);
     if (!res.ok) throw new Error(await res.text());
     const members = await res.json();
     if (!members || members.length === 0) {
@@ -36665,7 +37874,7 @@ async function submitMTUEdit() {
   }
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    const res = await fetch(`/api/lxd/host-interfaces/${encodeURIComponent(_mtuEditIface)}/mtu`, {
+    const res = await fetch(`/api/incus/host-interfaces/${encodeURIComponent(_mtuEditIface)}/mtu`, {
       method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({mtu})
     });
     const data = await res.json();
@@ -36690,7 +37899,7 @@ async function submitDeleteVLANIface() {
   const btn = document.getElementById('del-vlan-iface-submit');
   btn.disabled = true; btn.textContent = 'Deleting…';
   try {
-    const res = await fetch(`/api/lxd/vlan-interface/${encodeURIComponent(_deleteVLANIfacePending)}`, {method:'DELETE'});
+    const res = await fetch(`/api/incus/vlan-interface/${encodeURIComponent(_deleteVLANIfacePending)}`, {method:'DELETE'});
     const data = await res.json();
     if (!res.ok) { showToast(data.error || 'Delete failed', 'error'); return; }
     document.getElementById('modal-delete-vlan-iface').classList.add('hidden');
@@ -36765,7 +37974,7 @@ async function openCreateBridgeModal() {
   const sel = document.getElementById('cb-parent');
   sel.innerHTML = '<option value="">Loading…</option>';
   try {
-    const res = await fetch('/api/lxd/host-interfaces');
+    const res = await fetch('/api/incus/host-interfaces');
     const ifaces = res.ok ? await res.json() : [];
     sel.innerHTML = ifaces.length
       ? ifaces.map(i => `<option value="${esc(i)}">${esc(i)}</option>`).join('')
@@ -36814,7 +38023,7 @@ async function submitCreateBridge() {
   const btn = document.getElementById('create-bridge-submit');
   btn.disabled = true; btn.textContent = 'Creating…';
   try {
-    const res = await fetch('/api/lxd/network-bridges', {
+    const res = await fetch('/api/incus/network-bridges', {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(req)
     });
     const data = await res.json();
@@ -36877,7 +38086,7 @@ async function submitEditBridge() {
   const btn = document.getElementById('edit-bridge-submit');
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    const res = await fetch(`/api/lxd/network-bridges/${encodeURIComponent(_editBridgeCurrentName)}`, {
+    const res = await fetch(`/api/incus/network-bridges/${encodeURIComponent(_editBridgeCurrentName)}`, {
       method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(req)
     });
     const data = await res.json();
@@ -36901,7 +38110,7 @@ async function submitDeleteBridge() {
   const btn = document.getElementById('del-bridge-submit');
   btn.disabled = true; btn.textContent = 'Deleting…';
   try {
-    const res = await fetch(`/api/lxd/network-bridges/${encodeURIComponent(_deleteBridgePendingName)}`, {method:'DELETE'});
+    const res = await fetch(`/api/incus/network-bridges/${encodeURIComponent(_deleteBridgePendingName)}`, {method:'DELETE'});
     const data = await res.json();
     if (!res.ok) {
       showToast(data.error || 'Delete failed', 'error');
@@ -36939,7 +38148,7 @@ function refreshDatastoresNav() {
   if (_lxdStorageCacheDS.length > 0) {
     renderDatastoresNav(_lxdStorageCacheDS);
   } else {
-    fetch('/api/lxd/storage-pools-detail').then(r => r.ok ? r.json() : []).then(pools => {
+    fetch('/api/incus/storage-pools-detail').then(r => r.ok ? r.json() : []).then(pools => {
       _lxdStorageCacheDS = pools || [];
       renderDatastoresNav(_lxdStorageCacheDS);
     }).catch(() => {});
@@ -36955,7 +38164,7 @@ function renderDatastoresNav(pools) {
       : `<span class="nav-dot" style="background:#6e7681;"></span>`;
     const label = p.description || p.name;
     return `<button class="nav-compute-instance" id="nav-ds-${esc(p.name)}" title="${esc(p.description ? p.description+' ('+p.name+')' : p.name)}" onclick='openDatastoreDetail(${JSON.stringify(p.name)})'>
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75;"><path d="M8.416.223a.5.5 0 0 0-.832 0l-3 4.5A.5.5 0 0 0 5 5.5h.098L3.076 8.735A.5.5 0 0 0 3.5 9.5h.191l-1.638 3.276a.5.5 0 0 0 .447.724H13.5a.5.5 0 0 0 .447-.724L12.309 9.5H12.5a.5.5 0 0 0 .424-.765L10.902 5.5H11a.5.5 0 0 0 .416-.777l-3-4.5z"/></svg>
+      <span style="flex-shrink:0;font-size:15px;line-height:1;width:15px;text-align:center;">🗄️</span>
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${esc(label)}</span>
       ${dot}
     </button>`;
@@ -36980,7 +38189,7 @@ async function loadDatastoreMembers() {
   tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
   al.classList.add('hidden');
   try {
-    const res = await fetch(`/api/lxd/storage-pools/${encodeURIComponent(_currentDatastoreName)}/members`);
+    const res = await fetch(`/api/incus/storage-pools/${encodeURIComponent(_currentDatastoreName)}/members`);
     if (!res.ok) throw new Error(await res.text());
     const members = await res.json();
     if (!members || members.length === 0) {
@@ -37026,7 +38235,7 @@ async function loadLXDDatastores() {
   tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
   al.classList.add('hidden');
   try {
-    const res = await fetch('/api/lxd/storage-pools-detail');
+    const res = await fetch('/api/incus/storage-pools-detail');
     if (!res.ok) throw new Error(await res.text());
     const pools = await res.json();
     _lxdStorageCacheDS = pools || [];
@@ -37103,7 +38312,7 @@ async function openEditDatastoreModal(name) {
   btn.disabled = true; btn.textContent = 'Loading…';
   document.getElementById('modal-edit-datastore').classList.remove('hidden');
   try {
-    const res = await fetch('/api/lxd/storage-pools/' + encodeURIComponent(name), {credentials: 'same-origin'});
+    const res = await fetch('/api/incus/storage-pools/' + encodeURIComponent(name), {credentials: 'same-origin'});
     if (!res.ok) throw new Error(await res.text());
     const p = await res.json();
     _editDsDriver = p.driver || '';
@@ -37141,7 +38350,7 @@ async function submitEditDatastore() {
     body.use_refquota = document.getElementById('edit-ds-use-refquota').checked;
   }
   try {
-    const res = await fetch('/api/lxd/storage-pools/' + encodeURIComponent(_editDsCurrentName), {
+    const res = await fetch('/api/incus/storage-pools/' + encodeURIComponent(_editDsCurrentName), {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body)
@@ -37156,15 +38365,19 @@ async function submitEditDatastore() {
 async function openAddDatastoreModal() {
   const sel = document.getElementById('add-ds-zfs-pool');
   const nameEl = document.getElementById('add-ds-name');
+  const rootEl = document.getElementById('add-ds-root');
+  const rootPrefix = document.getElementById('add-ds-root-prefix');
   const al = document.getElementById('add-datastore-alert');
   al.classList.add('hidden');
   nameEl.value = '';
+  rootEl.value = '';
+  rootPrefix.textContent = 'pool/';
   sel.innerHTML = '<option value="">Loading…</option>';
   document.getElementById('modal-add-datastore').classList.remove('hidden');
   try {
     const [poolsRes, existingRes] = await Promise.all([
       fetch('/api/pools').then(r => r.ok ? r.json() : []),
-      fetch('/api/lxd/storage-pools-detail').then(r => r.ok ? r.json() : [])
+      fetch('/api/incus/storage-pools-detail').then(r => r.ok ? r.json() : [])
     ]);
     const existingSources = new Set((existingRes || []).map(p => (p.source || '').split('/')[0]).filter(Boolean));
     const available = (poolsRes || []).filter(p => !existingSources.has(p.name));
@@ -37182,27 +38395,46 @@ async function openAddDatastoreModal() {
 function _onAddDsPoolChange() {
   const sel = document.getElementById('add-ds-zfs-pool');
   const nameEl = document.getElementById('add-ds-name');
+  const rootEl = document.getElementById('add-ds-root');
+  const rootPrefix = document.getElementById('add-ds-root-prefix');
   if (sel.value && !nameEl.value) {
     nameEl.value = sel.value.toLowerCase().replace(/[^a-z0-9\-_]/g, '-');
+  }
+  // Default root dataset to incus-<hostname> on first pool selection.
+  // window._serverHostname is populated at app start from /api/version.
+  if (sel.value) {
+    rootPrefix.textContent = sel.value + '/';
+    if (!rootEl.value) {
+      const hn = (window._serverHostname || 'host').toLowerCase().replace(/[^a-z0-9\-_]/g, '-');
+      rootEl.value = 'incus-' + hn;
+    }
+  } else {
+    rootPrefix.textContent = 'pool/';
   }
 }
 
 async function submitAddDatastore() {
   const sel = document.getElementById('add-ds-zfs-pool');
   const nameEl = document.getElementById('add-ds-name');
+  const rootEl = document.getElementById('add-ds-root');
   const al = document.getElementById('add-datastore-alert');
   const btn = document.getElementById('add-ds-submit');
   al.classList.add('hidden');
   const zfsPool = sel.value.trim();
   const name = nameEl.value.trim();
+  const root = rootEl.value.trim();
   if (!zfsPool) { al.textContent = 'Select a ZFS pool.'; al.classList.remove('hidden'); return; }
+  if (!root)    { al.textContent = 'Enter a root dataset name.'; al.classList.remove('hidden'); return; }
+  if (!/^[a-zA-Z0-9_\-]+$/.test(root)) { al.textContent = 'Root dataset name must contain only letters, digits, dash and underscore.'; al.classList.remove('hidden'); return; }
   if (!name) { al.textContent = 'Enter a datastore name.'; al.classList.remove('hidden'); return; }
+  // Backend expects the full <pool>/<dataset> path as zfs_dataset.
+  const zfsDataset = zfsPool + '/' + root;
   btn.disabled = true; btn.textContent = 'Adding…';
   try {
-    const res = await fetch('/api/lxd/storage-pools-detail', {
+    const res = await fetch('/api/incus/storage-pools-detail', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({name, zfs_dataset: zfsPool})
+      body: JSON.stringify({name, zfs_dataset: zfsDataset})
     });
     const data = await res.json();
     if (!res.ok) { al.textContent = data.error || 'Failed to add datastore'; al.classList.remove('hidden'); return; }
@@ -37228,7 +38460,7 @@ async function submitDeleteDatastore() {
   const al = document.getElementById('del-datastore-alert');
   btn.disabled = true; btn.textContent = 'Deleting…';
   try {
-    const res = await fetch(`/api/lxd/storage-pools/${encodeURIComponent(_lxdDatastorePendingDelete)}`, {method:'DELETE'});
+    const res = await fetch(`/api/incus/storage-pools/${encodeURIComponent(_lxdDatastorePendingDelete)}`, {method:'DELETE'});
     const data = await res.json();
     if (!res.ok) {
       al.textContent = data.error || 'Delete failed'; al.classList.remove('hidden');

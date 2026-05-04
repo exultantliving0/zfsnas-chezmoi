@@ -25,7 +25,7 @@ type BridgeMember struct {
 // GetBridgeMembers returns instances attached to the named LXD bridge with their IPs.
 func GetBridgeMembers(bridge string) ([]BridgeMember, error) {
 	// Get network detail to find used_by list.
-	netOut, err := exec.Command("lxc", "query", "/1.0/networks/"+bridge).Output()
+	netOut, err := exec.Command("incus", "query", "/1.0/networks/"+bridge).Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc query network: %w", err)
 	}
@@ -44,7 +44,7 @@ func GetBridgeMembers(bridge string) ([]BridgeMember, error) {
 		instName := uri[strings.LastIndex(uri, "/")+1:]
 
 		// Get instance config: type, description, devices, expanded_config (volatile MACs).
-		cfgOut, err := exec.Command("lxc", "query", "/1.0/instances/"+instName).Output()
+		cfgOut, err := exec.Command("incus", "query", "/1.0/instances/"+instName).Output()
 		if err != nil {
 			continue
 		}
@@ -103,7 +103,7 @@ func GetBridgeMembers(bridge string) ([]BridgeMember, error) {
 
 		// Get IP from instance state if running.
 		if inst.Status == "Running" && devName != "" {
-			stateOut, err := exec.Command("lxc", "query", "/1.0/instances/"+instName+"/state").Output()
+			stateOut, err := exec.Command("incus", "query", "/1.0/instances/"+instName+"/state").Output()
 			if err == nil {
 				var state struct {
 					Network map[string]struct {
@@ -185,7 +185,7 @@ type LXDNetworkEditRequest struct {
 
 // ListLXDNetworks returns all LXD networks with full detail.
 func ListLXDNetworks() ([]LXDNetwork, error) {
-	out, err := exec.Command("lxc", "network", "list", "--format", "json").Output()
+	out, err := exec.Command("incus", "network", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc network list: %w", err)
 	}
@@ -256,7 +256,7 @@ func osBridgeIPv4(name string) string {
 
 // GetLXDNetwork returns detail for a single LXD network.
 func GetLXDNetwork(name string) (LXDNetwork, error) {
-	out, err := exec.Command("lxc", "query", "/1.0/networks/"+name).Output()
+	out, err := exec.Command("incus", "query", "/1.0/networks/"+name).Output()
 	if err != nil {
 		return LXDNetwork{}, fmt.Errorf("lxc network show: %w", err)
 	}
@@ -438,7 +438,7 @@ func removeVLANInterfaceStanza(iface string) {
 // is the correct approach.
 func setLXDNetworkDescription(name, description string) error {
 	payload := fmt.Sprintf(`{"description":%q}`, description)
-	if out, err := exec.Command("lxc", "query", "--wait", "-X", "PATCH",
+	if out, err := exec.Command("incus", "query", "--wait", "-X", "PATCH",
 		"/1.0/networks/"+name, "-d", payload).CombinedOutput(); err != nil {
 		return fmt.Errorf("set description: %s", strings.TrimSpace(string(out)))
 	}
@@ -478,7 +478,7 @@ func CreateLXDNetwork(req LXDNetworkCreateRequest) error {
 		if mtuArg != "" {
 			args = append(args, mtuArg)
 		}
-		if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("lxc network create: %s", strings.TrimSpace(string(out)))
 		}
 		if req.Description != "" {
@@ -515,7 +515,7 @@ func CreateLXDNetwork(req LXDNetworkCreateRequest) error {
 		if mtuArg != "" {
 			args = append(args, mtuArg)
 		}
-		if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 			removeVLANInterfaceStanza(vlanIface)
 			return fmt.Errorf("lxc network create: %s", strings.TrimSpace(string(out)))
 		}
@@ -537,7 +537,7 @@ func CreateLXDNetwork(req LXDNetworkCreateRequest) error {
 		if mtuArg != "" {
 			args = append(args, mtuArg)
 		}
-		if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("lxc network create: %s", strings.TrimSpace(string(out)))
 		}
 		if req.Description != "" {
@@ -563,11 +563,11 @@ func EditLXDNetwork(req LXDNetworkEditRequest) error {
 	// Apply each config key.
 	for k, v := range req.Config {
 		if v == "" {
-			if out, err := exec.Command("lxc", "network", "unset", req.Name, k).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", "network", "unset", req.Name, k).CombinedOutput(); err != nil {
 				return fmt.Errorf("unset %s: %s", k, strings.TrimSpace(string(out)))
 			}
 		} else {
-			if out, err := exec.Command("lxc", "network", "set", req.Name, k, v).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", "network", "set", req.Name, k, v).CombinedOutput(); err != nil {
 				return fmt.Errorf("set %s: %s", k, strings.TrimSpace(string(out)))
 			}
 		}
@@ -596,7 +596,7 @@ func DeleteLXDNetwork(name string) error {
 		}
 		profileName := ref[strings.LastIndex(ref, "/")+1:]
 		// Find which device in this profile uses our network.
-		if out, e := exec.Command("lxc", "profile", "show", profileName).Output(); e == nil {
+		if out, e := exec.Command("incus", "profile", "show", profileName).Output(); e == nil {
 			for _, line := range strings.Split(string(out), "\n") {
 				line = strings.TrimSpace(line)
 				// Matches "network: <name>" inside a devices block.
@@ -615,7 +615,7 @@ func DeleteLXDNetwork(name string) error {
 		externalIface = net.Config["bridge.external_interfaces"]
 	}
 
-	if out, err := exec.Command("lxc", "network", "delete", name).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "network", "delete", name).CombinedOutput(); err != nil {
 		return fmt.Errorf("lxc network delete: %s", strings.TrimSpace(string(out)))
 	}
 
@@ -633,7 +633,7 @@ func DeleteLXDNetwork(name string) error {
 // removeProfileNICByNetwork removes any NIC device from a profile that has
 // "network: <networkName>" in its config (used before deleting an LXD network).
 func removeProfileNICByNetwork(profileName, networkName string) {
-	out, err := exec.Command("lxc", "profile", "show", profileName, "--format", "json").Output()
+	out, err := exec.Command("incus", "profile", "show", profileName, "--format", "json").Output()
 	if err != nil {
 		return
 	}
@@ -645,7 +645,7 @@ func removeProfileNICByNetwork(profileName, networkName string) {
 	}
 	for devName, dev := range profile.Devices {
 		if dev["type"] == "nic" && dev["network"] == networkName {
-			exec.Command("lxc", "profile", "device", "remove", profileName, devName).Run() //nolint:errcheck
+			exec.Command("incus", "profile", "device", "remove", profileName, devName).Run() //nolint:errcheck
 		}
 	}
 }
@@ -703,7 +703,7 @@ func ListPhysicalInterfaces() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	skip := []string{"lo", "lxd", "veth", "tap", "virbr", "docker", "br-", "vmbr0-"}
+	skip := []string{"lo", "lxd", "incus", "veth", "tap", "virbr", "docker", "br-", "vmbr0-"}
 	var names []string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -816,7 +816,7 @@ type LXDStoragePool struct {
 
 // LXDListStoragePoolInfos returns all LXD storage pools with full detail.
 func LXDListStoragePoolInfos() ([]LXDStoragePool, error) {
-	out, err := exec.Command("lxc", "storage", "list", "--format", "json").Output()
+	out, err := exec.Command("incus", "storage", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc storage list: %w", err)
 	}
@@ -858,7 +858,7 @@ func LXDListStoragePoolInfos() ([]LXDStoragePool, error) {
 
 // GetStoragePoolMembers returns instances that live on the named LXD storage pool.
 func GetStoragePoolMembers(pool string) ([]BridgeMember, error) {
-	poolOut, err := exec.Command("lxc", "query", "/1.0/storage-pools/"+pool).Output()
+	poolOut, err := exec.Command("incus", "query", "/1.0/storage-pools/"+pool).Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc query storage-pool: %w", err)
 	}
@@ -879,7 +879,7 @@ func GetStoragePoolMembers(pool string) ([]BridgeMember, error) {
 			continue
 		}
 		seen[instName] = true
-		cfgOut, err := exec.Command("lxc", "query", "/1.0/instances/"+instName).Output()
+		cfgOut, err := exec.Command("incus", "query", "/1.0/instances/"+instName).Output()
 		if err != nil {
 			continue
 		}
@@ -916,7 +916,7 @@ func GetStoragePoolMembers(pool string) ([]BridgeMember, error) {
 			RootPool:    rootPool,
 		}
 		if inst.Status == "Running" {
-			stateOut, err2 := exec.Command("lxc", "query", "/1.0/instances/"+instName+"/state").Output()
+			stateOut, err2 := exec.Command("incus", "query", "/1.0/instances/"+instName+"/state").Output()
 			if err2 == nil {
 				var state struct {
 					Network map[string]struct {
@@ -950,7 +950,7 @@ func GetStoragePoolMembers(pool string) ([]BridgeMember, error) {
 
 // LXDCreateStoragePool creates a new ZFS-backed LXD storage pool.
 func LXDCreateStoragePool(name, zfsDataset string) error {
-	out, err := exec.Command("lxc", "storage", "create", name, "zfs", "source="+zfsDataset).CombinedOutput()
+	out, err := exec.Command("incus", "storage", "create", name, "zfs", "source="+zfsDataset).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -959,7 +959,7 @@ func LXDCreateStoragePool(name, zfsDataset string) error {
 
 // LXDDeleteStoragePool deletes an LXD storage pool.
 func LXDDeleteStoragePool(name string) error {
-	out, err := exec.Command("lxc", "storage", "delete", name).CombinedOutput()
+	out, err := exec.Command("incus", "storage", "delete", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -1003,7 +1003,7 @@ func LXDEditStoragePool(name string, req LXDStoragePoolEditRequest) error {
 	if err != nil {
 		return err
 	}
-	out, err := exec.Command("lxc", "query", "--request", "PATCH",
+	out, err := exec.Command("incus", "query", "--request", "PATCH",
 		"/1.0/storage-pools/"+name, "--data", string(data)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))

@@ -2,6 +2,11 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/x509"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,10 +28,13 @@ var lxdVGAUpgrader = websocket.Upgrader{
 }
 
 func lxdSocketPath() string {
+	// Incus is the only backend from 6.5.2 onward. Probe Incus's socket
+	// paths (deb installs land in /var/lib/incus; some distros symlink
+	// /run/incus.socket for service-style access).
 	for _, p := range []string{
-		"/var/snap/lxd/common/lxd/unix.socket",
-		"/var/lib/lxd/unix.socket",
-		"/run/lxd.socket",
+		"/var/lib/incus/unix.socket",
+		"/run/incus/unix.socket",
+		"/run/incus.socket",
 	} {
 		if _, err := os.Stat(p); err == nil {
 			return p
@@ -37,8 +45,15 @@ func lxdSocketPath() string {
 
 func startLXDVGAOp(name string) (opID, dataSecret, ctrlSecret string, err error) {
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("lxc", "query", "-X", "POST",
-		"--data", `{"type":"vga","width":1024,"height":768}`,
+	// One Incus operation backs the whole SPICE session. Every additional
+	// browser-side channel (display, inputs, cursor, …) dials a new data
+	// websocket to the SAME operation — that's how `incus console --type
+	// vga` itself works (each accept on the local Unix socket → new WS to
+	// the same opID/secret). force=true here is just to take over a stale
+	// op left behind by a previous broken session; we never start more
+	// than one op for a given live console.
+	cmd := exec.Command("incus", "query", "-X", "POST",
+		"--data", `{"type":"vga","width":1024,"height":768,"force":true}`,
 		"/1.0/instances/"+name+"/console",
 	)
 	cmd.Stdout = &stdout
@@ -73,6 +88,162 @@ func startLXDVGAOp(name string) (opID, dataSecret, ctrlSecret string, err error)
 	return opID, dataSecret, ctrlSecret, nil
 }
 
+// vgaSession pools one Incus console operation across every SPICE channel
+// (main + display + inputs + cursor + …) for a single VM. spice-html5 opens
+// one browser→server WebSocket per channel; without pooling, each handler
+// invocation would call POST /1.0/instances/<name>/console and produce a
+// distinct Incus operation, each with its own SPICE TCP connection inside
+// QEMU and its own connection_id. Channels after the main channel would then
+// send the main channel's connection_id to a different SPICE session and
+// QEMU would reply with SPICE_LINK_ERR_BAD_CONNECTION_ID (error code 8) —
+// which is exactly the failure observed before this fix.
+type vgaSession struct {
+	opID           string
+	dataSecret     string
+	ctrlSecret     string
+	ctrlConn       *websocket.Conn
+	refCount       int
+	cancelTeardown chan struct{}
+}
+
+var (
+	vgaSessions   = map[string]*vgaSession{}
+	vgaSessionsMu sync.Mutex
+)
+
+// vgaSessionGracePeriod gives a tiny window for spice-html5 to start opening
+// the next channel after the previous one closes (page reload, WebSocket
+// reset). Without it we'd tear down the op the instant the last channel
+// closes, racing the next channel's dial.
+const vgaSessionGracePeriod = 3 * time.Second
+
+func makeLXDDialer(socketPath string) websocket.Dialer {
+	return websocket.Dialer{
+		NetDial: func(network, addr string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
+		},
+		HandshakeTimeout: 10 * time.Second,
+	}
+}
+
+// acquireVGASession returns a pooled session for `name`, starting a fresh
+// Incus console operation if there isn't one already (or the cached one is
+// being torn down).
+func acquireVGASession(name, socketPath string) (*vgaSession, error) {
+	vgaSessionsMu.Lock()
+	if s, ok := vgaSessions[name]; ok {
+		// Cancel any pending teardown — another channel arrived in time.
+		if s.cancelTeardown != nil {
+			close(s.cancelTeardown)
+			s.cancelTeardown = nil
+		}
+		s.refCount++
+		log.Printf("[vga] reuse opID=%s refs=%d", s.opID, s.refCount)
+		vgaSessionsMu.Unlock()
+		return s, nil
+	}
+	vgaSessionsMu.Unlock()
+
+	// Fresh op outside the lock — `incus query` shells out and can take
+	// 50–200 ms. Holding the global mutex that long would serialize every
+	// other VM's console acquisitions.
+	opID, dataSecret, ctrlSecret, err := startLXDVGAOp(name)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("[vga] new opID=%s secretLen=%d ctrlLen=%d", opID, len(dataSecret), len(ctrlSecret))
+
+	dialer := makeLXDDialer(socketPath)
+	var ctrlConn *websocket.Conn
+	if ctrlSecret != "" {
+		// LXD requires the control channel to be connected alongside the
+		// data channel; without it LXD closes the data channel immediately.
+		ctrlURL := "ws://localhost/1.0/operations/" + opID + "/websocket?secret=" + ctrlSecret
+		c, _, ctrlErr := dialer.Dial(ctrlURL, nil)
+		if ctrlErr != nil {
+			log.Printf("[vga] dial LXD control WS error: %v", ctrlErr)
+		} else {
+			ctrlConn = c
+			go func(cc *websocket.Conn) {
+				for {
+					if _, _, e := cc.ReadMessage(); e != nil {
+						return
+					}
+				}
+			}(ctrlConn)
+			log.Printf("[vga] LXD control WS connected (pooled)")
+		}
+	}
+
+	s := &vgaSession{
+		opID:       opID,
+		dataSecret: dataSecret,
+		ctrlSecret: ctrlSecret,
+		ctrlConn:   ctrlConn,
+		refCount:   1,
+	}
+	vgaSessionsMu.Lock()
+	if existing, ok := vgaSessions[name]; ok {
+		// Another goroutine raced and inserted while we were starting.
+		// Drop our op (Incus will GC it once unused) and reuse theirs.
+		existing.refCount++
+		vgaSessionsMu.Unlock()
+		if ctrlConn != nil {
+			ctrlConn.Close()
+		}
+		log.Printf("[vga] race: discarded opID=%s, joined existing opID=%s refs=%d", opID, existing.opID, existing.refCount)
+		return existing, nil
+	}
+	vgaSessions[name] = s
+	vgaSessionsMu.Unlock()
+	return s, nil
+}
+
+func releaseVGASession(name string, s *vgaSession) {
+	vgaSessionsMu.Lock()
+	defer vgaSessionsMu.Unlock()
+	s.refCount--
+	if s.refCount > 0 {
+		return
+	}
+	cancel := make(chan struct{})
+	s.cancelTeardown = cancel
+	go func() {
+		select {
+		case <-time.After(vgaSessionGracePeriod):
+			vgaSessionsMu.Lock()
+			defer vgaSessionsMu.Unlock()
+			cur, ok := vgaSessions[name]
+			if !ok || cur != s || s.refCount > 0 {
+				return
+			}
+			delete(vgaSessions, name)
+			if s.ctrlConn != nil {
+				s.ctrlConn.Close()
+			}
+			log.Printf("[vga] tore down pooled session opID=%s", s.opID)
+		case <-cancel:
+			// A new channel grabbed the session inside the grace period.
+		}
+	}()
+}
+
+func invalidateVGASession(name string, s *vgaSession) {
+	vgaSessionsMu.Lock()
+	defer vgaSessionsMu.Unlock()
+	if cur, ok := vgaSessions[name]; ok && cur == s {
+		delete(vgaSessions, name)
+		if s.ctrlConn != nil {
+			s.ctrlConn.Close()
+		}
+		if s.cancelTeardown != nil {
+			close(s.cancelTeardown)
+			s.cancelTeardown = nil
+		}
+		log.Printf("[vga] invalidated pooled session opID=%s", s.opID)
+	}
+}
+
 // HandleLXDVGAConsole proxies the LXD VGA SPICE channel to the browser over WebSocket.
 // GET /ws/lxd-vga?name=<name>
 func HandleLXDVGAConsole(w http.ResponseWriter, r *http.Request) {
@@ -88,51 +259,34 @@ func HandleLXDVGAConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[vga] socket=%s name=%s", socketPath, name)
 
-	opID, dataSecret, ctrlSecret, err := startLXDVGAOp(name)
+	sess, err := acquireVGASession(name, socketPath)
 	if err != nil {
-		log.Printf("[vga] startLXDVGAOp error: %v", err)
+		log.Printf("[vga] acquireVGASession error: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	log.Printf("[vga] opID=%s secretLen=%d ctrlLen=%d", opID, len(dataSecret), len(ctrlSecret))
-
-	lxdDialer := websocket.Dialer{
-		NetDial: func(network, addr string) (net.Conn, error) {
-			return net.Dial("unix", socketPath)
-		},
-		HandshakeTimeout: 10 * time.Second,
-	}
-
-	// LXD requires the control channel to be connected alongside the data channel;
-	// without it LXD closes the data channel immediately.
-	if ctrlSecret != "" {
-		ctrlURL := "ws://localhost/1.0/operations/" + opID + "/websocket?secret=" + ctrlSecret
-		ctrlWS, _, ctrlErr := lxdDialer.Dial(ctrlURL, nil)
-		if ctrlErr != nil {
-			log.Printf("[vga] dial LXD control WS error: %v", ctrlErr)
-		} else {
-			log.Printf("[vga] LXD control WS connected")
-			defer ctrlWS.Close()
-			// Drain control messages in background; no data proxied to browser.
-			go func() {
-				for {
-					if _, _, e := ctrlWS.ReadMessage(); e != nil {
-						return
-					}
-				}
-			}()
+	released := false
+	releaseOnce := func() {
+		if !released {
+			released = true
+			releaseVGASession(name, sess)
 		}
 	}
+	defer releaseOnce()
 
-	// Connect to LXD's SPICE data channel via the Unix socket.
-	wsURL := "ws://localhost/1.0/operations/" + opID + "/websocket?secret=" + dataSecret
-	lxdWS, lxdResp, err := lxdDialer.Dial(wsURL, nil)
+	dialer := makeLXDDialer(socketPath)
+	wsURL := "ws://localhost/1.0/operations/" + sess.opID + "/websocket?secret=" + sess.dataSecret
+	lxdWS, lxdResp, err := dialer.Dial(wsURL, nil)
 	if err != nil {
-		log.Printf("[vga] dial LXD data WS error: %v (resp=%v)", err, lxdResp)
+		log.Printf("[vga] dial LXD data WS error: %v (resp=%v) — invalidating pooled session", err, lxdResp)
+		// The cached operation is probably gone (Incus GC'd it). Drop the
+		// cache so the next request starts a fresh op.
+		invalidateVGASession(name, sess)
+		releaseOnce()
 		http.Error(w, "connect to LXD: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	log.Printf("[vga] LXD data WS connected")
+	log.Printf("[vga] LXD data WS connected (opID=%s)", sess.opID)
 	defer lxdWS.Close()
 
 	browserWS, err := lxdVGAUpgrader.Upgrade(w, r, nil)
@@ -146,6 +300,78 @@ func HandleLXDVGAConsole(w http.ResponseWriter, r *http.Request) {
 	var once sync.Once
 	done := make(chan struct{})
 
+	// SPICE-link-handshake state. We snoop the link traffic in both
+	// directions only long enough to (a) snag the server's RSA pub_key
+	// out of the SPICE_LINK_REPLY and (b) substitute the browser's auth
+	// ticket with a Go-encrypted one. After ticket substitution every
+	// subsequent frame is forwarded transparently.
+	//
+	// Why we re-encrypt server-side: spice-html5's hand-rolled OAEP
+	// (and even Web Crypto in some browsers) produces ciphertext that
+	// modern QEMU/Spice (Incus 6.0 on Debian 13) won't accept against
+	// the empty-string password set by `disable-ticketing=on`. A Go
+	// test with crypto/rsa.EncryptOAEP(sha1, …, []byte{}, nil) is
+	// accepted every time, so we just do the encryption here.
+	var (
+		rsaPub        *rsa.PublicKey
+		ticketRewrote bool
+		stateMu       sync.Mutex
+	)
+	captureLinkReply := func(msg []byte) {
+		// SPICE_LINK_HEADER (16) + SPICE_LINK_REPLY (≥ 4 + 162 …)
+		if len(msg) < 16+4+spiceTicketPubkeyBytes {
+			return
+		}
+		errCode := binary.LittleEndian.Uint32(msg[16:20])
+		if errCode != 0 {
+			return
+		}
+		pubDER := msg[20 : 20+spiceTicketPubkeyBytes]
+		pub, err := x509.ParsePKIXPublicKey(pubDER)
+		if err != nil {
+			log.Printf("[vga] parse SPKI from LINK_REPLY: %v", err)
+			return
+		}
+		rp, ok := pub.(*rsa.PublicKey)
+		if !ok {
+			log.Printf("[vga] LINK_REPLY pub_key is not RSA")
+			return
+		}
+		stateMu.Lock()
+		rsaPub = rp
+		ticketRewrote = false
+		stateMu.Unlock()
+		log.Printf("[vga] captured RSA pubkey (modulus %d bits)", rp.N.BitLen())
+	}
+	rewriteTicket := func(msg []byte) ([]byte, bool) {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		if len(msg) != 4+spiceTicketKeyPairBytes {
+			return msg, false
+		}
+		if rsaPub == nil {
+			log.Printf("[vga] ticket-shaped frame (%d bytes) but no RSA pubkey captured yet — passing through", len(msg))
+			return msg, false
+		}
+		if ticketRewrote {
+			log.Printf("[vga] ticket-shaped frame after first rewrite — passing through")
+			return msg, false
+		}
+		// Empty plaintext: matches the empty SPICE password Incus configures
+		// via disable-ticketing=on. memcmp(decrypted, "", 0) always passes.
+		enc, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, rsaPub, []byte{}, nil)
+		if err != nil {
+			log.Printf("[vga] rsa.EncryptOAEP: %v", err)
+			return msg, false
+		}
+		ticket := make([]byte, 4+spiceTicketKeyPairBytes)
+		binary.LittleEndian.PutUint32(ticket[0:4], spiceCommonCapAuthSpice)
+		copy(ticket[4:], enc)
+		ticketRewrote = true
+		log.Printf("[vga] re-encrypted auth ticket server-side (browser ticket discarded)")
+		return ticket, true
+	}
+
 	// LXD → browser
 	go func() {
 		defer once.Do(func() { close(done) })
@@ -155,7 +381,29 @@ func HandleLXDVGAConsole(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[vga] lxd→browser read err: %v", err)
 				return
 			}
+			// Drop stray empty TEXT frames coming from Incus's WS proxy.
+			// Incus's `incus query --console` websocket bridge sends an
+			// empty WebSocket text frame (opcode=1, length=0) between
+			// SPICE binary messages — verified with a direct unix-socket
+			// test that authenticates fine, gets SPICE_MSG_MAIN_INIT, then
+			// receives this empty frame. spice-html5 negotiates the
+			// "binary" subprotocol and chokes on text frames; the browser
+			// closes the connection right after with "Unexpected close
+			// while ready", which is exactly the user-facing error we saw.
+			// Filtering these frames out makes the proxy fully transparent
+			// from the SPICE client's point of view.
+			if mt == websocket.TextMessage && len(msg) == 0 {
+				continue
+			}
 			log.Printf("[vga] lxd→browser: type=%d len=%d", mt, len(msg))
+			if len(msg) == 4 {
+				log.Printf("[vga] lxd→browser 4-byte auth reply: % x (decoded=%d)", msg, binary.LittleEndian.Uint32(msg))
+			}
+			// 202 bytes is the SPICE_LINK_REPLY frame (16-byte header +
+			// 186-byte body for the standard caps shape). Snag the pub_key.
+			if len(msg) == 202 {
+				captureLinkReply(msg)
+			}
 			if err := browserWS.WriteMessage(mt, msg); err != nil {
 				log.Printf("[vga] lxd→browser write err: %v", err)
 				return
@@ -172,6 +420,11 @@ func HandleLXDVGAConsole(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("[vga] browser→lxd: type=%d len=%d", mt, len(msg))
+			// 132-byte frame is the SPICE_LINK_AUTH_TICKET (4-byte
+			// auth_mechanism + 128-byte encrypted_data). Substitute it.
+			if rewritten, ok := rewriteTicket(msg); ok {
+				msg = rewritten
+			}
 			if err := lxdWS.WriteMessage(mt, msg); err != nil {
 				log.Printf("[vga] browser→lxd write err: %v", err)
 				return
@@ -183,6 +436,15 @@ func HandleLXDVGAConsole(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[vga] proxy done for %s", name)
 }
 
+// spiceTicketPubkeyBytes / spiceTicketKeyPairBytes / spiceCommonCapAuthSpice
+// are the SPICE protocol constants. Defined locally because we don't pull in
+// a SPICE library — the values are stable across SPICE versions.
+const (
+	spiceTicketPubkeyBytes  = 162
+	spiceTicketKeyPairBytes = 128
+	spiceCommonCapAuthSpice = 1
+)
+
 // ServeLXDVGAPage serves the VGA console viewer using spice-html5.
 // GET /lxd-vga-console/{name}
 func ServeLXDVGAPage(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +454,9 @@ func ServeLXDVGAPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	fmt.Fprintf(w, lxdVGAPageHTML, name, name, name)
 }
 
@@ -278,7 +543,7 @@ html, body { width:100%%; height:100%%; background:#000; overflow:hidden; displa
 <div id="spice-area">
   <span id="notice">Connecting to VGA console…</span>
 </div>
-<script src="/static/vendor/spice-html5.js"></script>
+<script src="/static/vendor/spice-html5.js?v=6.5.2-webcrypto"></script>
 <script>
 const name = %q;
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';

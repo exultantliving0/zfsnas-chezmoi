@@ -978,6 +978,24 @@ input::placeholder { color: var(--text-3); }
   transition: opacity .15s;
 }
 .lxd-power-badge.lxd-tbl-icon-busy { opacity: 0.45; cursor: default; pointer-events: none; }
+/* VMs & Containers list — make the table area independently scrollable.
+   Pages-container handles outer scroll for tall pages, but the LXD table
+   has 10 columns and many rows; on short or narrow viewports the action
+   column gets clipped. Constraining the card with internal scroll keeps
+   every column reachable, with a sticky header so you can see what
+   column is what while scrolling. */
+.lxd-table-card {
+  overflow: auto;
+  max-height: calc(100vh - 200px);
+  min-height: 180px;
+}
+.lxd-table-card thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 2;
+}
+
 th.lxd-sortable { cursor: pointer; user-select: none; }
 th.lxd-sortable:hover { color: var(--text); }
 th.lxd-sortable .sort-arrow { font-size: 10px; margin-left: 3px; }
@@ -1107,6 +1125,38 @@ th.lxd-sortable.sort-desc .sort-arrow { opacity: 1; }
   user-select: none;
 }
 
+/* SWAP process gauge panel (v6.5.3+) — same chrome as CPU/MEM. Sits to the
+   right of MEM. Hidden via inline style when no swap device is configured. */
+#swap-gauge-panel {
+  width: 36px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 4px 8px;
+  gap: 4px;
+  cursor: default;
+  user-select: none;
+}
+
+/* SWAP gauge tooltip — same look as #mem-gauge-tooltip. */
+#swap-gauge-tooltip {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  min-width: 420px;
+  z-index: 10000;
+  display: none;
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  pointer-events: none;
+}
+
 #mem-gauge-tooltip {
   position: fixed;
   background: var(--surface);
@@ -1145,6 +1195,350 @@ th.lxd-sortable.sort-desc .sort-arrow { opacity: 1; }
   flex-shrink: 0;
   transition: height 0.5s ease;
 }
+/* v6.5.3+: traffic-light percentage readout under each vertical bar.
+   Two-digit number (max 4 chars including the % sign), monospaced for
+   stable width as the value ticks. JS toggles --pct-color via a class:
+   .pct-ok (green) / .pct-warn (yellow) / .pct-crit (red). */
+.bar-pct-readout {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: center;
+  width: 100%;
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition: color 0.3s ease;
+}
+.bar-pct-readout.pct-ok   { color: #3fb950; }
+.bar-pct-readout.pct-warn { color: #f0b429; }
+.bar-pct-readout.pct-crit { color: #ff453a; }
+
+/* ===== SysInfo modal — colourful hardware overview ===========================
+   The modal renders a stylised motherboard with each component (CPU, DIMMs,
+   chipset, BIOS chip, storage controllers + their disks) as a discrete
+   "chip" card glowing in its own accent colour. Tron theme overrides the
+   palette to neon cyan/magenta for the in-house look. */
+
+.sysinfo-modal { background: var(--surface); }
+
+/* Container: motherboard PCB tint, subtle grid lines for tech-blueprint feel. */
+.sysinfo-board {
+  position: relative;
+  border-radius: 14px;
+  padding: 22px;
+  background:
+    radial-gradient(1200px 600px at 30% 20%, rgba(0,180,216,0.06), transparent 60%),
+    radial-gradient(800px 500px at 80% 80%, rgba(48,209,88,0.06), transparent 60%),
+    linear-gradient(180deg, rgba(0,0,0,0.18), rgba(0,0,0,0.02));
+  border: 1px solid var(--border);
+  box-shadow: inset 0 0 60px rgba(0,0,0,0.25);
+}
+.sysinfo-board::before {
+  content: "";
+  position: absolute; inset: 12px;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 24px 24px;
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* Section grid: top row split into CPU + RAM, then chassis identity row, then
+   storage controllers list. Auto-fits when the modal is narrow. */
+.sysinfo-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+.sysinfo-grid-row { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  .sysinfo-grid { grid-template-columns: 1fr; }
+}
+
+/* A "chip" is one component card. Each gets its own accent via --chip-accent. */
+.sysinfo-chip {
+  --chip-accent: var(--accent);
+  position: relative;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.10));
+  border: 1px solid color-mix(in srgb, var(--chip-accent) 38%, transparent);
+  border-radius: 12px;
+  padding: 14px 16px 14px;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.02) inset,
+    0 0 26px color-mix(in srgb, var(--chip-accent) 18%, transparent);
+}
+.sysinfo-chip-label {
+  position: absolute;
+  top: -10px; left: 14px;
+  background: var(--surface);
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--chip-accent);
+  border: 1px solid color-mix(in srgb, var(--chip-accent) 50%, transparent);
+  border-radius: 6px;
+  display: flex; align-items: center; gap: 6px;
+}
+.sysinfo-chip-label .sysinfo-chip-icon { font-size: 12px; }
+
+/* Per-component accents */
+.sysinfo-chip.is-cpu       { --chip-accent: #ef4444; }
+.sysinfo-chip.is-ram       { --chip-accent: #06b6d4; }
+.sysinfo-chip.is-mobo      { --chip-accent: #22c55e; }
+.sysinfo-chip.is-bios      { --chip-accent: #a855f7; }
+.sysinfo-chip.is-system    { --chip-accent: #f59e0b; }
+.sysinfo-chip.is-ctrl      { --chip-accent: #f97316; }
+
+/* Headline value (model name / total RAM) */
+.sysinfo-headline {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 6px;
+  line-height: 1.35;
+}
+.sysinfo-subline {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* Specs grid: small label/value pairs under the headline. */
+.sysinfo-specs {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  row-gap: 4px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.sysinfo-specs dt {
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  align-self: center;
+}
+.sysinfo-specs dd {
+  margin: 0;
+  color: var(--text-2);
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-weight: 500;
+}
+
+/* DIMM strip: little upright sticks of memory drawn with CSS. */
+.sysinfo-dimm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.sysinfo-dimm {
+  position: relative;
+  height: 86px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--chip-accent) 55%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--chip-accent) 32%, transparent) 0 6px,
+    color-mix(in srgb, var(--chip-accent) 14%, transparent) 6px 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 6px 8px 8px;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--chip-accent) 22%, transparent);
+}
+.sysinfo-dimm.is-empty {
+  border-style: dashed;
+  background: transparent;
+  opacity: 0.45;
+}
+.sysinfo-dimm-locator {
+  font-size: 9px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  position: absolute; top: 4px; left: 8px;
+}
+.sysinfo-dimm-size {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+}
+.sysinfo-dimm-speed {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+.sysinfo-dimm-vendor {
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Controller card: header with model + lscpi class, list of attached disks. */
+.sysinfo-ctrl {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sysinfo-ctrl-card {
+  border: 1px solid color-mix(in srgb, var(--chip-accent) 35%, transparent);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: rgba(0,0,0,0.18);
+}
+.sysinfo-ctrl-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 8px;
+}
+.sysinfo-ctrl-model {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+}
+.sysinfo-ctrl-class {
+  font-size: 11px;
+  color: var(--chip-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.sysinfo-ctrl-slot {
+  font-family: 'SF Mono','Menlo','Consolas',monospace;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.sysinfo-ctrl-disks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.sysinfo-disk {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.025);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+.sysinfo-disk-icon { font-size: 16px; line-height: 1; }
+.sysinfo-disk-info { display:flex; flex-direction:column; min-width:0; flex:1; }
+.sysinfo-disk-dev {
+  font-family: 'SF Mono','Menlo','Consolas',monospace;
+  font-weight: 700;
+  color: var(--text);
+}
+.sysinfo-disk-meta {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tron neon override: brighter accents + outer glow. */
+body.tron .sysinfo-chip,
+body.tron-legacy .sysinfo-chip {
+  background: linear-gradient(180deg, rgba(0,210,255,0.04), rgba(0,0,0,0.18));
+  box-shadow:
+    0 0 0 1px rgba(0,210,255,0.08) inset,
+    0 0 32px color-mix(in srgb, var(--chip-accent) 32%, transparent);
+}
+body.tron .sysinfo-chip.is-cpu,
+body.tron-legacy .sysinfo-chip.is-cpu       { --chip-accent: #ff2d55; }
+body.tron .sysinfo-chip.is-ram,
+body.tron-legacy .sysinfo-chip.is-ram       { --chip-accent: #00f0ff; }
+body.tron .sysinfo-chip.is-mobo,
+body.tron-legacy .sysinfo-chip.is-mobo      { --chip-accent: #00ff95; }
+body.tron .sysinfo-chip.is-bios,
+body.tron-legacy .sysinfo-chip.is-bios      { --chip-accent: #c084fc; }
+body.tron .sysinfo-chip.is-system,
+body.tron-legacy .sysinfo-chip.is-system    { --chip-accent: #ffe600; }
+body.tron .sysinfo-chip.is-ctrl,
+body.tron-legacy .sysinfo-chip.is-ctrl      { --chip-accent: #ff9d00; }
+
+/* SysInfo CPU chip — P/E core breakdown highlights. Colours chosen so they
+   read clearly on both light and dark surfaces; Tron picks up its neon palette. */
+.sysinfo-pcore { color: #d97706; font-weight: 700; }
+.sysinfo-ecore { color: #0891b2; font-weight: 700; }
+body.tron .sysinfo-pcore, body.tron-legacy .sysinfo-pcore { color: #ffe600; text-shadow: 0 0 5px rgba(255,230,0,0.6); }
+body.tron .sysinfo-ecore, body.tron-legacy .sysinfo-ecore { color: #00f0ff; text-shadow: 0 0 5px rgba(0,240,255,0.6); }
+
+/* "Hybrid" badge in the CPU subline — pill background gives it AA contrast
+   on both light surfaces (#fff/#f2f2f7) and dark ones (#001428–#1c1c1e). */
+.sysinfo-hybrid-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  margin-left: 2px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(217,119,6,0.16);
+  color: #b45309;
+  border: 1px solid rgba(217,119,6,0.45);
+}
+body.light .sysinfo-hybrid-badge {
+  background: rgba(180,83,9,0.12);
+  color: #92400e;
+  border-color: rgba(180,83,9,0.55);
+}
+body.tron .sysinfo-hybrid-badge,
+body.tron-legacy .sysinfo-hybrid-badge {
+  background: rgba(255,230,0,0.12);
+  color: #ffe600;
+  border-color: rgba(255,230,0,0.55);
+  text-shadow: 0 0 6px rgba(255,230,0,0.55);
+}
+
+/* zram "compressed" segment of the MEM tooltip's first row. Default: bold,
+   bright green so it pops against the regular tooltip text. Tron: glowing
+   cyan to match the rest of the theme's neon palette. */
+.mem-tooltip-compressed {
+  color: #22c55e;
+  font-weight: 800;
+  text-shadow: 0 0 6px rgba(34,197,94,0.55);
+}
+body.tron .mem-tooltip-compressed,
+body.tron-legacy .mem-tooltip-compressed {
+  color: #00f0ff;
+  font-weight: 800;
+  text-shadow: 0 0 6px rgba(0,240,255,0.85), 0 0 12px rgba(0,210,255,0.55);
+}
+
+/* v6.5.3+: footer row inside each Virtualization-tab card holding the Apply
+   button and a status message. Right-aligns the button, lets the message
+   take the remaining width. Replaces the panel-wide Save / Reload footer. */
+.virt-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.virt-card-msg {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-3);
+  min-height: 16px;
+}
+.virt-card-msg.ok    { color: #3fb950; }
+.virt-card-msg.error { color: #ff453a; }
 #cpu-gauge-tooltip {
   position: fixed;
   background: var(--surface);

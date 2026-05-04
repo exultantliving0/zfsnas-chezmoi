@@ -77,8 +77,8 @@ func lxdNormalizeSizeStr(s string) string {
 type LXDInstance struct {
 	Name        string `json:"name"`
 	Description string `json:"description"` // human-readable display name
-	Type        string `json:"type"`         // "virtual-machine" | "container"
-	Status      string `json:"status"`       // "Running", "Stopped", "Starting", "Stopping", ...
+	Type        string `json:"type"`        // "virtual-machine" | "container"
+	Status      string `json:"status"`      // "Running", "Stopped", "Starting", "Stopping", ...
 	IPv4        string `json:"ipv4"`
 	Image       string `json:"image"`
 	CPULimit    string `json:"cpu_limit"`
@@ -118,8 +118,8 @@ type LXDExistingDisk struct {
 // Raw ZVols: DevPath = "/dev/zvol/…"
 // LXD-managed volumes: DevPath = "lxd:<pool>/<volname>"
 type LXDFreeZVol struct {
-	Name    string `json:"name"`     // display name
-	DevPath string `json:"dev_path"` // /dev/zvol/… or lxd:<pool>/<vol>
+	Name    string  `json:"name"`     // display name
+	DevPath string  `json:"dev_path"` // /dev/zvol/… or lxd:<pool>/<vol>
 	SizeGB  float64 `json:"size_gb"`
 }
 
@@ -163,7 +163,7 @@ func ListFreeZVols() ([]LXDFreeZVol, error) {
 // not currently attached to any instance (i.e. detached disks).
 func listFreeLXDManagedVols() []LXDFreeZVol {
 	// Get all pools
-	poolsOut, err := exec.Command("lxc", "query", "/1.0/storage-pools?recursion=1").Output()
+	poolsOut, err := exec.Command("incus", "query", "/1.0/storage-pools?recursion=1").Output()
 	if err != nil {
 		return nil
 	}
@@ -178,7 +178,7 @@ func listFreeLXDManagedVols() []LXDFreeZVol {
 
 	var out []LXDFreeZVol
 	for _, pool := range pools {
-		volsOut, err := exec.Command("lxc", "query",
+		volsOut, err := exec.Command("incus", "query",
 			"/1.0/storage-pools/"+pool.Name+"/volumes/custom?recursion=1").Output()
 		if err != nil {
 			continue
@@ -201,7 +201,7 @@ func listFreeLXDManagedVols() []LXDFreeZVol {
 			// stale entries in its database after volumes are deleted directly.
 			if lxdFindZFSVol(v.Name) == "" {
 				// Prune the orphaned LXD inventory entry.
-				exec.Command("lxc", "storage", "volume", "delete", pool.Name, v.Name).Run()
+				exec.Command("incus", "storage", "volume", "delete", pool.Name, v.Name).Run()
 				continue
 			}
 			sizeGB := parseVolSizeGB(v.Config.Size)
@@ -296,7 +296,7 @@ func parseVolSizeGB(s string) float64 {
 
 // lxdPoolZFSPrefixes returns the ZFS dataset paths used by LXD ZFS-backed storage pools.
 func lxdPoolZFSPrefixes() []string {
-	out, err := exec.Command("lxc", "query", "/1.0/storage-pools?recursion=1").Output()
+	out, err := exec.Command("incus", "query", "/1.0/storage-pools?recursion=1").Output()
 	if err != nil {
 		return nil
 	}
@@ -350,9 +350,9 @@ type LXDPCIDevice struct {
 	DeviceName string `json:"device_name"`
 	Address    string `json:"address"` // e.g. "0000:02:00.0"
 	Desc       string `json:"desc"`
-	ROMBar     string `json:"rombar,omitempty"`  // "0" or "1"; "" = LXD default
-	AER        string `json:"aer,omitempty"`     // "0" or "1"; "" = LXD default
-	XVGA       string `json:"x_vga,omitempty"`   // "0" or "1"; "" = LXD default
+	ROMBar     string `json:"rombar,omitempty"` // "0" or "1"; "" = LXD default
+	AER        string `json:"aer,omitempty"`    // "0" or "1"; "" = LXD default
+	XVGA       string `json:"x_vga,omitempty"`  // "0" or "1"; "" = LXD default
 }
 
 // LXDPassthroughDevice is a generic device passthrough for containers.
@@ -365,52 +365,52 @@ type LXDPassthroughDevice struct {
 
 // LXDCreateVMRequest contains all parameters for VM creation.
 type LXDCreateVMRequest struct {
-	Name            string         `json:"name"`
-	Description     string         `json:"description"`
-	Image           string         `json:"image"`
-	Profile         string         `json:"profile"`
-	AutoStart       bool           `json:"auto_start"`
-	VCPU            int            `json:"vcpu"`
-	MemoryMB        int            `json:"memory_mb"`
-	MemoryHugepages bool           `json:"memory_hugepages"`
-	RootPool        string         `json:"root_pool"`
-	RootSizeGB      int            `json:"root_size_gb"`
-	ExtraDisks      []LXDDisk      `json:"extra_disks"`
-	ExistingDisks   []LXDExistingDisk `json:"existing_disks_raw"`
-	NICs            []LXDNIC       `json:"nics"`
-	USBDevices      []LXDUSBDevice `json:"usb_devices"`
-	PCIDevices      []LXDPCIDevice `json:"pci_devices"`
-	CloudInit       string         `json:"cloud_init"`
-	CDROMPath       string         `json:"cdrom_path"` // absolute path to ISO, "" = no disc
-	CDROMPool       string         `json:"cdrom_pool"` // pool name — handler resolves to CDROMPath
-	CDROMIso        string         `json:"cdrom_iso"`  // ISO filename within pool's .isos dir
-	CDROMs          []string       `json:"cdroms"`     // handler-resolved absolute ISO paths (multi-drive)
-	CPUSockets        int    `json:"cpu_sockets"`        // QEMU socket topology (0 = auto)
-	CPUPin            string `json:"cpu_pin"`            // LXD limits.cpu range string for pinning
-	StatefulSnapshots bool   `json:"stateful_snapshots"` // sets migration.stateful before first start
-	Firmware          string `json:"firmware"`           // "uefi" (default) | "bios"
-	SecureBoot        bool   `json:"secure_boot"`        // only meaningful when Firmware == "uefi"
-	TPM               bool   `json:"tpm"`                // enable emulated TPM 2.0 (security.tpm)
-	MachineType       string `json:"machine_type"`       // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", "q35", "pc", etc.
-	DiskBus           string `json:"disk_bus"`           // "" = virtio-blk (default), "scsi", "nvme"
+	Name              string            `json:"name"`
+	Description       string            `json:"description"`
+	Image             string            `json:"image"`
+	Profile           string            `json:"profile"`
+	AutoStart         bool              `json:"auto_start"`
+	VCPU              int               `json:"vcpu"`
+	MemoryMB          int               `json:"memory_mb"`
+	MemoryHugepages   bool              `json:"memory_hugepages"`
+	RootPool          string            `json:"root_pool"`
+	RootSizeGB        int               `json:"root_size_gb"`
+	ExtraDisks        []LXDDisk         `json:"extra_disks"`
+	ExistingDisks     []LXDExistingDisk `json:"existing_disks_raw"`
+	NICs              []LXDNIC          `json:"nics"`
+	USBDevices        []LXDUSBDevice    `json:"usb_devices"`
+	PCIDevices        []LXDPCIDevice    `json:"pci_devices"`
+	CloudInit         string            `json:"cloud_init"`
+	CDROMPath         string            `json:"cdrom_path"`         // absolute path to ISO, "" = no disc
+	CDROMPool         string            `json:"cdrom_pool"`         // pool name — handler resolves to CDROMPath
+	CDROMIso          string            `json:"cdrom_iso"`          // ISO filename within pool's .isos dir
+	CDROMs            []string          `json:"cdroms"`             // handler-resolved absolute ISO paths (multi-drive)
+	CPUSockets        int               `json:"cpu_sockets"`        // QEMU socket topology (0 = auto)
+	CPUPin            string            `json:"cpu_pin"`            // LXD limits.cpu range string for pinning
+	StatefulSnapshots bool              `json:"stateful_snapshots"` // sets migration.stateful before first start
+	Firmware          string            `json:"firmware"`           // "uefi" (default) | "bios"
+	SecureBoot        bool              `json:"secure_boot"`        // only meaningful when Firmware == "uefi"
+	TPM               bool              `json:"tpm"`                // enable emulated TPM 2.0 (security.tpm)
+	MachineType       string            `json:"machine_type"`       // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", "q35", "pc", etc.
+	DiskBus           string            `json:"disk_bus"`           // "" = virtio-blk (default), "scsi", "nvme"
 }
 
 // LXDCreateContainerRequest contains all parameters for container creation.
 type LXDCreateContainerRequest struct {
-	Name         string                 `json:"name"`
-	Description  string                 `json:"description"`
-	Image        string                 `json:"image"`
-	Profile      string                 `json:"profile"`
-	AutoStart    bool                   `json:"auto_start"`
-	CPUCores     int                    `json:"cpu_cores"`
-	CPUShares    int                    `json:"cpu_shares"`    // 1-10, maps to limits.cpu.priority
-	CPULimitPct  int                    `json:"cpu_limit_pct"` // 0=unlimited; 1-100 → limits.cpu.allowance
-	MemoryMB     int                    `json:"memory_mb"`
-	SwapMB       int                    `json:"swap_mb"`     // -1 = no swap, 0 = unlimited, >0 = N MB
-	DiskSizeGB   int                    `json:"disk_size_gb"`
-	RootPool     string                 `json:"root_pool"`
-	Unprivileged bool                   `json:"unprivileged"` // true = security.privileged=false (default)
-	Nesting       bool                   `json:"nesting"`       // security.nesting=true
+	Name          string                 `json:"name"`
+	Description   string                 `json:"description"`
+	Image         string                 `json:"image"`
+	Profile       string                 `json:"profile"`
+	AutoStart     bool                   `json:"auto_start"`
+	CPUCores      int                    `json:"cpu_cores"`
+	CPUShares     int                    `json:"cpu_shares"`    // 1-10, maps to limits.cpu.priority
+	CPULimitPct   int                    `json:"cpu_limit_pct"` // 0=unlimited; 1-100 → limits.cpu.allowance
+	MemoryMB      int                    `json:"memory_mb"`
+	SwapMB        int                    `json:"swap_mb"` // -1 = no swap, 0 = unlimited, >0 = N MB
+	DiskSizeGB    int                    `json:"disk_size_gb"`
+	RootPool      string                 `json:"root_pool"`
+	Unprivileged  bool                   `json:"unprivileged"`   // true = security.privileged=false (default)
+	Nesting       bool                   `json:"nesting"`        // security.nesting=true
 	FeatureKeyctl bool                   `json:"feature_keyctl"` // security.syscalls.allow=keyctl
 	FeatureFUSE   bool                   `json:"feature_fuse"`   // adds /dev/fuse device
 	RootPassword  string                 `json:"root_password"`  // set via chpasswd after start
@@ -423,15 +423,15 @@ type LXDCreateContainerRequest struct {
 // LXDInstanceStats holds live resource usage for a running instance.
 type LXDInstanceStats struct {
 	Status        string  `json:"status"`
-	UptimeSec     int64   `json:"uptime_sec"`       // seconds since instance started (0 if unknown)
+	UptimeSec     int64   `json:"uptime_sec"` // seconds since instance started (0 if unknown)
 	CPUUsageNs    int64   `json:"cpu_usage_ns"`
-	CPUPct        float64 `json:"cpu_pct"`          // current CPU % across all vCPUs (0-100)
-	CPUCount      int     `json:"cpu_count"`         // number of vCPUs configured
+	CPUPct        float64 `json:"cpu_pct"`   // current CPU % across all vCPUs (0-100)
+	CPUCount      int     `json:"cpu_count"` // number of vCPUs configured
 	MemUsedBytes  int64   `json:"mem_used_bytes"`
 	MemPeakBytes  int64   `json:"mem_peak_bytes"`
-	MemLimitBytes int64   `json:"mem_limit_bytes"`   // 0 = unlimited
+	MemLimitBytes int64   `json:"mem_limit_bytes"` // 0 = unlimited
 	DiskUsedBytes int64   `json:"disk_used_bytes"`
-	DiskSizeBytes int64   `json:"disk_size_bytes"`   // 0 = unlimited / unknown
+	DiskSizeBytes int64   `json:"disk_size_bytes"` // 0 = unlimited / unknown
 	Processes     int     `json:"processes"`
 }
 
@@ -471,17 +471,21 @@ func LXDGetInstanceStats(name string) (LXDInstanceStats, error) {
 	type stateRaw struct {
 		Status    string `json:"status"`
 		StartedAt string `json:"started_at"` // RFC3339; only present in LXD 5.2+ (api ext instance_state_started_at)
-		Pid       int64  `json:"pid"`         // host PID of the container init / VM process
-		CPU       struct{ Usage int64 `json:"usage"` } `json:"cpu"`
-		Memory    struct {
+		Pid       int64  `json:"pid"`        // host PID of the container init / VM process
+		CPU       struct {
+			Usage int64 `json:"usage"`
+		} `json:"cpu"`
+		Memory struct {
 			Usage     int64 `json:"usage"`
 			UsagePeak int64 `json:"usage_peak"`
 		} `json:"memory"`
-		Disk      map[string]struct{ Usage int64 `json:"usage"` } `json:"disk"`
+		Disk map[string]struct {
+			Usage int64 `json:"usage"`
+		} `json:"disk"`
 		Processes int `json:"processes"`
 	}
 	queryState := func() (int64, *stateRaw, error) {
-		out, err := exec.Command("lxc", "query", "/1.0/instances/"+name+"/state").Output()
+		out, err := exec.Command("incus", "query", "/1.0/instances/"+name+"/state").Output()
 		if err != nil {
 			return 0, nil, err
 		}
@@ -575,8 +579,8 @@ func LXDGetInstanceStats(name string) (LXDInstanceStats, error) {
 		uptimeSec = pidUptimeSec(raw2.Pid)
 	}
 
-	memUsed  := raw2.Memory.Usage
-	memPeak  := raw2.Memory.UsagePeak
+	memUsed := raw2.Memory.Usage
+	memPeak := raw2.Memory.UsagePeak
 	// VMs without lxd-agent: the /state endpoint reports memory.usage = 0
 	// and cpu.usage stuck at 0 because the cgroup doesn't see inside the
 	// QEMU process. LXD's prom endpoint reports real values for both via
@@ -728,6 +732,7 @@ type PCIDevice struct {
 }
 
 var lxdNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
+
 // pciAddrRe accepts both short (BB:SS.F) and full (DDDD:BB:SS.F) PCI addresses.
 var pciAddrRe = regexp.MustCompile(`^([0-9a-fA-F]{4}:)?[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$`)
 
@@ -738,6 +743,7 @@ func normPCIAddr(addr string) string {
 	}
 	return addr
 }
+
 var usbIDRe = regexp.MustCompile(`^[0-9a-fA-F]{4}$`)
 
 // parsePCIQEMUArgs extracts per-device options from a raw.qemu string.
@@ -783,7 +789,7 @@ func buildPCIQEMUArg(pci LXDPCIDevice) string {
 // removed and replaced with entries derived from pciDevices (only those with
 // at least one option set are written back). Other raw.qemu content is kept.
 func applyPCIRawQEMU(name string, pciDevices []LXDPCIDevice) {
-	out, _ := exec.Command("lxc", "config", "get", name, "raw.qemu").Output()
+	out, _ := exec.Command("incus", "config", "get", name, "raw.qemu").Output()
 	existing := strings.TrimSpace(string(out))
 
 	// Strip all existing -device vfio-pci entries (ZNAS fully manages them).
@@ -806,21 +812,24 @@ func applyPCIRawQEMU(name string, pciDevices []LXDPCIDevice) {
 	newVal := strings.Join(parts, " ")
 
 	if newVal == "" {
-		exec.Command("lxc", "config", "unset", name, "raw.qemu").Run()
+		exec.Command("incus", "config", "unset", name, "raw.qemu").Run()
 	} else {
-		exec.Command("lxc", "config", "set", name, "raw.qemu", newVal).Run()
+		// key=value single-arg form: prevents `incus`'s flag parser from
+		// treating values that start with "-" (e.g. "-global …" or
+		// "-smp sockets=2") as shorthand flags.
+		exec.Command("incus", "config", "set", name, "raw.qemu="+newVal).Run()
 	}
 }
 
 // LXDAvailable probes LXD accessibility by running `lxc list --format json`.
 func LXDAvailable() bool {
-	cmd := exec.Command("lxc", "list", "--format", "json")
+	cmd := exec.Command("incus", "list", "--format", "json")
 	return cmd.Run() == nil
 }
 
 // LXDVersion returns the lxc client version string.
 func LXDVersion() string {
-	out, err := exec.Command("lxc", "version").Output()
+	out, err := exec.Command("incus", "version").Output()
 	if err != nil {
 		return ""
 	}
@@ -918,7 +927,7 @@ func lxdPickBestIP(
 
 // ListLXDInstances returns all LXD instances (VMs + containers).
 func ListLXDInstances() ([]LXDInstance, error) {
-	out, err := exec.Command("lxc", "list", "--format", "json").Output()
+	out, err := exec.Command("incus", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc list: %w", err)
 	}
@@ -989,7 +998,7 @@ func LXDGetStatus(name string) (string, error) {
 	if !lxdNameRe.MatchString(name) {
 		return "", fmt.Errorf("invalid instance name")
 	}
-	out, err := exec.Command("lxc", "list", name, "--format", "json").Output()
+	out, err := exec.Command("incus", "list", name, "--format", "json").Output()
 	if err != nil {
 		return "", err
 	}
@@ -1007,7 +1016,7 @@ func LXDStart(name string) error {
 	if !lxdNameRe.MatchString(name) {
 		return fmt.Errorf("invalid instance name")
 	}
-	out, err := exec.Command("lxc", "start", name).CombinedOutput()
+	out, err := exec.Command("incus", "start", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -1029,7 +1038,7 @@ func LXDStop(name string, force bool) error {
 		// goroutine for the VM's full ACPI shutdown wait (30 s+).
 		args = append(args, "--timeout=10")
 	}
-	out, err := exec.Command("lxc", args...).CombinedOutput()
+	out, err := exec.Command("incus", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -1041,7 +1050,7 @@ func LXDRestart(name string) error {
 	if !lxdNameRe.MatchString(name) {
 		return fmt.Errorf("invalid instance name")
 	}
-	out, err := exec.Command("lxc", "restart", name).CombinedOutput()
+	out, err := exec.Command("incus", "restart", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -1057,15 +1066,15 @@ func LXDDelete(name string, deleteVolumes bool) error {
 	_ = LXDStop(name, true)
 	// Always pass --force so deletion succeeds even when the instance is in ERROR state
 	// or when lxc considers it still running after a failed stop.
-	return exec.Command("lxc", "delete", "--force", name).Run()
+	return exec.Command("incus", "delete", "--force", name).Run()
 }
 
 // LXDNICConfig describes a network interface device on an instance.
 type LXDNICConfig struct {
 	Name        string `json:"name"`
-	Bridge      string `json:"bridge"`              // "network" or "parent" value
-	NICType     string `json:"nictype"`             // "network" (managed) or "bridged" (direct bridge)
-	Connected   bool   `json:"connected"`           // false when OS link is down (detected from instance state)
+	Bridge      string `json:"bridge"`    // "network" or "parent" value
+	NICType     string `json:"nictype"`   // "network" (managed) or "bridged" (direct bridge)
+	Connected   bool   `json:"connected"` // false when OS link is down (detected from instance state)
 	VlanID      int    `json:"vlan_id,omitempty"`
 	FromProfile bool   `json:"from_profile,omitempty"`
 	MAC         string `json:"mac,omitempty"`        // volatile.<name>.hwaddr
@@ -1073,8 +1082,8 @@ type LXDNICConfig struct {
 	IPv4Mode    string `json:"ipv4_mode,omitempty"`  // "dhcp" | "static" | "none"
 	IPv4Addr    string `json:"ipv4_addr,omitempty"`  // e.g. "10.0.0.10/24"
 	IPv4GW      string `json:"ipv4_gw,omitempty"`    // gateway IP
-	DNS1        string `json:"dns1,omitempty"`        // primary DNS (static only)
-	DNS2        string `json:"dns2,omitempty"`        // secondary DNS (static only)
+	DNS1        string `json:"dns1,omitempty"`       // primary DNS (static only)
+	DNS2        string `json:"dns2,omitempty"`       // secondary DNS (static only)
 }
 
 // LXDDiskConfig describes a disk device on an instance.
@@ -1090,60 +1099,60 @@ type LXDDiskConfig struct {
 	CompRatio    string `json:"comp_ratio,omitempty"`    // e.g. "1.23x"
 	BootPriority string `json:"boot_priority,omitempty"` // lxd boot.priority value
 	// VM-only per-disk knobs. Empty string means "leave unset / inherit".
-	IOCache  string `json:"io_cache,omitempty"`  // "" | "none" | "writeback" | "writethrough" | "unsafe" | "directsync"
-	IOBus    string `json:"io_bus,omitempty"`    // "" | "virtio-blk" | "virtio-scsi" | "nvme" — overrides the VM-wide DiskBus when non-empty
-	ReadOnly bool   `json:"readonly,omitempty"`  // attach disk read-only
+	IOCache  string `json:"io_cache,omitempty"` // "" | "none" | "writeback" | "writethrough" | "unsafe" | "directsync"
+	IOBus    string `json:"io_bus,omitempty"`   // "" | "virtio-blk" | "virtio-scsi" | "nvme" — overrides the VM-wide DiskBus when non-empty
+	ReadOnly bool   `json:"readonly,omitempty"` // attach disk read-only
 }
 
 // LXDCapabilities flags optional disk knobs by LXD's API extension list, so
 // the UI can render only the keys the running LXD will actually accept
 // (LXD 5.0.x lacks `io.bus`/`io.threads`, breaks the dropdown silently).
 type LXDCapabilities struct {
-	DiskIOBus    bool `json:"disk_io_bus"`
-	DiskIOCache  bool `json:"disk_io_cache"`
+	DiskIOBus     bool `json:"disk_io_bus"`
+	DiskIOCache   bool `json:"disk_io_cache"`
 	DiskIOThreads bool `json:"disk_io_threads"`
 }
 
 // LXDInstanceConfig holds the editable configuration of an LXD instance.
 type LXDInstanceConfig struct {
-	Description        string                 `json:"description"`
-	CPULimit           string                 `json:"cpu_limit"`
-	CPUPin             string                 `json:"cpu_pin"`            // LXD range string for pinning; overrides CPULimit when non-empty
-	CPUSockets          int                    `json:"cpu_sockets"`        // QEMU socket topology (0=auto)
-	MemoryLimit         string                 `json:"memory_limit"`
-	MemoryHugepages     bool                   `json:"memory_hugepages"`
-	MemoryReservation   string                 `json:"memory_reservation"` // "", "25", "50", "75", "100", or "custom:<size>"
-	Nesting              bool                   `json:"nesting"`
-	Autostart            bool                   `json:"autostart"`
-	StatefulSnapshots    bool                   `json:"stateful_snapshots"` // migration.stateful — VM-only
-	IsVM                 bool                   `json:"is_vm"`
+	Description       string `json:"description"`
+	CPULimit          string `json:"cpu_limit"`
+	CPUPin            string `json:"cpu_pin"`     // LXD range string for pinning; overrides CPULimit when non-empty
+	CPUSockets        int    `json:"cpu_sockets"` // QEMU socket topology (0=auto)
+	MemoryLimit       string `json:"memory_limit"`
+	MemoryHugepages   bool   `json:"memory_hugepages"`
+	MemoryReservation string `json:"memory_reservation"` // "", "25", "50", "75", "100", or "custom:<size>"
+	Nesting           bool   `json:"nesting"`
+	Autostart         bool   `json:"autostart"`
+	StatefulSnapshots bool   `json:"stateful_snapshots"` // migration.stateful — VM-only
+	IsVM              bool   `json:"is_vm"`
 	// Container-specific features (only applied when ApplyContainerFeatures is true)
-	ApplyContainerFeatures bool   `json:"apply_container_features,omitempty"`
-	CPULimitPct            int    `json:"cpu_limit_pct,omitempty"`  // 0=unset, 1-100 → limits.cpu.allowance
-	CPUShares              int    `json:"cpu_shares,omitempty"`     // 0=unset, 1-10 → limits.cpu.priority
-	SwapLimit              string `json:"swap_limit,omitempty"`     // "" | "false" | "512MB"
-	Unprivileged           bool   `json:"unprivileged,omitempty"`   // security.privileged = !Unprivileged
-	FeatureKeyctl          bool   `json:"feature_keyctl,omitempty"` // security.syscalls.allow=keyctl
-	FeatureFUSE            bool   `json:"feature_fuse,omitempty"`   // /dev/fuse device
-	CDROMPath          string                 `json:"cdrom_path"`    // current ISO path (GET) / desired path (PUT)
-	ApplyCDROM         bool                   `json:"apply_cdrom"`   // if true, apply CDROMPath change on PUT (legacy single-drive)
-	CDROMs             []string               `json:"cdroms"`        // handler-resolved absolute ISO paths (multi-drive)
-	ApplyCDROMs        bool                   `json:"apply_cdroms"`  // if true, replace all CDROMs with CDROMs list
-	Firmware           string                 `json:"firmware"`      // "uefi" (default) | "bios"
-	SecureBoot         bool                   `json:"secure_boot"`   // only meaningful when Firmware == "uefi"
-	TPM                bool                   `json:"tpm"`           // enable emulated TPM 2.0 (security.tpm)
-	MachineType        string                 `json:"machine_type"`  // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", etc.
-	DiskBus            string                 `json:"disk_bus"`      // "" = virtio-blk (default), "scsi", "nvme"
-	NICs               []LXDNICConfig         `json:"nics"`
-	Disks              []LXDDiskConfig        `json:"disks"`
-	DetachDisks        []string               `json:"detach_disks,omitempty"` // device names to detach only (keep backing volume)
-	ExistingDisks      []LXDExistingDisk      `json:"existing_disks_raw"` // ZVols to attach as new raw block devices
-	USBDevices         []LXDUSBDevice         `json:"usb_devices"`
-	PCIDevices         []LXDPCIDevice         `json:"pci_devices"`
-	PassthroughDevices []LXDPassthroughDevice `json:"passthrough_devices"`
+	ApplyContainerFeatures bool                   `json:"apply_container_features,omitempty"`
+	CPULimitPct            int                    `json:"cpu_limit_pct,omitempty"`  // 0=unset, 1-100 → limits.cpu.allowance
+	CPUShares              int                    `json:"cpu_shares,omitempty"`     // 0=unset, 1-10 → limits.cpu.priority
+	SwapLimit              string                 `json:"swap_limit,omitempty"`     // "" | "false" | "512MB"
+	Unprivileged           bool                   `json:"unprivileged,omitempty"`   // security.privileged = !Unprivileged
+	FeatureKeyctl          bool                   `json:"feature_keyctl,omitempty"` // security.syscalls.allow=keyctl
+	FeatureFUSE            bool                   `json:"feature_fuse,omitempty"`   // /dev/fuse device
+	CDROMPath              string                 `json:"cdrom_path"`               // current ISO path (GET) / desired path (PUT)
+	ApplyCDROM             bool                   `json:"apply_cdrom"`              // if true, apply CDROMPath change on PUT (legacy single-drive)
+	CDROMs                 []string               `json:"cdroms"`                   // handler-resolved absolute ISO paths (multi-drive)
+	ApplyCDROMs            bool                   `json:"apply_cdroms"`             // if true, replace all CDROMs with CDROMs list
+	Firmware               string                 `json:"firmware"`                 // "uefi" (default) | "bios"
+	SecureBoot             bool                   `json:"secure_boot"`              // only meaningful when Firmware == "uefi"
+	TPM                    bool                   `json:"tpm"`                      // enable emulated TPM 2.0 (security.tpm)
+	MachineType            string                 `json:"machine_type"`             // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", etc.
+	DiskBus                string                 `json:"disk_bus"`                 // "" = virtio-blk (default), "scsi", "nvme"
+	NICs                   []LXDNICConfig         `json:"nics"`
+	Disks                  []LXDDiskConfig        `json:"disks"`
+	DetachDisks            []string               `json:"detach_disks,omitempty"` // device names to detach only (keep backing volume)
+	ExistingDisks          []LXDExistingDisk      `json:"existing_disks_raw"`     // ZVols to attach as new raw block devices
+	USBDevices             []LXDUSBDevice         `json:"usb_devices"`
+	PCIDevices             []LXDPCIDevice         `json:"pci_devices"`
+	PassthroughDevices     []LXDPassthroughDevice `json:"passthrough_devices"`
 	// Daemon-side capability flags (read-only on GET; ignored on PUT). Lets
 	// the editor disable inputs that the running LXD will silently reject.
-	Capabilities       LXDCapabilities        `json:"capabilities,omitempty"`
+	Capabilities LXDCapabilities `json:"capabilities,omitempty"`
 }
 
 var lxdDevNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
@@ -1161,6 +1170,28 @@ func updateRawQEMUSockets(rawQemu string, sockets int) string {
 	}
 	if sockets > 1 {
 		rawQemu = strings.TrimSpace(rawQemu) + fmt.Sprintf(" -smp sockets=%d", sockets)
+	}
+	return strings.TrimSpace(rawQemu)
+}
+
+// updateRawQEMUMachine inserts or updates a -machine TYPE flag in a raw.qemu
+// string. Used because Incus 6.0.x rejects the qemu.machine.type config key
+// ("Unknown configuration key") — only the qemu_raw_conf extension is
+// available, so we override the machine type via raw.qemu instead. machineType
+// of "" removes any previously-injected -machine clause.
+func updateRawQEMUMachine(rawQemu, machineType string) string {
+	// Remove any existing -machine X clause we added (token after the flag).
+	const marker = " -machine "
+	if idx := strings.Index(rawQemu, marker); idx >= 0 {
+		end := idx + len(marker)
+		for end < len(rawQemu) && rawQemu[end] != ' ' {
+			end++
+		}
+		rawQemu = strings.TrimSpace(rawQemu[:idx]) + rawQemu[end:]
+	}
+	machineType = strings.TrimSpace(machineType)
+	if machineType != "" {
+		rawQemu = strings.TrimSpace(rawQemu) + " -machine " + machineType
 	}
 	return strings.TrimSpace(rawQemu)
 }
@@ -1192,26 +1223,15 @@ func setCDROMsRawQEMU(rawQemu string, paths []string) string {
 	return strings.TrimSpace(rawQemu)
 }
 
-// setCDROMsAppArmor replaces ISO directory AppArmor rules in rawAA with the appropriate
-// rules for the given ISO paths.
+// setCDROMsAppArmor replaces ISO directory AppArmor rules in rawAA with the
+// appropriate rules for the given ISO paths.
 //
-// Snap LXD: ISOs are under /var/snap/lxd/common/lxd/isos/ — one blanket rule covers all pools.
-// Non-snap: per-directory rules for each unique ISO parent directory.
+// Incus on Debian is deb-only — no snap mount-namespace tricks are needed.
+// We emit one rule per unique ISO parent directory; QEMU's AppArmor profile
+// extends from those.
 func setCDROMsAppArmor(rawAA string, paths []string) string {
 	rawAA = strings.TrimSpace(cdromAAre.ReplaceAllString(rawAA, ""))
-	if lxdIsSnap() {
-		// One rule covers all pools; individual pool subdirs are already inside this tree.
-		hasISO := false
-		for _, p := range paths {
-			if p != "" && filepath.IsAbs(p) {
-				hasISO = true
-				break
-			}
-		}
-		if hasISO {
-			rawAA = strings.TrimSpace(rawAA) + " " + snapLXDISOBase + "/** rk,"
-		}
-	} else {
+	{
 		seen := map[string]bool{}
 		for _, p := range paths {
 			if p == "" || !filepath.IsAbs(p) {
@@ -1231,7 +1251,7 @@ func setCDROMsAppArmor(rawAA string, paths []string) string {
 // and removes any legacy LXD cdrom disk devices (virtio-scsi) that may already exist.
 func vmApplyCDROMs(name string, paths []string, applyConf func(string, string) error) {
 	// Remove legacy LXD cdrom disk devices so we don't present duplicate drives.
-	out, _ := exec.Command("lxc", "query", "/1.0/instances/"+name).Output()
+	out, _ := exec.Command("incus", "query", "/1.0/instances/"+name).Output()
 	var inst struct {
 		Devices map[string]map[string]string `json:"devices"`
 	}
@@ -1239,20 +1259,20 @@ func vmApplyCDROMs(name string, paths []string, applyConf func(string, string) e
 		for devName, d := range inst.Devices {
 			if d["type"] == "disk" && d["readonly"] == "true" &&
 				strings.HasSuffix(strings.ToLower(d["source"]), ".iso") {
-				exec.Command("lxc", "config", "device", "remove", name, devName).Run() //nolint:errcheck
+				exec.Command("incus", "config", "device", "remove", name, devName).Run() //nolint:errcheck
 			}
 		}
 	}
 
 	// Read current raw.qemu (may already have socket topology or PCI flags) and update CDROMs.
-	curRQ, _ := exec.Command("lxc", "config", "get", name, "raw.qemu").Output()
+	curRQ, _ := exec.Command("incus", "config", "get", name, "raw.qemu").Output()
 	newRQ := setCDROMsRawQEMU(strings.TrimSpace(string(curRQ)), paths)
 	// raw.qemu values start with '-' which lxc config set misparses as its own flags.
 	// Use lxc query PATCH to set the value safely.
 	lxdPatchConfig(name, "raw.qemu", newRQ)
 
 	// Update raw.apparmor so snapped LXD's QEMU sandbox can open the ISO files.
-	curAA, _ := exec.Command("lxc", "config", "get", name, "raw.apparmor").Output()
+	curAA, _ := exec.Command("incus", "config", "get", name, "raw.apparmor").Output()
 	newAA := setCDROMsAppArmor(strings.TrimSpace(string(curAA)), paths)
 	applyConf("raw.apparmor", newAA) //nolint:errcheck
 }
@@ -1279,7 +1299,7 @@ var (
 func LXDGetCapabilities() LXDCapabilities {
 	lxdAPIExtensionsOnce.Do(func() {
 		lxdAPIExtensions = map[string]bool{}
-		out, err := exec.Command("lxc", "query", "/1.0").Output()
+		out, err := exec.Command("incus", "query", "/1.0").Output()
 		if err != nil {
 			return
 		}
@@ -1308,7 +1328,7 @@ var (
 func lxdSupportsConfigKey(key string) bool {
 	lxdSupportedKeysOnce.Do(func() {
 		lxdSupportedKeys = map[string]bool{}
-		out, err := exec.Command("lxc", "query", "/1.0/metadata/configuration").Output()
+		out, err := exec.Command("incus", "query", "/1.0/metadata/configuration").Output()
 		if err != nil {
 			return
 		}
@@ -1370,10 +1390,10 @@ func normalizeSwapLimit(v string) string {
 // interpreting them as CLI flags, and only updates the one config key.
 func lxdPatchConfig(name, key, val string) {
 	if val == "" {
-		exec.Command("lxc", "config", "unset", name, key).Run() //nolint:errcheck
+		exec.Command("incus", "config", "unset", name, key).Run() //nolint:errcheck
 		return
 	}
-	exec.Command("lxc", "config", "set", name, key+"="+val).Run() //nolint:errcheck
+	exec.Command("incus", "config", "set", name, key+"="+val).Run() //nolint:errcheck
 }
 
 // lxdFindZFSVol searches for a ZFS volume whose name ends with /suffix or _suffix.
@@ -1423,7 +1443,7 @@ func lxdSetZvolReservation(zfsPath string, pct int) {
 // lxdZFSPoolForLXDPool returns the ZFS pool name backing a given LXD storage pool.
 // Returns "" on error or if the pool driver is not ZFS.
 func lxdZFSPoolForLXDPool(lxdPool string) string {
-	out, err := exec.Command("lxc", "query", "/1.0/storage-pools/"+lxdPool).Output()
+	out, err := exec.Command("incus", "query", "/1.0/storage-pools/"+lxdPool).Output()
 	if err != nil {
 		return ""
 	}
@@ -1460,7 +1480,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 	if !lxdNameRe.MatchString(name) {
 		return LXDInstanceConfig{}, fmt.Errorf("invalid instance name")
 	}
-	out, err := exec.Command("lxc", "query", "/1.0/instances/"+name).Output()
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+name).Output()
 	if err != nil {
 		return LXDInstanceConfig{}, fmt.Errorf("query instance: %w", err)
 	}
@@ -1489,6 +1509,21 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 		}
 		if v, err := strconv.Atoi(rq[idx:end]); err == nil {
 			rawQemuSockets = v
+		}
+	}
+	// Parse machine type — prefer the native qemu.machine.type key (newer
+	// Incus), fall back to the -machine TYPE token in raw.qemu (Incus 6.0.x
+	// where the native key is rejected as "Unknown configuration key").
+	machineType := raw.Config["qemu.machine.type"]
+	if machineType == "" {
+		if rq := raw.Config["raw.qemu"]; strings.Contains(rq, "-machine ") {
+			const marker = "-machine "
+			idx := strings.Index(rq, marker) + len(marker)
+			end := idx
+			for end < len(rq) && rq[end] != ' ' {
+				end++
+			}
+			machineType = rq[idx:end]
 		}
 	}
 
@@ -1527,12 +1562,12 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 		IsVM:              raw.Type == "virtual-machine",
 		Firmware:          firmware,
 		SecureBoot:        secureBoot,
-		MachineType:       raw.Config["qemu.machine.type"],
+		MachineType:       machineType,
 		// Container-specific (populated for containers, ignored for VMs)
-		CPULimitPct:   cpuLimitPct,
-		CPUShares:     cpuShares,
-		SwapLimit:     raw.Config["limits.memory.swap"],
-		Unprivileged:  raw.Config["security.privileged"] != "true",
+		CPULimitPct:  cpuLimitPct,
+		CPUShares:    cpuShares,
+		SwapLimit:    raw.Config["limits.memory.swap"],
+		Unprivileged: raw.Config["security.privileged"] != "true",
 		FeatureKeyctl: raw.Config["security.syscalls.intercept.keyctl"] == "true" ||
 			strings.Contains(raw.Config["security.syscalls.allow"], "keyctl"),
 		Capabilities: LXDGetCapabilities(),
@@ -1708,7 +1743,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 	}
 
 	// Enrich NICs with live IP addresses from instance state.
-	stateOut, err := exec.Command("lxc", "query", "/1.0/instances/"+name+"/state").Output()
+	stateOut, err := exec.Command("incus", "query", "/1.0/instances/"+name+"/state").Output()
 	if err == nil {
 		var state struct {
 			Network map[string]lxdStateNetwork `json:"network"`
@@ -1852,7 +1887,7 @@ const lxdSBOffMarker = "driver=cfi.pflash01,property=secure,value=off"
 // lxdSetSecureBootRawQEMU adds/removes the secure-boot-disable pflash flag from
 // raw.qemu without clobbering any other flags already present.
 func lxdSetSecureBootRawQEMU(name string, enable bool) error {
-	out, _ := exec.Command("lxc", "config", "get", name, "raw.qemu").Output()
+	out, _ := exec.Command("incus", "config", "get", name, "raw.qemu").Output()
 	current := strings.TrimSpace(string(out))
 
 	// Strip any existing pflash secure flag (handles both "-global <marker>" forms).
@@ -1874,10 +1909,10 @@ func lxdSetSecureBootRawQEMU(name string, enable bool) error {
 		if current == "" {
 			return nil // raw.qemu was already absent and nothing to add — no-op
 		}
-		setOut, setErr = exec.Command("lxc", "config", "unset", name, "raw.qemu").CombinedOutput()
+		setOut, setErr = exec.Command("incus", "config", "unset", name, "raw.qemu").CombinedOutput()
 	} else {
 		// Use key=value form so lxc doesn't parse the leading "-global" as its own flag.
-		setOut, setErr = exec.Command("lxc", "config", "set", name, "raw.qemu="+cleaned).CombinedOutput()
+		setOut, setErr = exec.Command("incus", "config", "set", name, "raw.qemu="+cleaned).CombinedOutput()
 	}
 	if setErr != nil {
 		msg := strings.TrimSpace(string(setOut))
@@ -1902,7 +1937,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 
 	// Resolve IsVM from LXD if the caller did not supply it.
 	if !cfg.IsVM {
-		if out, err := exec.Command("lxc", "query", "/1.0/instances/"+name).Output(); err == nil {
+		if out, err := exec.Command("incus", "query", "/1.0/instances/"+name).Output(); err == nil {
 			var inst struct {
 				Type string `json:"type"`
 			}
@@ -1918,7 +1953,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 
 	// Description via REST PATCH.
 	descJSON, _ := json.Marshal(cfg.Description)
-	if out, err := exec.Command("lxc", "query", "-X", "PATCH",
+	if out, err := exec.Command("incus", "query", "-X", "PATCH",
 		"/1.0/instances/"+name, "--data", fmt.Sprintf(`{"description":%s}`, descJSON)).CombinedOutput(); err != nil {
 		return fmt.Errorf("description: %s", strings.TrimSpace(string(out)))
 	}
@@ -1928,18 +1963,18 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		var out []byte
 		var err error
 		if val == "" {
-			out, err = exec.Command("lxc", "config", "unset", name, key).CombinedOutput()
+			out, err = exec.Command("incus", "config", "unset", name, key).CombinedOutput()
 			if err != nil && strings.Contains(string(out), "not currently set") {
 				return nil
 			}
 		} else {
 			// Use key=value form when value starts with "-" to prevent lxc from
-		// interpreting it as its own CLI flag (e.g. raw.qemu=-global ...).
-		if strings.HasPrefix(val, "-") {
-			out, err = exec.Command("lxc", "config", "set", name, key+"="+val).CombinedOutput()
-		} else {
-			out, err = exec.Command("lxc", "config", "set", name, key, val).CombinedOutput()
-		}
+			// interpreting it as its own CLI flag (e.g. raw.qemu=-global ...).
+			if strings.HasPrefix(val, "-") {
+				out, err = exec.Command("incus", "config", "set", name, key+"="+val).CombinedOutput()
+			} else {
+				out, err = exec.Command("incus", "config", "set", name, key, val).CombinedOutput()
+			}
 		}
 		if err != nil {
 			return fmt.Errorf("%s: %s", key, strings.TrimSpace(string(out)))
@@ -1964,7 +1999,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	if cfg.IsVM {
 		// Read current raw.qemu so we can update sockets without clobbering other flags.
 		curRawQEMU := ""
-		if out, err := exec.Command("lxc", "config", "get", name, "raw.qemu").Output(); err == nil {
+		if out, err := exec.Command("incus", "config", "get", name, "raw.qemu").Output(); err == nil {
 			curRawQEMU = strings.TrimSpace(string(out))
 		}
 		newRawQEMU := updateRawQEMUSockets(curRawQEMU, cfg.CPUSockets)
@@ -2044,7 +2079,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	// TPM device (VM-only): add or remove the tpm device based on cfg.TPM.
 	if cfg.IsVM {
 		hasTPM := false
-		if out, err := exec.Command("lxc", "query", "/1.0/instances/"+name).Output(); err == nil {
+		if out, err := exec.Command("incus", "query", "/1.0/instances/"+name).Output(); err == nil {
 			var inst struct {
 				Devices map[string]map[string]string `json:"devices"`
 			}
@@ -2058,14 +2093,29 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			}
 		}
 		if cfg.TPM && !hasTPM {
-			exec.Command("lxc", "config", "device", "add", name, "tpm", "tpm").Run() //nolint:errcheck
+			exec.Command("incus", "config", "device", "add", name, "tpm", "tpm").Run() //nolint:errcheck
 		} else if !cfg.TPM && hasTPM {
-			exec.Command("lxc", "config", "device", "remove", name, "tpm").Run() //nolint:errcheck
+			exec.Command("incus", "config", "device", "remove", name, "tpm").Run() //nolint:errcheck
 		}
 	}
-	// Machine type (VM-only). Empty string unsets the override, letting LXD choose.
+	// Machine type (VM-only). Empty string unsets the override, letting LXD
+	// choose. Incus 6.0.x lacks the qemu.machine.type config key — fall back
+	// to a -machine TYPE clause inside raw.qemu when the native key is
+	// rejected so the dropdown actually works on this Incus version.
 	if cfg.IsVM {
-		applyConf("qemu.machine.type", cfg.MachineType) //nolint:errcheck
+		if err := applyConf("qemu.machine.type", cfg.MachineType); err != nil {
+			out, _ := exec.Command("incus", "config", "get", name, "raw.qemu").Output()
+			lxdPatchConfig(name, "raw.qemu",
+				updateRawQEMUMachine(strings.TrimSpace(string(out)), cfg.MachineType))
+		} else {
+			// Native key accepted: clear any prior raw.qemu -machine override
+			// so the two paths can't disagree on subsequent edits.
+			out, _ := exec.Command("incus", "config", "get", name, "raw.qemu").Output()
+			cleaned := updateRawQEMUMachine(strings.TrimSpace(string(out)), "")
+			if strings.TrimSpace(string(out)) != cleaned {
+				lxdPatchConfig(name, "raw.qemu", cleaned)
+			}
+		}
 	}
 
 	// Container-specific features (CPU throttle, swap, security, FUSE).
@@ -2104,7 +2154,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		// the default seccomp profile already permits keyctl, so we leave
 		// the config untouched. Either way, drop any stale allow=keyctl
 		// value left by the old buggy code.
-		exec.Command("lxc", "config", "unset", name, "security.syscalls.allow").Run() //nolint:errcheck
+		exec.Command("incus", "config", "unset", name, "security.syscalls.allow").Run() //nolint:errcheck
 		if cfg.FeatureKeyctl {
 			if lxdSupportsConfigKey("security.syscalls.intercept.keyctl") {
 				if err := applyConf("security.syscalls.intercept.keyctl", "true"); err != nil {
@@ -2112,12 +2162,12 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				}
 			}
 		} else {
-			exec.Command("lxc", "config", "unset", name, "security.syscalls.intercept.keyctl").Run() //nolint:errcheck
+			exec.Command("incus", "config", "unset", name, "security.syscalls.intercept.keyctl").Run() //nolint:errcheck
 		}
 	}
 
 	// Fetch current instance-level devices for diff.
-	rawOut, err := exec.Command("lxc", "query", "/1.0/instances/"+name).Output()
+	rawOut, err := exec.Command("incus", "query", "/1.0/instances/"+name).Output()
 	if err != nil {
 		return fmt.Errorf("query instance: %w", err)
 	}
@@ -2179,10 +2229,10 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	// If LXD returns a DNS name conflict (two NICs on the same LXD-managed bridge),
 	// it disables DNS on that bridge (dns.mode=none) and retries once.
 	lxcNICRun := func(bridge string, args []string) ([]byte, error) {
-		out, err := exec.Command("lxc", args...).CombinedOutput()
+		out, err := exec.Command("incus", args...).CombinedOutput()
 		if err != nil && strings.Contains(string(out), "DNS name") {
-			exec.Command("lxc", "network", "set", bridge, "dns.mode=none").Run() //nolint:errcheck
-			out, err = exec.Command("lxc", args...).CombinedOutput()
+			exec.Command("incus", "network", "set", bridge, "dns.mode=none").Run() //nolint:errcheck
+			out, err = exec.Command("incus", args...).CombinedOutput()
 		}
 		return out, err
 	}
@@ -2202,7 +2252,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				// Profile NIC being disconnected: bring the link down inside the container.
 				// Instance-level NICs that don't exist yet just skip (nothing to disconnect).
 				if isProfileOnly && isRunning {
-					exec.Command("lxc", "exec", name, "--", "ip", "link", "set", nic.Name, "down").Run()
+					exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "down").Run()
 				}
 				continue
 			}
@@ -2213,13 +2263,22 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				// overrides the profile NIC. Without this override the request was
 				// silently swallowed — the audit log showed "lxd_edit_config" success
 				// while the VM kept the profile's old bridge.
-				profDev    := expandedNICs[nic.Name]
+				profDev := expandedNICs[nic.Name]
 				profBridge := profDev["network"]
 				if profBridge == "" {
 					profBridge = profDev["parent"]
 				}
 				profVlan := profDev["vlan"]
-				profMAC  := strings.ToLower(profDev["hwaddr"])
+				profMAC := strings.ToLower(profDev["hwaddr"])
+				// Same volatile-MAC fallback as the instance-NIC path below:
+				// the GET response synthesises an effective MAC from
+				// volatile.<name>.hwaddr when the profile / device hwaddr
+				// is unset, and a no-op save would round-trip that value
+				// here. Without this fallback every save would create a
+				// per-instance override device just to pin the volatile MAC.
+				if profMAC == "" {
+					profMAC = strings.ToLower(rawDev.ExpandedConfig["volatile."+nic.Name+".hwaddr"])
+				}
 				wantVlan := ""
 				if nic.VlanID > 0 {
 					wantVlan = fmt.Sprintf("%d", nic.VlanID)
@@ -2243,7 +2302,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				// Bring the link up regardless (best-effort; VMs without lxd-agent
 				// will fail silently, which is the existing pre-fix behaviour).
 				if isRunning {
-					exec.Command("lxc", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run()
+					exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run()
 				}
 				continue
 			}
@@ -2260,11 +2319,11 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				return fmt.Errorf("add NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
 			}
 			// Clear any disconnected-NIC metadata for this device.
-			exec.Command("lxc", "config", "unset", name, "user.disconnected_nics."+nic.Name).Run() //nolint:errcheck
+			exec.Command("incus", "config", "unset", name, "user.disconnected_nics."+nic.Name).Run() //nolint:errcheck
 		} else {
 			// NIC exists in instance config.
 			// Clear any stale disconnected-NIC metadata so the UI stays consistent.
-			exec.Command("lxc", "config", "unset", name, "user.disconnected_nics."+nic.Name).Run() //nolint:errcheck
+			exec.Command("incus", "config", "unset", name, "user.disconnected_nics."+nic.Name).Run() //nolint:errcheck
 
 			curUsesNetwork := cur["network"] != "" // "network=" style registers with LXD DNS
 			curBridge := cur["network"]
@@ -2278,7 +2337,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				if isRunning {
 					return fmt.Errorf("stop the VM first to disconnect NIC %s", nic.Name)
 				}
-				if out, err := exec.Command("lxc", "config", "device", "remove", name, nic.Name).CombinedOutput(); err != nil {
+				if out, err := exec.Command("incus", "config", "device", "remove", name, nic.Name).CombinedOutput(); err != nil {
 					return fmt.Errorf("disconnect NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
 				}
 				mac := cur["hwaddr"]
@@ -2290,7 +2349,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 					"mac":    mac,
 					"vlan":   cur["vlan"],
 				})
-				exec.Command("lxc", "config", "set", name,
+				exec.Command("incus", "config", "set", name,
 					"user.disconnected_nics."+nic.Name, string(metaVal)).Run() //nolint:errcheck
 				// wantNICs still contains this name so the deletion loop won't retry the remove.
 				continue
@@ -2304,7 +2363,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				if isRunning {
 					return fmt.Errorf("stop the VM first to change NIC %s bridge (managed-network NIC requires restart)", nic.Name)
 				}
-				if out, err := exec.Command("lxc", "config", "device", "remove", name, nic.Name).CombinedOutput(); err != nil {
+				if out, err := exec.Command("incus", "config", "device", "remove", name, nic.Name).CombinedOutput(); err != nil {
 					return fmt.Errorf("update NIC %s (remove): %s", nic.Name, strings.TrimSpace(string(out)))
 				}
 				addArgs := nicBridgedArgs(nic.Name, nic.Bridge)
@@ -2336,21 +2395,34 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			}
 			if curVlan != wantVlan {
 				if wantVlan == "" {
-					exec.Command("lxc", "config", "device", "unset", name, nic.Name, "vlan").Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "unset", name, nic.Name, "vlan").Run() //nolint:errcheck
 				} else {
-					if out, err := exec.Command("lxc", "config", "device", "set",
+					if out, err := exec.Command("incus", "config", "device", "set",
 						name, nic.Name, "vlan="+wantVlan).CombinedOutput(); err != nil {
 						return fmt.Errorf("update NIC %s vlan: %s", nic.Name, strings.TrimSpace(string(out)))
 					}
 				}
 			}
+			// MAC comparison: the GET endpoint returns the effective MAC by
+			// falling back to volatile.<nic>.hwaddr when the device-level
+			// hwaddr is unset (Incus auto-assigns volatile MACs). A round-
+			// trip through the edit form therefore gives us wantMAC == the
+			// volatile MAC even when the user changed nothing. If we only
+			// compared against cur["hwaddr"] here, every save would re-pin
+			// the MAC at the device level and Incus would treat that as a
+			// NIC change — which on stateful or freshly-created VMs surfaces
+			// as "Failed to detach NIC after 10s". Treat the volatile MAC
+			// as part of the current state so a no-op save stays a no-op.
 			curMAC := strings.ToLower(cur["hwaddr"])
+			if curMAC == "" {
+				curMAC = strings.ToLower(rawDev.ExpandedConfig["volatile."+nic.Name+".hwaddr"])
+			}
 			wantMAC := strings.ToLower(nic.MAC)
 			if curMAC != wantMAC {
 				if wantMAC == "" {
-					exec.Command("lxc", "config", "device", "unset", name, nic.Name, "hwaddr").Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "unset", name, nic.Name, "hwaddr").Run() //nolint:errcheck
 				} else {
-					if out, err := exec.Command("lxc", "config", "device", "set",
+					if out, err := exec.Command("incus", "config", "device", "set",
 						name, nic.Name, "hwaddr="+wantMAC).CombinedOutput(); err != nil {
 						return fmt.Errorf("update NIC %s hwaddr: %s", nic.Name, strings.TrimSpace(string(out)))
 					}
@@ -2360,7 +2432,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	}
 	for n := range curNICs {
 		if _, ok := wantNICs[n]; !ok {
-			if out, err := exec.Command("lxc", "config", "device", "remove", name, n).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", "config", "device", "remove", name, n).CombinedOutput(); err != nil {
 				outStr := strings.TrimSpace(string(out))
 				if isRunning {
 					return fmt.Errorf("remove NIC %s: %s (stop the VM first to remove NICs)", n, outStr)
@@ -2373,7 +2445,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	if isRunning {
 		for _, nic := range cfg.NICs {
 			if nic.Connected {
-				exec.Command("lxc", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run() //nolint:errcheck
+				exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run() //nolint:errcheck
 			}
 		}
 	}
@@ -2395,7 +2467,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		if isRunning {
 			if dnsLines := _collectDNSLines(staticNICs); len(dnsLines) > 0 {
 				resolvConf := strings.Join(dnsLines, "\n") + "\n"
-				cmd := exec.Command("lxc", "exec", name, "--", "/bin/sh", "-c",
+				cmd := exec.Command("incus", "exec", name, "--", "/bin/sh", "-c",
 					"rm -f /etc/resolv.conf && cat > /etc/resolv.conf")
 				cmd.Stdin = strings.NewReader(resolvConf)
 				cmd.Run()
@@ -2418,13 +2490,13 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			if disk.Size != "" {
 				volArgs = append(volArgs, "size="+disk.Size)
 			}
-			if out, err := exec.Command("lxc", volArgs...).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", volArgs...).CombinedOutput(); err != nil {
 				return fmt.Errorf("create volume for %s: %s", disk.Name, strings.TrimSpace(string(out)))
 			}
 			devArgs := []string{"config", "device", "add", name, disk.Name, "disk",
 				"pool=" + disk.Pool, "source=" + volName}
-			if out, err := exec.Command("lxc", devArgs...).CombinedOutput(); err != nil {
-				exec.Command("lxc", "storage", "volume", "delete", disk.Pool, volName).Run()
+			if out, err := exec.Command("incus", devArgs...).CombinedOutput(); err != nil {
+				exec.Command("incus", "storage", "volume", "delete", disk.Pool, volName).Run()
 				return fmt.Errorf("add disk %s: %s", disk.Name, strings.TrimSpace(string(out)))
 			}
 			// Apply ZFS reservation for the newly created volume.
@@ -2446,7 +2518,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			newBytes := lxdVolSizeBytes(disk.Size)
 			if newBytes > 0 && curBytes > 0 && newBytes <= curBytes {
 				// Same size or smaller — skip. ZFS volumes can only grow.
-			} else if out, err := exec.Command("lxc", "config", "device", "set", name, disk.Name, "size", disk.Size).CombinedOutput(); err != nil {
+			} else if out, err := exec.Command("incus", "config", "device", "set", name, disk.Name, "size", disk.Size).CombinedOutput(); err != nil {
 				return fmt.Errorf("resize disk %s: %s", disk.Name, strings.TrimSpace(string(out)))
 			}
 		} else if !disk.IsRoot && disk.Size != "" && cur["size"] == "" {
@@ -2505,9 +2577,9 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			curPrio := cur["boot.priority"]
 			if disk.BootPriority != curPrio {
 				if disk.BootPriority == "" {
-					exec.Command("lxc", "config", "device", "unset", name, disk.Name, "boot.priority").Run()
+					exec.Command("incus", "config", "device", "unset", name, disk.Name, "boot.priority").Run()
 				} else {
-					exec.Command("lxc", "config", "device", "set", name, disk.Name, "boot.priority", disk.BootPriority).Run()
+					exec.Command("incus", "config", "device", "set", name, disk.Name, "boot.priority", disk.BootPriority).Run()
 				}
 			}
 			// Per-disk bus override beats the VM-wide DiskBus when non-empty.
@@ -2521,18 +2593,18 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				}
 				if want != cur["io.bus"] {
 					if want == "" {
-						exec.Command("lxc", "config", "device", "unset", name, disk.Name, "io.bus").Run() //nolint:errcheck
+						exec.Command("incus", "config", "device", "unset", name, disk.Name, "io.bus").Run() //nolint:errcheck
 					} else {
-						exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
+						exec.Command("incus", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
 					}
 				}
 			}
 			// io.cache (LXD ≥ 5.0 with disk_io_cache extension; widely available).
 			if isVM && caps.DiskIOCache && disk.IOCache != cur["io.cache"] {
 				if disk.IOCache == "" {
-					exec.Command("lxc", "config", "device", "unset", name, disk.Name, "io.cache").Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "unset", name, disk.Name, "io.cache").Run() //nolint:errcheck
 				} else {
-					exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
 				}
 			}
 			// readonly: skip on root disks (LXD rejects readonly=true on /).
@@ -2540,9 +2612,9 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				curRO := cur["readonly"] == "true"
 				if curRO != disk.ReadOnly {
 					if disk.ReadOnly {
-						exec.Command("lxc", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
+						exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
 					} else {
-						exec.Command("lxc", "config", "device", "unset", name, disk.Name, "readonly").Run() //nolint:errcheck
+						exec.Command("incus", "config", "device", "unset", name, disk.Name, "readonly").Run() //nolint:errcheck
 					}
 				}
 			}
@@ -2555,14 +2627,14 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 					want = cfg.DiskBus
 				}
 				if want != "" {
-					exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
 				}
 			}
 			if caps.DiskIOCache && disk.IOCache != "" {
-				exec.Command("lxc", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
+				exec.Command("incus", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
 			}
 			if !disk.IsRoot && disk.ReadOnly {
-				exec.Command("lxc", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
+				exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
 			}
 		}
 	}
@@ -2580,12 +2652,12 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		if _, ok := wantDisks[n]; !ok {
 			volPool := d["pool"]
 			volName := d["source"]
-			if out, err := exec.Command("lxc", "config", "device", "remove", name, n).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", "config", "device", "remove", name, n).CombinedOutput(); err != nil {
 				return fmt.Errorf("remove disk %s: %s", n, strings.TrimSpace(string(out)))
 			}
 			// Delete the backing block volume unless this is a detach-only operation.
 			if !detachOnly[n] && volPool != "" && volName == name+"-"+n {
-				exec.Command("lxc", "storage", "volume", "delete", volPool, volName).Run()
+				exec.Command("incus", "storage", "volume", "delete", volPool, volName).Run()
 			}
 		}
 	}
@@ -2612,20 +2684,20 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				// on hotplug failure — must stop, apply, then restart.
 				needStop := !rootIsInstance && isRunning
 				if needStop {
-					if err := exec.Command("lxc", "stop", name, "--timeout=20").Run(); err != nil {
-						exec.Command("lxc", "stop", name, "--force").Run() //nolint:errcheck
+					if err := exec.Command("incus", "stop", name, "--timeout=20").Run(); err != nil {
+						exec.Command("incus", "stop", name, "--force").Run() //nolint:errcheck
 					}
 				}
 				if cfg.DiskBus == "" {
-					exec.Command("lxc", "config", "device", "unset", name, rootName, "io.bus").Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "unset", name, rootName, "io.bus").Run() //nolint:errcheck
 				} else if rootIsInstance {
-					exec.Command("lxc", "config", "device", "set", name, rootName, "io.bus", cfg.DiskBus).Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "set", name, rootName, "io.bus", cfg.DiskBus).Run() //nolint:errcheck
 				} else {
 					// Profile-inherited root: 'override' creates an instance-level copy with io.bus set.
-					exec.Command("lxc", "config", "device", "override", name, rootName, "io.bus="+cfg.DiskBus).Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "override", name, rootName, "io.bus="+cfg.DiskBus).Run() //nolint:errcheck
 				}
 				if needStop {
-					exec.Command("lxc", "start", name).Run() //nolint:errcheck
+					exec.Command("incus", "start", name).Run() //nolint:errcheck
 				}
 			}
 		}
@@ -2642,7 +2714,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			// Container path: use LXD disk devices directly.
 			for n, d := range rawDev.Devices {
 				if d["type"] == "disk" && d["readonly"] == "true" && strings.HasSuffix(strings.ToLower(d["source"]), ".iso") {
-					exec.Command("lxc", "config", "device", "remove", name, n).Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "remove", name, n).Run() //nolint:errcheck
 				}
 			}
 			for i, path := range cfg.CDROMs {
@@ -2650,7 +2722,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 					continue
 				}
 				devName := fmt.Sprintf("cdrom%d", i)
-				exec.Command("lxc", "config", "device", "add", name, devName, "disk", //nolint:errcheck
+				exec.Command("incus", "config", "device", "add", name, devName, "disk", //nolint:errcheck
 					"source="+path, "readonly=true").Run()
 			}
 		}
@@ -2665,12 +2737,12 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		} else {
 			for n, d := range rawDev.Devices {
 				if d["type"] == "disk" && d["readonly"] == "true" && strings.HasSuffix(strings.ToLower(d["source"]), ".iso") {
-					exec.Command("lxc", "config", "device", "remove", name, n).Run() //nolint:errcheck
+					exec.Command("incus", "config", "device", "remove", name, n).Run() //nolint:errcheck
 					break
 				}
 			}
 			if cfg.CDROMPath != "" {
-				exec.Command("lxc", "config", "device", "add", name, "cdrom", "disk", //nolint:errcheck
+				exec.Command("incus", "config", "device", "add", name, "cdrom", "disk", //nolint:errcheck
 					"source="+cfg.CDROMPath, "readonly=true").Run()
 			}
 		}
@@ -2695,7 +2767,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		} else {
 			continue
 		}
-		if out, err := exec.Command("lxc", dArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
 			return fmt.Errorf("attach existing disk %s: %s", devName, strings.TrimSpace(string(out)))
 		}
 	}
@@ -2713,18 +2785,18 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		cur, exists := curUSB[usb.DeviceName]
 		if !exists || cur["vendorid"] != usb.VendorID || cur["productid"] != usb.ProductID {
 			if exists {
-				exec.Command("lxc", "config", "device", "remove", name, usb.DeviceName).Run()
+				exec.Command("incus", "config", "device", "remove", name, usb.DeviceName).Run()
 			}
 			args := []string{"config", "device", "add", name, usb.DeviceName, "usb",
 				"vendorid=" + usb.VendorID, "productid=" + usb.ProductID}
-			if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 				return fmt.Errorf("add USB %s: %s", usb.DeviceName, strings.TrimSpace(string(out)))
 			}
 		}
 	}
 	for n := range curUSB {
 		if _, ok := wantUSB[n]; !ok {
-			exec.Command("lxc", "config", "device", "remove", name, n).Run()
+			exec.Command("incus", "config", "device", "remove", name, n).Run()
 		}
 	}
 
@@ -2742,17 +2814,17 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		cur, exists := curPCI[pci.DeviceName]
 		if !exists || normPCIAddr(cur["address"]) != addr {
 			if exists {
-				exec.Command("lxc", "config", "device", "remove", name, pci.DeviceName).Run()
+				exec.Command("incus", "config", "device", "remove", name, pci.DeviceName).Run()
 			}
 			args := []string{"config", "device", "add", name, pci.DeviceName, "pci", "address=" + addr}
-			if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 				return fmt.Errorf("add PCI %s: %s", pci.DeviceName, strings.TrimSpace(string(out)))
 			}
 		}
 	}
 	for n := range curPCI {
 		if _, ok := wantPCI[n]; !ok {
-			exec.Command("lxc", "config", "device", "remove", name, n).Run()
+			exec.Command("incus", "config", "device", "remove", name, n).Run()
 		}
 	}
 
@@ -2764,7 +2836,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		}
 		wantPT[dev.DeviceName] = struct{}{}
 		if _, exists := curPassthrough[dev.DeviceName]; exists {
-			exec.Command("lxc", "config", "device", "remove", name, dev.DeviceName).Run()
+			exec.Command("incus", "config", "device", "remove", name, dev.DeviceName).Run()
 		}
 		args := []string{"config", "device", "add", name, dev.DeviceName, dev.Type}
 		if dev.HostPath != "" {
@@ -2773,13 +2845,13 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		for k, v := range dev.Extra {
 			args = append(args, k+"="+v)
 		}
-		if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("add device %s: %s", dev.DeviceName, strings.TrimSpace(string(out)))
 		}
 	}
 	for n := range curPassthrough {
 		if _, ok := wantPT[n]; !ok {
-			exec.Command("lxc", "config", "device", "remove", name, n).Run()
+			exec.Command("incus", "config", "device", "remove", name, n).Run()
 		}
 	}
 
@@ -2793,9 +2865,9 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			}
 		}
 		if cfg.FeatureFUSE && !fuseExists {
-			exec.Command("lxc", "config", "device", "add", name, "fuse", "unix-char", "path=/dev/fuse").Run()
+			exec.Command("incus", "config", "device", "add", name, "fuse", "unix-char", "path=/dev/fuse").Run()
 		} else if !cfg.FeatureFUSE && fuseExists {
-			exec.Command("lxc", "config", "device", "remove", name, "fuse").Run()
+			exec.Command("incus", "config", "device", "remove", name, "fuse").Run()
 		}
 	}
 
@@ -2855,11 +2927,13 @@ func GetLXDMachineVersions() (MachineVersions, error) {
 
 // LXDListProfiles lists LXD profile names.
 func LXDListProfiles() ([]string, error) {
-	out, err := exec.Command("lxc", "profile", "list", "--format", "json").Output()
+	out, err := exec.Command("incus", "profile", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, err
 	}
-	var raw []struct{ Name string `json:"name"` }
+	var raw []struct {
+		Name string `json:"name"`
+	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, err
 	}
@@ -2872,11 +2946,13 @@ func LXDListProfiles() ([]string, error) {
 
 // LXDListStoragePools lists LXD storage pool names.
 func LXDListStoragePools() ([]string, error) {
-	out, err := exec.Command("lxc", "storage", "list", "--format", "json").Output()
+	out, err := exec.Command("incus", "storage", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, err
 	}
-	var raw []struct{ Name string `json:"name"` }
+	var raw []struct {
+		Name string `json:"name"`
+	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, err
 	}
@@ -2909,7 +2985,7 @@ func LXDListNetworks() ([]string, error) {
 
 // LXDListNetworkInfos lists LXD bridge networks with descriptions.
 func LXDListNetworkInfos() ([]LXDNetworkInfo, error) {
-	out, err := exec.Command("lxc", "network", "list", "--format", "json").Output()
+	out, err := exec.Command("incus", "network", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -2941,7 +3017,7 @@ type LXDRemote struct {
 // LXDListRemotes returns all configured image remotes, excluding the local LXD daemon.
 // lxc remote list --format json returns a map[name]remote (not an array), with "addr" for the URL.
 func LXDListRemotes() ([]LXDRemote, error) {
-	out, err := exec.Command("lxc", "remote", "list", "--format", "json").Output()
+	out, err := exec.Command("incus", "remote", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc remote list: %w", err)
 	}
@@ -2977,7 +3053,7 @@ func LXDListRemoteImages(remote, kind string) ([]LXDImage, error) {
 	if kind != "" {
 		args = append(args, "type="+kind)
 	}
-	out, err := exec.Command("lxc", args...).Output()
+	out, err := exec.Command("incus", args...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc image list: %w", err)
 	}
@@ -3015,7 +3091,7 @@ func LXDListLocalImages(kind string) ([]LXDImage, error) {
 	if kind != "" {
 		args = append(args, "type="+kind)
 	}
-	out, err := exec.Command("lxc", args...).Output()
+	out, err := exec.Command("incus", args...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc image list: %w", err)
 	}
@@ -3138,21 +3214,28 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		args = append(args, "-d", "root,io.bus="+req.DiskBus)
 	}
 	log("Initialising VM " + req.Name + "…")
-	if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("lxc init: %s: %w", strings.TrimSpace(string(out)), err)
+	if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		// Translate the raw SQLite UNIQUE constraint error Incus surfaces
+		// when an instance name is already taken into something a user
+		// can read. Same idea applies to the project_id column variant.
+		if strings.Contains(msg, "UNIQUE constraint failed") && strings.Contains(msg, "instances.name") {
+			return fmt.Errorf("an instance named %q already exists", req.Name)
+		}
+		return fmt.Errorf("lxc init: %s: %w", msg, err)
 	}
 	// Apply secure boot setting post-init so we can fall back to raw.qemu on LXD 6.x
 	// (which removed the security.secureboot config key).
 	if req.Firmware == "bios" {
 		// BIOS: disable secureboot; ignore error if key not supported by this LXD version.
-		if out, err := exec.Command("lxc", "config", "set", req.Name, "security.secureboot=false").CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", "config", "set", req.Name, "security.secureboot=false").CombinedOutput(); err != nil {
 			if !strings.Contains(strings.TrimSpace(string(out)), "isn't supported") {
 				log("WARNING: could not set security.secureboot=false: " + strings.TrimSpace(string(out)))
 			}
 		}
 	} else if !req.SecureBoot {
 		// UEFI without Secure Boot: try the key first, fall back to raw.qemu pflash flag.
-		out, err := exec.Command("lxc", "config", "set", req.Name, "security.secureboot=false").CombinedOutput()
+		out, err := exec.Command("incus", "config", "set", req.Name, "security.secureboot=false").CombinedOutput()
 		if err != nil && strings.Contains(strings.TrimSpace(string(out)), "isn't supported") {
 			if err2 := lxdSetSecureBootRawQEMU(req.Name, false); err2 != nil {
 				log("WARNING: secure boot (raw.qemu fallback): " + err2.Error())
@@ -3167,22 +3250,28 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 
 	// TPM device — add after init.
 	if req.TPM {
-		if out, err := exec.Command("lxc", "config", "device", "add", req.Name, "tpm", "tpm").CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", "config", "device", "add", req.Name, "tpm", "tpm").CombinedOutput(); err != nil {
 			log("WARNING: could not add TPM device: " + strings.TrimSpace(string(out)))
 		}
 	}
 
-	// Machine type — set after init so qemu.machine.type is available.
+	// Machine type — Incus 6.0.x lacks the qemu.machine.type config key
+	// ("Unknown configuration key"); use raw.qemu's -machine flag instead.
+	// Try the native key first so newer Incus versions get a clean config,
+	// fall back to raw.qemu when Incus rejects it.
 	if req.MachineType != "" {
-		if out, err := exec.Command("lxc", "config", "set", req.Name, "qemu.machine.type", req.MachineType).CombinedOutput(); err != nil {
-			log("WARNING: could not set machine type: " + strings.TrimSpace(string(out)))
+		if out, err := exec.Command("incus", "config", "set", req.Name, "qemu.machine.type", req.MachineType).CombinedOutput(); err != nil {
+			rawOut, _ := exec.Command("incus", "config", "get", req.Name, "raw.qemu").Output()
+			lxdPatchConfig(req.Name, "raw.qemu",
+				updateRawQEMUMachine(strings.TrimSpace(string(rawOut)), req.MachineType))
+			log("info: machine type applied via raw.qemu (Incus rejected qemu.machine.type: " + strings.TrimSpace(string(out)) + ")")
 		}
 	}
 
 	// Set description (display name).
 	if req.Description != "" {
 		descJSON, _ := json.Marshal(req.Description)
-		exec.Command("lxc", "query", "-X", "PATCH", "/1.0/instances/"+req.Name,
+		exec.Command("incus", "query", "-X", "PATCH", "/1.0/instances/"+req.Name,
 			"--data", fmt.Sprintf(`{"description":%s}`, descJSON)).Run()
 	}
 
@@ -3201,7 +3290,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		volArgs := []string{"storage", "volume", "create", disk.Pool, volName,
 			"--type", "block", fmt.Sprintf("size=%dGB", disk.SizeGB)}
 		log("Adding disk " + devName + "…")
-		if out, err := exec.Command("lxc", volArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", volArgs...).CombinedOutput(); err != nil {
 			log("WARNING: create volume for " + devName + ": " + strings.TrimSpace(string(out)))
 			continue
 		}
@@ -3210,9 +3299,9 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		if req.DiskBus != "" {
 			dArgs = append(dArgs, "io.bus="+req.DiskBus)
 		}
-		if out, err := exec.Command("lxc", dArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add disk " + devName + ": " + strings.TrimSpace(string(out)))
-			exec.Command("lxc", "storage", "volume", "delete", disk.Pool, volName).Run()
+			exec.Command("incus", "storage", "volume", "delete", disk.Pool, volName).Run()
 		} else if disk.ReservePct > 0 {
 			zfsPath := lxdFindZFSVol(volName)
 			lxdSetZvolReservation(zfsPath, disk.ReservePct)
@@ -3237,7 +3326,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 			log("WARNING: existing disk " + devName + ": invalid dev_path, skipping")
 			continue
 		}
-		if out, err := exec.Command("lxc", dArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
 			log("WARNING: attach existing disk " + devName + ": " + strings.TrimSpace(string(out)))
 		}
 	}
@@ -3245,7 +3334,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 	// Set migration.stateful now that all disks are attached.  Setting it during
 	// lxc init causes LXD to reject any subsequent disk-add for non-shared pools.
 	if req.StatefulSnapshots && !req.TPM {
-		if out, err := exec.Command("lxc", "config", "set", req.Name, "migration.stateful=true").CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", "config", "set", req.Name, "migration.stateful=true").CombinedOutput(); err != nil {
 			log("WARNING: set migration.stateful: " + strings.TrimSpace(string(out)))
 		}
 	}
@@ -3266,7 +3355,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 			nArgs = append(nArgs, fmt.Sprintf("vlan=%d", nic.VlanID))
 		}
 		log("Adding NIC " + devName + "…")
-		if out, err := exec.Command("lxc", nArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", nArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add NIC " + devName + ": " + strings.TrimSpace(string(out)))
 		}
 	}
@@ -3281,7 +3370,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 			"vendorid=" + usb.VendorID, "productid=" + usb.ProductID,
 		}
 		log("Adding USB device " + usb.DeviceName + "…")
-		if out, err := exec.Command("lxc", uArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", uArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add USB " + usb.DeviceName + ": " + strings.TrimSpace(string(out)))
 		}
 	}
@@ -3296,7 +3385,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 			"address=" + normPCIAddr(pci.Address),
 		}
 		log("Adding PCI device " + pci.DeviceName + "…")
-		if out, err := exec.Command("lxc", pArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", pArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add PCI " + pci.DeviceName + ": " + strings.TrimSpace(string(out)))
 		}
 	}
@@ -3306,20 +3395,19 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 
 	// Apply CPU pinning (overrides vCPU count when set).
 	if req.CPUPin != "" {
-		exec.Command("lxc", "config", "set", req.Name, "limits.cpu", normalizeCPUPin(req.CPUPin)).Run()
+		exec.Command("incus", "config", "set", req.Name, "limits.cpu", normalizeCPUPin(req.CPUPin)).Run()
 	}
 
 	// Apply socket topology via raw.qemu.
 	if req.CPUSockets > 0 {
-		out, _ := exec.Command("lxc", "config", "get", req.Name, "raw.qemu").Output()
+		out, _ := exec.Command("incus", "config", "get", req.Name, "raw.qemu").Output()
 		cur := strings.TrimSpace(string(out))
 		next := updateRawQEMUSockets(cur, req.CPUSockets)
 		if next != cur {
-			if next == "" {
-				exec.Command("lxc", "config", "unset", req.Name, "raw.qemu").Run()
-			} else {
-				exec.Command("lxc", "config", "set", req.Name, "raw.qemu", next).Run()
-			}
+			// key=value single-arg form, see lxdPatchConfig — values that
+			// start with "-" (here "-smp sockets=N") would otherwise be
+			// parsed by `incus` as an unknown shorthand flag.
+			lxdPatchConfig(req.Name, "raw.qemu", next)
 		}
 	}
 
@@ -3344,20 +3432,20 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		// Read current raw.qemu (may have socket topology) and inject CDROM entries.
 		// Use lxc query PATCH instead of lxc config set to avoid flag-parsing issues
 		// with values starting with '-'.
-		curRQ, _ := exec.Command("lxc", "config", "get", req.Name, "raw.qemu").Output()
+		curRQ, _ := exec.Command("incus", "config", "get", req.Name, "raw.qemu").Output()
 		newRQ := setCDROMsRawQEMU(strings.TrimSpace(string(curRQ)), paths)
 		lxdPatchConfig(req.Name, "raw.qemu", newRQ)
 		// AppArmor: allow the ISO directories for snapped LXD.
-		curAA, _ := exec.Command("lxc", "config", "get", req.Name, "raw.apparmor").Output()
+		curAA, _ := exec.Command("incus", "config", "get", req.Name, "raw.apparmor").Output()
 		newAA := setCDROMsAppArmor(strings.TrimSpace(string(curAA)), paths)
 		if newAA != "" {
-			exec.Command("lxc", "config", "set", req.Name, "raw.apparmor", newAA).Run() //nolint:errcheck
+			exec.Command("incus", "config", "set", req.Name, "raw.apparmor", newAA).Run() //nolint:errcheck
 		}
 	}
 
 	if req.AutoStart {
 		log("Starting VM…")
-		if out, err := exec.Command("lxc", "start", req.Name).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", "start", req.Name).CombinedOutput(); err != nil {
 			return fmt.Errorf("lxc start: %s: %w", strings.TrimSpace(string(out)), err)
 		}
 	}
@@ -3440,14 +3528,14 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	}
 
 	log("Initialising container " + req.Name + "…")
-	if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("lxc init: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
 	// Set description (display name).
 	if req.Description != "" {
 		descJSON, _ := json.Marshal(req.Description)
-		exec.Command("lxc", "query", "-X", "PATCH", "/1.0/instances/"+req.Name,
+		exec.Command("incus", "query", "-X", "PATCH", "/1.0/instances/"+req.Name,
 			"--data", fmt.Sprintf(`{"description":%s}`, descJSON)).Run()
 	}
 
@@ -3461,7 +3549,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 			dArgs = append(dArgs, fmt.Sprintf("size=%dGB", req.DiskSizeGB))
 		}
 		log("Configuring root disk…")
-		if out, err := exec.Command("lxc", dArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
 			log("WARNING: root disk size: " + strings.TrimSpace(string(out)))
 		}
 	}
@@ -3484,7 +3572,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		// Static IP is configured via pre-start file push — bridged NICs
 		// do not accept ipv4.address/ipv4.gateway at the device level.
 		log("Adding NIC " + devName + "…")
-		if out, err := exec.Command("lxc", nArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", nArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add NIC " + devName + ": " + strings.TrimSpace(string(out)))
 		}
 
@@ -3506,7 +3594,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 			dArgs = append(dArgs, k+"="+v)
 		}
 		log("Adding device " + dev.DeviceName + "…")
-		if out, err := exec.Command("lxc", dArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add device " + dev.DeviceName + ": " + strings.TrimSpace(string(out)))
 		}
 	}
@@ -3514,7 +3602,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	// FUSE: expose /dev/fuse inside the container.
 	if req.FeatureFUSE {
 		log("Adding FUSE device…")
-		if out, err := exec.Command("lxc", "config", "device", "add", req.Name,
+		if out, err := exec.Command("incus", "config", "device", "add", req.Name,
 			"fuse", "unix-char", "path=/dev/fuse").CombinedOutput(); err != nil {
 			log("WARNING: add fuse device: " + strings.TrimSpace(string(out)))
 		}
@@ -3523,7 +3611,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	needStart := req.AutoStart || req.RootPassword != "" || _hasStaticIPConfig(req.NICs)
 	if needStart {
 		log("Starting container…")
-		if out, err := exec.Command("lxc", "start", req.Name).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", "start", req.Name).CombinedOutput(); err != nil {
 			return fmt.Errorf("lxc start: %s: %w", strings.TrimSpace(string(out)), err)
 		}
 		// Wait for the container's init system to finish starting up so that
@@ -3550,7 +3638,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	// Set root password via chpasswd (requires running container).
 	if req.RootPassword != "" {
 		log("Setting root password…")
-		cmd := exec.Command("lxc", "exec", req.Name, "--", "chpasswd")
+		cmd := exec.Command("incus", "exec", req.Name, "--", "chpasswd")
 		cmd.Stdin = strings.NewReader("root:" + req.RootPassword + "\n")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			log("WARNING: set root password: " + strings.TrimSpace(string(out)))
@@ -3562,7 +3650,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	if dnsLines := _collectDNSLines(req.NICs); len(dnsLines) > 0 {
 		log("Configuring DNS…")
 		resolvConf := strings.Join(dnsLines, "\n") + "\n"
-		cmd := exec.Command("lxc", "exec", req.Name, "--", "/bin/sh", "-c",
+		cmd := exec.Command("incus", "exec", req.Name, "--", "/bin/sh", "-c",
 			"rm -f /etc/resolv.conf && cat > /etc/resolv.conf")
 		cmd.Stdin = strings.NewReader(resolvConf)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -3573,7 +3661,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	// Stop if we only started for post-init tasks and auto_start was not requested.
 	if !req.AutoStart && needStart {
 		log("Stopping container…")
-		exec.Command("lxc", "stop", req.Name).Run()
+		exec.Command("incus", "stop", req.Name).Run()
 	}
 
 	log("Done.")
@@ -3595,7 +3683,7 @@ func _waitContainerReady(name string, timeoutSec int) error {
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
 	// Phase 1: wait until exec is possible.
 	for time.Now().Before(deadline) {
-		if exec.Command("lxc", "exec", name, "--", "true").Run() == nil {
+		if exec.Command("incus", "exec", name, "--", "true").Run() == nil {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -3605,7 +3693,7 @@ func _waitContainerReady(name string, timeoutSec int) error {
 	}
 	// Phase 2: wait for systemd to finish initialising (systemd-based containers).
 	for time.Now().Before(deadline) {
-		out, err := exec.Command("lxc", "exec", name, "--", "systemctl", "is-system-running").Output()
+		out, err := exec.Command("incus", "exec", name, "--", "systemctl", "is-system-running").Output()
 		if err != nil {
 			// systemctl not available (non-systemd); a brief extra wait is enough.
 			time.Sleep(3 * time.Second)
@@ -3635,7 +3723,7 @@ func _pushStaticNetworkConfig(ctName, devName string, nic LXDNIC) {
 	if nic.DNS2 != "" {
 		nd.WriteString("DNS=" + nic.DNS2 + "\n")
 	}
-	cmd := exec.Command("lxc", "file", "push", "-", ctName+"/etc/systemd/network/"+devName+".network")
+	cmd := exec.Command("incus", "file", "push", "-", ctName+"/etc/systemd/network/"+devName+".network")
 	cmd.Stdin = strings.NewReader(nd.String())
 	cmd.Run()
 
@@ -3647,7 +3735,7 @@ func _pushStaticNetworkConfig(ctName, devName string, nic LXDNIC) {
 	if nic.IPv4GW != "" {
 		ifd.WriteString("    gateway " + nic.IPv4GW + "\n")
 	}
-	cmd2 := exec.Command("lxc", "file", "push", "-", ctName+"/etc/network/interfaces.d/"+devName)
+	cmd2 := exec.Command("incus", "file", "push", "-", ctName+"/etc/network/interfaces.d/"+devName)
 	cmd2.Stdin = strings.NewReader(ifd.String())
 	cmd2.Run()
 }
@@ -3655,11 +3743,11 @@ func _pushStaticNetworkConfig(ctName, devName string, nic LXDNIC) {
 // _applyStaticIPCommands applies a static IP immediately via ip commands in a
 // running container (the persistent config was already pushed before start).
 func _applyStaticIPCommands(ctName, devName string, nic LXDNIC) {
-	exec.Command("lxc", "exec", ctName, "--", "ip", "link", "set", devName, "up").Run()
-	exec.Command("lxc", "exec", ctName, "--", "ip", "addr", "flush", "dev", devName).Run()
-	exec.Command("lxc", "exec", ctName, "--", "ip", "addr", "add", nic.IPv4Addr, "dev", devName).Run()
+	exec.Command("incus", "exec", ctName, "--", "ip", "link", "set", devName, "up").Run()
+	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "flush", "dev", devName).Run()
+	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "add", nic.IPv4Addr, "dev", devName).Run()
 	if nic.IPv4GW != "" {
-		exec.Command("lxc", "exec", ctName, "--", "ip", "route", "replace", "default", "via", nic.IPv4GW).Run()
+		exec.Command("incus", "exec", ctName, "--", "ip", "route", "replace", "default", "via", nic.IPv4GW).Run()
 	}
 }
 
@@ -3761,7 +3849,7 @@ func ListLXDSnapshots(name string) ([]LXDSnapshot, error) {
 		CreatedAt time.Time `json:"created_at"`
 		Stateful  bool      `json:"stateful"`
 	}
-	out, err := exec.Command("lxc", "query", "/1.0/instances/"+name+"/snapshots?recursion=1").Output()
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+name+"/snapshots?recursion=1").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc query snapshots: %w", err)
 	}
@@ -3782,7 +3870,7 @@ func ListLXDSnapshots(name string) ([]LXDSnapshot, error) {
 
 // lxdVMRamBytes returns the VM's configured RAM in bytes (4 GiB fallback).
 func lxdVMRamBytes(name string) int64 {
-	if out, e := exec.Command("lxc", "config", "get", name, "limits.memory").Output(); e == nil {
+	if out, e := exec.Command("incus", "config", "get", name, "limits.memory").Output(); e == nil {
 		mem := strings.TrimSpace(string(out))
 		var mult int64 = 1
 		if strings.HasSuffix(mem, "GB") {
@@ -3804,7 +3892,7 @@ func lxdVMRamBytes(name string) int64 {
 func lxdStateDataset(name string) string {
 	// Find root pool from LXD storage pool config.
 	poolName := ""
-	if out, e := exec.Command("lxc", "config", "device", "show", name).Output(); e == nil {
+	if out, e := exec.Command("incus", "config", "device", "show", name).Output(); e == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "pool:") {
@@ -3815,7 +3903,7 @@ func lxdStateDataset(name string) string {
 	if poolName == "" {
 		return ""
 	}
-	if out, e := exec.Command("lxc", "query", "/1.0/storage-pools/"+poolName).Output(); e == nil {
+	if out, e := exec.Command("incus", "query", "/1.0/storage-pools/"+poolName).Output(); e == nil {
 		var info struct {
 			Config map[string]string `json:"config"`
 		}
@@ -3846,9 +3934,9 @@ func lxdEnsureStateQuota(name string) {
 
 	// Tell LXD the size.state so it allows stateful start/migration.
 	// If root is inherited from a profile, "set" fails — use "override" instead.
-	if out, err := exec.Command("lxc", "config", "device", "set", name, "root", "size.state="+sizeVal).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "config", "device", "set", name, "root", "size.state="+sizeVal).CombinedOutput(); err != nil {
 		if strings.Contains(string(out), "profile") {
-			exec.Command("lxc", "config", "device", "override", name, "root", "size.state="+sizeVal).Run() //nolint:errcheck
+			exec.Command("incus", "config", "device", "override", name, "root", "size.state="+sizeVal).Run() //nolint:errcheck
 		}
 	}
 
@@ -3890,11 +3978,11 @@ func lxdStateAvail(name string) (avail, needed int64, err error) {
 func CreateLXDSnapshot(name, snapName string, stateful bool) error {
 	if stateful {
 		// Check whether migration.stateful is already enabled.
-		out, _ := exec.Command("lxc", "config", "get", name, "migration.stateful").Output()
+		out, _ := exec.Command("incus", "config", "get", name, "migration.stateful").Output()
 		if strings.TrimSpace(string(out)) != "true" {
 			// Try to set it. This fails when the VM is running — LXD requires the
 			// VM to be stopped to change this key because it changes QEMU init args.
-			if setOut, err := exec.Command("lxc", "config", "set", name, "migration.stateful", "true").CombinedOutput(); err != nil {
+			if setOut, err := exec.Command("incus", "config", "set", name, "migration.stateful", "true").CombinedOutput(); err != nil {
 				msg := strings.TrimSpace(string(setOut))
 				if strings.Contains(msg, "running") || strings.Contains(msg, "cannot be updated") {
 					return fmt.Errorf(
@@ -3933,7 +4021,7 @@ func CreateLXDSnapshot(name, snapName string, stateful bool) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	if out, err := exec.CommandContext(ctx, "lxc", args...).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "incus", args...).CombinedOutput(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("snapshot timed out after %s. Common causes: (1) VM dataset quota is full — QEMU must write the full memory state (~RAM size) to disk; increase the dataset quota or free space. (2) migration.stateful not set before last VM start — stop the VM, enable 'Stateful Snapshots' in Edit, start again, then retry.", timeout)
 		}
@@ -3977,7 +4065,7 @@ func RestoreLXDSnapshot(name, snapName string, removeSubsequent bool) error {
 			}
 		}
 	}
-	if out, err := exec.Command("lxc", "restore", name, snapName).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "restore", name, snapName).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -3987,13 +4075,13 @@ func RestoreLXDSnapshot(name, snapName string, removeSubsequent bool) error {
 // The description is applied via a PATCH to the LXD API after creation.
 func CloneLXDFromSnapshot(sourceName, snapName, newName, description string) error {
 	src := sourceName + "/" + snapName
-	if out, err := exec.Command("lxc", "copy", src, newName).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "copy", src, newName).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	if description != "" {
 		body, _ := json.Marshal(map[string]string{"description": description})
 		// Ignore errors — the clone already exists; description is cosmetic.
-		exec.Command("lxc", "query", "-X", "PATCH",
+		exec.Command("incus", "query", "-X", "PATCH",
 			"/1.0/instances/"+newName, "-d", string(body)).Run()
 	}
 	return nil
@@ -4002,12 +4090,12 @@ func CloneLXDFromSnapshot(sourceName, snapName, newName, description string) err
 // CloneLXDInstance copies an instance directly (no snapshot needed).
 // The source may be running; LXD will take a live copy.
 func CloneLXDInstance(sourceName, newName, description string) error {
-	if out, err := exec.Command("lxc", "copy", sourceName, newName).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "copy", sourceName, newName).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	if description != "" {
 		body, _ := json.Marshal(map[string]string{"description": description})
-		exec.Command("lxc", "query", "-X", "PATCH",
+		exec.Command("incus", "query", "-X", "PATCH",
 			"/1.0/instances/"+newName, "-d", string(body)).Run()
 	}
 	return nil
@@ -4015,7 +4103,7 @@ func CloneLXDInstance(sourceName, newName, description string) error {
 
 // DeleteLXDSnapshot deletes a single snapshot from the instance.
 func DeleteLXDSnapshot(name, snapName string) error {
-	if out, err := exec.Command("lxc", "delete", name+"/"+snapName).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "delete", name+"/"+snapName).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -4033,11 +4121,11 @@ type LXDLogEntry struct {
 // to lxc info --show-log when no structured log is available.
 func GetLXDInstanceLogs(name string) ([]LXDLogEntry, error) {
 	// Try fetching the lxc.log file directly via the API.
-	raw, err := exec.Command("lxc", "query",
+	raw, err := exec.Command("incus", "query",
 		"/1.0/instances/"+name+"/logs/lxc.log").Output()
 	if err != nil {
 		// Fall back to lxc info --show-log
-		raw, err = exec.Command("lxc", "info", "--show-log", name).CombinedOutput()
+		raw, err = exec.Command("incus", "info", "--show-log", name).CombinedOutput()
 		if err != nil {
 			return nil, fmt.Errorf("lxc logs: %w", err)
 		}
@@ -4048,20 +4136,17 @@ func GetLXDInstanceLogs(name string) ([]LXDLogEntry, error) {
 }
 
 // GetLXDInstanceConsoleLog returns the contents of
-// /var/log/lxd/<name>/console.log — the boot/console output the kernel
+// /var/log/incus/<name>/console.log — the boot/console output the kernel
 // + init system has written since the last start of a container.
 //
 // Two paths tried in order:
 //
-//  1. `lxc console <name> --show-log` over the LXD unix socket. Works
-//     when the daemon's console buffer is populated. On LXD 5.0.x with
-//     deb packaging the daemon often errors with "open : no such file
-//     or directory" because of an LXD-internal path bug, so we fall
-//     back to (2).
-//  2. `sudo cat /var/log/lxd/<name>/console.log` — the file is root-
+//  1. `incus console <name> --show-log` over the daemon unix socket.
+//     Works when the daemon's console buffer is populated.
+//  2. `sudo cat /var/log/incus/<name>/console.log` — the file is root-
 //     owned mode 0600 so direct read isn't possible from the zfsnas
-//     service user. The ZFSNAS_LXD sudo alias grants either
-//     `cat /var/log/lxd/*/console.log` (classic sudo, tight) or `cat *`
+//     service user. The ZFSNAS_INCUS sudo alias grants either
+//     `cat /var/log/incus/*/console.log` (classic sudo, tight) or `cat *`
 //     (sudo-rs, wider — required because sudo-rs rejects any prefix
 //     before `*`). Either way, the instance name is regex-validated
 //     by lxdNameRe above before this command runs, so the broader
@@ -4074,7 +4159,7 @@ func GetLXDInstanceConsoleLog(name string) (string, error) {
 		return "", fmt.Errorf("invalid instance name")
 	}
 	// 1. lxc console --show-log
-	if out, err := exec.Command("lxc", "console", name, "--show-log").CombinedOutput(); err == nil {
+	if out, err := exec.Command("incus", "console", name, "--show-log").CombinedOutput(); err == nil {
 		s := string(out)
 		if idx := strings.Index(s, "Console log:"); idx >= 0 {
 			s = s[idx+len("Console log:"):]
@@ -4083,7 +4168,7 @@ func GetLXDInstanceConsoleLog(name string) (string, error) {
 	}
 	// 2. sudo cat fallback. Path is host-side, name comes from the
 	//    instance list (regex-validated above) so no traversal risk.
-	path := "/var/log/lxd/" + name + "/console.log"
+	path := "/var/log/incus/" + name + "/console.log"
 	out, err := exec.Command("sudo", "/usr/bin/cat", path).CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
@@ -4244,7 +4329,7 @@ func LXDMoveStorage(name, targetPool string) error {
 	if targetPool == "" {
 		return fmt.Errorf("target storage pool is required")
 	}
-	out, err := exec.Command("lxc", "move", name, "--storage", targetPool).CombinedOutput()
+	out, err := exec.Command("incus", "move", name, "--storage", targetPool).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}

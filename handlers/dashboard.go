@@ -13,6 +13,9 @@ var staticMetricSeries = []string{
 	"mem_cache_pct",
 	"mem_arc_pct",
 	"mem_app_pct",
+	"mem_zram_pool_pct",  // configured zram cap, % of MemTotal (v6.5.3+)
+	"mem_zram_orig_pct",  // uncompressed bytes held in zram, % of MemTotal
+	"mem_zram_compr_pct", // compressed bytes physically in RAM, % of MemTotal
 	"disk_read_mbps",
 	"disk_write_mbps",
 	"disk_busy_pct",
@@ -34,6 +37,14 @@ func buildDashboardKeys(db *rrd.DB) []string {
 // HandleGetHardwareInfo returns static hardware properties (CPU cores, total RAM).
 func HandleGetHardwareInfo(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, system.GetHardwareInfo())
+}
+
+// HandleGetDetailedSystemInfo returns the full hardware snapshot rendered by
+// the SysInfo popup: CPU vendor/model/freq, per-DIMM memory inventory,
+// motherboard, BIOS, and storage controllers grouped with their attached
+// disks. Best-effort — fields we couldn't read come back empty/zero.
+func HandleGetDetailedSystemInfo(w http.ResponseWriter, r *http.Request) {
+	jsonOK(w, system.GetDetailedSystemInfo())
 }
 
 // HandleGetNetIfaces returns a map of external interface name → IPv4 address.

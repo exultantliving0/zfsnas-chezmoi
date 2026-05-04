@@ -181,6 +181,14 @@ func main() {
 		}
 	}()
 
+	// ===== LXD VM/Container state watcher (v6.5.3) =====
+	// Polls instance statuses every 10s and writes an audit-log entry whenever
+	// a VM or container changes state, including out-of-band changes (CLI
+	// shutdown, qemu crash, host reboot recovery, autostart on boot). Costs
+	// nothing on hosts that haven't enabled the feature — the loop short-
+	// circuits when LXDAvailable() is false.
+	system.StartLXDStateWatcher()
+
 	// ===== Daily SMART refresh goroutine =====
 	handlers.StartDailySmartRefresh()
 
@@ -245,12 +253,14 @@ func main() {
 		version.SetExperimental(true)
 		log.Println("Experimental mode enabled.")
 		if system.LXDAvailable() {
-			log.Println("LXD detected and accessible — VMs & Containers feature enabled.")
+			log.Println("Incus detected and accessible — VMs & Containers feature enabled.")
 			handlers.SetLXDAvailable(true)
 			// Ensure cross-distro OVMF firmware symlinks exist (Ubuntu ↔ Debian naming).
 			system.EnsureOVMFCompat()
-			// Background: sync LXD trust with all InterLink peers that don't have
-			// it confirmed yet, so the flag is set without requiring manual action.
+			// Background: sync Incus trust with all InterLink peers that don't
+			// have it confirmed yet, so the flag is set without requiring manual
+			// action. (Field name kept as LXDTrusted for config-file backwards
+			// compat with 6.5.1 and earlier installs.)
 			go func() {
 				for i := range appCfg.InterLink {
 					ls := &appCfg.InterLink[i]
@@ -258,16 +268,16 @@ func main() {
 						continue
 					}
 					if err := system.LXDSyncInterlinkTrustForPeer(*ls, ls.ID); err != nil {
-						log.Printf("LXD trust auto-sync for %s: %v", ls.Hostname, err)
+						log.Printf("Incus trust auto-sync for %s: %v", ls.Hostname, err)
 						continue
 					}
 					ls.LXDTrusted = true
 					config.SaveAppConfig(appCfg) //nolint:errcheck
-					log.Printf("LXD trust auto-synced for %s", ls.Hostname)
+					log.Printf("Incus trust auto-synced for %s", ls.Hostname)
 				}
 			}()
 		} else {
-			log.Println("WARNING: LXD not accessible. Ensure the ZNAS user is in the 'lxd' group. VMs & Containers feature disabled.")
+			log.Println("WARNING: Incus not accessible. Ensure the ZNAS user is in the '" + system.HVUserGroup + "' group. VMs & Containers feature disabled.")
 		}
 	}
 

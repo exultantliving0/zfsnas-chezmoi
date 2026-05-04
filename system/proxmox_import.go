@@ -46,21 +46,21 @@ type ProxmoxVM struct {
 	MemoryMB   int             `json:"memory_mb"`
 	NICs       []ProxmoxVMNIC  `json:"nics"`
 	Disks      []ProxmoxVMDisk `json:"disks"`
-	IsUEFI     bool            `json:"is_uefi"`      // true when bios: ovmf
-	BootDevice string          `json:"boot_device"`  // first device in boot: order=
+	IsUEFI     bool            `json:"is_uefi"`            // true when bios: ovmf
+	BootDevice string          `json:"boot_device"`        // first device in boot: order=
 	EFIDisk    *ProxmoxVMDisk  `json:"efi_disk,omitempty"` // efidisk0 entry (OVMF vars)
 	Error      string          `json:"error,omitempty"`
 }
 
 // ProxmoxImportRequest is the full import request body from the frontend.
 type ProxmoxImportRequest struct {
-	Host        string       `json:"host"`
-	User        string       `json:"user"`
-	Password    string       `json:"password"`
-	VMs         []ProxmoxVM  `json:"vms"`
-	LocalBridge string       `json:"local_bridge"`
-	StoragePool string       `json:"storage_pool"`
-	StartAfter  bool         `json:"start_after"`
+	Host        string      `json:"host"`
+	User        string      `json:"user"`
+	Password    string      `json:"password"`
+	VMs         []ProxmoxVM `json:"vms"`
+	LocalBridge string      `json:"local_bridge"`
+	StoragePool string      `json:"storage_pool"`
+	StartAfter  bool        `json:"start_after"`
 }
 
 // SshpassAvailable returns true if sshpass is installed.
@@ -73,6 +73,23 @@ func SshpassAvailable() bool {
 func QemuImgAvailable() bool {
 	_, err := exec.LookPath("qemu-img")
 	return err == nil
+}
+
+// NtfsfixAvailable returns true if ntfsfix is installed (ntfs-3g package).
+// Used by fixUEFIWindows() to clear the NTFS dirty bit on imported Windows disks.
+func NtfsfixAvailable() bool {
+	_, err := exec.LookPath("ntfsfix")
+	return err == nil
+}
+
+// HivexAvailable returns true if python3-hivex bindings are loadable. Used by
+// fixUEFIWindows() to patch BCD on imported Windows ESPs (remove BootMgr's
+// resumeobject + set bootstatuspolicy=IgnoreAllFailures).
+func HivexAvailable() bool {
+	if _, err := exec.LookPath("python3"); err != nil {
+		return false
+	}
+	return exec.Command("python3", "-c", "import hivex").Run() == nil
 }
 
 // sudoMkdirTemp creates a uniquely-named temporary directory under base using
@@ -155,7 +172,7 @@ func importTempDir(lxdPoolName string) string {
 	// 2. Parse `lxc storage show` config block → get backing ZFS dataset → walk up.
 	// (lxc storage show has a stable YAML format with "source:" under "config:".)
 	for _, subcmd := range []string{"show", "info"} {
-		out, err := exec.Command("lxc", "storage", subcmd, lxdPoolName).Output()
+		out, err := exec.Command("incus", "storage", subcmd, lxdPoolName).Output()
 		if err != nil {
 			continue
 		}
@@ -169,12 +186,9 @@ func importTempDir(lxdPoolName string) string {
 		}
 	}
 
-	// 3. Well-known LXD storage-pools directories (snap / apt installs).
-	for _, base := range []string{
-		"/var/snap/lxd/common/lxd/storage-pools",
-		"/var/lib/lxd/storage-pools",
-	} {
-		p := fmt.Sprintf("%s/%s", base, lxdPoolName)
+	// 3. Well-known Incus storage-pools directory (deb install only).
+	{
+		p := fmt.Sprintf("/var/lib/incus/storage-pools/%s", lxdPoolName)
 		if info, err := os.Stat(p); err == nil && info.IsDir() {
 			return p
 		}
@@ -451,14 +465,15 @@ func sanitiseLXDName(name string) string {
 
 // lxcNameFree returns true if no LXD instance with the given name exists.
 func lxcNameFree(name string) bool {
-	return exec.Command("lxc", "info", name).Run() != nil
+	return exec.Command("incus", "info", name).Run() != nil
 }
 
 // ImportProxmoxVM imports a single live Proxmox VM as a new LXD VM.
 //
 // Pipeline per disk (no temp space on the remote):
-//   remote: pvesm path → qemu-img convert -O raw → stdout
-//   SSH pipe → local raw file on ZFS pool → lxc storage volume import
+//
+//	remote: pvesm path → qemu-img convert -O raw → stdout
+//	SSH pipe → local raw file on ZFS pool → lxc storage volume import
 //
 // Progress lines are written to logCh.
 // pxiCountingReader wraps an io.Reader and calls fn with the number of bytes read on each Read.
@@ -502,24 +517,24 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 
 	// Step 1: Create empty LXD VM.
 	log(fmt.Sprintf("Creating LXD VM '%s' (vCPU=%d, RAM=%d MB)...", vmName, vm.CPU, vm.MemoryMB))
-	if out, err := exec.Command("lxc", "init", "--empty", vmName, "--vm").CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "init", "--empty", vmName, "--vm").CombinedOutput(); err != nil {
 		return fmt.Errorf("lxc init: %s: %s", err.Error(), strings.TrimSpace(string(out)))
 	}
 
 	var createdVolumes []string
 	rollback := func() {
-		exec.Command("lxc", "delete", "--force", vmName).Run() //nolint:errcheck
+		exec.Command("incus", "delete", "--force", vmName).Run() //nolint:errcheck
 		for _, vol := range createdVolumes {
-			exec.Command("lxc", "storage", "volume", "delete", req.StoragePool, vol).Run() //nolint:errcheck
+			exec.Command("incus", "storage", "volume", "delete", req.StoragePool, vol).Run() //nolint:errcheck
 		}
 	}
 
-	if out, err := exec.Command("lxc", "config", "set", vmName,
+	if out, err := exec.Command("incus", "config", "set", vmName,
 		fmt.Sprintf("limits.cpu=%d", vm.CPU)).CombinedOutput(); err != nil {
 		rollback()
 		return fmt.Errorf("set cpu: %s: %s", err.Error(), strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.Command("lxc", "config", "set", vmName,
+	if out, err := exec.Command("incus", "config", "set", vmName,
 		fmt.Sprintf("limits.memory=%dMB", vm.MemoryMB)).CombinedOutput(); err != nil {
 		rollback()
 		return fmt.Errorf("set memory: %s: %s", err.Error(), strings.TrimSpace(string(out)))
@@ -527,7 +542,7 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 
 	if vm.IsUEFI {
 		log("  UEFI VM detected — disabling Secure Boot for compatibility.")
-		exec.Command("lxc", "config", "set", vmName, "security.secureboot=false").Run() //nolint:errcheck
+		exec.Command("incus", "config", "set", vmName, "security.secureboot=false").Run() //nolint:errcheck
 	} else {
 		// SeaBIOS (legacy BIOS) VM.
 		// Prefer LXD-native CSM support (5.4+/6.x). On LXD 5.0.x the key is
@@ -536,8 +551,8 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 		log("  SeaBIOS (legacy BIOS) VM detected — configuring CSM/SeaBIOS mode.")
 
 		// LXD 5.4+ requires secureboot=false before csm=true.
-		exec.Command("lxc", "config", "set", vmName, "security.secureboot=false").Run() //nolint:errcheck
-		csmOut, csmErr := exec.Command("lxc", "config", "set", vmName, "security.csm=true").CombinedOutput()
+		exec.Command("incus", "config", "set", vmName, "security.secureboot=false").Run() //nolint:errcheck
+		csmOut, csmErr := exec.Command("incus", "config", "set", vmName, "security.csm=true").CombinedOutput()
 		if csmErr == nil {
 			log("  ✓ CSM (SeaBIOS) mode enabled via security.csm.")
 		} else {
@@ -545,13 +560,13 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 			// concept) and force SeaBIOS via raw.qemu -bios flag instead.
 			log(fmt.Sprintf("  security.csm not supported (%s) — using raw.qemu -bios fallback.",
 				strings.TrimSpace(string(csmOut))))
-			exec.Command("lxc", "config", "unset", vmName, "security.secureboot").Run() //nolint:errcheck
+			exec.Command("incus", "config", "unset", vmName, "security.secureboot").Run() //nolint:errcheck
 
 			biosPath := seabiosBinPath()
 			if biosPath == "" {
 				log("  ⚠ SeaBIOS binary not found — VM may not boot; install the 'seabios' package.")
 			} else {
-				if out, err := exec.Command("lxc", "config", "set", vmName, "raw.qemu=-bios "+biosPath).CombinedOutput(); err != nil {
+				if out, err := exec.Command("incus", "config", "set", vmName, "raw.qemu=-bios "+biosPath).CombinedOutput(); err != nil {
 					log(fmt.Sprintf("  ⚠ Could not set raw.qemu=-bios: %s — VM may not boot.", strings.TrimSpace(string(out))))
 				} else {
 					log(fmt.Sprintf("  ✓ SeaBIOS configured via raw.qemu -bios %s.", biosPath))
@@ -590,7 +605,7 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 			if lxdSize != "" {
 				devArgs = append(devArgs, "size="+lxdSize)
 			}
-			if out, err := exec.Command("lxc", devArgs...).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", devArgs...).CombinedOutput(); err != nil {
 				rollback()
 				return fmt.Errorf("add root disk: %s: %s", err.Error(), strings.TrimSpace(string(out)))
 			}
@@ -598,7 +613,7 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 			// bridge. Remove the profile now that the root disk is set at instance
 			// level; otherwise adding the imported NICs to the same bridge causes
 			// a DNS-name conflict error.
-			exec.Command("lxc", "profile", "remove", vmName, "default").Run() //nolint:errcheck
+			exec.Command("incus", "profile", "remove", vmName, "default").Run() //nolint:errcheck
 			zvolDataset = fmt.Sprintf("%s/virtual-machines/%s.block", poolSource, vmName)
 		} else {
 			// Additional disk: create a custom block volume.
@@ -608,7 +623,7 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 			if lxdSize != "" {
 				createArgs = append(createArgs, "size="+lxdSize)
 			}
-			if out, err := exec.Command("lxc", createArgs...).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", createArgs...).CombinedOutput(); err != nil {
 				rollback()
 				return fmt.Errorf("create disk volume %d: %s: %s", i, err.Error(), strings.TrimSpace(string(out)))
 			}
@@ -783,6 +798,17 @@ fi`, disk.StorageVol)
 		if vm.IsUEFI && i == 0 {
 			log("  Repairing UEFI fallback boot path...")
 			fixUEFIGrub(blockDev, log)
+			// Windows-specific repairs run alongside fixUEFIGrub (no-ops on
+			// non-Windows ESPs). They neutralise the "every-other-boot →
+			// recovery loop" we used to see on imported Windows VMs: the
+			// disk arrives with the NTFS volume marked dirty by Windows'
+			// fast-startup shutdown, and BCD's resumeobject points at a
+			// hiberfile location that no longer matches Incus's hardware
+			// topology. After applying ntfsfix to clear the dirty bit and
+			// stripping the resume / ignoreallfailures policy from BCD,
+			// Windows does a cold boot every time and stops cycling through
+			// recovery on each second start.
+			fixUEFIWindows(blockDev, log)
 		}
 
 		// Restore volmode=none so LXD finds the zvol in its expected state.
@@ -795,7 +821,7 @@ fi`, disk.StorageVol)
 				"pool=" + req.StoragePool,
 				"source=" + volName,
 			}
-			if out, err := exec.Command("lxc", devArgs...).CombinedOutput(); err != nil {
+			if out, err := exec.Command("incus", devArgs...).CombinedOutput(); err != nil {
 				rollback()
 				return fmt.Errorf("attach disk %d: %s: %s", i, err.Error(), strings.TrimSpace(string(out)))
 			}
@@ -821,14 +847,14 @@ fi`, disk.StorageVol)
 		if nic.MAC != "" {
 			nicArgs = append(nicArgs, fmt.Sprintf("hwaddr=%s", strings.ToLower(nic.MAC)))
 		}
-		if out, err := exec.Command("lxc", nicArgs...).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", nicArgs...).CombinedOutput(); err != nil {
 			errMsg := strings.TrimSpace(string(out))
 			log(fmt.Sprintf("  ⚠ NIC %s could not be directly attached (%s) — saved as disconnected NIC.", nic.Device, errMsg))
 			// Preserve config so the user can reconnect via ZNAS VM edit UI.
 			mac := strings.ToLower(nic.MAC)
 			disconnConf := fmt.Sprintf(`{"bridge":%q,"mac":%q,"vlan":""}`, req.LocalBridge, mac)
 			disconnKey := "user.disconnected_nics." + nic.Device
-			if setOut, setErr := exec.Command("lxc", "config", "set", vmName, disconnKey, disconnConf).CombinedOutput(); setErr != nil {
+			if setOut, setErr := exec.Command("incus", "config", "set", vmName, disconnKey, disconnConf).CombinedOutput(); setErr != nil {
 				log(fmt.Sprintf("  ✗ Could not save disconnected NIC config: %s", strings.TrimSpace(string(setOut))))
 			}
 		} else {
@@ -839,7 +865,7 @@ fi`, disk.StorageVol)
 	// Step 4: Optionally start.
 	if req.StartAfter {
 		log(fmt.Sprintf("Starting VM '%s'...", vmName))
-		if out, err := exec.Command("lxc", "start", vmName).CombinedOutput(); err != nil {
+		if out, err := exec.Command("incus", "start", vmName).CombinedOutput(); err != nil {
 			log(fmt.Sprintf("  ⚠ Could not start VM: %s: %s", err.Error(), strings.TrimSpace(string(out))))
 		} else {
 			log("  ✓ VM started.")
@@ -853,7 +879,7 @@ fi`, disk.StorageVol)
 // getLXDPoolSource parses `lxc storage show <pool>` and returns the ZFS dataset
 // name backing the pool (e.g. "NVMEPool/lxd-base"). Returns "" on any failure.
 func getLXDPoolSource(poolName string) string {
-	out, err := exec.Command("lxc", "storage", "show", poolName).Output()
+	out, err := exec.Command("incus", "storage", "show", poolName).Output()
 	if err != nil {
 		return ""
 	}
@@ -1042,4 +1068,212 @@ func seabiosBinPath() string {
 		}
 	}
 	return ""
+}
+
+// fixUEFIWindows applies repairs that an imported Windows guest needs to boot
+// reliably on Incus. Detection: an ESP that contains
+// \EFI\Microsoft\Boot\bootmgfw.efi. No-op for non-Windows VMs.
+//
+// Why this is needed: Windows' default shutdown is fast-startup (a partial
+// kernel hibernation). The captured Proxmox disk therefore arrives with
+//  1. NTFS volume dirty bit + "kept in cache" flag set, blocking r/w mount
+//     and forcing Windows to run a slow check on every boot.
+//  2. BCD pointing the BootMgr at a `resumeobject` (Windows Resume App)
+//     that references hibernation memory captured against the Proxmox
+//     QEMU machine (different ACPI / PCI topology than Incus). On Incus
+//     the resume aborts; without `bootstatuspolicy=ignoreallfailures`,
+//     BootMgr alternates between the resume attempt and Windows RE on
+//     every second boot — the "recovery loop every 2 boots" we saw.
+//
+// The fix runs offline against the imported zvol, before LXD ever sets
+// volmode=none on it, so the user's first start finds a clean disk.
+func fixUEFIWindows(blockDev string, log func(string)) {
+	parts, err := listPartitions(blockDev)
+	if err != nil {
+		log("  ⚠ Windows fix: " + err.Error())
+		return
+	}
+	if len(parts) == 0 {
+		return
+	}
+
+	// Find the ESP (FAT32 partition with \EFI\Microsoft\Boot\bootmgfw.efi).
+	// Each partition is reached via an offset+sizelimit loop device because
+	// `partx -a` is unreliable on zvols whose 16 KiB volblocksize doesn't
+	// match a 512-byte logical sector size — the kernel rejects the add
+	// with EINVAL and `${blockDev}p1` never appears.
+	tmpESP := fmt.Sprintf("/tmp/.znas-esp-win-%d", time.Now().UnixNano())
+	if err := os.MkdirAll(tmpESP, 0o755); err != nil {
+		log("  ⚠ Windows fix: mkdir ESP: " + err.Error())
+		return
+	}
+	defer os.RemoveAll(tmpESP)
+
+	espLoop := ""
+	for _, p := range parts {
+		loop, lerr := pxiLoopAttach(blockDev, p)
+		if lerr != nil {
+			continue
+		}
+		if exec.Command("sudo", "mount", "-t", "vfat", "-o", "umask=022", loop, tmpESP).Run() != nil {
+			exec.Command("sudo", "losetup", "-d", loop).Run() //nolint:errcheck
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(tmpESP, "EFI", "Microsoft", "Boot", "bootmgfw.efi")); err == nil {
+			espLoop = loop
+			break
+		}
+		exec.Command("sudo", "umount", "-l", tmpESP).Run() //nolint:errcheck
+		exec.Command("sudo", "losetup", "-d", loop).Run()  //nolint:errcheck
+	}
+	if espLoop == "" {
+		// Not a Windows install — nothing to do.
+		return
+	}
+	log("  Detected Windows ESP — applying boot-state repairs.")
+
+	// Patch BCD before unmounting the ESP. Done first because if it fails
+	// we'd rather know now than after we've already touched NTFS partitions.
+	bcdPath := filepath.Join(tmpESP, "EFI", "Microsoft", "Boot", "BCD")
+	if err := patchWindowsBCD(bcdPath); err != nil {
+		log("  ⚠ BCD patch: " + err.Error())
+	} else {
+		log("  ✓ BCD patched: removed BootMgr resumeobject + bootstatuspolicy=IgnoreAllFailures")
+	}
+	exec.Command("sudo", "umount", "-l", tmpESP).Run()   //nolint:errcheck
+	exec.Command("sudo", "losetup", "-d", espLoop).Run() //nolint:errcheck
+
+	// Clear the NTFS dirty / fast-startup-cache bit on every NTFS partition
+	// that lives on this disk. Without this, Windows refuses to mount the
+	// volume read/write on first boot and keeps falling through to recovery.
+	for _, p := range parts {
+		loop, lerr := pxiLoopAttach(blockDev, p)
+		if lerr != nil {
+			continue
+		}
+		// Skip the ESP itself (FAT32) and anything that isn't NTFS.
+		out, err := exec.Command("sudo", "blkid", "-o", "value", "-s", "TYPE", loop).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "ntfs" {
+			exec.Command("sudo", "losetup", "-d", loop).Run() //nolint:errcheck
+			continue
+		}
+		if out, err := exec.Command("sudo", "ntfsfix", "--clear-dirty", loop).CombinedOutput(); err != nil {
+			log(fmt.Sprintf("  ⚠ ntfsfix on partition %d: %s", p.Index, strings.TrimSpace(string(out))))
+		} else {
+			log(fmt.Sprintf("  ✓ ntfsfix on partition %d — cleared NTFS dirty bit", p.Index))
+		}
+		// Best-effort: drop \hiberfil.sys if Windows left one behind.
+		tmpNT := fmt.Sprintf("/tmp/.znas-nt-%d", time.Now().UnixNano())
+		if err := os.MkdirAll(tmpNT, 0o755); err == nil {
+			if exec.Command("sudo", "mount", "-o", "remove_hiberfile", "-t", "ntfs-3g", loop, tmpNT).Run() == nil {
+				exec.Command("sudo", "umount", tmpNT).Run() //nolint:errcheck
+			}
+			os.RemoveAll(tmpNT)
+		}
+		exec.Command("sudo", "losetup", "-d", loop).Run() //nolint:errcheck
+	}
+}
+
+// pxiPart describes one partition entry parsed from `sgdisk -p`.
+type pxiPart struct {
+	Index      int   // 1-based partition index
+	StartBytes int64 // first byte of the partition (sector * 512)
+	SizeBytes  int64 // partition size in bytes
+}
+
+// pxiSGDiskRow matches a partition row in sgdisk's print output:
+//
+//	Number  Start (sector)    End (sector)  Size       Code  Name
+//	   1            2048          206847   100.0 MiB   EF00  EFI system partition
+//
+// Captures: 1=Number, 2=Start sector, 3=End sector.
+var pxiSGDiskRow = regexp.MustCompile(`^\s*(\d+)\s+(\d+)\s+(\d+)\s+`)
+
+// listPartitions parses `sgdisk -p <blockDev>` to enumerate partitions on the
+// imported zvol. We use sgdisk because `partx -a` fails on zvols whose 16 KiB
+// volblocksize doesn't match the partition table's 512-byte sector
+// arithmetic (kernel returns EINVAL for every partition), and because
+// resolving partition geometry through GPT lets us mount each partition via
+// an offset loop device — a path that always works.
+func listPartitions(blockDev string) ([]pxiPart, error) {
+	out, err := exec.Command("sudo", "sgdisk", "-p", blockDev).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("sgdisk -p %s: %s", blockDev, strings.TrimSpace(string(out)))
+	}
+	const sectorSize = 512
+	var parts []pxiPart
+	for _, line := range strings.Split(string(out), "\n") {
+		m := pxiSGDiskRow.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		idx, _ := strconv.Atoi(m[1])
+		start, _ := strconv.ParseInt(m[2], 10, 64)
+		end, _ := strconv.ParseInt(m[3], 10, 64)
+		if idx <= 0 || end < start {
+			continue
+		}
+		parts = append(parts, pxiPart{
+			Index:      idx,
+			StartBytes: start * sectorSize,
+			SizeBytes:  (end - start + 1) * sectorSize,
+		})
+	}
+	return parts, nil
+}
+
+// pxiLoopAttach attaches a read/write loop device to one partition of blockDev
+// using offset+sizelimit. Caller MUST detach with `losetup -d`.
+func pxiLoopAttach(blockDev string, p pxiPart) (string, error) {
+	out, err := exec.Command("sudo", "losetup", "-f", "--show",
+		"-o", strconv.FormatInt(p.StartBytes, 10),
+		"--sizelimit", strconv.FormatInt(p.SizeBytes, 10),
+		blockDev,
+	).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("losetup p%d: %s", p.Index, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// patchWindowsBCD opens the Windows BCD registry hive at bcdPath and:
+//  1. Deletes the BootMgr's `resumeobject` element (`23000006`) so BootMgr
+//     never tries to resume from a stale hibernate file.
+//  2. Sets the BootMgr's `bootstatuspolicy` (`25000005`) to 1 = IgnoreAll-
+//     Failures so a single boot hiccup doesn't kick Windows into RE on
+//     the next start.
+//
+// Implemented via libhivex's Python bindings (python3-hivex), piped through
+// stdin so sudoers only has to whitelist the very narrow `python3 -` form
+// rather than allowing `python3 -c '<arbitrary code>'`.
+func patchWindowsBCD(bcdPath string) error {
+	const script = `import hivex, struct, sys
+h = hivex.Hivex(sys.argv[1], write=True)
+def child(node, name):
+    for c in h.node_children(node):
+        if h.node_name(c) == name: return c
+    return None
+root = h.root()
+objs = child(root, "Objects")
+if not objs: sys.exit("no Objects")
+bm = child(objs, "{9dea862c-5cdd-4e70-acc1-f32b344d4795}")
+if not bm: sys.exit("no BootMgr GUID")
+elements = child(bm, "Elements")
+if not elements: sys.exit("no Elements")
+res = child(elements, "23000006")
+if res:
+    h.node_delete_child(res)
+bsp = child(elements, "25000005")
+if not bsp:
+    bsp = h.node_add_child(elements, "25000005")
+h.node_set_value(bsp, {"key": "Element", "t": 3, "value": struct.pack("<Q", 1)})
+h.commit(None)
+`
+	cmd := exec.Command("sudo", "python3", "-", bcdPath)
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("hivex: %s: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

@@ -11,17 +11,20 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"zfsnas/internal/config"
 )
 
-// lxdBinaryPath returns the absolute path to the lxd binary,
-// checking /usr/bin (Debian) then /usr/sbin (Ubuntu).
+// lxdBinaryPath returns the absolute path to the incus daemon CLI binary
+// (used by `sudo incus admin init`), checking /usr/bin (Debian) then /usr/sbin
+// (Ubuntu, future-proof — Incus is currently deb-only on Debian).
 func lxdBinaryPath() string {
-	for _, p := range []string{"/usr/bin/lxd", "/usr/sbin/lxd"} {
+	for _, p := range []string{"/usr/bin/incus", "/usr/sbin/incus"} {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
 	}
-	return "lxd" // fallback to PATH
+	return "incus" // fallback to PATH
 }
 
 // LXDEnablePrereqResult is returned by LXDEnableCheckPrereqs.
@@ -190,10 +193,12 @@ func NewLXDEnableJob(cancel context.CancelFunc) *LXDEnableJob {
 		Status: "running",
 		cancel: cancel,
 		Steps: []LXDEnableStepStatus{
-			{ID: 1, Label: "Install LXD and QEMU packages", Status: "pending"},
-			{ID: 2, Label: "Initialise LXD", Status: "pending"},
+			{ID: 1, Label: "Install Incus and QEMU packages", Status: "pending"},
+			{ID: 2, Label: "Initialise Incus", Status: "pending"},
 			{ID: 3, Label: "Configure physical NIC bridges", Status: "pending"},
 			{ID: 4, Label: "Install chrony (time synchronisation)", Status: "pending"},
+			{ID: 5, Label: "Enable memory compression (zram, Balanced profile)", Status: "pending"},
+			{ID: 6, Label: "Enable VMs & Container metrics listener", Status: "pending"},
 		},
 	}
 }
@@ -239,6 +244,12 @@ func LXDEnableFeature(ctx context.Context, storagePool string, job *LXDEnableJob
 		done(err)
 		return
 	}
+
+	// Step 5 — Memory compression (best-effort polish, never fails the job)
+	lxdStep5MemComp(ctx, job)
+
+	// Step 6 — VM/Container metrics listener (best-effort polish)
+	lxdStep6Metrics(ctx, job)
 
 	done(nil)
 }
@@ -290,7 +301,13 @@ func runCmdLog(ctx context.Context, job *LXDEnableJob, name string, args ...stri
 func lxdStep1Packages(ctx context.Context, job *LXDEnableJob) error {
 	job.setStep(1, "running", "")
 	pkgs := []string{
-		"lxd", "lxd-client", "lxd-agent",
+		// Incus 6.0+ ships in Debian 13 main. The five sub-packages cover daemon
+		// (incus-base + incus), client (incus-client), the in-VM agent
+		// (incus-agent), and the integration tooling (incus-extra). The
+		// `incus-extra` package also bundles `lxd-to-incus`, the upstream
+		// migration helper, on Debian — there is no separate `incus-tools`
+		// package on Debian 13 (deb just folds it in).
+		"incus", "incus-base", "incus-client", "incus-extra", "incus-agent",
 		"bridge-utils",
 		"qemu-system-x86", "qemu-kvm",
 		"dnsmasq-base",
@@ -346,19 +363,20 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// ── Step 2: lxd init ─────────────────────────────────────────────────────────
+// ── Step 2: incus admin init ─────────────────────────────────────────────────
 
-// lxdIsInitialized returns true when LXD already has at least one storage pool,
-// meaning a previous lxd init (or manual setup) was done.
+// lxdIsInitialized returns true when Incus already has at least one storage
+// pool, meaning a previous `incus admin init` (or manual setup) was done.
 func lxdIsInitialized() bool {
-	out, err := exec.Command("lxc", "storage", "list", "--format", "csv").Output()
+	out, err := exec.Command("incus", "storage", "list", "--format", "csv").Output()
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
-// runLXCLog runs a lxc command (no sudo) and streams its output into the job log.
+// runLXCLog runs an incus command (no sudo) and streams its output into the
+// job log.
 func runLXCLog(ctx context.Context, job *LXDEnableJob, args ...string) error {
-	job.log("$ lxc " + strings.Join(args, " "))
-	cmd := exec.CommandContext(ctx, "lxc", args...)
+	job.log("$ incus " + strings.Join(args, " "))
+	cmd := exec.CommandContext(ctx, "incus", args...)
 	out, err := cmd.CombinedOutput()
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line != "" {
@@ -371,15 +389,17 @@ func runLXCLog(ctx context.Context, job *LXDEnableJob, args ...string) error {
 func lxdStep2Init(ctx context.Context, storagePool, hostname string, job *LXDEnableJob) error {
 	job.setStep(2, "running", "")
 
-	// Add the service account to the lxd group first (non-fatal — may already be done).
-	job.log("Ensuring service account is in the lxd group…")
-	if err := runCmdLog(ctx, job, "/usr/sbin/usermod", "-a", "-G", "lxd", "zfsnas"); err != nil {
+	// Add the service account to the incus-admin group first (non-fatal — may
+	// already be done). incus-admin grants full daemon access; the read-only
+	// `incus` group is not enough for the mutations ZNAS performs.
+	job.log("Ensuring service account is in the " + HVUserGroup + " group…")
+	if err := runCmdLog(ctx, job, "/usr/sbin/usermod", "-a", "-G", HVUserGroup, "zfsnas"); err != nil {
 		job.log("Warning: usermod returned error (may already be in group): " + err.Error())
 	}
 
 	var err error
 	if lxdIsInitialized() {
-		job.log("LXD is already initialised — applying incremental configuration…")
+		job.log("Incus is already initialised — applying incremental configuration…")
 		err = lxdConfigureExisting(ctx, storagePool, hostname, job)
 	} else {
 		err = lxdInitFreshPreseed(ctx, storagePool, hostname, job)
@@ -388,17 +408,53 @@ func lxdStep2Init(ctx context.Context, storagePool, hostname string, job *LXDEna
 		return err
 	}
 
-	// Generate lxc client cert for cross-server VM push (idempotent).
-	job.log("Generating lxc client certificate for VM push…")
+	// Generate incus client cert for cross-server VM push (idempotent).
+	job.log("Generating incus client certificate for VM push…")
 	if certErr := LXDEnsureClientCert(); certErr != nil {
-		job.log("Warning: could not generate lxc client cert: " + certErr.Error())
+		job.log("Warning: could not generate incus client cert: " + certErr.Error())
 	} else {
-		job.log("LXD client certificate ready.")
+		job.log("Incus client certificate ready.")
 	}
+
+	// Register the Ubuntu cloud-images simplestreams remotes. Incus only
+	// ships the `images:` remote (linuxcontainers.org) by default — the
+	// Ubuntu and ubuntu-daily remotes that LXD users were used to need to
+	// be added explicitly. We do it here so the Create VM / Create
+	// Container wizard immediately offers Ubuntu images without forcing
+	// the user to drop into a shell.
+	ensureImageRemotes(ctx, job)
+
 	return nil
 }
 
-// lxdInitFreshPreseed runs `sudo lxd init --preseed` for a brand-new LXD installation.
+// ensureImageRemotes registers the Ubuntu cloud-images remotes if they're
+// not already present. Idempotent — `incus remote add` errors out cleanly if
+// the remote exists, which we treat as a no-op.
+func ensureImageRemotes(ctx context.Context, job *LXDEnableJob) {
+	remotes := []struct {
+		name, url string
+	}{
+		{"ubuntu", "https://cloud-images.ubuntu.com/releases"},
+		{"ubuntu-daily", "https://cloud-images.ubuntu.com/daily"},
+	}
+	for _, r := range remotes {
+		out, _ := exec.Command("incus", "remote", "list", "--format", "csv").Output()
+		if strings.Contains(string(out), r.name+",") {
+			job.log("Image remote " + r.name + " already registered.")
+			continue
+		}
+		job.log("Adding image remote " + r.name + " (" + r.url + ")…")
+		if err := runLXCLog(ctx, job, "remote", "add", r.name, r.url,
+			"--protocol=simplestreams", "--public"); err != nil {
+			job.log("Warning: could not register " + r.name + " remote: " + err.Error())
+		}
+	}
+}
+
+// lxdInitFreshPreseed runs `sudo incus admin init --preseed` for a brand-new
+// Incus installation. Preseed schema is identical to LXD's (Incus is a hard
+// fork) — ZNAS keeps the dataset name "LXD-<hostname>" so `lxd-to-incus` style
+// in-place migrations don't have to rename the backing dataset.
 func lxdInitFreshPreseed(ctx context.Context, storagePool, hostname string, job *LXDEnableJob) error {
 	dataset := storagePool + "/LXD-" + hostname
 	preseed := fmt.Sprintf(`config:
@@ -433,13 +489,13 @@ projects:
     features.networks: "true"
     features.profiles: "true"
     features.storage.volumes: "true"
-  description: Default LXD project
+  description: Default Incus project
   name: default
 `, dataset)
 
 	lxdBin := lxdBinaryPath()
-	job.log("Running lxd init --preseed (" + lxdBin + ")…")
-	cmd := exec.CommandContext(ctx, "sudo", lxdBin, "init", "--preseed")
+	job.log("Running incus admin init --preseed (" + lxdBin + ")…")
+	cmd := exec.CommandContext(ctx, "sudo", lxdBin, "admin", "init", "--preseed")
 	cmd.Stdin = strings.NewReader(preseed)
 	out, err := cmd.CombinedOutput()
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -448,8 +504,8 @@ projects:
 		}
 	}
 	if err != nil {
-		job.setStep(2, "error", "lxd init failed: "+err.Error())
-		return fmt.Errorf("lxd init: %w", err)
+		job.setStep(2, "error", "incus admin init failed: "+err.Error())
+		return fmt.Errorf("incus admin init: %w", err)
 	}
 	job.setStep(2, "done", "")
 	return nil
@@ -465,7 +521,7 @@ func lxdConfigureExisting(ctx context.Context, storagePool, hostname string, job
 	}
 
 	// Ensure host-nat bridge exists
-	out, _ := exec.Command("lxc", "network", "show", "host-nat").Output()
+	out, _ := exec.Command("incus", "network", "show", "host-nat").Output()
 	if len(strings.TrimSpace(string(out))) == 0 {
 		job.log("Creating host-nat bridge…")
 		if err := runLXCLog(ctx, job, "network", "create", "host-nat",
@@ -492,7 +548,7 @@ func lxdConfigureExisting(ctx context.Context, storagePool, hostname string, job
 	}
 
 	// Ensure default storage pool exists pointing at chosen ZFS pool
-	poolOut, _ := exec.Command("lxc", "storage", "show", "default").Output()
+	poolOut, _ := exec.Command("incus", "storage", "show", "default").Output()
 	if len(strings.TrimSpace(string(poolOut))) == 0 {
 		dataset := storagePool + "/LXD-" + hostname
 		job.log("Creating default storage pool on " + dataset + "…")
@@ -801,4 +857,71 @@ func lxdStep4Chrony(ctx context.Context, job *LXDEnableJob) error {
 	}
 	job.setStep(4, "done", "")
 	return nil
+}
+
+// ── Step 5: memory compression (zram-tools, Balanced profile) ─────────────────
+//
+// Best-effort: a failure here does not fail the overall LXD-enable job; the
+// core feature still works without zram. The Balanced profile (PercentRAM=25,
+// algorithm=zstd) is the same default the Settings → Virtualization →
+// Memory Compression card recommends for VM hosts.
+func lxdStep5MemComp(ctx context.Context, job *LXDEnableJob) {
+	job.setStep(5, "running", "")
+
+	if !MemCompPrereqsInstalled() {
+		job.log("Installing zram-tools…")
+		if err := InstallMemCompPrereqs(func(line string) { job.log(line) }); err != nil {
+			job.log("Warning: zram-tools install failed: " + err.Error())
+			job.setStep(5, "error", "zram-tools install failed: "+err.Error())
+			return
+		}
+	} else {
+		job.log("zram-tools already installed.")
+	}
+
+	cur := GetMemCompStatus()
+	if cur.Enabled {
+		job.log("Memory compression already enabled — leaving existing configuration in place.")
+		job.setStep(5, "done", "")
+		return
+	}
+
+	job.log("Enabling memory compression with Balanced profile (25% RAM, zstd)…")
+	if err := ApplyMemCompConfig(MemCompConfig{Enabled: true, PercentRAM: 25, Algorithm: "zstd"}); err != nil {
+		job.log("Warning: enable memory compression failed: " + err.Error())
+		job.setStep(5, "error", "enable memory compression failed: "+err.Error())
+		return
+	}
+	job.setStep(5, "done", "")
+}
+
+// ── Step 6: VM/Container metrics listener ─────────────────────────────────────
+//
+// Best-effort: turns on Incus' Prometheus endpoint on the loopback and flips
+// LXDMetricsEnabled in app config so the portal scraper picks it up across
+// restarts.
+func lxdStep6Metrics(ctx context.Context, job *LXDEnableJob) {
+	job.setStep(6, "running", "")
+
+	job.log("Enabling Incus metrics listener on " + LXDMetricsAddress + "…")
+	if _, _, err := EnableLXDMetricsListener(); err != nil {
+		job.log("Warning: enable metrics listener failed: " + err.Error())
+		job.setStep(6, "error", "enable metrics listener failed: "+err.Error())
+		return
+	}
+
+	cfg, err := config.LoadAppConfig()
+	if err != nil {
+		job.log("Warning: load app config: " + err.Error())
+		job.setStep(6, "error", "load app config: "+err.Error())
+		return
+	}
+	cfg.LXDMetricsEnabled = true
+	if err := config.SaveAppConfig(cfg); err != nil {
+		job.log("Warning: save app config: " + err.Error())
+		job.setStep(6, "error", "save app config: "+err.Error())
+		return
+	}
+	job.log("Metrics listener enabled and persisted.")
+	job.setStep(6, "done", "")
 }

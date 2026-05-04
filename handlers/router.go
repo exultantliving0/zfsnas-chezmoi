@@ -2,11 +2,60 @@ package handlers
 
 import (
 	"io/fs"
+	"log"
 	"net/http"
+	"strings"
 	"zfsnas/internal/config"
 
 	"github.com/gorilla/mux"
 )
+
+// incusPathAliases maps every Incus-canonical URL prefix to the legacy LXD
+// prefix that the route table actually mounts. Set in v6.5.2 so the canonical
+// API surface is /api/incus/* (and /ws/incus-*, /incus-console/*) while the
+// /api/lxd/* form keeps working unchanged. Removed in 6.5.5 — external
+// scripts hitting /api/lxd/* should switch to /api/incus/* by then.
+//
+// We rewrite Incus → LXD (not the other way) because the route table still
+// uses /api/lxd/* internally; flipping the table would touch ~85 routes for
+// no behavioural gain. This is purely an alias layer.
+var incusPathAliases = map[string]string{
+	"/api/incus/":         "/api/lxd/",
+	"/ws/incus-console":   "/ws/lxd-console",
+	"/ws/incus-vga":       "/ws/lxd-vga",
+	"/incus-console/":     "/lxd-console/",
+	"/incus-vga-console/": "/lxd-vga-console/",
+}
+
+// IncusPathAliasMiddleware rewrites Incus-canonical URLs (/api/incus/*) to the
+// legacy LXD-prefixed routes the router actually mounts. The router sees the
+// LXD path; the client sees the Incus path. WebSocket upgrades continue to
+// work because the rewrite happens before mux dispatch.
+//
+// Deprecation telemetry: requests that arrive on the legacy /api/lxd/* form
+// log a one-line warning. Browsers running an older static bundle (before the
+// frontend was refreshed to /api/incus/*) will trigger these on every page
+// load — that's expected and harmless. The warning is a sweep tool, not a
+// blocker.
+func IncusPathAliasMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		for incusPrefix, lxdPrefix := range incusPathAliases {
+			if strings.HasPrefix(path, incusPrefix) {
+				r.URL.Path = lxdPrefix + path[len(incusPrefix):]
+				break
+			}
+		}
+		// Soft-deprecation warning: hits on the legacy /api/lxd/* form after
+		// the canonical name became /api/incus/* in v6.5.2. The frontend
+		// shipped in this release uses the canonical paths, so warnings here
+		// indicate a stale browser cache or an external API consumer.
+		if strings.HasPrefix(path, "/api/lxd/") {
+			log.Printf("WARNING: deprecated /api/lxd/* path %q — switch to /api/incus/* (will be removed in 6.5.5)", path)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // NewRouter builds and returns the application router.
 // staticFS is the embedded (or disk) filesystem rooted at the static/ directory.
@@ -79,6 +128,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// --- Audit log ---
 	r.Handle("/api/audit",
 		RequireAuth(http.HandlerFunc(HandleAuditLog))).Methods("GET")
+	r.Handle("/api/audit/by-target",
+		RequireAuth(http.HandlerFunc(HandleAuditByTarget))).Methods("GET")
 	// Multi-host aggregate (v6.4.28): merges local + every InterLink peer.
 	r.Handle("/api/audit/aggregate",
 		RequireAuth(HandleAuditAggregate(appCfg))).Methods("GET")
@@ -267,6 +318,17 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// WebSocket: stream apt-get install output (admin only)
 	r.Handle("/ws/prereqs-install",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallPrereqs)))).Methods("GET")
+
+	// --- Memory Compression (zram-tools), v6.5.3+ ---
+	// Status is read by Settings → Virtualization (admin) and the topbar
+	// gauge / dashboard chart (every authenticated user sees the live
+	// counters; we keep status auth-only, no admin gate).
+	r.Handle("/api/memcomp/status",
+		RequireAuth(http.HandlerFunc(HandleMemCompStatus))).Methods("GET")
+	r.Handle("/api/memcomp/config",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleMemCompConfig)))).Methods("PUT")
+	r.Handle("/ws/memcomp-install",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleMemCompInstallPrereqs)))).Methods("GET")
 
 	// WebSocket: interactive PTY terminal
 	r.Handle("/ws/terminal",
@@ -465,6 +527,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// --- Hardware info ---
 	r.Handle("/api/sysinfo/hardware",
 		RequireAuth(http.HandlerFunc(HandleGetHardwareInfo))).Methods("GET")
+	r.Handle("/api/sysinfo/hardware-detailed",
+		RequireAuth(http.HandlerFunc(HandleGetDetailedSystemInfo))).Methods("GET")
 
 	// --- Version ---
 	r.Handle("/api/version",
@@ -570,15 +634,15 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 
 	// --- InterLink (server federation + SSO switching) ---
 	// Public endpoints — called by remote ZNAS servers or browser redirects (no session auth).
-	r.HandleFunc("/api/interlink/ping",          HandleInterlinkPing).Methods("GET")
-	r.HandleFunc("/api/interlink/accept-link",   HandleInterlinkAcceptLink(appCfg)).Methods("POST")
-	r.HandleFunc("/api/interlink/check-user",    HandleInterlinkCheckUser(appCfg)).Methods("POST")
-	r.HandleFunc("/api/interlink/remote-unlink",    HandleInterlinkRemoteUnlink(appCfg)).Methods("POST")
-	r.HandleFunc("/api/interlink/remote-pools",     HandleInterlinkRemotePools(appCfg)).Methods("POST")
-	r.HandleFunc("/api/interlink/push-ssh-key",     HandleInterlinkPushSSHKey(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/ping", HandleInterlinkPing).Methods("GET")
+	r.HandleFunc("/api/interlink/accept-link", HandleInterlinkAcceptLink(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/check-user", HandleInterlinkCheckUser(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/remote-unlink", HandleInterlinkRemoteUnlink(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/remote-pools", HandleInterlinkRemotePools(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/push-ssh-key", HandleInterlinkPushSSHKey(appCfg)).Methods("POST")
 	r.HandleFunc("/api/interlink/check-zfs-access", HandleInterlinkCheckZFSAccess(appCfg)).Methods("POST")
 	r.HandleFunc("/api/interlink/grant-zfs-access", HandleInterlinkGrantZFSAccess(appCfg)).Methods("POST")
-	r.HandleFunc("/interlink-login",             HandleInterlinkLogin(appCfg)).Methods("GET")
+	r.HandleFunc("/interlink-login", HandleInterlinkLogin(appCfg)).Methods("GET")
 	// Authenticated endpoints — called by the local portal UI.
 	r.Handle("/api/interlink/servers/fast",
 		RequireAuth(http.HandlerFunc(HandleInterlinkListFast(appCfg)))).Methods("GET")
@@ -687,11 +751,11 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/lxd/instances/{name}/restart",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDRestart)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/config",
-			RequireAuth(http.HandlerFunc(HandleLXDGetConfig))).Methods("GET")
-		r.Handle("/api/lxd/instances/{name}/config",
-			RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDSetConfig)))).Methods("PUT")
-		r.Handle("/api/lxd/instances/{name}",
-			RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDDelete)))).Methods("DELETE")
+		RequireAuth(http.HandlerFunc(HandleLXDGetConfig))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/config",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDSetConfig)))).Methods("PUT")
+	r.Handle("/api/lxd/instances/{name}",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDDelete)))).Methods("DELETE")
 	r.Handle("/api/lxd/vms",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateVM)))).Methods("POST")
 	r.Handle("/api/lxd/containers",
@@ -776,7 +840,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/lxd/isos/upload",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUploadISO)))).Methods("POST")
 	r.Handle("/api/lxd/isos/{filename}",
-	RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteISO)))).Methods("DELETE")
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteISO)))).Methods("DELETE")
 	// VGA-console drive picker: list configured CDROMs + ISOs available in the
 	// VM's pool, and swap the first drive without leaving the console.
 	r.Handle("/api/lxd/instances/{name}/cdroms",
@@ -785,13 +849,13 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDSwapCDROM)))).Methods("POST")
 
 	// --- LXD InterLink push (HMAC-authenticated peer endpoints) ---
-	r.HandleFunc("/api/lxd/interlink-cert",   HandleLXDInterlinkCert(appCfg)).Methods("POST")
-	r.HandleFunc("/api/lxd/interlink-trust",  HandleLXDInterlinkTrust(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/interlink-cert", HandleLXDInterlinkCert(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/interlink-trust", HandleLXDInterlinkTrust(appCfg)).Methods("POST")
 	r.HandleFunc("/api/lxd/storage-pools-remote", HandleLXDRemoteStoragePools(appCfg)).Methods("POST")
-	r.HandleFunc("/api/lxd/bridges-remote",   HandleLXDRemoteBridges(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/bridges-remote", HandleLXDRemoteBridges(appCfg)).Methods("POST")
 	r.HandleFunc("/api/lxd/instances-remote", HandleLXDRemoteInstances(appCfg)).Methods("POST")
-	r.HandleFunc("/api/lxd/vm-nvram-reset",   HandleLXDVMNVRAMReset(appCfg)).Methods("POST")
-	r.HandleFunc("/api/lxd/vm-tpm-clear",     HandleLXDVMTPMClear(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/vm-nvram-reset", HandleLXDVMNVRAMReset(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/vm-tpm-clear", HandleLXDVMTPMClear(appCfg)).Methods("POST")
 	// Session-authenticated LXD InterLink push endpoints.
 	r.Handle("/api/lxd/interlink-sync-trust/{server_id}",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDInterlinkSyncTrust(appCfg))))).Methods("POST")
@@ -818,17 +882,17 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// --- TrueNAS-compatible read-only REST API (v2.0) ---
 	// Accepts session cookie OR Authorization: Bearer <api_key>
 	for path, h := range map[string]http.HandlerFunc{
-		"/api/v2.0/alert/list":       HandleHomepageAlertList,
-		"/api/v2.0/system/info":      HandleHomepageSystemInfo,
-		"/api/v2.0/system/version":   HandleHomepageSystemVersion,
-		"/api/v2.0/pool":             HandleHomepagePools,
-		"/api/v2.0/pool/dataset":     HandleHomepageDatasets,
+		"/api/v2.0/alert/list":        HandleHomepageAlertList,
+		"/api/v2.0/system/info":       HandleHomepageSystemInfo,
+		"/api/v2.0/system/version":    HandleHomepageSystemVersion,
+		"/api/v2.0/pool":              HandleHomepagePools,
+		"/api/v2.0/pool/dataset":      HandleHomepageDatasets,
 		"/api/v2.0/pool/snapshottask": HandleHomepageSnapshotTasks,
-		"/api/v2.0/snapshot":         HandleHomepageSnapshots,
-		"/api/v2.0/disk":             HandleHomepageDisks,
-		"/api/v2.0/sharing/smb":      HandleHomepageSMBShares,
-		"/api/v2.0/sharing/nfs":      HandleHomepageNFSShares,
-		"/api/v2.0/service":          HandleHomepageServices,
+		"/api/v2.0/snapshot":          HandleHomepageSnapshots,
+		"/api/v2.0/disk":              HandleHomepageDisks,
+		"/api/v2.0/sharing/smb":       HandleHomepageSMBShares,
+		"/api/v2.0/sharing/nfs":       HandleHomepageNFSShares,
+		"/api/v2.0/service":           HandleHomepageServices,
 	} {
 		r.Handle(path, RequireAuthOrAPIKey(http.HandlerFunc(h))).Methods("GET")
 	}
@@ -856,5 +920,9 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 
 	// RelayMiddleware wraps the completed mux router (Server A outbound proxy):
 	// intercepts requests for relay-active sessions and forwards them to the remote.
-	return RelayMiddleware(appCfg, r)
+	// IncusPathAliasMiddleware runs first so /api/incus/* gets rewritten to the
+	// internally-mounted /api/lxd/* before the relay decision is made — the
+	// relay forwards the rewritten path to the peer (who will also be 6.5.2+
+	// and has the same alias).
+	return IncusPathAliasMiddleware(RelayMiddleware(appCfg, r))
 }

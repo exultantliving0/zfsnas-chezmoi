@@ -194,7 +194,7 @@ func SweepOrphanLXDMetrics() {
 // listLXDInstanceNames returns names of all LXD instances (any state). Uses
 // `lxc list --format json -c n` which is the cheapest available query.
 func listLXDInstanceNames() ([]string, error) {
-	out, err := exec.Command("lxc", "list", "--format", "csv", "-c", "n").Output()
+	out, err := exec.Command("incus", "list", "--format", "csv", "-c", "n").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +421,7 @@ func fetchLXDMetricsBody() (string, error) {
 		}
 	}
 	// Fallback via the lxc CLI / unix socket.
-	out, qerr := exec.Command("lxc", "query", "/1.0/metrics").Output()
+	out, qerr := exec.Command("incus", "query", "/1.0/metrics").Output()
 	if qerr != nil {
 		if err != nil {
 			return "", fmt.Errorf("https %s: %v; lxc query: %v", lxdMetricsURL, err, qerr)

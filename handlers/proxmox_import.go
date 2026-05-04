@@ -15,8 +15,8 @@ import (
 // pxiJob tracks an async Proxmox import operation for a single VM.
 type pxiJob struct {
 	mu           sync.Mutex
-	Status       string   `json:"status"` // "queued" | "running" | "done" | "error" | "canceled"
-	Error        string   `json:"error,omitempty"`
+	Status       string `json:"status"` // "queued" | "running" | "done" | "error" | "canceled"
+	Error        string `json:"error,omitempty"`
 	Lines        []string
 	TotalBytes   int64
 	BytesWritten int64
@@ -36,16 +36,20 @@ func (j *pxiJob) cancel() {
 }
 
 var (
-	pxiJobs sync.Map       // job_id → *pxiJob
+	pxiJobs sync.Map                 // job_id → *pxiJob
 	pxiSem  = make(chan struct{}, 4) // max 4 parallel imports
 )
 
-// HandleProxmoxImportToolsStatus reports whether sshpass and qemu-img are installed.
+// HandleProxmoxImportToolsStatus reports whether the import-time tools are
+// installed. ntfs-3g + python3-hivex were added in v6.5.2 for the Windows
+// boot-state repair (fixUEFIWindows in system/proxmox_import.go).
 // GET /api/lxd/proxmox-import/tools-status
 func HandleProxmoxImportToolsStatus(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{
 		"sshpass":  system.SshpassAvailable(),
 		"qemu_img": system.QemuImgAvailable(),
+		"ntfsfix":  system.NtfsfixAvailable(),
+		"hivex":    system.HivexAvailable(),
 	})
 }
 

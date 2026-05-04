@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"zfsnas/internal/audit"
@@ -20,6 +22,54 @@ func HandleAuditLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, entries)
+}
+
+// HandleAuditByTarget returns audit log entries whose Target field equals or
+// contains the given value. Used by the per-instance Logs tab to surface every
+// known event tied to a specific VM / container (start, stop, snapshot,
+// state-change, OOM kill, etc.). Newest-first; capped via ?limit= (default
+// 200). Empty result is fine — caller treats absence as "no events yet".
+func HandleAuditByTarget(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	if target == "" {
+		jsonErr(w, http.StatusBadRequest, "target query parameter required")
+		return
+	}
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 5000 {
+			limit = n
+		}
+	}
+	all, err := audit.Read()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "failed to read audit log")
+		return
+	}
+	out := make([]audit.Entry, 0, limit)
+	// audit.Read returns oldest-first; walk the slice in reverse so the
+	// newest matches land at the head and we can short-circuit at `limit`.
+	for i := len(all) - 1; i >= 0 && len(out) < limit; i-- {
+		e := all[i]
+		if entryTargetMatches(e.Target, target) {
+			out = append(out, e)
+		}
+	}
+	jsonOK(w, out)
+}
+
+// entryTargetMatches accepts an exact match or "name/<sub>" form. Some
+// entries store "<vm>/<snapshot>" or "<vm> → <newname>" in Target, so we
+// treat any Target that begins with "<name>" followed by "/", " ", or end-
+// of-string as belonging to that instance.
+func entryTargetMatches(target, name string) bool {
+	if target == name {
+		return true
+	}
+	if strings.HasPrefix(target, name+"/") || strings.HasPrefix(target, name+" ") {
+		return true
+	}
+	return false
 }
 
 // HandleAuditAggregate returns the local audit log merged with every
