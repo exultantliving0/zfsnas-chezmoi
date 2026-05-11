@@ -83,6 +83,7 @@ var sudoersSectionInfoMap = map[string]sudoersSectionInfo{
 func buildCommandToSectionMap() map[string]string {
 	required := strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
 	required = strings.Replace(required, "{{LXD_CAT_LINE}}", lxdConsoleCatLine(), 1)
+	required = applySudoRSSubstitutions(required)
 	m := make(map[string]string)
 	currentAlias := ""
 	for _, line := range strings.Split(required, "\n") {
@@ -147,6 +148,7 @@ func CanManageSudoers(status SudoStatus) bool {
 func RequiredSudoersContent() string {
 	s := strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
 	s = strings.Replace(s, "{{LXD_CAT_LINE}}", lxdConsoleCatLine(), 1)
+	s = applySudoRSSubstitutions(s)
 	if !version.IsExperimental() {
 		s = stripExperimentalSudoersSections(s)
 	}
@@ -283,6 +285,51 @@ func lxdConsoleCatLine() string {
 		return "/usr/bin/cat *"
 	}
 	return "/usr/bin/cat /var/log/incus/*/console.log"
+}
+
+// applySudoRSSubstitutions widens sudoers entries that use wildcards in
+// non-trailing positions. sudo-rs (Ubuntu 26.04+) only accepts `*` as the
+// entire trailing argument — any prefix (`--since=*`), suffix (`* scope global`),
+// or middle position (`/proc/*/smaps_rollup`) trips visudo with
+// "wildcards are not allowed in command arguments" and refuses to load the
+// file, which kills every sudo call the portal needs.
+//
+// Each replacement broadens the rule to a form sudo-rs accepts. Path scoping
+// is still enforced in Go before each invocation (filebrowser.go SafeJoin,
+// netplan_migrate.go fixed paths, system/memprocs.go pid filter, etc.), so
+// the broader sudoers rule is only reachable to someone who can already
+// execute as the zfsnas service account. On classic sudo the original
+// narrow forms are kept.
+func applySudoRSSubstitutions(s string) string {
+	if !IsSudoRS() {
+		return s
+	}
+	return widenWildcardsForSudoRS(s)
+}
+
+// widenWildcardsForSudoRS performs the substitutions unconditionally. Split
+// from applySudoRSSubstitutions so unit tests can exercise the rewrite
+// without depending on the host's sudo flavor.
+func widenWildcardsForSudoRS(s string) string {
+	repls := [...][2]string{
+		// ZFSNAS_SMART (always present) — /proc/<pid>/smaps_rollup read for
+		// the swap-aware MEM topbar gauge. Wildcard in middle.
+		{"/usr/bin/cat /proc/*/smaps_rollup", "/usr/bin/cat *"},
+		// ZFSNAS_INCUS — journalctl --since=<ts> for the OOM-kill attribution
+		// in the VMs & Containers state watcher. `--since=` prefix before *.
+		{"/usr/bin/journalctl --since=*", "/usr/bin/journalctl *"},
+		// ZFSNAS_VMSETUP — netplan→ifupdown migration commands.
+		{"/usr/bin/rm -f /run/systemd/network/*.network", "/usr/bin/rm -f *"},
+		{"/usr/bin/ip addr flush dev * scope global", "/usr/bin/ip *"},
+		{"/usr/bin/ip route flush dev * scope global", "/usr/bin/ip *"},
+		{"/usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled", "/usr/bin/mv *"},
+		{"/usr/bin/cat /etc/netplan/*.yaml", "/usr/bin/cat *"},
+		{"/usr/bin/tee /etc/network/interfaces.pre-znas-*", "/usr/bin/tee *"},
+	}
+	for _, r := range repls {
+		s = strings.Replace(s, r[0], r[1], 1)
+	}
+	return s
 }
 
 var (
@@ -914,6 +961,7 @@ var sudoersExplanations = map[string]string{
 	"/usr/sbin/dmidecode *":                               "Reads DMI/SMBIOS firmware tables for motherboard, BIOS, and per-DIMM memory details (v6.5.3+ SysInfo popup).",
 	"/usr/bin/journalctl -k *":                            "Reads the kernel ring buffer (read-only) so the VMs & Containers state watcher can attribute a Running→Stopped transition to a kernel OOM-kill (v6.5.3+, virtualization-only).",
 	"/usr/bin/journalctl --since=*":                       "Reads the systemd journal (read-only) so the VMs & Containers state watcher can attribute a Running→Stopped transition to a kernel OOM-kill (v6.5.3+, virtualization-only).",
+	"/usr/bin/journalctl *":                               "sudo-rs fallback for `journalctl --since=*` (Ubuntu 26.04+): sudo-rs rejects the `--since=` prefix before `*`, so the rule is widened to `journalctl *`. Still read-only — journalctl never modifies state. Used by the VMs & Containers state watcher for OOM-kill attribution (v6.5.3+).",
 	"/usr/bin/cat /proc/*/smaps_rollup":                   "Reads /proc/<pid>/smaps_rollup so the MEM topbar gauge can show complete swap usage (incl. shmem) for QEMU/KVM workers — VmSwap in /proc/<pid>/status only counts anonymous private swap (v6.5.3+).",
 	"/usr/bin/apt-get *":                                  "Package installation and OS updates. Used by the Prerequisites tab and the Settings > OS Updates page.",
 	"/usr/bin/tee /etc/samba/smb.conf":                    "Writes the Samba configuration file when a share is created, edited, or deleted.",
@@ -955,13 +1003,54 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/systemctl restart zramswap":                 "Memory Compression (v6.5.3+): restarts after a config change so the new PERCENT/ALGO take effect (briefly tears the swap down — ZNAS guards this with a free-RAM safety check).",
 	"/usr/bin/systemctl enable zramswap":                  "Memory Compression (v6.5.3+): persists the unit across reboots after the first enable.",
 	"/usr/bin/systemctl disable zramswap":                 "Memory Compression (v6.5.3+): clears the unit from boot so a Disable in the UI is durable across reboots.",
+	"/usr/sbin/swapoff /dev/zram0":                        "Memory Compression (v6.5.5+): drains /dev/zram0 directly during a resize. Needed because `systemctl stop zramswap` is a no-op when the unit is in `failed` state (Type=oneshot RemainAfterExit=true), leaving the device armed and the next start failing with EBUSY. Narrow path — only the canonical zram device, no wildcard.",
+	"/usr/sbin/modprobe -r zram":                          "Memory Compression (v6.5.5+): unloads the zram kernel module after swapoff so the next start can recreate /dev/zram0 at the new PERCENT. Module name is fixed; no wildcard.",
+	"/usr/bin/systemctl reset-failed zramswap":            "Memory Compression (v6.5.5+): clears the `failed` state on the zramswap unit before retrying start, so systemd will actually launch ExecStart= instead of refusing.",
+	"/usr/bin/systemctl enable systemd-networkd":          "Netplan→ifupdown migration (v6.5.6+): re-enables systemd-networkd as part of rollback when the migration verification step fails.",
+	"/usr/bin/systemctl disable systemd-networkd":         "Netplan→ifupdown migration (v6.5.6+): disables systemd-networkd before handing the host over to ifupdown's `networking` service.",
+	"/usr/bin/systemctl start systemd-networkd":           "Netplan→ifupdown migration (v6.5.6+): rollback only — restarts systemd-networkd if the migration could not bring up an interface.",
+	"/usr/bin/systemctl stop systemd-networkd":            "Netplan→ifupdown migration (v6.5.6+): stops systemd-networkd after the new ifupdown config is in place.",
+	"/usr/bin/systemctl enable systemd-networkd.socket":   "Netplan→ifupdown migration (v6.5.6+): rollback companion to enable systemd-networkd.",
+	"/usr/bin/systemctl disable systemd-networkd.socket":  "Netplan→ifupdown migration (v6.5.6+): disable companion socket so it can't trigger systemd-networkd back up.",
+	"/usr/bin/systemctl start systemd-networkd.socket":    "Netplan→ifupdown migration (v6.5.6+): rollback companion socket start.",
+	"/usr/bin/systemctl stop systemd-networkd.socket":     "Netplan→ifupdown migration (v6.5.6+): stops the systemd-networkd activation socket alongside the unit.",
+	"/usr/bin/systemctl enable systemd-networkd-varlink.socket":      "Netplan→ifupdown migration (v6.5.6+): rollback companion for the varlink activation socket.",
+	"/usr/bin/systemctl disable systemd-networkd-varlink.socket":     "Netplan→ifupdown migration (v6.5.6+): also disabled because it's a separate activation path that would otherwise re-spawn systemd-networkd after stop.",
+	"/usr/bin/systemctl start systemd-networkd-varlink.socket":       "Netplan→ifupdown migration (v6.5.6+): rollback start.",
+	"/usr/bin/systemctl stop systemd-networkd-varlink.socket":        "Netplan→ifupdown migration (v6.5.6+): stops the varlink socket so it can't trigger systemd-networkd back up.",
+	"/usr/bin/systemctl enable systemd-networkd-resolve-hook.socket":  "Netplan→ifupdown migration (v6.5.6+): rollback companion for the resolve-hook activation socket.",
+	"/usr/bin/systemctl disable systemd-networkd-resolve-hook.socket": "Netplan→ifupdown migration (v6.5.6+): also disabled — same reason as the varlink socket.",
+	"/usr/bin/systemctl start systemd-networkd-resolve-hook.socket":   "Netplan→ifupdown migration (v6.5.6+): rollback start.",
+	"/usr/bin/systemctl stop systemd-networkd-resolve-hook.socket":    "Netplan→ifupdown migration (v6.5.6+): stops the resolve-hook socket alongside the rest.",
+	"/usr/bin/rm -f /run/systemd/network/*.network":                   "Netplan→ifupdown migration (v6.5.6+): removes the netplan-generated systemd-networkd .network files left in tmpfs so a re-spawned networkd has nothing to apply against the host's NICs. /run is tmpfs — these would clear on reboot anyway, but the migration needs them gone now.",
+	"/usr/bin/rm -f /etc/resolv.conf":                                 "Netplan→ifupdown migration (v6.5.6+): removes the systemd-resolved stub symlink at /etc/resolv.conf so the migration can replace it with a regular file containing the captured upstream DNS. Without this, `tee /etc/resolv.conf` would write through the symlink into the resolved-managed run-time file.",
+	"/usr/bin/tee /etc/resolv.conf":                                   "Netplan→ifupdown migration (v6.5.6+): writes /etc/resolv.conf with the captured DNS servers so DNS resolution survives the disabling of systemd-networkd. Narrow path, no wildcard.",
+	"/usr/bin/tee /etc/dhcpcd.conf":                                   "Netplan→ifupdown migration (v6.5.6+): appends a per-interface `clientid` block to /etc/dhcpcd.conf that mirrors the DHCP Client-Identifier systemd-networkd was sending (read from /run/systemd/netif/leases/<ifindex>). Without this, dhcpcd would announce itself with its default RFC-4361 DUID+IAID and the DHCP server would lease the host a different IP after the migration.",
+	"/usr/bin/tee /etc/dhcpcd.exit-hook":                              "Netplan→ifupdown migration (v6.5.6+): writes a small shell exit-hook that pushes DHCP-supplied DNS into systemd-resolved (`resolvectl dns <iface> <ip>`) so /etc/resolv.conf doesn't need a static DNS fallback when the user is on DHCP.",
+	"/usr/bin/chmod 0755 /etc/dhcpcd.exit-hook":                       "Netplan→ifupdown migration (v6.5.6+): makes the dhcpcd exit-hook executable. Narrow path, no wildcard.",
+	"/usr/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf": "Netplan→ifupdown migration (v6.5.6+): restores the standard Ubuntu/Debian /etc/resolv.conf symlink to systemd-resolved's stub when a previous ZNAS migration left a regular file behind. Single fixed source + destination — no wildcard.",
+	"/usr/bin/systemctl enable systemd-resolved":                      "Netplan→ifupdown migration (v6.5.6+): keeps systemd-resolved enabled across reboots so the stub at 127.0.0.53 keeps owning /etc/resolv.conf.",
+	"/usr/bin/systemctl start systemd-resolved":                       "Netplan→ifupdown migration (v6.5.6+): starts systemd-resolved if it isn't already running so DNS resolution survives the disabling of systemd-networkd.",
+	"/usr/bin/ip addr flush dev * scope global":                       "Netplan→ifupdown migration (v6.5.6+): flushes managed interfaces' global IPv4 addresses just before `ifup -a` runs, so the address netplan/networkd left on the link doesn't collide with `ip addr add` and mark networking.service `failed`. Sub-second window with no IP — the new address comes back via ifup immediately after.",
+	"/usr/bin/ip route flush dev * scope global":                      "Netplan→ifupdown migration (v6.5.6+): mirrors the addr flush above; clears stale routes from the same window so ifup's route adds don't error with `File exists`.",
+	"/usr/bin/ip *":                                                   "sudo-rs fallback for `ip addr flush dev * scope global` and `ip route flush dev * scope global` (Ubuntu 26.04+): sudo-rs rejects the trailing `scope global` after `*` (only the entire trailing argument may be `*`), so the rule is widened to `ip *`. Used during the netplan→ifupdown migration window to drop netplan-set addresses/routes before ifup runs (v6.5.6+).",
+	"/usr/bin/systemctl enable networking":                "Netplan→ifupdown migration (v6.5.6+): persists the ifupdown service across reboots after the migration succeeds.",
+	"/usr/bin/systemctl disable networking":               "Netplan→ifupdown migration (v6.5.6+): paired with enable (rarely used, kept for symmetry / future rollback flow).",
+	"/usr/bin/systemctl start networking":                 "Netplan→ifupdown migration (v6.5.6+): brings up the new /etc/network/interfaces config.",
+	"/usr/bin/systemctl stop networking":                  "Netplan→ifupdown migration (v6.5.6+): paired with start; not used in the happy path.",
+	"/usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled": "Netplan→ifupdown migration (v6.5.6+): renames every netplan YAML to a .znas-disabled suffix so netplan stops generating systemd-networkd configs at boot. Scoped to /etc/netplan/.",
+	"/usr/bin/mv *":                                                    "sudo-rs fallback for `mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled` (Ubuntu 26.04+): sudo-rs rejects wildcards in non-trailing positions, so the rule is widened to `mv *`. The exact source/destination paths are computed in Go from a glob of /etc/netplan/*.yaml before the sudo call (system/netplan_migrate.go). Used only during the one-shot netplan→ifupdown migration (v6.5.6+).",
+	"/usr/bin/cat /etc/netplan/*.yaml":                    "Netplan→ifupdown migration (v6.5.6+): reads netplan YAML files (root-owned 0600 on Ubuntu 26.04) so the migration can detect renderer + unsupported constructs.",
+	"/usr/bin/tee /etc/network/interfaces":                "Netplan→ifupdown migration (v6.5.6+): writes the generated /etc/network/interfaces. Narrow path, no wildcard.",
+	"/usr/bin/tee /etc/network/interfaces.pre-znas-*":     "Netplan→ifupdown migration (v6.5.6+): timestamped backup of any pre-existing /etc/network/interfaces before the migration overwrites it.",
+	"/usr/bin/tee /etc/cloud/cloud.cfg.d/99-znas-disable-network-config.cfg": "Netplan→ifupdown migration (v6.5.6+): drops a single cloud-init drop-in that disables cloud-init's network management so the next reboot doesn't regenerate the netplan YAML we just disabled.",
 	"/usr/bin/mount *":                                    "Proxmox Import: mounts the EFI System Partition (FAT32) from an imported VM's root zvol into a private /tmp directory so grub.cfg can be installed for UEFI fallback boot repair (v6.4.21+). Broadened from `mount -t vfat * /dev/zd*p* /tmp/.znas-esp-*` for sudo-rs compatibility.",
 	"/usr/bin/umount *":                                   "Proxmox Import: unmounts the EFI System Partition after the UEFI fallback boot repair is complete (v6.4.21+). Broadened from `umount * /tmp/.znas-esp-*` for sudo-rs compatibility.",
 	"/usr/bin/chmod 0775 *":                               "ISO Management: sets group-write permission on the .isos directory so the zfsnas process user can upload ISO files without requiring root on each transfer (v6.4.22+).",
 	"/usr/bin/rm -f *":                                    "ISO Management: removes a partially-written ISO file if the upload is interrupted (v6.4.22+).",
+	"/usr/bin/mv -f *":                                    "ISO Management URL fetch: atomic rename from <pool>/.isos/<name>.part to <pool>/.isos/<name> after the download completes and the ISO 9660 magic check passes (v6.5.8+). Single trailing wildcard required because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing positions; filename is regex-validated against isoNameRe (no path traversal, no shell metacharacters) before invocation.",
 	"/usr/bin/cat /var/log/incus/*/console.log":           "Container Console tab: reads /var/log/incus/<name>/console.log (root-owned 0600) so the per-container Console pane can show the boot/console output (v6.4.28+). Pattern is locked to /var/log/incus/<single-segment>/console.log — sudo blocks every other path including /etc/shadow and traversal attempts (verified). Instance name is also regex-validated before invocation. (Used on classic sudo only; on sudo-rs hosts the wider `cat *` form is used because sudo-rs rejects any prefix before `*`.)",
 	"/usr/bin/cat *":                                      "Container Console tab — sudo-rs fallback (Ubuntu 26.04+): reads /var/log/incus/<name>/console.log for the per-container Console pane. The narrower /var/log/incus/*/console.log form is preferred but rejected by sudo-rs's stricter wildcard parser (only `*` as a complete trailing argument is accepted). Path scoping is enforced server-side: the instance name is regex-validated against the live Incus instance list before invocation (system/lxd.go GetLXDInstanceConsoleLog).",
-	"/usr/bin/lxd-to-incus *":                             "LXD → Incus one-shot migration helper (v6.5.2+): the upstream incus-tools package's `lxd-to-incus` migrates an existing LXD install (database, certs, profiles, networks, storage-pool refs, instance configs) to Incus in place. Run by the in-portal Migrate from LXD wizard; idempotent.",
 	"/usr/sbin/partprobe *":                               "Refreshes the kernel partition table after disk changes.",
 	"/usr/bin/udevadm settle *":                           "Waits for udev to settle after disk operations before proceeding.",
 	"/usr/sbin/blkid -o export":                           "Reads disk UUIDs and filesystem types after partitioning.",
@@ -1242,8 +1331,6 @@ Cmnd_Alias ZFSNAS_INCUSNET = \
 #                                                              prefix before *)
 #   Used by the Container Console tab to read /var/log/incus/<name>/console.log
 #   (root-owned 0600). Instance name is regex-validated server-side regardless.
-# since v6.5.2 — lxd-to-incus is the upstream one-shot migration tool. Allowed
-#   here so the in-portal "Migrate from LXD" wizard can run it under sudo.
 # since v6.5.3 — journalctl reads (kernel ring buffer + systemd journal) let
 #   the state watcher attribute a Running→Stopped VM/container transition to
 #   a kernel OOM-kill. Read-only and confined to this virtualization-gated
@@ -1259,7 +1346,7 @@ Cmnd_Alias ZFSNAS_INCUS = \
     /usr/bin/chmod 0775 *, \
     /usr/bin/tee *, \
     /usr/bin/rm -f *, \
-    /usr/bin/lxd-to-incus *, \
+    /usr/bin/mv -f *, \
     /usr/bin/ntfsfix *, \
     /usr/bin/blkid -o value -s TYPE *, \
     /usr/bin/python3 - *, \
@@ -1293,7 +1380,46 @@ Cmnd_Alias ZFSNAS_VMSETUP = \
     /usr/bin/systemctl restart zramswap, \
     /usr/bin/systemctl enable zramswap, \
     /usr/bin/systemctl disable zramswap, \
+    /usr/bin/systemctl reset-failed zramswap, \
+    /usr/sbin/swapoff /dev/zram0, \
+    /usr/sbin/modprobe -r zram, \
     /usr/bin/tee /etc/default/zramswap, \
+    /usr/bin/systemctl enable systemd-networkd, \
+    /usr/bin/systemctl disable systemd-networkd, \
+    /usr/bin/systemctl start systemd-networkd, \
+    /usr/bin/systemctl stop systemd-networkd, \
+    /usr/bin/systemctl enable systemd-networkd.socket, \
+    /usr/bin/systemctl disable systemd-networkd.socket, \
+    /usr/bin/systemctl start systemd-networkd.socket, \
+    /usr/bin/systemctl stop systemd-networkd.socket, \
+    /usr/bin/systemctl enable systemd-networkd-varlink.socket, \
+    /usr/bin/systemctl disable systemd-networkd-varlink.socket, \
+    /usr/bin/systemctl start systemd-networkd-varlink.socket, \
+    /usr/bin/systemctl stop systemd-networkd-varlink.socket, \
+    /usr/bin/systemctl enable systemd-networkd-resolve-hook.socket, \
+    /usr/bin/systemctl disable systemd-networkd-resolve-hook.socket, \
+    /usr/bin/systemctl start systemd-networkd-resolve-hook.socket, \
+    /usr/bin/systemctl stop systemd-networkd-resolve-hook.socket, \
+    /usr/bin/rm -f /run/systemd/network/*.network, \
+    /usr/bin/rm -f /etc/resolv.conf, \
+    /usr/bin/tee /etc/resolv.conf, \
+    /usr/bin/tee /etc/dhcpcd.conf, \
+    /usr/bin/tee /etc/dhcpcd.exit-hook, \
+    /usr/bin/chmod 0755 /etc/dhcpcd.exit-hook, \
+    /usr/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf, \
+    /usr/bin/systemctl enable systemd-resolved, \
+    /usr/bin/systemctl start systemd-resolved, \
+    /usr/bin/ip addr flush dev * scope global, \
+    /usr/bin/ip route flush dev * scope global, \
+    /usr/bin/systemctl enable networking, \
+    /usr/bin/systemctl disable networking, \
+    /usr/bin/systemctl start networking, \
+    /usr/bin/systemctl stop networking, \
+    /usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled, \
+    /usr/bin/cat /etc/netplan/*.yaml, \
+    /usr/bin/tee /etc/network/interfaces, \
+    /usr/bin/tee /etc/network/interfaces.pre-znas-*, \
+    /usr/bin/tee /etc/cloud/cloud.cfg.d/99-znas-disable-network-config.cfg, \
     /usr/bin/ln -sf *
 
 # ── OS updates & service installation ────────────────────────────────────────

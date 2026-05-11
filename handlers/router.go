@@ -704,6 +704,15 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDEnableProgress)))).Methods("GET")
 	r.Handle("/api/lxd/enable/cancel",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDEnableCancel)))).Methods("POST")
+	// Uninstall flow: count check + async purge job. The progress is
+	// observable through the same /api/lxd/enable/progress endpoint
+	// because the underlying job structure is shared.
+	r.Handle("/api/lxd/uninstall/check",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDUninstallCheck)))).Methods("GET")
+	r.Handle("/api/lxd/uninstall/start",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDUninstallStart)))).Methods("POST")
+	r.Handle("/ws/lxd-migrate-netplan",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDMigrateNetplan)))).Methods("GET")
 	r.Handle("/api/lxd/refresh-status",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDRefreshStatus)))).Methods("POST")
 
@@ -742,6 +751,25 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDCloneInstance)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/move-storage",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDMoveStorage)))).Methods("POST")
+	// Per-disk move (v6.5.37) — Related Objects burger menu. Independent
+	// of /move-storage (which moves the whole instance) because the user
+	// picks one disk row. Backend dispatches root vs custom-volume on the
+	// disk's actual config.
+	//
+	// Routes are registered under /api/lxd/* (the post-alias-rewrite path)
+	// even though the frontend calls /api/incus/*: IncusPathAliasMiddleware
+	// rewrites every /api/incus/* URL to /api/lxd/* BEFORE mux dispatch,
+	// so a route registered at /api/incus/* would never match. The
+	// existing proxmox-import + every other "new" endpoint follows the
+	// same pattern. v6.5.40 fixed a regression where the first cut of
+	// this route was registered under /api/incus/* and quietly returned
+	// 405 because nothing matched the rewritten path.
+	r.Handle("/api/lxd/instances/{name}/disk-move/start",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskMoveStart)))).Methods("POST")
+	r.Handle("/api/lxd/instances/{name}/disk-move/progress",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskMoveProgress)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/disk-move/cancel",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskMoveCancel)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/snapshots/{snap}",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDDeleteSnapshot)))).Methods("DELETE")
 	r.Handle("/api/lxd/instances/{name}/start",
@@ -750,6 +778,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDStop)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/restart",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDRestart)))).Methods("POST")
+	r.Handle("/api/lxd/instances/{name}/reset",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDReset)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/config",
 		RequireAuth(http.HandlerFunc(HandleLXDGetConfig))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/config",
@@ -839,6 +869,12 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleListISOs)))).Methods("GET")
 	r.Handle("/api/lxd/isos/upload",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUploadISO)))).Methods("POST")
+	// ISO fetch from URL: server-side download into the pool's .isos
+	// directory. Validates ISO 9660 magic before publishing the file.
+	r.Handle("/api/lxd/isos/fetch",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFetchISOStart)))).Methods("POST")
+	r.Handle("/api/lxd/isos/fetch/progress",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFetchISOProgress)))).Methods("GET")
 	r.Handle("/api/lxd/isos/{filename}",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDeleteISO)))).Methods("DELETE")
 	// VGA-console drive picker: list configured CDROMs + ISOs available in the

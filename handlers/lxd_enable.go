@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"zfsnas/internal/audit"
@@ -73,6 +74,52 @@ func HandleLXDEnableProgress(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, v.(*system.LXDEnableJob).Snapshot())
 }
 
+// HandleLXDUninstallCheck returns the deployed-instance counts so the
+// UI can decide whether to enable the Uninstall button. CanUninstall is
+// true when both counts are zero.
+// GET /api/lxd/uninstall/check
+func HandleLXDUninstallCheck(w http.ResponseWriter, r *http.Request) {
+	jsonOK(w, system.LXDCountInstances())
+}
+
+// HandleLXDUninstallStart kicks off an async uninstall job. The pre-flight
+// is enforced server-side (regardless of the UI check) so a stale UI can
+// never cause data loss. Returns the job ID; progress is polled via
+// /api/lxd/enable/progress (same job structure).
+// POST /api/lxd/uninstall/start
+func HandleLXDUninstallStart(w http.ResponseWriter, r *http.Request) {
+	counts := system.LXDCountInstances()
+	if !counts.CanUninstall {
+		jsonErr(w, http.StatusConflict, fmt.Sprintf(
+			"cannot uninstall: %d VM(s) and %d container(s) are still deployed — delete them first",
+			counts.VMCount, counts.ContainerCount))
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	job := system.NewLXDEnableJob(cancel)
+	jobID := newEnableJobID()
+	lxdEnableJobs.Store(jobID, job)
+
+	go func() {
+		system.LXDUninstallFeature(ctx, job)
+		snap := job.Snapshot()
+		if snap.Status == "done" {
+			// Re-probe so /api/lxd/status flips to "unavailable" without
+			// requiring a service restart.
+			SetLXDAvailable(system.LXDAvailable())
+			audit.Log(audit.Entry{
+				Action:  audit.ActionLXDUninstall,
+				User:    "system",
+				Details: "VMs & Containers feature uninstalled (network bridges + chrony preserved)",
+			})
+		}
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+	jsonOK(w, map[string]string{"job_id": jobID})
+}
+
 // HandleLXDEnableCancel cancels a running enable job.
 // POST /api/lxd/enable/cancel?job_id=<id>
 func HandleLXDEnableCancel(w http.ResponseWriter, r *http.Request) {
@@ -84,4 +131,55 @@ func HandleLXDEnableCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	v.(*system.LXDEnableJob).Cancel()
 	jsonOK(w, map[string]bool{"cancelled": true})
+}
+
+// HandleLXDMigrateNetplan runs the netplan→ifupdown migration over a
+// WebSocket so the user sees live progress (apt output, generated
+// interfaces file, success/rollback verdict). On the closing frame we
+// embed the freshly re-evaluated prereq result so the UI doesn't need a
+// second GET to refresh the row icons.
+//
+// WS /ws/incus/enable/migrate-netplan
+func HandleLXDMigrateNetplan(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	send := func(line string) {
+		conn.WriteMessage(1, mustJSON(map[string]interface{}{"line": line})) //nolint:errcheck
+	}
+	done := func(success bool, msg string) {
+		conn.WriteMessage(1, mustJSON(map[string]interface{}{ //nolint:errcheck
+			"done":    true,
+			"success": success,
+			"message": msg,
+			"prereqs": system.LXDEnableCheckPrereqs(),
+		}))
+	}
+
+	sess := MustSession(r)
+	send("Starting netplan → ifupdown migration…")
+	send("─────────────────────────────────────────")
+
+	if err := system.MigrateNetplanToIfupdown(send); err != nil {
+		send("✗ " + err.Error())
+		audit.Log(audit.Entry{
+			User: sess.Username, Role: sess.Role,
+			Action: audit.ActionNetworkMigrate, Result: audit.ResultError,
+			Details: err.Error(),
+		})
+		done(false, err.Error())
+		return
+	}
+
+	send("─────────────────────────────────────────")
+	send("Migration completed successfully.")
+	audit.Log(audit.Entry{
+		User: sess.Username, Role: sess.Role,
+		Action: audit.ActionNetworkMigrate, Result: audit.ResultOK,
+		Details: "from=netplan to=ifupdown",
+	})
+	done(true, "migration complete")
 }

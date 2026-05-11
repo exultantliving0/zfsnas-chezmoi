@@ -44,10 +44,30 @@ type MemCompStatus struct {
 // MemCompConfig is the editable surface the UI sends to PUT /api/memcomp/config.
 // PercentRAM range is enforced server-side: 5..75. We refuse 0 (use Enabled=false
 // instead) and >75 (silly value, would crash the host).
+//
+// Mode is set by the UI on a *retry* after the backend returned a
+// "needs_decision" outcome: "defer" tells us to write the config file but
+// leave the live zram device alone (new size takes effect on next boot).
 type MemCompConfig struct {
 	Enabled    bool   `json:"enabled"`
 	PercentRAM int    `json:"percent_ram"`
 	Algorithm  string `json:"algorithm"`
+	Mode       string `json:"mode,omitempty"` // "" = auto, "defer" = config-only
+}
+
+// MemCompApplyOutcome reports what ApplyMemCompConfig actually did so the
+// UI can react with the right messaging:
+//
+//	"applied"        — config persisted AND device reloaded at the new size
+//	"deferred"       — config persisted, device untouched (effective at boot)
+//	"needs_decision" — nothing changed; UI shows headroom breakdown and asks
+//	                   the user to free memory & retry, or to defer.
+type MemCompApplyOutcome struct {
+	Status         string `json:"status"`
+	Message        string `json:"message"`
+	OrigDataBytes  int64  `json:"orig_data_bytes,omitempty"`
+	HeadroomBytes  int64  `json:"headroom_bytes,omitempty"`
+	PendingPercent int    `json:"pending_percent,omitempty"`
 }
 
 // MemCompPrereqsInstalled reports whether the zram-tools package is present.
@@ -162,20 +182,34 @@ func readTotalSwapUsedBytes() int64 {
 }
 
 // ApplyMemCompConfig is the one entrypoint for enable / disable / reconfigure.
-// The reconfigure path is the dangerous one: shrinking PERCENT while zram has
-// data can ENOMEM during swapoff. We refuse it pre-flight.
-func ApplyMemCompConfig(cfg MemCompConfig) error {
+// Returns a structured outcome so the handler can distinguish between
+// "applied right now", "saved for next reboot", and "user must decide".
+//
+// The reconfigure path is the dangerous one: shrinking PERCENT (or disabling)
+// while zram already holds data forces a swapoff, and swapoff needs somewhere
+// to put those pages — physical RAM and other (disk) swap. If neither has
+// room, we don't proceed automatically; instead we return needs_decision so
+// the UI can surface the choice (free memory and retry, vs defer until reboot).
+//
+// Note on the systemctl dance: zramswap.service is Type=oneshot
+// RemainAfterExit=true. After a previously-failed start the unit sits in
+// `failed` state — and `systemctl stop` on a failed oneshot returns 0
+// instantly *without* running ExecStop=, so /dev/zram0 is never torn down
+// and the next `start` hits EBUSY again. We therefore drive the teardown
+// ourselves (swapoff + modprobe -r + reset-failed) instead of relying on
+// the unit's stop hook.
+func ApplyMemCompConfig(cfg MemCompConfig) (MemCompApplyOutcome, error) {
 	if !MemCompPrereqsInstalled() {
-		return fmt.Errorf("zram-tools is not installed; install it from Prerequisites first")
+		return MemCompApplyOutcome{}, fmt.Errorf("zram-tools is not installed; install it from Prerequisites first")
 	}
 	if cfg.Enabled {
 		if cfg.PercentRAM < 5 || cfg.PercentRAM > 75 {
-			return fmt.Errorf("percent_ram must be between 5 and 75 (got %d)", cfg.PercentRAM)
+			return MemCompApplyOutcome{}, fmt.Errorf("percent_ram must be between 5 and 75 (got %d)", cfg.PercentRAM)
 		}
 		switch cfg.Algorithm {
 		case "zstd", "lz4", "lzo":
 		default:
-			return fmt.Errorf("algorithm must be zstd, lz4, or lzo (got %q)", cfg.Algorithm)
+			return MemCompApplyOutcome{}, fmt.Errorf("algorithm must be zstd, lz4, or lzo (got %q)", cfg.Algorithm)
 		}
 	}
 
@@ -184,22 +218,31 @@ func ApplyMemCompConfig(cfg MemCompConfig) error {
 	// Reconfigure-safety: only when zram is currently enabled and the new
 	// config either disables it OR shrinks the pool (smaller PercentRAM
 	// or different algorithm — both force a swapoff first).
-	if cur.Enabled {
-		needSwapoff := !cfg.Enabled || cfg.PercentRAM < cur.PercentRAM || cfg.Algorithm != cur.Algorithm
-		if needSwapoff && cur.OrigDataBytes > 0 {
-			avail := readMemAvailableBytes()
-			// Reserve 512 MiB as a safety margin for the kernel.
-			const reserve = int64(512 * 1024 * 1024)
-			if cur.OrigDataBytes > avail-reserve {
-				return fmt.Errorf(
-					"cannot re-create zram device safely: %s currently held in zram swap, only %s of physical RAM is free. Stop or shrink a VM and try again.",
-					humanBytes(cur.OrigDataBytes), humanBytes(avail-reserve))
-			}
+	needSwapoff := cur.Enabled &&
+		(!cfg.Enabled || cfg.PercentRAM < cur.PercentRAM || cfg.Algorithm != cur.Algorithm)
+
+	if needSwapoff && cur.OrigDataBytes > 0 && cfg.Mode != "defer" {
+		// Headroom = MemAvailable + free disk swap. The kernel can move
+		// pages out of zram into either physical RAM (after evicting cache)
+		// or another swap device. Reserve 512 MiB as a kernel safety margin.
+		const reserve = int64(512 * 1024 * 1024)
+		headroom := readMemAvailableBytes() + readDiskSwapFreeBytes()
+		if cur.OrigDataBytes > headroom-reserve {
+			return MemCompApplyOutcome{
+				Status: "needs_decision",
+				Message: fmt.Sprintf(
+					"%s held in zram, only %s of RAM + disk swap free. Free memory and retry, or apply on next reboot.",
+					humanBytes(cur.OrigDataBytes), humanBytes(headroom-reserve)),
+				OrigDataBytes:  cur.OrigDataBytes,
+				HeadroomBytes:  headroom - reserve,
+				PendingPercent: cfg.PercentRAM,
+			}, nil
 		}
 	}
 
-	// Write the config file unconditionally (even on disable) so a future
-	// `apt upgrade` of zram-tools doesn't silently re-arm the old setting.
+	// Write the config file unconditionally (even on disable, even when
+	// deferring) so a future `apt upgrade` of zram-tools doesn't silently
+	// re-arm the old setting, and so the next reboot picks up the new value.
 	pct := cfg.PercentRAM
 	algo := cfg.Algorithm
 	if !cfg.Enabled {
@@ -209,45 +252,113 @@ func ApplyMemCompConfig(cfg MemCompConfig) error {
 		}
 	}
 	if err := writeMemCompConfigFile(pct, algo); err != nil {
-		return err
+		return MemCompApplyOutcome{}, err
+	}
+
+	// Defer path: config saved, live device left alone. Persist enable/disable
+	// so the new state survives reboot and the boot-time start picks up PERCENT.
+	if cfg.Mode == "defer" {
+		if cfg.Enabled {
+			exec.Command("sudo", "systemctl", "enable", memCompService).Run() //nolint:errcheck
+		} else {
+			exec.Command("sudo", "systemctl", "disable", memCompService).Run() //nolint:errcheck
+		}
+		return MemCompApplyOutcome{
+			Status:         "deferred",
+			Message:        fmt.Sprintf("Saved. New limit (%d%% RAM) takes effect on next reboot.", pct),
+			PendingPercent: pct,
+		}, nil
 	}
 
 	if cfg.Enabled {
-		// We deliberately do `stop` followed by `start` instead of `restart`.
-		// zram-tools' service script can't shrink an in-use zram device — its
-		// restart path triggers `Device or resource busy` errors on the size
-		// reset and leaves /sys/block/zram0/disksize at the previous value.
-		// Stop first ensures swapoff happens cleanly, freeing the device so
-		// the next start can recreate it at the new PERCENT.
+		// Tear the device down ourselves rather than via `systemctl stop`,
+		// which is a no-op when the unit is in `failed` state (Type=oneshot
+		// RemainAfterExit=true). Skipping it on a brand-new enable
+		// (cur.Enabled=false) keeps the no-op cheap.
 		if cur.Enabled {
-			if out, err := exec.Command("sudo", "systemctl", "stop", memCompService).CombinedOutput(); err != nil {
-				msg := strings.TrimSpace(string(out))
-				if !strings.Contains(msg, "not loaded") {
-					return fmt.Errorf("systemctl stop %s: %s", memCompService, msg)
-				}
+			if err := teardownLiveZram(); err != nil {
+				return MemCompApplyOutcome{}, err
 			}
 		}
+		// Sync systemd's view of the unit with reality. Without this,
+		// `systemctl start` refuses to run ExecStart= when the unit is
+		// still `active` (Type=oneshot RemainAfterExit=true keeps it active
+		// after a successful prior start, even after our manual teardown
+		// removed the device underneath it). `stop` transitions active→inactive
+		// (and runs ExecStop= harmlessly if the device is already gone);
+		// `reset-failed` clears the `failed` state if we were in it instead.
+		exec.Command("sudo", "systemctl", "stop", memCompService).Run()         //nolint:errcheck
+		exec.Command("sudo", "systemctl", "reset-failed", memCompService).Run() //nolint:errcheck
+
 		if out, err := exec.Command("sudo", "systemctl", "start", memCompService).CombinedOutput(); err != nil {
-			return fmt.Errorf("systemctl start %s: %s", memCompService, strings.TrimSpace(string(out)))
+			return MemCompApplyOutcome{}, fmt.Errorf("systemctl start %s: %s\n\n%s",
+				memCompService, strings.TrimSpace(string(out)), recentZramJournal())
+		}
+		// Verify the device actually came up — `systemctl start` on an
+		// already-active oneshot is a silent no-op, so a clean exit code
+		// alone doesn't prove ExecStart= ran.
+		if !zramInProcSwaps() || readSysFileInt64("/sys/block/zram0/disksize") == 0 {
+			return MemCompApplyOutcome{}, fmt.Errorf(
+				"zramswap reported started but /dev/zram0 is not active. systemd may have skipped ExecStart=; please retry.\n\n%s",
+				recentZramJournal())
 		}
 		if out, err := exec.Command("sudo", "systemctl", "enable", memCompService).CombinedOutput(); err != nil {
 			// Enable failure is non-fatal — the pool is up, but won't survive reboot.
-			return fmt.Errorf("systemctl enable %s: %s (pool is active but won't survive reboot)",
+			return MemCompApplyOutcome{}, fmt.Errorf("systemctl enable %s: %s (pool is active but won't survive reboot)",
 				memCompService, strings.TrimSpace(string(out)))
 		}
 	} else {
 		exec.Command("sudo", "systemctl", "disable", memCompService).Run() //nolint:errcheck
-		if out, err := exec.Command("sudo", "systemctl", "stop", memCompService).CombinedOutput(); err != nil {
-			// stop failure is mostly harmless: if zramswap was already inactive,
-			// systemctl returns success; if it was active and stop failed, the
-			// admin has a real problem and we surface it.
+		if cur.Enabled {
+			if err := teardownLiveZram(); err != nil {
+				return MemCompApplyOutcome{}, err
+			}
+		}
+		// Same state-sync rationale as above: without `stop`, the unit can
+		// remain `active` after our manual teardown, which would cause a
+		// later re-enable to silently no-op.
+		exec.Command("sudo", "systemctl", "stop", memCompService).Run()         //nolint:errcheck
+		exec.Command("sudo", "systemctl", "reset-failed", memCompService).Run() //nolint:errcheck
+	}
+
+	return MemCompApplyOutcome{Status: "applied", Message: "Applied.", PendingPercent: pct}, nil
+}
+
+// teardownLiveZram swapoffs /dev/zram0 and unloads the zram module so the
+// next start can recreate the device at a new size. Both operations have
+// "already gone" success conditions we tolerate: swapoff returns ENXIO/EINVAL
+// when the device isn't a swap, and modprobe -r returns "is not in" / "not
+// found" when the module isn't loaded.
+func teardownLiveZram() error {
+	if zramInProcSwaps() {
+		if out, err := exec.Command("sudo", "swapoff", "/dev/zram0").CombinedOutput(); err != nil {
 			msg := strings.TrimSpace(string(out))
-			if !strings.Contains(msg, "not loaded") {
-				return fmt.Errorf("systemctl stop %s: %s", memCompService, msg)
+			if !strings.Contains(msg, "No such") && !strings.Contains(msg, "Invalid") {
+				return fmt.Errorf("swapoff /dev/zram0: %s", msg)
 			}
 		}
 	}
+	if out, err := exec.Command("sudo", "modprobe", "-r", "zram").CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		// Tolerate: module already unloaded, or kmod's "module zram is not in kernel".
+		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "is not in") &&
+			!strings.Contains(msg, "FATAL") {
+			return fmt.Errorf("modprobe -r zram: %s", msg)
+		}
+	}
 	return nil
+}
+
+// recentZramJournal grabs the last few lines of `journalctl -u zramswap` so
+// a generic "Job for zramswap.service failed" surfaces with the actual cause
+// (the line systemd hides behind its wrapper). Best-effort — empty string on
+// any read failure so the wrapping error message is still returned.
+func recentZramJournal() string {
+	out, err := exec.Command("journalctl", "-u", memCompService, "--no-pager", "-n", "8").Output()
+	if err != nil {
+		return ""
+	}
+	return "Recent journal:\n" + strings.TrimSpace(string(out))
 }
 
 // InstallMemCompPrereqs runs `apt-get install -y zram-tools` and streams stdout
@@ -386,6 +497,38 @@ func readZramSwapUsedBytes() int64 {
 		return usedKB * 1024
 	}
 	return 0
+}
+
+// readDiskSwapFreeBytes sums (Size - Used) across every non-zram entry in
+// /proc/swaps. Used by the headroom check: when shrinking zram, the kernel
+// can relocate pages either back into RAM or into another swap device — so
+// disk swap free space counts as headroom, but the zram device we're about
+// to tear down does not.
+func readDiskSwapFreeBytes() int64 {
+	f, err := os.Open("/proc/swaps")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	var freeKB int64
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "Filename") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		if strings.HasPrefix(fields[0], "/dev/zram") {
+			continue
+		}
+		size, _ := strconv.ParseInt(fields[2], 10, 64)
+		used, _ := strconv.ParseInt(fields[3], 10, 64)
+		freeKB += size - used
+	}
+	return freeKB * 1024
 }
 
 // readMemAvailableBytes returns MemAvailable from /proc/meminfo, in bytes.

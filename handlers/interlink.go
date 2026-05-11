@@ -28,6 +28,14 @@ type serverStatus struct {
 	RemoteVersion string
 	LXDEnabled    bool
 	FetchedAt     time.Time
+	// Hostname (v6.5.43) — the peer's CURRENT system hostname returned
+	// by the live ping. The stored config.LinkedServer.Hostname is
+	// frozen at link time, so renaming a peer leaves the dropdown
+	// showing the old name forever. Cached here for the 30s TTL window
+	// and used by HandleInterlinkList to override the stale config
+	// value. Empty when populated from accept-link / push-ssh-key
+	// (which don't ping).
+	Hostname string
 }
 
 var (
@@ -115,12 +123,26 @@ func HandleInterlinkAcceptLink(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 
 		// Idempotent: if already linked by this caller URL, return the existing IDs.
+		// Still hand back the existing peers list (v6.5.42) so a repeat link
+		// from a fresh admin who didn't ride out the original cluster
+		// propagation can finish the job — also why ExistingPeers is
+		// computed BEFORE the new-link branch appends `req.CallerURL`,
+		// so the caller never sees itself in its own propagation list.
 		for _, ls := range appCfg.InterLink {
 			if ls.URL == req.CallerURL {
-				jsonOK(w, system.AcceptLinkResponse{RemoteID: ls.ID, Hostname: hostname})
+				jsonOK(w, system.AcceptLinkResponse{
+					RemoteID:      ls.ID,
+					Hostname:      hostname,
+					ExistingPeers: buildInterlinkPeerList(appCfg, req.CallerURL),
+				})
 				return
 			}
 		}
+
+		// Snapshot the peer list BEFORE appending the new caller — we don't
+		// want the caller to receive itself in ExistingPeers and recursively
+		// link to itself. Slice copy is cheap (just URL+Hostname strings).
+		existingPeers := buildInterlinkPeerList(appCfg, req.CallerURL)
 
 		localID := newID()
 		appCfg.InterLink = append(appCfg.InterLink, config.LinkedServer{
@@ -174,8 +196,37 @@ func HandleInterlinkAcceptLink(appCfg *config.AppConfig) http.HandlerFunc {
 			}
 		}()
 
-		jsonOK(w, system.AcceptLinkResponse{RemoteID: localID, Hostname: hostname})
+		jsonOK(w, system.AcceptLinkResponse{
+			RemoteID:      localID,
+			Hostname:      hostname,
+			ExistingPeers: existingPeers,
+		})
 	}
+}
+
+// buildInterlinkPeerList returns the local InterLink config as a list of
+// (URL, Hostname) pairs, excluding any entry whose URL matches the given
+// excludeURL. Used by HandleInterlinkAcceptLink to populate the
+// ExistingPeers field of AcceptLinkResponse so the caller can propagate
+// the link to every member of the existing cluster in one shot.
+//
+// Returns nil (not an empty slice) when there are no peers to share —
+// keeps the JSON output clean via omitempty on AcceptLinkResponse.
+func buildInterlinkPeerList(appCfg *config.AppConfig, excludeURL string) []system.LinkedPeer {
+	if appCfg == nil || len(appCfg.InterLink) == 0 {
+		return nil
+	}
+	out := make([]system.LinkedPeer, 0, len(appCfg.InterLink))
+	for _, ls := range appCfg.InterLink {
+		if ls.URL == excludeURL {
+			continue
+		}
+		out = append(out, system.LinkedPeer{URL: ls.URL, Hostname: ls.Hostname})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // HandleInterlinkCheckUser handles POST /api/interlink/check-user — HMAC-authenticated.
@@ -286,10 +337,20 @@ func HandleInterlinkListFast(appCfg *config.AppConfig) http.HandlerFunc {
 		out := make([]serverOut, 0, len(appCfg.InterLink))
 		for _, ls := range appCfg.InterLink {
 			s, _ := cachedStatus(ls.ID)
+			// Prefer the cache's live hostname over the stored config
+			// value (v6.5.43). The stored value is frozen at link time
+			// and goes stale when a peer is renamed; the cache holds
+			// whatever PingServer reported in the last 30 s. The /list
+			// endpoint also persists fresh values back to config, so
+			// this fallback path stays correct on a cold start too.
+			hostname := ls.Hostname
+			if s.Hostname != "" {
+				hostname = s.Hostname
+			}
 			out = append(out, serverOut{
 				ID:         ls.ID,
 				URL:        ls.URL,
-				Hostname:   ls.Hostname,
+				Hostname:   hostname,
 				Online:     s.Online,
 				LXDEnabled: s.LXDEnabled,
 			})
@@ -320,6 +381,13 @@ func HandleInterlinkList(appCfg *config.AppConfig) http.HandlerFunc {
 			ver        string
 			zfsAccess  bool
 			lxdEnabled bool
+			// hostname (v6.5.43): the peer's CURRENT system hostname,
+			// captured from the live ping. Empty when status came from
+			// the in-memory cache without a hostname recorded (e.g.
+			// statuses set via SetStatus elsewhere that don't fill the
+			// field). Caller uses this to override the stale config
+			// value when present.
+			hostname string
 		}
 		ch := make(chan result, len(appCfg.InterLink))
 		for _, ls := range appCfg.InterLink {
@@ -327,15 +395,15 @@ func HandleInterlinkList(appCfg *config.AppConfig) http.HandlerFunc {
 			go func() {
 				if s, ok := cachedStatus(ls.ID); ok {
 					zfsAccess, _ := system.GetRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
-					ch <- result{ls.ID, s.Online, s.RemoteVersion, zfsAccess, s.LXDEnabled}
+					ch <- result{ls.ID, s.Online, s.RemoteVersion, zfsAccess, s.LXDEnabled, s.Hostname}
 					return
 				}
 				h, v, err := system.PingServer(ls.URL, ls.TLSFingerprint)
 				online := err == nil && h != ""
 				lxdEnabled := system.RemotePingHasLXD(ls.URL, ls.TLSFingerprint)
-				setStatus(ls.ID, serverStatus{Online: online, RemoteVersion: v, LXDEnabled: lxdEnabled, FetchedAt: time.Now()})
+				setStatus(ls.ID, serverStatus{Online: online, RemoteVersion: v, LXDEnabled: lxdEnabled, FetchedAt: time.Now(), Hostname: h})
 				zfsAccess, _ := system.GetRemoteZFSAccess(ls.URL, ls.SharedSecret, ls.TLSFingerprint)
-				ch <- result{ls.ID, online, v, zfsAccess, lxdEnabled}
+				ch <- result{ls.ID, online, v, zfsAccess, lxdEnabled, h}
 			}()
 		}
 
@@ -345,13 +413,40 @@ func HandleInterlinkList(appCfg *config.AppConfig) http.HandlerFunc {
 			statusMap[res.id] = res
 		}
 
+		// Persist any hostname drift back to config (v6.5.43). A peer
+		// renamed after linking will return a fresh hostname from
+		// PingServer; we want every subsequent call (including the
+		// /fast endpoint that doesn't ping) to serve the new name.
+		// One SaveAppConfig at the end batches every change in one
+		// fsync — cheaper than per-peer saves, and avoids the half-
+		// applied-state risk if one save errors mid-loop.
+		anyChanged := false
+		for i := range appCfg.InterLink {
+			s := statusMap[appCfg.InterLink[i].ID]
+			if s.hostname != "" && s.hostname != appCfg.InterLink[i].Hostname {
+				appCfg.InterLink[i].Hostname = s.hostname
+				anyChanged = true
+			}
+		}
+		if anyChanged {
+			if err := config.SaveAppConfig(appCfg); err != nil {
+				log.Printf("interlink: persist refreshed hostnames: %v", err)
+			}
+		}
+
 		out := make([]serverOut, 0, len(appCfg.InterLink))
 		for _, ls := range appCfg.InterLink {
 			s := statusMap[ls.ID]
+			// Use the live hostname when we have one; fall back to the
+			// (now-possibly-refreshed) stored value otherwise.
+			hostname := ls.Hostname
+			if s.hostname != "" {
+				hostname = s.hostname
+			}
 			out = append(out, serverOut{
 				ID:            ls.ID,
 				URL:           ls.URL,
-				Hostname:      ls.Hostname,
+				Hostname:      hostname,
 				LinkedBy:      ls.LinkedBy,
 				LinkedAt:      ls.LinkedAt,
 				Online:        s.online,
@@ -465,11 +560,210 @@ func HandleInterlinkLink(appCfg *config.AppConfig) http.HandlerFunc {
 			Details: "linked " + req.URL,
 		})
 
+		// Cluster propagation (v6.5.42): if the just-linked peer already
+		// belongs to a cluster (B knew {C, D, …}), iterate B's existing
+		// peer list and link with each using the same admin credentials.
+		// Best-effort — a per-peer failure (creds rejected, peer offline,
+		// TOTP required on that peer's admin account, …) is logged and
+		// surfaced in the response, but doesn't roll back the primary
+		// A↔B link that already succeeded.
+		propagation := propagateInterlink(r, appCfg, sess, req.Username, req.Password, req.TOTP, resp.ExistingPeers)
+
 		jsonOK(w, map[string]interface{}{
 			"ok":            true,
 			"linked_server": ls,
+			// propagation.summary lets the modal show "Also linked to
+			// hostX, hostY (1 failed: hostZ — invalid credentials)".
+			// Empty array when the remote had no other peers.
+			"cluster_propagation": propagation,
 		})
 	}
+}
+
+// interlinkPropagationResult is what HandleInterlinkLink returns in its
+// "cluster_propagation" field. The frontend uses Linked/Skipped/Failed
+// counts to render a partial-success badge and Details for the per-peer
+// breakdown in the result modal.
+type interlinkPropagationResult struct {
+	Linked  []string                       `json:"linked"`  // hostnames that joined successfully
+	Skipped []string                       `json:"skipped"` // hostnames already linked locally before propagation
+	Failed  []interlinkPropagationFailure  `json:"failed"`  // hostnames that refused (creds, TOTP, offline, …)
+}
+
+type interlinkPropagationFailure struct {
+	URL      string `json:"url"`
+	Hostname string `json:"hostname"`
+	Reason   string `json:"reason"`
+}
+
+// propagateInterlink iterates the peers returned by the just-linked
+// server's accept-link response and runs the standard accept-link flow
+// against each, using the same admin credentials supplied for the
+// original link. Mirrors the body of HandleInterlinkLink's main link
+// path: ping → capture FP → SendAcceptLink → append to local config →
+// push SSH key. Side-effects on appCfg.InterLink are persisted with a
+// single SaveAppConfig at the end so callers see the final state.
+//
+// Takes *http.Request so we can reuse the existing localURL(r, appCfg)
+// helper — that one prefers r.Host (the URL the admin actually typed
+// in their browser) over a hostname-based fallback, which matters when
+// the server sits behind a reverse proxy or uses a non-default name.
+func propagateInterlink(r *http.Request, appCfg *config.AppConfig, sess *session.Session, adminUser, adminPass, adminTOTP string, peers []system.LinkedPeer) interlinkPropagationResult {
+	result := interlinkPropagationResult{
+		Linked:  []string{},
+		Skipped: []string{},
+		Failed:  []interlinkPropagationFailure{},
+	}
+	if len(peers) == 0 {
+		return result
+	}
+
+	localHostname, _ := os.Hostname()
+	if localHostname == "" {
+		localHostname = "localhost"
+	}
+
+	for _, peer := range peers {
+		// Skip self defensively: a misconfigured remote could conceivably
+		// include the caller's own URL in its peer list. SendAcceptLink to
+		// ourselves would hit our own accept-link handler under our own
+		// session and create a self-loop. Hard to trigger but worth a
+		// guard.
+		if isLocalInterlinkURL(peer.URL, appCfg) {
+			continue
+		}
+
+		// Already linked? Skip — the operation is idempotent and there's
+		// nothing to do. This handles the common "user adds the same
+		// cluster twice" case without producing fake "Failed: already
+		// linked" entries.
+		alreadyLinked := false
+		for _, ls := range appCfg.InterLink {
+			if ls.URL == peer.URL {
+				alreadyLinked = true
+				break
+			}
+		}
+		if alreadyLinked {
+			result.Skipped = append(result.Skipped, peer.Hostname)
+			continue
+		}
+
+		// Reachability + TOFU fingerprint capture, same as the manual
+		// flow above. If we can't even ping, record the failure with the
+		// connection error and move on.
+		remoteHostname, _, err := system.PingServer(peer.URL, "")
+		if err != nil {
+			log.Printf("interlink propagate: ping %s failed: %v", peer.URL, err)
+			result.Failed = append(result.Failed, interlinkPropagationFailure{
+				URL: peer.URL, Hostname: peer.Hostname, Reason: "unreachable: " + err.Error(),
+			})
+			continue
+		}
+		remoteFP := system.CaptureTLSFingerprint(peer.URL)
+
+		localID := newID()
+		secret := system.GenerateSharedSecret()
+
+		// Use the same caller-URL synthesis as the manual flow so peers
+		// see consistent identity regardless of whether the admin reached
+		// us via hostname, IP, or proxy. r.Host wins when set.
+		callerURL := localURL(r, appCfg)
+
+		resp, err := system.SendAcceptLink(peer.URL, remoteFP, system.AcceptLinkRequest{
+			CallerURL:      callerURL,
+			CallerHostname: localHostname,
+			CallerID:       localID,
+			SharedSecret:   secret,
+			AdminUsername:  adminUser,
+			AdminPassword:  adminPass,
+			AdminTOTP:      adminTOTP, // single TOTP is consumed by B; reused here only because per-peer TOTP isn't typed
+		})
+		if err != nil {
+			log.Printf("interlink propagate: accept-link %s failed: %v", peer.URL, err)
+			result.Failed = append(result.Failed, interlinkPropagationFailure{
+				URL: peer.URL, Hostname: peer.Hostname, Reason: err.Error(),
+			})
+			continue
+		}
+		if resp.TOTPNeeded {
+			// Per-peer TOTP would need its own code — we have only one in
+			// hand (just consumed by the primary target). Report it as a
+			// distinct failure so the UI can guide the user to add this
+			// peer manually with its own TOTP.
+			result.Failed = append(result.Failed, interlinkPropagationFailure{
+				URL: peer.URL, Hostname: peer.Hostname, Reason: "remote admin requires a fresh 2FA code — link this peer manually",
+			})
+			continue
+		}
+
+		ls := config.LinkedServer{
+			ID:             localID,
+			URL:            peer.URL,
+			Hostname:       remoteHostname,
+			SharedSecret:   secret,
+			RemoteID:       resp.RemoteID,
+			LinkedBy:       sess.Username,
+			LinkedAt:       time.Now(),
+			TLSFingerprint: remoteFP,
+		}
+		appCfg.InterLink = append(appCfg.InterLink, ls)
+		setStatus(ls.ID, serverStatus{Online: true, RemoteVersion: "", FetchedAt: time.Now()})
+
+		// Best-effort SSH key push, same as the manual flow.
+		if pubKey, err := system.EnsureSSHKey(); err == nil {
+			if err := system.SendPushSSHKey(ls.URL, ls.SharedSecret, pubKey, ls.TLSFingerprint); err != nil {
+				log.Printf("interlink propagate: push SSH key to %s failed: %v", ls.URL, err)
+			}
+		}
+
+		audit.Log(audit.Entry{
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionInterlinkLinked,
+			Target:  remoteHostname,
+			Result:  audit.ResultOK,
+			Details: "auto-linked via cluster propagation (peer of " + peer.Hostname + ")",
+		})
+		result.Linked = append(result.Linked, remoteHostname)
+	}
+
+	// One save covers every successful peer addition.
+	if len(result.Linked) > 0 {
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			log.Printf("interlink propagate: SaveAppConfig: %v", err)
+		}
+	}
+	return result
+}
+
+// isLocalInterlinkURL returns true if the given URL points back at this
+// server. Best-effort check used to keep the propagation loop from
+// linking the caller to itself when a misbehaving remote includes the
+// caller in its own peer list. The accept-link handler already strips
+// the caller from ExistingPeers, but a paranoid second check costs
+// almost nothing and protects against future regressions / a remote on
+// an older binary.
+func isLocalInterlinkURL(url string, appCfg *config.AppConfig) bool {
+	if url == "" {
+		return false
+	}
+	host, _ := os.Hostname()
+	port := 8443
+	if appCfg != nil && appCfg.Port != 0 {
+		port = appCfg.Port
+	}
+	candidates := []string{
+		fmt.Sprintf("https://%s:%d", host, port),
+		fmt.Sprintf("https://localhost:%d", port),
+		fmt.Sprintf("https://127.0.0.1:%d", port),
+	}
+	for _, c := range candidates {
+		if url == c {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleInterlinkUnlink handles DELETE /api/interlink/{id} (admin only).

@@ -113,10 +113,30 @@ type AcceptLinkRequest struct {
 }
 
 // AcceptLinkResponse is what the remote server returns.
+//
+// ExistingPeers (v6.5.42) carries the remote's current InterLink list at
+// accept time (URL + Hostname only — no secrets, no IDs). The caller uses
+// it to auto-propagate the link to the rest of the remote's cluster:
+// when admin A links to B and B already knows {C, D, E}, A iterates this
+// list and runs accept-link against each peer too, so A ends up linked to
+// every member of the cluster in one operation. Skipped if the remote
+// pre-dates this field (omitempty + nil-safe iteration on the caller).
 type AcceptLinkResponse struct {
-	RemoteID   string `json:"remote_id"`
-	Hostname   string `json:"hostname"`
-	TOTPNeeded bool   `json:"totp_needed"`
+	RemoteID      string       `json:"remote_id"`
+	Hostname      string       `json:"hostname"`
+	TOTPNeeded    bool         `json:"totp_needed"`
+	ExistingPeers []LinkedPeer `json:"existing_peers,omitempty"`
+}
+
+// LinkedPeer is the lightweight "this is who I know" entry returned in
+// AcceptLinkResponse.ExistingPeers. Only the URL is operationally useful
+// (the caller pings it to capture a TLS fingerprint, then opens an
+// accept-link of its own); Hostname is included so the UI can display a
+// friendly name in the cluster-propagation summary without a second
+// round-trip per peer.
+type LinkedPeer struct {
+	URL      string `json:"url"`
+	Hostname string `json:"hostname"`
 }
 
 // SendAcceptLink calls POST <url>/api/interlink/accept-link.

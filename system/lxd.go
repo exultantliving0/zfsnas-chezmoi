@@ -3,6 +3,7 @@ package system
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -100,13 +101,30 @@ type LXDImage struct {
 	Serial      string `json:"serial"`
 }
 
-// LXDDisk is an extra virtual disk for a VM.
+// LXDDisk is an extra virtual disk for a VM or container.
+// SizeGB is float so the unit selector (MB/GB/TB) can express fractional GB
+// (e.g. 100MB → 0.1).
+//
+// IncludeInSnapshots (default true on the wire) tags the underlying custom
+// volume with `user.znas:snap_with_instance=true` so the snapshot/restore
+// path knows to take a matching volume snapshot every time the instance
+// is snapshotted. With it false, the volume is independent — instance
+// snapshots leave the disk's data untouched.
 type LXDDisk struct {
-	DeviceName string `json:"device_name"`
-	Pool       string `json:"pool"`
-	SizeGB     int    `json:"size_gb"`
-	ReservePct int    `json:"reserve_pct"` // 0=thin, 25/50/75/100
+	DeviceName         string  `json:"device_name"`
+	Pool               string  `json:"pool"`
+	SizeGB             float64 `json:"size_gb"`
+	ReservePct         int     `json:"reserve_pct"` // 0=thin, 25/50/75/100
+	IncludeInSnapshots bool    `json:"include_in_snapshots"`
 }
+
+// LXDSnapWithInstanceProperty is the user property ZNAS sets on a custom
+// storage volume to mark it as "follow the instance's snapshot lifecycle".
+// CreateLXDSnapshot scans every attached disk device, looks up its source
+// volume's user properties, and snapshots/restores in lockstep when the
+// property is "true". Stored under `user.znas:` so it doesn't collide with
+// any Incus internal config keys.
+const LXDSnapWithInstanceProperty = "user.znas:snap_with_instance"
 
 // LXDExistingDisk references an existing ZFS volume to attach as a raw block device.
 type LXDExistingDisk struct {
@@ -347,12 +365,14 @@ type LXDUSBDevice struct {
 
 // LXDPCIDevice is a PCI device to pass through to a VM.
 type LXDPCIDevice struct {
-	DeviceName string `json:"device_name"`
-	Address    string `json:"address"` // e.g. "0000:02:00.0"
-	Desc       string `json:"desc"`
-	ROMBar     string `json:"rombar,omitempty"` // "0" or "1"; "" = LXD default
-	AER        string `json:"aer,omitempty"`    // "0" or "1"; "" = LXD default
-	XVGA       string `json:"x_vga,omitempty"`  // "0" or "1"; "" = LXD default
+	DeviceName   string `json:"device_name"`
+	Address      string `json:"address"` // e.g. "0000:02:00.0"
+	Desc         string `json:"desc"`
+	ROMBar       string `json:"rombar,omitempty"`         // "0" or "1"; "" = LXD default
+	AER          string `json:"aer,omitempty"`            // "0" or "1"; "" = LXD default
+	XVGA         string `json:"x_vga,omitempty"`          // "0" or "1"; "" = LXD default
+	XIGDOpRegion string `json:"x_igd_opregion,omitempty"` // "0" or "1"; "" = unset. Intel iGPU OpRegion ACPI buffer; required for i915 firmware/power features under passthrough.
+	XIGDGMS      string `json:"x_igd_gms,omitempty"`      // "0".."16"; "" = unset. Intel iGPU stolen-memory size (multiples of 32MB; 2 = 64MB, the value Plex VAAPI transcoding needs).
 }
 
 // LXDPassthroughDevice is a generic device passthrough for containers.
@@ -374,7 +394,7 @@ type LXDCreateVMRequest struct {
 	MemoryMB          int               `json:"memory_mb"`
 	MemoryHugepages   bool              `json:"memory_hugepages"`
 	RootPool          string            `json:"root_pool"`
-	RootSizeGB        int               `json:"root_size_gb"`
+	RootSizeGB        float64           `json:"root_size_gb"`
 	ExtraDisks        []LXDDisk         `json:"extra_disks"`
 	ExistingDisks     []LXDExistingDisk `json:"existing_disks_raw"`
 	NICs              []LXDNIC          `json:"nics"`
@@ -393,6 +413,50 @@ type LXDCreateVMRequest struct {
 	TPM               bool              `json:"tpm"`                // enable emulated TPM 2.0 (security.tpm)
 	MachineType       string            `json:"machine_type"`       // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", "q35", "pc", etc.
 	DiskBus           string            `json:"disk_bus"`           // "" = virtio-blk (default), "scsi", "nvme"
+	SMBIOS            *LXDSMBIOSType1   `json:"smbios,omitempty"`   // SMBIOS type 1 (System Information); applied via raw.qemu
+	SMBIOSType2       *LXDSMBIOSType2   `json:"smbios_type2,omitempty"` // SMBIOS type 2 (Baseboard / Motherboard); applied via raw.qemu
+	SMBIOSType4       *LXDSMBIOSType4   `json:"smbios_type4,omitempty"` // SMBIOS type 4 (Processor); applied via raw.qemu
+	DisableVirtualVGA bool              `json:"disable_virtual_vga"` // replace Incus' default virtio-vga with a passive bridge; used for full GPU passthrough so the guest doesn't bind a framebuffer console
+}
+
+// LXDSMBIOSType1 holds the seven fields exposed by Proxmox under "SMBIOS
+// settings (type1)". Mirrors QEMU's `-smbios type=1,…` clause. All fields
+// optional — empty values are omitted from the QEMU command line so the
+// firmware default applies.
+type LXDSMBIOSType1 struct {
+	UUID         string `json:"uuid,omitempty"`
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Product      string `json:"product,omitempty"`
+	Version      string `json:"version,omitempty"`
+	Serial       string `json:"serial,omitempty"`
+	SKU          string `json:"sku,omitempty"`
+	Family       string `json:"family,omitempty"`
+}
+
+// LXDSMBIOSType2 holds the six fields QEMU exposes for SMBIOS type 2
+// (Baseboard / Motherboard Information). Mirrors `-smbios type=2,…`.
+type LXDSMBIOSType2 struct {
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Product      string `json:"product,omitempty"`
+	Version      string `json:"version,omitempty"`
+	Serial       string `json:"serial,omitempty"`
+	Asset        string `json:"asset,omitempty"`
+	Location     string `json:"location,omitempty"`
+}
+
+// LXDSMBIOSType4 holds the fields QEMU exposes for SMBIOS type 4 (Processor
+// Information). Mirrors `-smbios type=4,…`. Numeric fields use 0 to mean
+// "omit"; QEMU then falls back to its built-in defaults.
+type LXDSMBIOSType4 struct {
+	SockPfx         string `json:"sock_pfx,omitempty"`
+	Manufacturer    string `json:"manufacturer,omitempty"`
+	Version         string `json:"version,omitempty"`
+	Serial          string `json:"serial,omitempty"`
+	Asset           string `json:"asset,omitempty"`
+	Part            string `json:"part,omitempty"`
+	ProcessorFamily int    `json:"processor_family,omitempty"` // SMBIOS processor family code (e.g. 0xB3 = Intel Xeon)
+	MaxSpeed        int    `json:"max_speed,omitempty"`        // MHz
+	CurrentSpeed    int    `json:"current_speed,omitempty"`    // MHz
 }
 
 // LXDCreateContainerRequest contains all parameters for container creation.
@@ -407,7 +471,7 @@ type LXDCreateContainerRequest struct {
 	CPULimitPct   int                    `json:"cpu_limit_pct"` // 0=unlimited; 1-100 → limits.cpu.allowance
 	MemoryMB      int                    `json:"memory_mb"`
 	SwapMB        int                    `json:"swap_mb"` // -1 = no swap, 0 = unlimited, >0 = N MB
-	DiskSizeGB    int                    `json:"disk_size_gb"`
+	DiskSizeGB    float64                `json:"disk_size_gb"`
 	RootPool      string                 `json:"root_pool"`
 	Unprivileged  bool                   `json:"unprivileged"`   // true = security.privileged=false (default)
 	Nesting       bool                   `json:"nesting"`        // security.nesting=true
@@ -418,6 +482,12 @@ type LXDCreateContainerRequest struct {
 	StartupDelay  int                    `json:"startup_delay"`
 	Devices       []LXDPassthroughDevice `json:"devices"`
 	NICs          []LXDNIC               `json:"nics"`
+	// Optional additional storage. Containers attach plain disks (no
+	// "block" type — that's VM-only); SizeGB applies as a quota on the
+	// pool-managed volume. Supports fractional GB so the UI can offer an
+	// MB unit.
+	ExtraDisks    []LXDDisk         `json:"extra_disks"`
+	ExistingDisks []LXDExistingDisk `json:"existing_disks"`
 }
 
 // LXDInstanceStats holds live resource usage for a running instance.
@@ -747,11 +817,26 @@ func normPCIAddr(addr string) string {
 var usbIDRe = regexp.MustCompile(`^[0-9a-fA-F]{4}$`)
 
 // parsePCIQEMUArgs extracts per-device options from a raw.qemu string.
-// Returns a map of normalised PCI address → option map for -device vfio-pci entries.
+// Returns a map keyed by *both* the normalised PCI host address AND the
+// Incus device ID (`dev-incus_<devname>`) so the GET path can look up
+// options no matter which emission form was used. Two recognised forms:
+//
+//   - New form (ZNAS ≥ 6.5.20): `-set device.dev-incus_<name>.<prop>=<val>`
+//     — modifies the device that Incus' own qemu.conf already emits for
+//     a `type: pci` device. Avoids the "device is already attached"
+//     QEMU error that the legacy form triggered on hosts where Incus'
+//     and ZNAS' vfio-pci frontends both tried to claim the same host
+//     device.
+//   - Legacy form (≤ 6.5.19): `-device vfio-pci,host=<addr>,<prop>=<val>,…`
+//     — was a second `-device` line, kept here so an old raw.qemu still
+//     decodes cleanly. New writes always use the -set form; the next
+//     `applyPCIRawQEMU` pass cleans the legacy entry out.
 func parsePCIQEMUArgs(rawQEMU string) map[string]map[string]string {
 	result := map[string]map[string]string{}
-	re := regexp.MustCompile(`-device\s+vfio-pci,([^\s]+)`)
-	for _, m := range re.FindAllStringSubmatch(rawQEMU, -1) {
+
+	// Legacy: `-device vfio-pci,...`, keyed by host PCI address.
+	devRe := regexp.MustCompile(`-device\s+vfio-pci,([^\s]+)`)
+	for _, m := range devRe.FindAllStringSubmatch(rawQEMU, -1) {
 		opts := map[string]string{}
 		for _, kv := range strings.Split(m[1], ",") {
 			if parts := strings.SplitN(kv, "=", 2); len(parts) == 2 {
@@ -762,26 +847,227 @@ func parsePCIQEMUArgs(rawQEMU string) map[string]map[string]string {
 			result[normPCIAddr(host)] = opts
 		}
 	}
+
+	// New: `-set device.<id>.<prop>=<val>`, keyed by the device ID. Each
+	// occurrence carries exactly one prop=val; we merge by id.
+	setRe := regexp.MustCompile(`-set\s+device\.(dev-incus_[A-Za-z0-9_.-]+)\.([A-Za-z0-9_-]+)=([^\s]+)`)
+	for _, m := range setRe.FindAllStringSubmatch(rawQEMU, -1) {
+		id, prop, val := m[1], m[2], m[3]
+		if result[id] == nil {
+			result[id] = map[string]string{}
+		}
+		result[id][prop] = val
+	}
+
 	return result
 }
 
-// buildPCIQEMUArg returns a -device vfio-pci,... string for a PCI device that
-// has at least one extra option (rombar/x-vga/aer) set. Returns "" otherwise.
+// buildPCIQEMUArg returns the raw.qemu fragment that overrides per-device
+// vfio-pci properties (rombar / x-vga / aer) for a given Incus PCI device,
+// or "" when no overrides are requested.
+//
+// We MUST emit `-set device.<id>.<prop>=<val>` rather than a fresh
+// `-device vfio-pci,host=<addr>,…`: Incus already emits a vfio-pci device
+// for every `type: pci` entry (visible in `/run/incus/<vm>/qemu.conf` as
+// `[device "dev-incus_<DeviceName>"]`), and adding a SECOND `-device`
+// targeting the same host BDF makes QEMU fail VM start with
+//
+//   vfio <addr>: device is already attached
+//
+// The `-set` form modifies the already-defined device in place, so the
+// host's vfio-pci binding is claimed exactly once. The Incus device ID
+// is deterministic: `dev-incus_<DeviceName>` (verified against mediaserver
+// on Ubuntu 26.04 + Incus 6.0.4, May 2026).
+//
+// QEMU's vfio-pci device tree also distinguishes numeric vs boolean
+// properties:
+//   - rombar is uint32 (accepts 0 or 1)
+//   - x-vga and aer are bool — QEMU rejects "1"/"0" with
+//     "Parameter 'x-vga' expects 'on' or 'off'"
+//
+// The frontend dropdown stores "1"/"0"/"" for all three for UI uniformity,
+// so pciBoolToken normalises the boolean ones to QEMU's required form.
+// pciManagedSetRe matches the exact `-set device.dev-incus_*.PROP=VAL`
+// directives that ZNAS itself emits — only the five properties the UI
+// exposes (rombar / x-vga / aer / x-igd-opregion / x-igd-gms). Anything
+// else on `device.dev-incus_*` (x-no-mmap, vendor-id, device-id, …) is
+// admin-owned and must survive an Edit-then-Save round-trip. Keeping the
+// property allowlist explicit here means the strip step in applyPCIRawQEMU
+// can never silently drop a manually-added option.
+//
+// x-igd-opregion and x-igd-gms were added to the UI in v6.5.26 after the
+// mediaserver investigation showed they're both required for stable Intel
+// iGPU passthrough (without them, sustained VAAPI transcoding wedges i915).
+// Before that, admins had to add them via SSH and the strip regex preserved
+// them via the orphan-strip exception.
+var pciManagedSetRe = regexp.MustCompile(`\s*-set\s+device\.dev-incus_[A-Za-z0-9_.-]+\.(?:rombar|x-vga|aer|x-igd-opregion|x-igd-gms)=[^\s]+`)
+
+// pciOrphanSetRe matches `-set device.<ID>.<prop>=<val>` and captures the
+// full Incus device ID in group 1. applyPCIRawQEMU uses this to find
+// references to PCI devices that no longer exist in the instance config
+// and strip them — QEMU rejects a `-set` against an unknown device with
+// `there is no device "X" defined`, blocking VM start. Captures only the
+// device-ID segment; the property name and value are consumed but not
+// captured.
+var pciOrphanSetRe = regexp.MustCompile(`\s*-set\s+device\.(dev-incus_[A-Za-z0-9_.-]+)\.[A-Za-z0-9_-]+=[^\s]+`)
+
 func buildPCIQEMUArg(pci LXDPCIDevice) string {
-	if pci.ROMBar == "" && pci.XVGA == "" && pci.AER == "" {
+	if pci.ROMBar == "" && pci.XVGA == "" && pci.AER == "" && pci.XIGDOpRegion == "" && pci.XIGDGMS == "" {
 		return ""
 	}
-	parts := []string{"host=" + normPCIAddr(pci.Address)}
+	if pci.DeviceName == "" {
+		// Without a DeviceName we can't build the Incus-side device ID, so
+		// fall back to the legacy `-device vfio-pci` shape. The caller
+		// guards against this for normal flows; this is just defensive.
+		parts := []string{"host=" + normPCIAddr(pci.Address)}
+		if pci.ROMBar != "" {
+			parts = append(parts, "rombar="+pci.ROMBar)
+		}
+		if v := pciBoolToken(pci.XVGA); v != "" {
+			parts = append(parts, "x-vga="+v)
+		}
+		if v := pciBoolToken(pci.AER); v != "" {
+			parts = append(parts, "aer="+v)
+		}
+		if v := pciBoolToken(pci.XIGDOpRegion); v != "" {
+			parts = append(parts, "x-igd-opregion="+v)
+		}
+		if pci.XIGDGMS != "" {
+			parts = append(parts, "x-igd-gms="+pci.XIGDGMS)
+		}
+		return "-device vfio-pci," + strings.Join(parts, ",")
+	}
+	devID := "dev-incus_" + pci.DeviceName
+	var sets []string
 	if pci.ROMBar != "" {
-		parts = append(parts, "rombar="+pci.ROMBar)
+		sets = append(sets, "-set device."+devID+".rombar="+pci.ROMBar)
 	}
-	if pci.XVGA != "" {
-		parts = append(parts, "x-vga="+pci.XVGA)
+	if v := pciBoolToken(pci.XVGA); v != "" {
+		sets = append(sets, "-set device."+devID+".x-vga="+v)
 	}
-	if pci.AER != "" {
-		parts = append(parts, "aer="+pci.AER)
+	if v := pciBoolToken(pci.AER); v != "" {
+		sets = append(sets, "-set device."+devID+".aer="+v)
 	}
-	return "-device vfio-pci," + strings.Join(parts, ",")
+	// x-igd-opregion is a QEMU boolean (on/off). Required for Intel iGPU
+	// passthrough — gives the guest's i915 driver access to the OpRegion
+	// ACPI buffer (firmware/power/panel info). Without it, i915 wedges
+	// under sustained transcoding load.
+	if v := pciBoolToken(pci.XIGDOpRegion); v != "" {
+		sets = append(sets, "-set device."+devID+".x-igd-opregion="+v)
+	}
+	// x-igd-gms is numeric (uint32, 0..16). Reserves N×32MB of stolen
+	// memory the iGPU uses as VAAPI encoder DMA buffer. Plex/ffmpeg under
+	// Coffee Lake needs at least 2 (64MB).
+	if pci.XIGDGMS != "" {
+		sets = append(sets, "-set device."+devID+".x-igd-gms="+pci.XIGDGMS)
+	}
+	return strings.Join(sets, " ")
+}
+
+// pciBoolToken normalizes any of "1"/"on"/"true"/"yes" → "on" and
+// "0"/"off"/"false"/"no" → "off" for QEMU vfio-pci boolean properties.
+// Empty input maps to "" so callers can skip emission. Anything else is
+// returned unchanged so a hand-typed value (rare, advanced users) still
+// reaches QEMU verbatim instead of getting silently dropped.
+func pciBoolToken(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return ""
+	case "1", "on", "true", "yes":
+		return "on"
+	case "0", "off", "false", "no":
+		return "off"
+	default:
+		return v
+	}
+}
+
+// pciBoolFromQEMU converts QEMU's on/off (or numeric 0/1) form for boolean
+// vfio-pci properties back into the "1"/"0" the frontend's PCI-options
+// dropdown expects. Inverse of pciBoolToken on the read path so a config
+// round-trip (raw.qemu → /api/lxd/instances/<vm>/config → modal) keeps
+// the dropdown highlighted on the correct entry.
+func pciBoolFromQEMU(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return ""
+	case "on", "true", "yes", "1":
+		return "1"
+	case "off", "false", "no", "0":
+		return "0"
+	default:
+		return v
+	}
+}
+
+// ── Disable Virtual VGA helpers (raw.qemu.conf override) ────────────────────
+//
+// Incus' default QEMU template always emits a `[device "qemu_gpu"]` virtio-vga
+// in the generated /run/incus/<vm>/qemu.conf. That's fine for normal VMs but
+// actively harmful for VMs doing physical-GPU passthrough — the guest kernel
+// binds fbcon to the virtio-vga (or to the passed-through iGPU if x-vga=on),
+// and on imperfect IGD passthrough the framebuffer init half-completes,
+// leaving every TTY mutex permanently held → "task blocked for >122 s" /
+// shutdown hangs (confirmed against a Plex VM on 192.168.2.5, May 2026).
+//
+// Incus exposes raw.qemu.conf as a *key-level override*: setting
+//
+//   [device "qemu_gpu"]
+//   driver = "pcie-pci-bridge"
+//
+// replaces just the `driver` key on the existing qemu_gpu device, leaving
+// the bus/addr untouched. pcie-pci-bridge is a passive PCIe-to-PCI bridge
+// with no display function — the guest sees a benign empty bus at the slot
+// the virtio-vga used to live at, fbcon never binds, the shutdown hang
+// goes away. Verified live against vm-1.
+//
+// State tracking via comment markers IN the raw.qemu.conf was tried in
+// 6.5.21 but rejected — QEMU's config-file parser refuses the merged file
+// with "Expected section header, got: '# znas-disable-virtual-vga-start'"
+// because Incus' merger placed the comment lines in positions where QEMU
+// expects either a [section] or a key=value. Instead we track state with a
+// dedicated instance user config key (disableVGAUserKey) and keep
+// raw.qemu.conf strictly to QEMU-parseable content.
+const disableVGAUserKey = "user.znas:disable_virtual_vga"
+
+// disableVGAOverrideBody is the exact raw.qemu.conf payload ZNAS writes when
+// the user enables "Disable virtual VGA adapter". One section, one key —
+// no comments, no markers, no surrounding blank lines (they get added at
+// concat time when raw.qemu.conf already has user content).
+const disableVGAOverrideBody = `[device "qemu_gpu"]
+driver = "pcie-pci-bridge"`
+
+// disableVGAStripRe matches the exact section+driver line pair we emit so
+// a toggle-off removes ZNAS' contribution without disturbing any unrelated
+// raw.qemu.conf content the user may have added themselves. (?m) anchors
+// `^` to line boundaries; `\s*` after each line tolerates trailing
+// whitespace; the optional trailing newline soaks up a single blank line
+// after the block.
+var disableVGAStripRe = regexp.MustCompile(`(?m)^\[device "qemu_gpu"\][ \t]*\r?\ndriver[ \t]*=[ \t]*"pcie-pci-bridge"[ \t]*\r?\n?`)
+
+// applyDisableVirtualVGA returns the updated raw.qemu.conf content for the
+// given disable setting. Pure function — caller is responsible for the
+// `incus config set/unset` calls and for keeping disableVGAUserKey in
+// sync. Idempotent: re-applying with the same setting on already-current
+// input is a no-op.
+func applyDisableVirtualVGA(currentRawConf string, disable bool) string {
+	stripped := disableVGAStripRe.ReplaceAllString(currentRawConf, "")
+	stripped = strings.TrimRight(stripped, "\n")
+	if !disable {
+		return stripped
+	}
+	if stripped == "" {
+		return disableVGAOverrideBody
+	}
+	return stripped + "\n\n" + disableVGAOverrideBody
+}
+
+// readDisableVirtualVGA reads the ZNAS-managed state flag for "Disable
+// virtual VGA adapter" from the instance's user config. The user key is
+// the single source of truth — raw.qemu.conf may have been edited by the
+// admin out-of-band, and we don't try to second-guess that here.
+func readDisableVirtualVGA(rawConfig map[string]string) bool {
+	return rawConfig[disableVGAUserKey] == "true"
 }
 
 // applyPCIRawQEMU rewrites the instance raw.qemu config key to include
@@ -792,9 +1078,56 @@ func applyPCIRawQEMU(name string, pciDevices []LXDPCIDevice) {
 	out, _ := exec.Command("incus", "config", "get", name, "raw.qemu").Output()
 	existing := strings.TrimSpace(string(out))
 
-	// Strip all existing -device vfio-pci entries (ZNAS fully manages them).
-	re := regexp.MustCompile(`\s*-device\s+vfio-pci,[^\s]*`)
-	existing = strings.TrimSpace(re.ReplaceAllString(existing, ""))
+	// Strip all existing ZNAS-managed PCI override entries — both the
+	// legacy `-device vfio-pci,...` shape (≤ 6.5.19, kept around so
+	// upgrade-then-edit cleans them out) AND the `-set device.dev-incus_*`
+	// shape we emit now.
+	//
+	// Two strip rules with different scopes:
+	//
+	//  1. For DEVICES THAT STILL EXIST in pciDevices: only strip ZNAS-managed
+	//     props (rombar / x-vga / aer) so we can re-emit them from current UI
+	//     state. Admin-added props on the same device (x-igd-opregion=on for
+	//     Intel iGPU OpRegion mapping, x-no-mmap=on, vendor-id, …) pass
+	//     through untouched. Stripping unknown props caused a 6.5.22
+	//     regression where iGPU passthrough lost its OpRegion after any
+	//     unrelated Edit save.
+	//
+	//  2. For DEVICES THAT NO LONGER EXIST in pciDevices: strip EVERY `-set
+	//     device.dev-incus_<gone>.*` line, including admin-added props.
+	//     QEMU rejects a `-set` directive that targets a non-existent device
+	//     with `there is no device "dev-incus_X" defined` and the VM won't
+	//     start. This was a 6.5.23 regression: removing the iGPU passthrough
+	//     in the UI left an orphan `-set device.dev-incus_pci0.x-igd-opregion=on`
+	//     behind, refusing to start the VM until raw.qemu was manually edited.
+	devRe := regexp.MustCompile(`\s*-device\s+vfio-pci,[^\s]*`)
+	existing = devRe.ReplaceAllString(existing, "")
+
+	// Rule 1: strip managed props on any device (will be re-emitted from
+	// pciDevices below if device still exists).
+	existing = pciManagedSetRe.ReplaceAllString(existing, "")
+
+	// Rule 2: strip every `-set device.dev-incus_<X>.*` whose <X> is no
+	// longer in pciDevices. Compute the keep-set first so the regex
+	// callback can answer in O(1).
+	keep := map[string]bool{}
+	for _, pci := range pciDevices {
+		if pci.DeviceName != "" {
+			keep["dev-incus_"+pci.DeviceName] = true
+		}
+	}
+	existing = pciOrphanSetRe.ReplaceAllStringFunc(existing, func(m string) string {
+		// Match groups: leading whitespace ... `-set device.<id>.<prop>=<val>`
+		sub := pciOrphanSetRe.FindStringSubmatch(m)
+		if len(sub) < 2 {
+			return m
+		}
+		if keep[sub[1]] {
+			return m // device still exists, preserve admin-added prop
+		}
+		return "" // orphan reference to a removed device — strip
+	})
+	existing = strings.TrimSpace(existing)
 
 	// Build replacement entries for devices with extra options.
 	var newEntries []string
@@ -1057,6 +1390,23 @@ func LXDRestart(name string) error {
 	return nil
 }
 
+// LXDReset cold-boots an instance — equivalent to pressing a physical
+// hardware Reset button. Translates to `incus restart --force`, which
+// kills QEMU/the container without an ACPI shutdown and brings it back
+// up. Used by the VGA console's keyboard menu so a guest stuck before
+// it can respond to Ctrl+Alt+Del (e.g. boot loader, BSOD, OVMF setup)
+// can still be recovered.
+func LXDReset(name string) error {
+	if !lxdNameRe.MatchString(name) {
+		return fmt.Errorf("invalid instance name")
+	}
+	out, err := exec.Command("incus", "restart", "--force", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // LXDDelete deletes an instance. Always uses --force to handle ERROR/running states.
 func LXDDelete(name string, deleteVolumes bool) error {
 	if !lxdNameRe.MatchString(name) {
@@ -1093,6 +1443,7 @@ type LXDDiskConfig struct {
 	Size         string `json:"size,omitempty"`
 	ReservePct   int    `json:"reserve_pct,omitempty"` // 0=thin, 25/50/75/100
 	IsRoot       bool   `json:"is_root,omitempty"`
+	IsAgent      bool   `json:"is_agent,omitempty"`    // true when source=="agent:config" — synthetic Incus agent share
 	FromProfile  bool   `json:"from_profile,omitempty"`
 	ZFSPath      string `json:"zfs_path,omitempty"`      // backing ZFS path
 	ZFSType      string `json:"zfs_type,omitempty"`      // "zvol" | "dataset"
@@ -1143,6 +1494,10 @@ type LXDInstanceConfig struct {
 	TPM                    bool                   `json:"tpm"`                      // enable emulated TPM 2.0 (security.tpm)
 	MachineType            string                 `json:"machine_type"`             // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", etc.
 	DiskBus                string                 `json:"disk_bus"`                 // "" = virtio-blk (default), "scsi", "nvme"
+	SMBIOS                 *LXDSMBIOSType1        `json:"smbios,omitempty"`         // SMBIOS type 1 (System Information); applied via raw.qemu
+	SMBIOSType2            *LXDSMBIOSType2        `json:"smbios_type2,omitempty"`   // SMBIOS type 2 (Baseboard / Motherboard); applied via raw.qemu
+	SMBIOSType4            *LXDSMBIOSType4        `json:"smbios_type4,omitempty"`   // SMBIOS type 4 (Processor); applied via raw.qemu
+	DisableVirtualVGA      bool                   `json:"disable_virtual_vga"`      // replace Incus' default virtio-vga with a passive bridge; used for full GPU passthrough so the guest doesn't bind a framebuffer console
 	NICs                   []LXDNICConfig         `json:"nics"`
 	Disks                  []LXDDiskConfig        `json:"disks"`
 	DetachDisks            []string               `json:"detach_disks,omitempty"` // device names to detach only (keep backing volume)
@@ -1174,32 +1529,327 @@ func updateRawQEMUSockets(rawQemu string, sockets int) string {
 	return strings.TrimSpace(rawQemu)
 }
 
+// smbiosAddString appends a key=value pair to parts, encoded so QEMU's
+// option parser AND Incus' raw.qemu argv tokenizer both see what we intend.
+//
+// Two distinct hazards:
+//
+//  1. Commas inside the value collide with QEMU's `,`-separated key=value
+//     pairs. QEMU's documented escape is a doubled comma, so we apply that.
+//
+//  2. Whitespace inside the value collides with Incus' raw.qemu tokenizer
+//     (it splits the string on whitespace before exec'ing QEMU, so a value
+//     with a space arrives as two argv elements and QEMU rejects the
+//     second one). There is no escape for this — Incus owns the argv
+//     boundary. We replace internal whitespace with `_` as a best-effort
+//     so the imported guest at least boots. The previous `.base64=on`
+//     trick was wrong: that companion option doesn't exist in QEMU
+//     (verified against QEMU 10.0.8 — `Invalid parameter 'manufacturer.base64'`),
+//     so values were unconditionally rejected at boot.
+//
+// Empty values are skipped so QEMU falls back to firmware/board defaults.
+func smbiosAddString(parts *[]string, key, val string) {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return
+	}
+	val = strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\t' {
+			return '_'
+		}
+		return r
+	}, val)
+	val = strings.ReplaceAll(val, ",", ",,")
+	*parts = append(*parts, key+"="+val)
+}
+
+// smbiosAddInt appends an integer key=value pair. Zero is treated as "unset"
+// and omitted, matching the JSON omitempty contract on the struct fields.
+func smbiosAddInt(parts *[]string, key string, val int) {
+	if val == 0 {
+		return
+	}
+	*parts = append(*parts, fmt.Sprintf("%s=%d", key, val))
+}
+
+// stripExistingSMBIOSClause removes any "-smbios <typePrefix>,…" or
+// "-smbios <typePrefix>" clause from a raw.qemu string while preserving
+// other -smbios clauses (different types) and unrelated raw.qemu content.
+//
+// Token-based: smbiosAddString guarantees no whitespace inside the value,
+// so we can rely on strings.Fields and treat each `-smbios <next-token>`
+// pair as a clause. The previous regex-style implementation used a marker
+// of " -smbios " (with a leading space), which silently failed to match a
+// clause sitting at position 0 — every Proxmox-imported VM ended up with
+// the type=1 clause duplicated on the next save.
+func stripExistingSMBIOSClause(rawQemu, typePrefix string) string {
+	fields := strings.Fields(rawQemu)
+	out := make([]string, 0, len(fields))
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "-smbios" && i+1 < len(fields) {
+			v := fields[i+1]
+			if strings.HasPrefix(v, typePrefix+",") || v == typePrefix {
+				i++ // skip the value too
+				continue
+			}
+		}
+		out = append(out, fields[i])
+	}
+	return strings.Join(out, " ")
+}
+
+// parseSMBIOSClause locates the first "-smbios <typePrefix>,…" clause in
+// rawQemu and returns its decoded key→value map. ok=false when no matching
+// clause exists, so callers can return nil rather than an empty struct.
+//
+// Round-trips two encodings written by smbiosAddString:
+//   - QEMU's doubled-comma escape (",," → literal ',').
+//   - Underscore-for-space substitution stays as-is (lossy on the read
+//     path; we have no way to know which underscores were originally
+//     spaces). That's fine — the UI will just show the underscore form.
+//
+// Also still decodes the legacy "<key>.base64=on" companion option for
+// clauses written by versions ≤ 6.5.4 (which QEMU rejected at boot, but
+// users may still have those values cached in raw.qemu until they re-save).
+func parseSMBIOSClause(rawQemu, typePrefix string) (map[string]string, bool) {
+	fields := strings.Fields(rawQemu)
+	for i := 0; i < len(fields); i++ {
+		if fields[i] != "-smbios" || i+1 >= len(fields) {
+			continue
+		}
+		val := fields[i+1]
+		if !strings.HasPrefix(val, typePrefix+",") && val != typePrefix {
+			continue
+		}
+		base64Set := map[string]bool{}
+		raw := map[string]string{}
+		for _, kv := range splitEscapedCommas(val) {
+			eq := strings.IndexByte(kv, '=')
+			if eq < 0 {
+				continue
+			}
+			k, v := kv[:eq], kv[eq+1:]
+			if strings.HasSuffix(k, ".base64") && v == "on" {
+				base64Set[strings.TrimSuffix(k, ".base64")] = true
+				continue
+			}
+			raw[k] = v
+		}
+		for k, v := range raw {
+			if base64Set[k] {
+				if b, err := base64.StdEncoding.DecodeString(v); err == nil {
+					raw[k] = string(b)
+				}
+			}
+		}
+		return raw, true
+	}
+	return nil, false
+}
+
+// splitEscapedCommas splits on `,` but treats `,,` as a literal comma,
+// matching QEMU's option-parser escape rule (the inverse of what
+// smbiosAddString writes).
+func splitEscapedCommas(s string) []string {
+	var out []string
+	var cur strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == ',' {
+			if i+1 < len(s) && s[i+1] == ',' {
+				cur.WriteByte(',')
+				i++
+				continue
+			}
+			out = append(out, cur.String())
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(s[i])
+	}
+	out = append(out, cur.String())
+	return out
+}
+
+// updateRawQEMUSMBIOSType1 inserts or updates a "-smbios type=1,…" clause in
+// a raw.qemu string. Removes any prior type=1 clause we wrote so the values
+// stay in sync with the form. A nil/empty SMBIOS struct strips the clause
+// entirely.
+func updateRawQEMUSMBIOSType1(rawQemu string, s *LXDSMBIOSType1) string {
+	rawQemu = stripExistingSMBIOSClause(rawQemu, "type=1")
+	if s == nil {
+		return strings.TrimSpace(rawQemu)
+	}
+	parts := []string{"type=1"}
+	smbiosAddString(&parts, "uuid", s.UUID)
+	smbiosAddString(&parts, "manufacturer", s.Manufacturer)
+	smbiosAddString(&parts, "product", s.Product)
+	smbiosAddString(&parts, "version", s.Version)
+	smbiosAddString(&parts, "serial", s.Serial)
+	smbiosAddString(&parts, "sku", s.SKU)
+	smbiosAddString(&parts, "family", s.Family)
+	if len(parts) == 1 {
+		return strings.TrimSpace(rawQemu)
+	}
+	return strings.TrimSpace(strings.TrimSpace(rawQemu) + " -smbios " + strings.Join(parts, ","))
+}
+
+// parseRawQEMUSMBIOSType1 reads a raw.qemu string and decodes the type=1
+// clause back into an LXDSMBIOSType1. Returns nil when no clause is present
+// so the GET handler can omit the field entirely from JSON output.
+func parseRawQEMUSMBIOSType1(rawQemu string) *LXDSMBIOSType1 {
+	raw, ok := parseSMBIOSClause(rawQemu, "type=1")
+	if !ok {
+		return nil
+	}
+	out := &LXDSMBIOSType1{
+		UUID:         raw["uuid"],
+		Manufacturer: raw["manufacturer"],
+		Product:      raw["product"],
+		Version:      raw["version"],
+		Serial:       raw["serial"],
+		SKU:          raw["sku"],
+		Family:       raw["family"],
+	}
+	if *out == (LXDSMBIOSType1{}) {
+		return nil
+	}
+	return out
+}
+
+// updateRawQEMUSMBIOSType2 inserts or updates a "-smbios type=2,…" clause
+// (Baseboard / Motherboard Information). Mirrors the type 1 helper.
+func updateRawQEMUSMBIOSType2(rawQemu string, s *LXDSMBIOSType2) string {
+	rawQemu = stripExistingSMBIOSClause(rawQemu, "type=2")
+	if s == nil {
+		return strings.TrimSpace(rawQemu)
+	}
+	parts := []string{"type=2"}
+	smbiosAddString(&parts, "manufacturer", s.Manufacturer)
+	smbiosAddString(&parts, "product", s.Product)
+	smbiosAddString(&parts, "version", s.Version)
+	smbiosAddString(&parts, "serial", s.Serial)
+	smbiosAddString(&parts, "asset", s.Asset)
+	smbiosAddString(&parts, "location", s.Location)
+	if len(parts) == 1 {
+		return strings.TrimSpace(rawQemu)
+	}
+	return strings.TrimSpace(strings.TrimSpace(rawQemu) + " -smbios " + strings.Join(parts, ","))
+}
+
+// parseRawQEMUSMBIOSType2 decodes the type=2 clause back into a struct.
+// Returns nil when absent or all-empty so JSON omits the field.
+func parseRawQEMUSMBIOSType2(rawQemu string) *LXDSMBIOSType2 {
+	raw, ok := parseSMBIOSClause(rawQemu, "type=2")
+	if !ok {
+		return nil
+	}
+	out := &LXDSMBIOSType2{
+		Manufacturer: raw["manufacturer"],
+		Product:      raw["product"],
+		Version:      raw["version"],
+		Serial:       raw["serial"],
+		Asset:        raw["asset"],
+		Location:     raw["location"],
+	}
+	if *out == (LXDSMBIOSType2{}) {
+		return nil
+	}
+	return out
+}
+
+// updateRawQEMUSMBIOSType4 inserts or updates a "-smbios type=4,…" clause
+// (Processor Information). String fields use the shared base64-aware
+// encoder; integer fields (max-speed, current-speed, processor-family) are
+// emitted plain — QEMU parses them as %d.
+func updateRawQEMUSMBIOSType4(rawQemu string, s *LXDSMBIOSType4) string {
+	rawQemu = stripExistingSMBIOSClause(rawQemu, "type=4")
+	if s == nil {
+		return strings.TrimSpace(rawQemu)
+	}
+	parts := []string{"type=4"}
+	smbiosAddString(&parts, "sock_pfx", s.SockPfx)
+	smbiosAddString(&parts, "manufacturer", s.Manufacturer)
+	smbiosAddString(&parts, "version", s.Version)
+	smbiosAddString(&parts, "serial", s.Serial)
+	smbiosAddString(&parts, "asset", s.Asset)
+	smbiosAddString(&parts, "part", s.Part)
+	smbiosAddInt(&parts, "processor-family", s.ProcessorFamily)
+	smbiosAddInt(&parts, "max-speed", s.MaxSpeed)
+	smbiosAddInt(&parts, "current-speed", s.CurrentSpeed)
+	if len(parts) == 1 {
+		return strings.TrimSpace(rawQemu)
+	}
+	return strings.TrimSpace(strings.TrimSpace(rawQemu) + " -smbios " + strings.Join(parts, ","))
+}
+
+// parseRawQEMUSMBIOSType4 decodes the type=4 clause back into a struct.
+// Returns nil when absent or all-empty so JSON omits the field.
+func parseRawQEMUSMBIOSType4(rawQemu string) *LXDSMBIOSType4 {
+	raw, ok := parseSMBIOSClause(rawQemu, "type=4")
+	if !ok {
+		return nil
+	}
+	atoi := func(s string) int {
+		n, _ := strconv.Atoi(strings.TrimSpace(s))
+		return n
+	}
+	out := &LXDSMBIOSType4{
+		SockPfx:         raw["sock_pfx"],
+		Manufacturer:    raw["manufacturer"],
+		Version:         raw["version"],
+		Serial:          raw["serial"],
+		Asset:           raw["asset"],
+		Part:            raw["part"],
+		ProcessorFamily: atoi(raw["processor-family"]),
+		MaxSpeed:        atoi(raw["max-speed"]),
+		CurrentSpeed:    atoi(raw["current-speed"]),
+	}
+	if *out == (LXDSMBIOSType4{}) {
+		return nil
+	}
+	return out
+}
+
+// machineFlagRe matches a `-machine TYPE` argv pair anywhere in a raw.qemu
+// string — including at the very start, where the leading-space lookup in
+// the old implementation missed and silently accumulated duplicates
+// (`-machine q35 -machine q35 …`). The non-capturing leading `(?:^|\s)` lets
+// the strip work at position 0 too. Followed by a single non-space token so
+// only the TYPE argument is consumed, not the next flag.
+var machineFlagRe = regexp.MustCompile(`(?:^|\s)-machine\s+\S+`)
+
 // updateRawQEMUMachine inserts or updates a -machine TYPE flag in a raw.qemu
 // string. Used because Incus 6.0.x rejects the qemu.machine.type config key
 // ("Unknown configuration key") — only the qemu_raw_conf extension is
 // available, so we override the machine type via raw.qemu instead. machineType
-// of "" removes any previously-injected -machine clause.
+// of "" removes ALL previously-injected -machine clauses.
 func updateRawQEMUMachine(rawQemu, machineType string) string {
-	// Remove any existing -machine X clause we added (token after the flag).
-	const marker = " -machine "
-	if idx := strings.Index(rawQemu, marker); idx >= 0 {
-		end := idx + len(marker)
-		for end < len(rawQemu) && rawQemu[end] != ' ' {
-			end++
-		}
-		rawQemu = strings.TrimSpace(rawQemu[:idx]) + rawQemu[end:]
-	}
+	// Strip every existing -machine clause. This handles three real-world
+	// shapes: (1) one clause mid-string, (2) one clause at the very start
+	// of raw.qemu where the previous strings.Index(" -machine ") lookup
+	// missed it, and (3) accumulated duplicates from past saves that hit
+	// case 2 and appended without cleaning up.
+	rawQemu = machineFlagRe.ReplaceAllString(rawQemu, "")
+	rawQemu = strings.TrimSpace(rawQemu)
 	machineType = strings.TrimSpace(machineType)
-	if machineType != "" {
-		rawQemu = strings.TrimSpace(rawQemu) + " -machine " + machineType
+	if machineType == "" {
+		return rawQemu
 	}
-	return strings.TrimSpace(rawQemu)
+	if rawQemu == "" {
+		return "-machine " + machineType
+	}
+	return rawQemu + " -machine " + machineType
 }
 
 // cdromDriveRe matches -drive ...media=cdrom... entries in a raw.qemu string.
 // QEMU drive values are comma-separated with no internal spaces (file paths with spaces are
 // not valid in LXD ISO names), so \S+ captures the entire value without crossing into other flags.
 var cdromDriveRe = regexp.MustCompile(`\s*-drive\s+\S*media=cdrom\S*`)
+
+// cdromIdeDevRe matches -device ide-cd,... entries (the SATA/ICH9 AHCI half
+// of a CDROM declaration on Q35). Paired with cdromDriveRe so we strip both
+// halves cleanly when reconciling.
+var cdromIdeDevRe = regexp.MustCompile(`\s*-device\s+ide-cd\S*`)
 
 // cdromFileRe extracts the file= path from a -drive media=cdrom entry.
 var cdromFileRe = regexp.MustCompile(`-drive\s+file=([^,\s]+)[^-]*media=cdrom`)
@@ -1208,17 +1858,95 @@ var cdromFileRe = regexp.MustCompile(`-drive\s+file=([^,\s]+)[^-]*media=cdrom`)
 // Covers both old-style /.isos/ rules and new-style snap isos rules.
 var cdromAAre = regexp.MustCompile(`\S+/(?:\.isos|isos/[^/]+)/\*\* rk,`)
 
-// setCDROMsRawQEMU replaces any existing cdrom -drive entries in rawQemu with entries for
-// the given ISO paths.  In QEMU Q35 machines, if=ide maps to the ICH9 AHCI controller
-// (SATA), which Windows natively supports without virtio drivers.
+// bootFlagRe matches a `-boot OPTS` argv pair in a raw.qemu string. Used by
+// setBootStrictOff to find and rewrite an existing -boot clause so we can
+// flip strict=on (Incus' default on Debian 13 / Ubuntu 26.04) to strict=off
+// without leaving a stray duplicate behind.
+var bootFlagRe = regexp.MustCompile(`\s*-boot\s+\S+`)
+
+// cdromBootindexBase is the bootindex floor for raw.qemu CDROMs. Incus
+// auto-assigns bootindex 0 to the root disk and 1 to eth0; using 10+i keeps
+// us clear of those slots while still leaving the CDROMs in OVMF's boot
+// list (after the root + PXE attempts time out, the firmware falls through
+// to the CDROM and boots the installer).
+//
+// The fall-through requires `-boot strict=off`. Incus passes
+// `-boot strict=on` by default on Debian 13 / Ubuntu 26.04, which made OVMF
+// halt at the first non-bootable device (the empty root zvol at bootindex=0)
+// instead of iterating to the CDROM — the firmware printed
+// "BdsDxe: failed to load Boot0001 […] not found" and then "No OS to boot
+// from" without ever touching the SATA CDROM. setBootStrictOff overrides
+// this whenever a CDROM is attached.
+const cdromBootindexBase = 10
+
+// cdromBootPriorityBase is the boot.priority floor used when adding a CDROM
+// as an Incus disk-device (the canonical `boot.priority=10` install path).
+// Higher Incus priority = lower QEMU bootindex, so cdrom0 lands at bootindex
+// 0 — strictly ahead of the root disk and eth0 — and OVMF boots straight
+// from the disc. Subsequent CDROMs descend (cdrom1=9, cdrom2=8, …) so the
+// first ISO is always tried first.
+const cdromBootPriorityBase = 10
+
+// setBootStrictOff ensures the raw.qemu string contains
+// `-boot order=dcn,strict=off` so OVMF can:
+//
+//  1. Walk through every BootOrder entry until one boots, instead of halting
+//     at the first failed entry (`strict=off`). Without this, fresh VMs with
+//     an empty root disk + PXE-less NIC + a CDROM never reach the CDROM and
+//     report "no OS to boot from" — even though the CDROM is attached and
+//     bootable.
+//
+//  2. Try CD-ROM first, then disk, then network for any device that lacks an
+//     explicit bootindex (`order=dcn`). bootindex hints on individual
+//     devices override `order=` per QEMU semantics, so this is harmless when
+//     Incus has set bootindex on the root disk and NIC; it kicks in as a
+//     fallback when Incus does not.
+//
+// `menu=on` was tried briefly in v6.5.10 to expose the F12 boot picker
+// automatically. It was dropped in v6.5.11 after a production incident on
+// 192.168.2.216: when no boot device works, OVMF with `menu=on` sits on
+// its built-in boot manager screen and stops servicing QMP, which hangs
+// Incus' periodic state queries, which hangs `incus list`, which hangs
+// `system.LXDAvailable()` at zfsnas startup, which prevents the HTTPS
+// listener from ever binding. The portal went dark. The F12 boot picker
+// is still reachable from the VGA console toolbar (sendVGAKey(0x58)),
+// so we don't need menu=on to expose it to the user.
+//
+// `reboot-timeout=N` is intentionally absent too: it is SeaBIOS-only
+// (per QEMU docs) and OVMF ignores it; some QEMU builds warn about it
+// on UEFI, which clutters the VM start log.
+//
+// Subsequent -boot flags override earlier ones in QEMU's option parser, so
+// it's safe to append even when Incus has already emitted `-boot strict=on`.
+// We still strip any prior -boot clause we may have added in earlier saves
+// to keep the raw.qemu string from growing on every edit.
+func setBootStrictOff(rawQemu string) string {
+	rawQemu = bootFlagRe.ReplaceAllString(rawQemu, "")
+	rawQemu = strings.TrimSpace(rawQemu)
+	suffix := "-boot order=dcn,strict=off"
+	if rawQemu == "" {
+		return suffix
+	}
+	return rawQemu + " " + suffix
+}
+
+// setCDROMsRawQEMU replaces any existing cdrom -drive / -device ide-cd
+// entries in rawQemu with entries for the given ISO paths. CDROMs are
+// attached as SATA devices on the Q35 ICH9 AHCI controller (bus=ide.N),
+// which Windows installs natively without needing virtio drivers loaded
+// up-front. Each pair carries an explicit bootindex starting at
+// cdromBootindexBase to avoid colliding with Incus' auto-assigned slots.
 func setCDROMsRawQEMU(rawQemu string, paths []string) string {
-	rawQemu = strings.TrimSpace(cdromDriveRe.ReplaceAllString(rawQemu, ""))
+	rawQemu = cdromDriveRe.ReplaceAllString(rawQemu, "")
+	rawQemu = cdromIdeDevRe.ReplaceAllString(rawQemu, "")
+	rawQemu = strings.TrimSpace(rawQemu)
 	for i, p := range paths {
 		if p == "" || !filepath.IsAbs(p) {
 			continue
 		}
 		rawQemu = strings.TrimSpace(rawQemu) +
-			fmt.Sprintf(" -drive file=%s,if=ide,media=cdrom,readonly=on,index=%d", p, i)
+			fmt.Sprintf(" -drive file=%s,if=none,id=cd%d,media=cdrom,readonly=on -device ide-cd,drive=cd%d,bus=ide.%d,bootindex=%d",
+				p, i, i, i, cdromBootindexBase+i)
 	}
 	return strings.TrimSpace(rawQemu)
 }
@@ -1247,10 +1975,42 @@ func setCDROMsAppArmor(rawAA string, paths []string) string {
 	return strings.TrimSpace(rawAA)
 }
 
-// vmApplyCDROMs updates raw.qemu and raw.apparmor on a VM for the given ISO paths,
-// and removes any legacy LXD cdrom disk devices (virtio-scsi) that may already exist.
+// vmApplyCDROMs reconciles the CDROM set on a VM via the canonical Incus
+// install path: each ISO is exposed as an Incus disk-device with
+// `boot.priority=10`, so OVMF lands on the CDROM at QEMU bootindex 0 and
+// boots straight into the installer's GRUB without iterating through the
+// empty root disk or eth0's PXE/HTTP timeouts.
+//
+// Q35 SATA (raw.qemu `-device ide-cd,bus=ide.0`) is also emitted, but as a
+// **fallback** for Windows installers — virtio-scsi requires a viostor
+// side-load that fresh Windows ISOs don't carry, so OVMF skips Incus'
+// default-bus CDROM almost instantly on those and falls through to the SATA
+// copy. For Linux/BSD/macOS installs the Incus disk-device path wins first
+// and the SATA copy is never reached. Both attachments point at the same
+// ISO file; the guest just sees two CDROM devices with identical media.
+//
+// `-boot order=dcn,strict=off` is still injected so any auto-discovered
+// devices (no explicit bootindex) prefer CD-ROM, and so OVMF iterates
+// through every BootOrder entry instead of halting at the first failed
+// one. **Never** `menu=on` — when no device boots, OVMF parks on its
+// boot-manager screen and stops servicing QMP, which hangs Incus and
+// transitively prevents zfsnas from binding 8443 at startup. Verified the
+// hard way on production (192.168.2.216, May 2026 — see v6.5.10 incident
+// notes).
+//
+// Constraint: Incus rejects file-source disk-devices on VMs with
+// `migration.stateful=true` ("Only Incus-managed disks are allowed with
+// migration.stateful=true"). For those VMs the dual-attach is impossible;
+// we fall back to SATA-only via raw.qemu and the user lives with the slow
+// PXE/HTTP fall-through. The fresh-VM-create path in `LXDCreateVM` defers
+// `migration.stateful=true` whenever a CDROM is attached for exactly this
+// reason (see the long comment around the migration.stateful set call).
+//
+// Migration: any cdrom* disk device with a stale source path is removed
+// first so existing VMs get the current set on the next save.
 func vmApplyCDROMs(name string, paths []string, applyConf func(string, string) error) {
-	// Remove legacy LXD cdrom disk devices so we don't present duplicate drives.
+	// 1. Drop every currently-attached readonly ISO disk device. We rebuild
+	// from `paths` below.
 	out, _ := exec.Command("incus", "query", "/1.0/instances/"+name).Output()
 	var inst struct {
 		Devices map[string]map[string]string `json:"devices"`
@@ -1264,17 +2024,64 @@ func vmApplyCDROMs(name string, paths []string, applyConf func(string, string) e
 		}
 	}
 
-	// Read current raw.qemu (may already have socket topology or PCI flags) and update CDROMs.
+	// 2. If `migration.stateful=true` is set on this VM, Incus refuses
+	// file-source disk devices outright, so we can't dual-attach. Skip the
+	// Incus-native step and fall through to raw.qemu SATA-only.
+	statefulOut, _ := exec.Command("incus", "config", "get", name, "migration.stateful").Output()
+	stateful := strings.TrimSpace(string(statefulOut)) == "true"
+
+	if !stateful {
+		// 3. Add an Incus disk-device per requested ISO, with descending
+		// boot.priority so the first CDROM lands at bootindex 0, the second
+		// at bootindex 1, etc. This is the canonical `incus config device
+		// add … boot.priority=10` install pattern.
+		for i, p := range paths {
+			if p == "" || !filepath.IsAbs(p) {
+				continue
+			}
+			devName := fmt.Sprintf("cdrom%d", i)
+			if out, err := exec.Command("incus", "config", "device", "add", name, devName, "disk", //nolint:errcheck
+				"source="+p, "readonly=true",
+				fmt.Sprintf("boot.priority=%d", cdromBootPriorityBase-i),
+			).CombinedOutput(); err != nil {
+				// Surface the error so a future Incus regression doesn't
+				// silently fail like v6.5.10 did. Caller sees this in the
+				// activity log; we still emit raw.qemu SATA below as a
+				// fallback so the user isn't left with no CDROM at all.
+				_ = applyConf("user.znas:cdrom_attach_warning",
+					fmt.Sprintf("incus config device add %s: %s",
+						devName, strings.TrimSpace(string(out))))
+			}
+		}
+	}
+
+	// 4. Always emit the raw.qemu SATA copy: Windows installers need it
+	// (no viostor), and on stateful VMs it's the only attachment.
 	curRQ, _ := exec.Command("incus", "config", "get", name, "raw.qemu").Output()
 	newRQ := setCDROMsRawQEMU(strings.TrimSpace(string(curRQ)), paths)
-	// raw.qemu values start with '-' which lxc config set misparses as its own flags.
-	// Use lxc query PATCH to set the value safely.
-	lxdPatchConfig(name, "raw.qemu", newRQ)
+	hasPaths := false
+	for _, p := range paths {
+		if p != "" && filepath.IsAbs(p) {
+			hasPaths = true
+			break
+		}
+	}
+	if hasPaths {
+		newRQ = setBootStrictOff(newRQ)
+	}
+	if strings.TrimSpace(newRQ) != strings.TrimSpace(string(curRQ)) {
+		lxdPatchConfig(name, "raw.qemu", newRQ)
+	}
 
-	// Update raw.apparmor so snapped LXD's QEMU sandbox can open the ISO files.
+	// 5. Reconcile raw.apparmor: QEMU's sandbox needs explicit read access
+	// to each ISO directory because the raw.qemu drive bypasses Incus'
+	// layered AppArmor profile (the Incus-native disk-device path inherits
+	// it automatically).
 	curAA, _ := exec.Command("incus", "config", "get", name, "raw.apparmor").Output()
 	newAA := setCDROMsAppArmor(strings.TrimSpace(string(curAA)), paths)
-	applyConf("raw.apparmor", newAA) //nolint:errcheck
+	if strings.TrimSpace(newAA) != strings.TrimSpace(string(curAA)) {
+		applyConf("raw.apparmor", newAA) //nolint:errcheck
+	}
 }
 
 // lxdSupportsConfigKey probes whether the running LXD version accepts a given
@@ -1563,6 +2370,15 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 		Firmware:          firmware,
 		SecureBoot:        secureBoot,
 		MachineType:       machineType,
+		// SMBIOS types 1/2/4 are round-tripped through raw.qemu's -smbios
+		// clauses. nil when no clause is present so the JSON omits the field.
+		SMBIOS:      parseRawQEMUSMBIOSType1(raw.Config["raw.qemu"]),
+		SMBIOSType2: parseRawQEMUSMBIOSType2(raw.Config["raw.qemu"]),
+		SMBIOSType4: parseRawQEMUSMBIOSType4(raw.Config["raw.qemu"]),
+		// "Disable virtual VGA adapter" — state is tracked via the
+		// user.znas:disable_virtual_vga config key (NOT by parsing
+		// raw.qemu.conf — see disableVGAOverrideBody comments for why).
+		DisableVirtualVGA: readDisableVirtualVGA(raw.Config),
 		// Container-specific (populated for containers, ignored for VMs)
 		CPULimitPct:  cpuLimitPct,
 		CPUShares:    cpuShares,
@@ -1630,11 +2446,19 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 			}
 			lxdPool := devCfg["pool"]
 			isRoot := devCfg["path"] == "/"
+			// "agent" is the synthetic Incus agent disk that lives in
+			// every VM. Its source is the literal "agent:config", not a
+			// pool/volume — Incus generates it on the fly each start.
+			// Flagged so the editor can render it read-only and prevent
+			// accidental detachment (Incus would re-add it anyway, but
+			// the user shouldn't be allowed to think it's editable).
+			isAgent := devCfg["source"] == "agent:config"
 			disk := LXDDiskConfig{
 				Name:         devName,
 				Pool:         lxdPool,
 				Size:         lxdNormalizeSizeStr(devCfg["size"]),
 				IsRoot:       isRoot,
+				IsAgent:      isAgent,
 				FromProfile:  !isInstanceLevel,
 				BootPriority: devCfg["boot.priority"],
 				IOCache:      devCfg["io.cache"],
@@ -1820,11 +2644,27 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 	if rawQEMU := raw.ExpandedConfig["raw.qemu"]; rawQEMU != "" && len(cfg.PCIDevices) > 0 {
 		qemuOpts := parsePCIQEMUArgs(rawQEMU)
 		for i, pci := range cfg.PCIDevices {
-			if opts, ok := qemuOpts[normPCIAddr(pci.Address)]; ok {
-				cfg.PCIDevices[i].ROMBar = opts["rombar"]
-				cfg.PCIDevices[i].XVGA = opts["x-vga"]
-				cfg.PCIDevices[i].AER = opts["aer"]
+			// Try the new key first (`-set device.dev-incus_<name>` form)
+			// then fall back to the legacy address key. parsePCIQEMUArgs
+			// populates both into the same map.
+			opts, ok := qemuOpts["dev-incus_"+pci.DeviceName]
+			if !ok {
+				opts, ok = qemuOpts[normPCIAddr(pci.Address)]
 			}
+			if !ok {
+				continue
+			}
+			// rombar is a numeric in QEMU and in the dropdown — pass through.
+			cfg.PCIDevices[i].ROMBar = opts["rombar"]
+			// x-vga and aer are QEMU booleans (on/off). Translate back
+			// to the 1/0 form the frontend dropdown stores so a fresh
+			// Edit Modal opens with the correct option highlighted.
+			cfg.PCIDevices[i].XVGA = pciBoolFromQEMU(opts["x-vga"])
+			cfg.PCIDevices[i].AER = pciBoolFromQEMU(opts["aer"])
+			// x-igd-opregion is a boolean (on/off); same round-trip.
+			cfg.PCIDevices[i].XIGDOpRegion = pciBoolFromQEMU(opts["x-igd-opregion"])
+			// x-igd-gms is a numeric 0..16 — pass through as-is.
+			cfg.PCIDevices[i].XIGDGMS = opts["x-igd-gms"]
 		}
 	}
 
@@ -1935,6 +2775,26 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		return fmt.Errorf("invalid instance name")
 	}
 
+	// "Disable virtual VGA adapter" — BIOS guard. SeaBIOS only writes
+	// boot output to VGA (no native serial console), and Intel iGPUs
+	// ship no standalone option ROM (their VBIOS lives in the host
+	// firmware, accessed via OpRegion at runtime). So a BIOS guest with
+	// no virtual VGA hangs forever inside SeaBIOS during display init —
+	// confirmed empirically on Z370 + UHD 630 + QEMU 10.x + Incus 6.0.5:
+	// QEMU runs cleanly, one vCPU spins at 85% in the VBIOS-execution
+	// loop, the guest never reaches the bootloader, agent never starts.
+	// Even the full Q35 IGD recipe (-machine q35,igd-passthru=on, iGPU
+	// at pcie.0:02.0, x-vga + x-igd-opregion + x-igd-gms) fails without
+	// an extracted-from-host VBIOS romfile, which is system-specific and
+	// fragile. UEFI (OVMF) handles Intel iGPU init natively via OpRegion
+	// so the option is safe there — Plex transcoding works either way
+	// because the iGPU is still exclusively passed through to i915
+	// regardless of whether the virtual VGA is present. Fail fast before
+	// any partial config is written (descriptor PATCH, key updates).
+	if cfg.IsVM && cfg.DisableVirtualVGA && cfg.Firmware == "bios" {
+		return fmt.Errorf("disable_virtual_vga is not supported on BIOS (CSM) VMs: SeaBIOS needs a virtual VGA for boot output and Intel iGPUs have no standalone VBIOS option ROM. Either keep the virtual VGA on (the iGPU is still passed through and Plex still gets exclusive access via i915) or switch this VM to UEFI firmware")
+	}
+
 	// Resolve IsVM from LXD if the caller did not supply it.
 	if !cfg.IsVM {
 		if out, err := exec.Command("incus", "query", "/1.0/instances/"+name).Output(); err == nil {
@@ -2039,9 +2899,45 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	// that supports stateful (memory-including) snapshots. Can only be changed while
 	// the instance is stopped; ignore the error here so other settings still apply
 	// (the UI already warns the user about the stop requirement).
+	//
+	// Incus rules out three combinations entirely:
+	//   1. TPM + migration.stateful=true (mutually exclusive)
+	//   2. additional disks from a non-shared pool + migration.stateful=true
+	//      (ZFS is local, so any extra disk attached on a ZFS-backed host
+	//      breaks the start: "Only additional disks coming from a shared
+	//      storage pool are supported with migration.stateful=true").
+	// We force stateful off when either constraint is violated rather than
+	// letting the VM end up in a state that cannot start.
 	if cfg.IsVM {
-		// TPM and migration.stateful are mutually exclusive in LXD.
-		wantStateful := cfg.StatefulSnapshots && !cfg.TPM
+		hasExtraDisks := false
+		for _, d := range cfg.Disks {
+			if !d.IsRoot {
+				hasExtraDisks = true
+				break
+			}
+		}
+		if !hasExtraDisks && len(cfg.ExistingDisks) > 0 {
+			hasExtraDisks = true
+		}
+		// CDROMs attached via Incus-native disk devices have an external
+		// path source — Incus rejects them outright when migration.stateful
+		// is true with "Only Incus-managed disks are allowed". So as soon
+		// as the user attaches an installer ISO, we force stateful off.
+		// Without this gate the VM either won't start at all or, if the
+		// CDROM fails to attach, OVMF won't see the install medium and
+		// the user sees "boot media not found" / PXE timeout.
+		hasCDROMs := false
+		if cfg.ApplyCDROMs {
+			for _, p := range cfg.CDROMs {
+				if p != "" {
+					hasCDROMs = true
+					break
+				}
+			}
+		} else if cfg.ApplyCDROM && cfg.CDROMPath != "" {
+			hasCDROMs = true
+		}
+		wantStateful := cfg.StatefulSnapshots && !cfg.TPM && !hasExtraDisks && !hasCDROMs
 		migVal := "false"
 		if wantStateful {
 			migVal = "true"
@@ -2115,6 +3011,21 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			if strings.TrimSpace(string(out)) != cleaned {
 				lxdPatchConfig(name, "raw.qemu", cleaned)
 			}
+		}
+	}
+
+	// SMBIOS types 1, 2, and 4 (VM-only). Stored inside raw.qemu's -smbios
+	// clauses so values survive a stop/start cycle and round-trip through
+	// the GET path. Always rewrite each clause — passing a nil/empty struct
+	// strips any previously-attached clause of that type.
+	if cfg.IsVM {
+		out, _ := exec.Command("incus", "config", "get", name, "raw.qemu").Output()
+		current := strings.TrimSpace(string(out))
+		updated := updateRawQEMUSMBIOSType1(current, cfg.SMBIOS)
+		updated = updateRawQEMUSMBIOSType2(updated, cfg.SMBIOSType2)
+		updated = updateRawQEMUSMBIOSType4(updated, cfg.SMBIOSType4)
+		if updated != current {
+			lxdPatchConfig(name, "raw.qemu", updated)
 		}
 	}
 
@@ -2874,6 +3785,26 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	// Apply rombar/x-vga/aer via raw.qemu (LXD pci device type does not accept them directly).
 	applyPCIRawQEMU(name, cfg.PCIDevices)
 
+	// Apply "Disable virtual VGA adapter" via raw.qemu.conf + user key.
+	// Toggling the checkbox in the Edit modal flips both in sync so the
+	// override body and the state flag agree. Other raw.qemu.conf
+	// content the user may have set (their own QEMU overrides) is
+	// preserved by the regex strip in applyDisableVirtualVGA.
+	curRawConf, _ := exec.Command("incus", "config", "get", name, "raw.qemu.conf").Output()
+	newRawConf := applyDisableVirtualVGA(strings.TrimSpace(string(curRawConf)), cfg.DisableVirtualVGA)
+	if strings.TrimSpace(newRawConf) != strings.TrimSpace(string(curRawConf)) {
+		if newRawConf == "" {
+			exec.Command("incus", "config", "unset", name, "raw.qemu.conf").Run() //nolint:errcheck
+		} else {
+			lxdPatchConfig(name, "raw.qemu.conf", newRawConf)
+		}
+	}
+	if cfg.DisableVirtualVGA {
+		exec.Command("incus", "config", "set", name, disableVGAUserKey+"=true").Run() //nolint:errcheck
+	} else {
+		exec.Command("incus", "config", "unset", name, disableVGAUserKey).Run() //nolint:errcheck
+	}
+
 	return nil
 }
 
@@ -3143,6 +4074,13 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		return fmt.Errorf("invalid instance name")
 	}
 
+	// BIOS + disable_virtual_vga is unsupported — see the same guard in
+	// LXDSetConfig for the full rationale. Fail before any `incus init`
+	// runs so we don't leave a half-created VM behind.
+	if req.DisableVirtualVGA && req.Firmware == "bios" {
+		return fmt.Errorf("disable_virtual_vga is not supported on BIOS (CSM) VMs: SeaBIOS needs a virtual VGA for boot output and Intel iGPUs have no standalone VBIOS option ROM. Either keep the virtual VGA on (the iGPU is still passed through and Plex still gets exclusive access via i915) or switch this VM to UEFI firmware")
+	}
+
 	log := func(msg string) {
 		if logCh != nil {
 			logCh <- msg
@@ -3206,7 +4144,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		// requested size.
 		const headerBytes int64 = 6144
 		const blockSize int64 = 16384
-		sizeBytes := int64(req.RootSizeGB) * 1000 * 1000 * 1000
+		sizeBytes := int64(req.RootSizeGB * 1000 * 1000 * 1000)
 		aligned := ((sizeBytes+headerBytes+blockSize-1)/blockSize)*blockSize - headerBytes
 		args = append(args, "-d", fmt.Sprintf("root,size=%dB", aligned))
 	}
@@ -3248,6 +4186,21 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		lxdEnsureStateQuota(req.Name)
 	}
 
+	// agent:config disk — Incus' magic device that exposes the in-VM agent
+	// + cloud-init seed as a CD-ROM. RHEL-family images (AlmaLinux, Rocky,
+	// CentOS Stream) declare image.requirements.cdrom_agent=true and refuse
+	// to start without one ("This virtual machine image requires an
+	// agent:config disk be added"). Other image families don't strictly
+	// need it, but having it attached is harmless. Always add; if it's
+	// already there from `incus init`, the call exits non-zero with
+	// "device already exists" which we treat as a success no-op.
+	if out, err := exec.Command("incus", "config", "device", "add", req.Name, "agent", "disk", "source=agent:config").CombinedOutput(); err != nil {
+		msg := strings.TrimSpace(string(out))
+		if !strings.Contains(msg, "already exists") {
+			log("WARNING: could not add agent:config disk: " + msg)
+		}
+	}
+
 	// TPM device — add after init.
 	if req.TPM {
 		if out, err := exec.Command("incus", "config", "device", "add", req.Name, "tpm", "tpm").CombinedOutput(); err != nil {
@@ -3265,6 +4218,21 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 			lxdPatchConfig(req.Name, "raw.qemu",
 				updateRawQEMUMachine(strings.TrimSpace(string(rawOut)), req.MachineType))
 			log("info: machine type applied via raw.qemu (Incus rejected qemu.machine.type: " + strings.TrimSpace(string(out)) + ")")
+		}
+	}
+
+	// SMBIOS types 1, 2, and 4 — written through raw.qemu's -smbios clauses.
+	// nil structs are no-ops (no clause emitted). Each type is independent
+	// so a VM can set type=1 only, or type=4 only, etc.
+	if req.SMBIOS != nil || req.SMBIOSType2 != nil || req.SMBIOSType4 != nil {
+		rawOut, _ := exec.Command("incus", "config", "get", req.Name, "raw.qemu").Output()
+		current := strings.TrimSpace(string(rawOut))
+		updated := updateRawQEMUSMBIOSType1(current, req.SMBIOS)
+		updated = updateRawQEMUSMBIOSType2(updated, req.SMBIOSType2)
+		updated = updateRawQEMUSMBIOSType4(updated, req.SMBIOSType4)
+		if updated != current {
+			lxdPatchConfig(req.Name, "raw.qemu", updated)
+			log("info: SMBIOS fields applied via raw.qemu")
 		}
 	}
 
@@ -3288,7 +4256,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		// LXD 5.x: create a named block volume first, then attach with source=.
 		volName := req.Name + "-" + devName
 		volArgs := []string{"storage", "volume", "create", disk.Pool, volName,
-			"--type", "block", fmt.Sprintf("size=%dGB", disk.SizeGB)}
+			"--type", "block", fmt.Sprintf("size=%vGB", disk.SizeGB)}
 		log("Adding disk " + devName + "…")
 		if out, err := exec.Command("incus", volArgs...).CombinedOutput(); err != nil {
 			log("WARNING: create volume for " + devName + ": " + strings.TrimSpace(string(out)))
@@ -3302,7 +4270,21 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add disk " + devName + ": " + strings.TrimSpace(string(out)))
 			exec.Command("incus", "storage", "volume", "delete", disk.Pool, volName).Run()
-		} else if disk.ReservePct > 0 {
+			continue
+		}
+		// Tag the volume so the snapshot/restore path knows whether to
+		// take a coordinated volume snapshot every time the instance is
+		// snapshotted. Default true so users who don't toggle anything
+		// get the intuitive "snapshots cover the whole instance" behaviour.
+		snap := "true"
+		if !disk.IncludeInSnapshots {
+			snap = "false"
+		}
+		if out, err := exec.Command("incus", "storage", "volume", "set",
+			disk.Pool, volName, LXDSnapWithInstanceProperty, snap).CombinedOutput(); err != nil {
+			log("Warning: tag " + LXDSnapWithInstanceProperty + " on " + volName + ": " + strings.TrimSpace(string(out)))
+		}
+		if disk.ReservePct > 0 {
 			zfsPath := lxdFindZFSVol(volName)
 			lxdSetZvolReservation(zfsPath, disk.ReservePct)
 		}
@@ -3331,12 +4313,47 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		}
 	}
 
-	// Set migration.stateful now that all disks are attached.  Setting it during
+	// Set migration.stateful now that all disks are attached. Setting it during
 	// lxc init causes LXD to reject any subsequent disk-add for non-shared pools.
-	if req.StatefulSnapshots && !req.TPM {
+	//
+	// Three exclusion conditions, all enforced by Incus itself:
+	//
+	//   1. TPM + migration.stateful=true is mutually exclusive.
+	//   2. Additional disks from a non-shared pool + migration.stateful=true
+	//      blocks VM start ("Only additional disks coming from a shared
+	//      storage pool are supported with migration.stateful=true"). ZFS is
+	//      local, so any ExtraDisk / ExistingDisk on a ZFS-backed host trips
+	//      this — we keep the disks and skip the stateful flip.
+	//   3. CDROMs (file-source readonly disk devices) + migration.stateful=true
+	//      raises "Only Incus-managed disks are allowed with
+	//      migration.stateful=true" — Incus refuses to add the CDROM. Setting
+	//      stateful AFTER the CDROM also fails. We need to keep the CDROM
+	//      with `boot.priority=10` so OVMF boots straight from it (the
+	//      canonical Incus install path) — sacrificing stateful snapshots
+	//      during install is the correct trade-off. Once the install ISO is
+	//      removed (Eject), the user can re-enable Stateful Snapshots from
+	//      the Edit dialog and migration.stateful=true will be applied.
+	hasExtraDisks := len(req.ExtraDisks) > 0 || len(req.ExistingDisks) > 0
+	hasCDROMsForStateful := false
+	for _, p := range req.CDROMs {
+		if p != "" && filepath.IsAbs(p) {
+			hasCDROMsForStateful = true
+			break
+		}
+	}
+	if !hasCDROMsForStateful && req.CDROMPath != "" && filepath.IsAbs(req.CDROMPath) {
+		hasCDROMsForStateful = true
+	}
+	if req.StatefulSnapshots && !req.TPM && !hasExtraDisks && !hasCDROMsForStateful {
 		if out, err := exec.Command("incus", "config", "set", req.Name, "migration.stateful=true").CombinedOutput(); err != nil {
 			log("WARNING: set migration.stateful: " + strings.TrimSpace(string(out)))
 		}
+	} else if req.StatefulSnapshots && hasExtraDisks {
+		log("Note: stateful snapshots disabled — Incus only allows migration.stateful=true on VMs whose additional disks live on a shared storage pool. ZFS is local, so attaching extra disks rules this out. Remove the additional disks if you need stateful snapshots.")
+	} else if req.StatefulSnapshots && req.TPM {
+		log("Note: stateful snapshots disabled — TPM is mutually exclusive with migration.stateful=true.")
+	} else if req.StatefulSnapshots && hasCDROMsForStateful {
+		log("Note: stateful snapshots deferred while the install CDROM is attached — Incus rejects file-source CDROMs whenever migration.stateful=true. After the OS is installed and you eject the CDROM, re-enable Stateful Snapshots from the VM Edit dialog and the flag will be applied.")
 	}
 
 	// Add NICs.
@@ -3393,6 +4410,18 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 	// Apply rombar/x-vga/aer via raw.qemu before starting.
 	applyPCIRawQEMU(req.Name, req.PCIDevices)
 
+	// Apply "Disable virtual VGA adapter" via raw.qemu.conf override +
+	// the disableVGAUserKey state flag (see disableVGAOverrideBody for
+	// why state is tracked in a user key rather than via raw.qemu.conf
+	// comment markers). Fresh VM → raw.qemu.conf is empty, so we just
+	// write the override body when checked and the user key flips to
+	// true; nothing to do when unchecked.
+	if req.DisableVirtualVGA {
+		val := applyDisableVirtualVGA("", true)
+		lxdPatchConfig(req.Name, "raw.qemu.conf", val)
+		exec.Command("incus", "config", "set", req.Name, disableVGAUserKey+"=true").Run() //nolint:errcheck
+	}
+
 	// Apply CPU pinning (overrides vCPU count when set).
 	if req.CPUPin != "" {
 		exec.Command("incus", "config", "set", req.Name, "limits.cpu", normalizeCPUPin(req.CPUPin)).Run()
@@ -3411,9 +4440,11 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		}
 	}
 
-	// Attach CD/DVD drives via raw.qemu (if=ide → ICH9 AHCI/SATA in Q35).
-	// This avoids the virtio-scsi driver requirement so the Windows installer
-	// can see both discs immediately.  raw.apparmor is set to allow the ISO dir.
+	// Attach CD/DVD drives via raw.qemu as SATA (Q35 ICH9 AHCI). Same
+	// path as the edit flow, so create + edit behave identically. See
+	// vmApplyCDROMs for the full rationale (Windows installers see SATA
+	// natively; Incus-native disk devices auto-bind virtio-scsi which
+	// requires a viostor side-load).
 	paths := req.CDROMs
 	if len(paths) == 0 && req.CDROMPath != "" {
 		paths = []string{req.CDROMPath}
@@ -3427,20 +4458,30 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 	}
 	if hasCDROMs {
 		log("Attaching CD/DVD drives…")
-		noop := func(k, v string) error { return nil } // placeholder — we call exec directly below
-		_ = noop
-		// Read current raw.qemu (may have socket topology) and inject CDROM entries.
-		// Use lxc query PATCH instead of lxc config set to avoid flag-parsing issues
-		// with values starting with '-'.
-		curRQ, _ := exec.Command("incus", "config", "get", req.Name, "raw.qemu").Output()
-		newRQ := setCDROMsRawQEMU(strings.TrimSpace(string(curRQ)), paths)
-		lxdPatchConfig(req.Name, "raw.qemu", newRQ)
-		// AppArmor: allow the ISO directories for snapped LXD.
-		curAA, _ := exec.Command("incus", "config", "get", req.Name, "raw.apparmor").Output()
-		newAA := setCDROMsAppArmor(strings.TrimSpace(string(curAA)), paths)
-		if newAA != "" {
-			exec.Command("incus", "config", "set", req.Name, "raw.apparmor", newAA).Run() //nolint:errcheck
+		applyConf := func(k, v string) error {
+			if v == "" {
+				return exec.Command("incus", "config", "unset", req.Name, k).Run()
+			}
+			lxdPatchConfig(req.Name, k, v)
+			return nil
 		}
+		vmApplyCDROMs(req.Name, paths, applyConf)
+		// Surface what was applied so the user can verify on the live host
+		// (Settings → Audit log + the create-job log). Without this, the
+		// "no OS to boot from" symptom from a stale -boot strict=on was
+		// invisible — the only way to diagnose it was `incus config show`
+		// over SSH. Reading these two keys back also confirms that the
+		// running ZNAS binary actually contains the boot-strict-off fix
+		// (a stale binary writes the old raw.qemu and the user gets the
+		// same failure on retry).
+		log(fmt.Sprintf("Attached %d CD/DVD drive(s) as SATA on Q35 ICH9 AHCI.", len(paths)))
+		if rqOut, _ := exec.Command("incus", "config", "get", req.Name, "raw.qemu").Output(); len(rqOut) > 0 {
+			log("raw.qemu = " + strings.TrimSpace(string(rqOut)))
+		}
+		if aaOut, _ := exec.Command("incus", "config", "get", req.Name, "raw.apparmor").Output(); len(aaOut) > 0 {
+			log("raw.apparmor = " + strings.TrimSpace(string(aaOut)))
+		}
+		log("Boot behaviour to expect: OVMF will attempt the empty root disk (~1 s, fails), then PXEv4/PXEv6/HTTPv4/HTTPv6 against eth0 (~30 s each, all time out on a NAT'd host), then the empty virtio-scsi CDROM (~1 s, fails), then the SATA CDROM (success). Total wait on a fresh UEFI VM: roughly 2–3 minutes of silent black screen before GRUB appears. Incus auto-assigns bootindex 0/1/2 to the root disk, eth0 NIC, and agent disk respectively, so the SATA CDROM has to land at bootindex 10 to avoid a duplicate-bootindex VM-start error — and OVMF tries lower bootindex first. If you don't want to wait, open the VGA console and press F12 from the keyboard dropdown to pick the CDROM manually.")
 	}
 
 	if req.AutoStart {
@@ -3546,7 +4587,9 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 			dArgs = append(dArgs, "pool="+req.RootPool)
 		}
 		if req.DiskSizeGB > 0 {
-			dArgs = append(dArgs, fmt.Sprintf("size=%dGB", req.DiskSizeGB))
+			// %vGB so fractional GB (sub-GB sizes from a "MB" unit selector)
+			// pass through as e.g. "0.1GB" — incus accepts decimals here.
+			dArgs = append(dArgs, fmt.Sprintf("size=%vGB", req.DiskSizeGB))
 		}
 		log("Configuring root disk…")
 		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
@@ -3605,6 +4648,82 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		if out, err := exec.Command("incus", "config", "device", "add", req.Name,
 			"fuse", "unix-char", "path=/dev/fuse").CombinedOutput(); err != nil {
 			log("WARNING: add fuse device: " + strings.TrimSpace(string(out)))
+		}
+	}
+
+	// Extra (newly-created) disks: incus storage volumes mounted at /<name>.
+	// Containers can't take "block"-type devices like VMs can; they get a
+	// pool-managed filesystem volume instead. SizeGB allows fractional GB so
+	// the UI's MB selector works (300MB → 0.3 GB).
+	for i, disk := range req.ExtraDisks {
+		devName := disk.DeviceName
+		if devName == "" {
+			devName = fmt.Sprintf("disk%d", i+1)
+		}
+		pool := disk.Pool
+		if pool == "" {
+			pool = req.RootPool
+		}
+		if pool == "" {
+			// Fall back to the first storage pool incus knows about.
+			if out, err := exec.Command("incus", "storage", "list", "--format", "csv").Output(); err == nil {
+				for _, line := range strings.Split(string(out), "\n") {
+					if line == "" {
+						continue
+					}
+					if i := strings.IndexByte(line, ','); i > 0 {
+						pool = line[:i]
+						break
+					}
+				}
+			}
+		}
+		if pool == "" {
+			log("WARNING: no storage pool available — skipping extra disk " + devName)
+			continue
+		}
+		volName := req.Name + "-" + devName
+		// Storage volume `size` option doesn't accept fractional GB strings
+		// like "0.3GB"; format as integer bytes (incus parses raw byte counts
+		// without a unit suffix) so MB-precision sizes still work.
+		sizeBytes := int64(disk.SizeGB * 1000 * 1000 * 1000)
+		log(fmt.Sprintf("Creating storage volume %s/%s (size=%d bytes)…", pool, volName, sizeBytes))
+		args := []string{"storage", "volume", "create", pool, volName}
+		if sizeBytes > 0 {
+			args = append(args, fmt.Sprintf("size=%d", sizeBytes))
+		}
+		if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
+			log("WARNING: create volume " + volName + ": " + strings.TrimSpace(string(out)))
+			continue
+		}
+		log("Attaching " + devName + " → /" + devName + "…")
+		if out, err := exec.Command("incus", "config", "device", "add", req.Name,
+			devName, "disk", "pool="+pool, "source="+volName, "path=/"+devName).CombinedOutput(); err != nil {
+			log("WARNING: attach volume " + volName + ": " + strings.TrimSpace(string(out)))
+			continue
+		}
+		// Tag the volume so the snapshot/restore path knows whether to
+		// also snapshot it alongside the container. Default true.
+		snap := "true"
+		if !disk.IncludeInSnapshots {
+			snap = "false"
+		}
+		if out, err := exec.Command("incus", "storage", "volume", "set",
+			pool, volName, LXDSnapWithInstanceProperty, snap).CombinedOutput(); err != nil {
+			log("Warning: tag " + LXDSnapWithInstanceProperty + " on " + volName + ": " + strings.TrimSpace(string(out)))
+		}
+	}
+
+	// Existing ZVols / pool volumes attached as-is (no creation step).
+	for i, ed := range req.ExistingDisks {
+		devName := ed.DeviceName
+		if devName == "" {
+			devName = fmt.Sprintf("disk%d", len(req.ExtraDisks)+i+1)
+		}
+		log("Attaching existing disk " + ed.DevPath + " as " + devName + "…")
+		if out, err := exec.Command("incus", "config", "device", "add", req.Name,
+			devName, "disk", "source="+ed.DevPath, "path=/"+devName).CombinedOutput(); err != nil {
+			log("WARNING: attach existing disk " + devName + ": " + strings.TrimSpace(string(out)))
 		}
 	}
 
@@ -4006,7 +5125,12 @@ func CreateLXDSnapshot(name, snapName string, stateful bool) error {
 		}
 	}
 
-	args := []string{"snapshot", name}
+	// Newer Incus (≥ 6.x as shipped in Ubuntu 26.04) removed the
+	// `incus snapshot <inst> [<name>]` short form — `incus snapshot` now
+	// requires an explicit subcommand (create/delete/restore/list/show).
+	// The `snapshot create` form has been valid for a long time, so this
+	// also works on older Incus.
+	args := []string{"snapshot", "create", name}
 	if snapName != "" {
 		args = append(args, snapName)
 	}
@@ -4034,6 +5158,9 @@ func CreateLXDSnapshot(name, snapName string, stateful bool) error {
 		}
 		return fmt.Errorf("%s", msg)
 	}
+	// Coordinated volume snapshot: tagged custom volumes get a matching
+	// snapshot so a later restore can roll their data back too.
+	snapshotTaggedVolumes(name, snapName)
 	return nil
 }
 
@@ -4065,9 +5192,12 @@ func RestoreLXDSnapshot(name, snapName string, removeSubsequent bool) error {
 			}
 		}
 	}
-	if out, err := exec.Command("incus", "restore", name, snapName).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "snapshot", "restore", name, snapName).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
+	// Roll attached tagged volumes back to their matching snapshot so the
+	// data disks line up with the instance's just-restored state.
+	restoreTaggedVolumes(name, snapName)
 	return nil
 }
 
@@ -4103,10 +5233,126 @@ func CloneLXDInstance(sourceName, newName, description string) error {
 
 // DeleteLXDSnapshot deletes a single snapshot from the instance.
 func DeleteLXDSnapshot(name, snapName string) error {
-	if out, err := exec.Command("incus", "delete", name+"/"+snapName).CombinedOutput(); err != nil {
+	if out, err := exec.Command("incus", "snapshot", "delete", name, snapName).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
+	// Clean up the matching volume snapshots so we don't leak storage.
+	deleteTaggedVolumeSnapshots(name, snapName)
 	return nil
+}
+
+// lxdSnapTaggedVolumes returns the (pool, volume) pairs of every disk
+// device on `instance` whose source custom volume carries
+// `user.znas:snap_with_instance=true`. Used by the snapshot/restore/delete
+// path to keep volume snapshots in lockstep with the instance's own.
+//
+// We deliberately read the LIVE instance config rather than a cached copy
+// so the lookup picks up disks that were added through the Edit modal
+// after creation, including ones whose tag was flipped via direct
+// `incus storage volume set …` outside ZNAS.
+func lxdSnapTaggedVolumes(instance string) [][2]string {
+	out, err := exec.Command("incus", "config", "show", instance, "--expanded").Output()
+	if err != nil {
+		return nil
+	}
+	// Cheap textual scan rather than a full YAML parse — the relevant
+	// region looks like:
+	//   data1:
+	//     pool: tank
+	//     source: u2604-2-data1
+	//     type: disk
+	// We collect (pool, source) per device that has type=disk.
+	type devEntry struct{ pool, source string }
+	devs := map[string]*devEntry{}
+	currentDev := ""
+	insideDevices := false
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "devices:" {
+			insideDevices = true
+			continue
+		}
+		if insideDevices && len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+			break
+		}
+		if !insideDevices {
+			continue
+		}
+		// "  data1:" — two-space indent device key
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    ") && strings.HasSuffix(strings.TrimSpace(line), ":") {
+			currentDev = strings.TrimSuffix(strings.TrimSpace(line), ":")
+			devs[currentDev] = &devEntry{}
+			continue
+		}
+		if currentDev == "" {
+			continue
+		}
+		trim := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trim, "pool: "):
+			devs[currentDev].pool = strings.TrimSpace(strings.TrimPrefix(trim, "pool:"))
+		case strings.HasPrefix(trim, "source: "):
+			devs[currentDev].source = strings.TrimSpace(strings.TrimPrefix(trim, "source:"))
+		case trim == "type: disk":
+			// keep
+		default:
+			// no-op; we don't care about other fields
+		}
+	}
+	var out2 [][2]string
+	for _, d := range devs {
+		if d.pool == "" || d.source == "" {
+			continue
+		}
+		// Probe the volume's user property. `incus storage volume get`
+		// prints the value (or empty) and exits 0; sudo not needed for
+		// `get`. The volume is custom-type — instance-scoped volumes
+		// (which are already part of incus snapshot) don't carry the tag.
+		val, err := exec.Command("incus", "storage", "volume", "get",
+			d.pool, d.source, LXDSnapWithInstanceProperty).Output()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(val)) == "true" {
+			out2 = append(out2, [2]string{d.pool, d.source})
+		}
+	}
+	return out2
+}
+
+// snapshotTaggedVolumes / restoreTaggedVolumes / deleteTaggedVolumeSnapshots
+// fan a single name out across every Snap-tagged custom volume the instance
+// references. Errors are downgraded to log lines because the instance-level
+// op already succeeded and rolling that back would be more disruptive than
+// the inconsistency we'd be guarding against.
+func snapshotTaggedVolumes(instance, snapName string) {
+	for _, pv := range lxdSnapTaggedVolumes(instance) {
+		args := []string{"storage", "volume", "snapshot", "create", pv[0], pv[1], snapName}
+		if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
+			// Older Incus uses `storage volume snapshot <pool> <vol> <snap>` (no "create")
+			args2 := []string{"storage", "volume", "snapshot", pv[0], pv[1], snapName}
+			if out2, err2 := exec.Command("incus", args2...).CombinedOutput(); err2 != nil {
+				_ = out
+				_ = out2
+				continue
+			}
+		}
+	}
+}
+
+func restoreTaggedVolumes(instance, snapName string) {
+	for _, pv := range lxdSnapTaggedVolumes(instance) {
+		exec.Command("incus", "storage", "volume", "restore", pv[0], pv[1], snapName).Run() //nolint:errcheck
+	}
+}
+
+func deleteTaggedVolumeSnapshots(instance, snapName string) {
+	for _, pv := range lxdSnapTaggedVolumes(instance) {
+		// New form first, then old.
+		if err := exec.Command("incus", "storage", "volume", "snapshot", "delete", pv[0], pv[1], snapName).Run(); err == nil {
+			continue
+		}
+		exec.Command("incus", "storage", "volume", "delete", pv[0], pv[1]+"/"+snapName).Run() //nolint:errcheck
+	}
 }
 
 // LXDLogEntry is a single parsed line from an instance log file.

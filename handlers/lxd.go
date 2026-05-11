@@ -373,6 +373,22 @@ func HandleLXDRestart(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"ok": "restarted"})
 }
 
+// HandleLXDReset cold-boots an instance — used by the VGA console's
+// keyboard menu so a stuck guest (BSOD, frozen boot loader, OVMF setup)
+// can be recovered without dropping out of the viewer.
+// POST /api/lxd/instances/{name}/reset
+func HandleLXDReset(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	sess := MustSession(r)
+	if err := system.LXDReset(name); err != nil {
+		audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDRestart, Target: name, Result: audit.ResultError, Details: "reset: " + err.Error()})
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDRestart, Target: name, Result: audit.ResultOK, Details: "force reset (VGA Reset button)"})
+	jsonOK(w, map[string]string{"ok": "reset"})
+}
+
 // HandleListFreeZVols returns ZFS volumes available for VM attachment.
 // GET /api/lxd/free-zvols
 func HandleListFreeZVols(w http.ResponseWriter, r *http.Request) {

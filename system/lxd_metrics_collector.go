@@ -232,13 +232,9 @@ func StartLXDMetricsCollector(configDir string, getEnabled func() bool) {
 	lxdMetricsDir = dir
 
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		// Periodic orphan sweep (~every 2h) regardless of scrape success.
-		sweepTicks := 0
-		for now := range ticker.C {
+		runScrape := func(now time.Time) {
 			if !getEnabled() {
-				continue
+				return
 			}
 			if err := scrapeLXDMetricsOnce(now); err != nil {
 				lxdMetricsStatusMu.Lock()
@@ -246,6 +242,20 @@ func StartLXDMetricsCollector(configDir string, getEnabled func() bool) {
 				lxdMetricsStatusMu.Unlock()
 				log.Printf("lxd metrics: scrape: %v", err)
 			}
+		}
+
+		// Kick off an immediate scrape so the UI badge leaves "… starting"
+		// within seconds of boot rather than waiting the full 5-min tick.
+		// Counter-derived series (cpu, net, disk) still need the next tick
+		// for a rate baseline; gauges (memory) populate right away.
+		runScrape(time.Now())
+
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		// Periodic orphan sweep (~every 2h) regardless of scrape success.
+		sweepTicks := 0
+		for now := range ticker.C {
+			runScrape(now)
 			sweepTicks++
 			if sweepTicks >= 24 { // ~2h
 				sweepTicks = 0
@@ -438,11 +448,22 @@ type promSample struct {
 	value  float64
 }
 
-// parsePromText is a minimal Prometheus text-format parser. LXD's output
-// is exposition-format-compliant but simple (no histograms we care about,
-// no exemplars), so we skip the official client_model dependency and parse
-// a single sample per non-comment line. Lines that fail to parse are
-// silently dropped — partial output is better than no output.
+// parsePromText is a minimal Prometheus text-format parser. LXD/Incus
+// output is exposition-format-compliant but simple (no histograms we care
+// about, no exemplars), so we skip the official client_model dependency
+// and parse a single sample per non-comment line. Lines that fail to
+// parse are silently dropped — partial output is better than no output.
+//
+// Metric-name normalization (added in v6.5.27 after the .5 host running
+// Incus 6.0.5 reported empty graphs): when LXD was forked into Incus,
+// the Prometheus metric prefix changed from `lxd_*` to `incus_*`. Ubuntu
+// 26.04 ships Incus 6.0.5, which emits `incus_cpu_seconds_total`,
+// `incus_memory_Active_anon_bytes`, etc. — none of which matched our
+// `lxd_*` switch cases, so every sample was silently dropped and the
+// per-instance RRD files never got created. Normalizing here means the
+// rest of the collector (this file + lxd_global_config.go realtime path)
+// switches on the canonical `lxd_*` names and works uniformly on both
+// stacks without any per-call-site `if HasPrefix` branches.
 func parsePromText(body string) []promSample {
 	var out []promSample
 	for _, line := range strings.Split(body, "\n") {
@@ -456,7 +477,11 @@ func parsePromText(body string) []promSample {
 		if nameEnd < 0 {
 			continue
 		}
-		s := promSample{metric: line[:nameEnd], labels: map[string]string{}}
+		name := line[:nameEnd]
+		if strings.HasPrefix(name, "incus_") {
+			name = "lxd_" + name[len("incus_"):]
+		}
+		s := promSample{metric: name, labels: map[string]string{}}
 		rest := strings.TrimSpace(line[nameEnd:])
 		if strings.HasPrefix(rest, "{") {
 			// Find matching '}' (labels never contain unescaped '}').

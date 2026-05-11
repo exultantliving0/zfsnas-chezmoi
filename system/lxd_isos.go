@@ -1,14 +1,19 @@
 package system
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,6 +21,14 @@ import (
 // dataset, walking up the hierarchy until it finds a mounted ancestor.
 // LXD storage datasets (e.g. "tank/lxd-base") are never mounted themselves;
 // in that case we use the root pool's mount point.
+//
+// Special-case: if the walk reaches the pool root (no slash) and that pool
+// has mountpoint=legacy with no kernel mount, set its mountpoint to /<pool>
+// and mount it. This happens when Incus was given a separate zpool as its
+// storage backend (e.g. `tank-incus`) — the zpool root is unmounted by
+// default but its child datasets are all `legacy` too, so there's no
+// mounted ancestor to walk to. The only safe place for the .isos directory
+// is the pool root itself.
 func zfsResolvedMountpoint(dataset string) (string, error) {
 	// Walk from the given dataset up to the root pool looking for a mounted path.
 	current := dataset
@@ -31,7 +44,45 @@ func zfsResolvedMountpoint(dataset string) (string, error) {
 		}
 		current = current[:idx]
 	}
+	// Walk fell off the top — try to mount the pool root.
+	root := dataset
+	if i := strings.IndexByte(root, '/'); i >= 0 {
+		root = root[:i]
+	}
+	if mp, err := mountPoolRootIfLegacy(root); err == nil {
+		return mp, nil
+	}
 	return "", fmt.Errorf("cannot find a mounted ancestor for ZFS dataset %q", dataset)
+}
+
+// mountPoolRootIfLegacy gives an unmounted, legacy-mountpoint zpool root a
+// real mountpoint at /<pool> and mounts it. Used as a fallback when the
+// pool was created by Incus with no usable mountpoint anywhere in the
+// hierarchy. Idempotent: if the mountpoint is already set and the dataset
+// is mounted, returns the existing path.
+func mountPoolRootIfLegacy(pool string) (string, error) {
+	// Probe current mountpoint property.
+	out, err := exec.Command("zfs", "get", "-H", "-o", "value", "mountpoint", pool).Output()
+	if err != nil {
+		return "", err
+	}
+	mp := strings.TrimSpace(string(out))
+	if filepath.IsAbs(mp) {
+		// Already has an absolute mountpoint — make sure it's mounted.
+		if mountedOut, _ := exec.Command("zfs", "mount").Output(); strings.Contains(string(mountedOut), pool+" "+mp) {
+			return mp, nil
+		}
+		if out, err := exec.Command("sudo", "/usr/sbin/zfs", "mount", pool).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("zfs mount %s: %s", pool, strings.TrimSpace(string(out)))
+		}
+		return mp, nil
+	}
+	// mountpoint is "legacy" / "none" / "-" — set to /<pool> and mount.
+	target := "/" + pool
+	if out, err := exec.Command("sudo", "/usr/sbin/zfs", "set", "mountpoint="+target, pool).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("zfs set mountpoint=%s %s: %s", target, pool, strings.TrimSpace(string(out)))
+	}
+	return target, nil
 }
 
 // zfsOneMountpoint returns the mount point for a single dataset without
@@ -169,6 +220,7 @@ func LXDListISOs(lxdPool string) ([]LXDISOInfo, error) {
 }
 
 // LXDDeleteISO deletes one ISO file from the pool's .isos directory.
+// Uploads run via `sudo tee` (root-owned files) so deletes must use sudo too.
 func LXDDeleteISO(lxdPool, filename string) error {
 	if !isoNameRe.MatchString(filename) {
 		return fmt.Errorf("invalid ISO filename")
@@ -177,7 +229,18 @@ func LXDDeleteISO(lxdPool, filename string) error {
 	if err != nil {
 		return err
 	}
-	return os.Remove(filepath.Join(dir, filename))
+	target := filepath.Join(dir, filename)
+	if err := os.Remove(target); err == nil {
+		return nil
+	} else if !os.IsPermission(err) && !os.IsNotExist(err) {
+		// Fall through to sudo only on permission errors / missing file.
+		// Other errors (read-only fs, etc.) surface immediately.
+		return err
+	}
+	if out, err := exec.Command("sudo", "/usr/bin/rm", "-f", target).CombinedOutput(); err != nil {
+		return fmt.Errorf("rm: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // LXDSaveISO streams r into <isoDir>/<filename>, creating the directory as needed.
@@ -208,4 +271,252 @@ func LXDSaveISO(lxdPool, filename string, r io.Reader) (string, error) {
 		return "", fmt.Errorf("write iso: %w", err)
 	}
 	return dest, nil
+}
+
+// ── ISO fetch from URL ─────────────────────────────────────────────────────
+
+// LXDISOFetchJob tracks one server-side ISO download. Stored in
+// `lxdISOFetchJobs` keyed by job ID; the HTTP layer polls it for the
+// activity-bar progress display.
+type LXDISOFetchJob struct {
+	URL        string `json:"url"`
+	Pool       string `json:"pool"`
+	Name       string `json:"name"`
+	BytesDone  int64  `json:"bytes_done"`
+	TotalBytes int64  `json:"total_bytes"`
+	Status     string `json:"status"` // "running" | "done" | "error"
+	Error      string `json:"error,omitempty"`
+	StartedAt  int64  `json:"started_at"`
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+}
+
+var (
+	lxdISOFetchJobs   sync.Map // jobID → *LXDISOFetchJob
+	lxdISOFetchTicker int64    // monotonic counter for IDs
+)
+
+// NewLXDISOFetchJobID returns a short numeric job ID. Plenty for the
+// session lifetime; not persistent across restarts.
+func NewLXDISOFetchJobID() string {
+	id := atomic.AddInt64(&lxdISOFetchTicker, 1)
+	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), id)
+}
+
+// LXDISOFetchJobGet returns a job snapshot by ID, or nil if absent.
+func LXDISOFetchJobGet(id string) *LXDISOFetchJob {
+	if v, ok := lxdISOFetchJobs.Load(id); ok {
+		j := v.(*LXDISOFetchJob)
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		// Return a value copy so callers can't race the writer.
+		cp := *j
+		return &cp
+	}
+	return nil
+}
+
+// LXDISOFetchStart begins a background download into pool's ISO dir.
+// Returns the job ID immediately; progress is observable via
+// LXDISOFetchJobGet.
+//
+// Validation order: (a) url is http(s); (b) filename matches isoNameRe;
+// (c) on completion, sniff bytes 0x8001..0x8005 for "CD001" — the ISO
+// 9660 Primary Volume Descriptor signature. Hybrid bootable ISOs still
+// keep the descriptor at that offset, so the check passes for every
+// well-formed image. Files that fail are deleted before the job flips
+// to "error" — no half-baked .iso on disk.
+//
+// onComplete (optional) is invoked from the goroutine when the job
+// terminates — used by the handler layer to write an audit log entry
+// stamped with the user/role of the request that started the fetch.
+// success is true iff the ISO landed at its final path; finalName is
+// the resolved filename (which may differ from suggestedName when it
+// was empty and we derived from the URL); errMsg is "" on success.
+func LXDISOFetchStart(pool, rawURL, suggestedName string, onComplete func(success bool, errMsg, finalName string)) (string, error) {
+	if pool == "" {
+		return "", fmt.Errorf("pool is required")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parse url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("only http(s) URLs are accepted")
+	}
+	// Resolve filename: prefer the user-supplied name; otherwise derive
+	// from the URL path. Either way it must end .iso and pass the
+	// upload-side regex (no path traversal, no shell metas).
+	name := strings.TrimSpace(suggestedName)
+	if name == "" {
+		name = filepath.Base(u.Path)
+		if i := strings.IndexByte(name, '?'); i >= 0 {
+			name = name[:i]
+		}
+	}
+	if name == "" || name == "." || name == "/" {
+		return "", fmt.Errorf("could not derive a filename from the URL — supply one explicitly")
+	}
+	if !strings.HasSuffix(strings.ToLower(name), ".iso") {
+		name = name + ".iso"
+	}
+	if !isoNameRe.MatchString(name) {
+		return "", fmt.Errorf("invalid ISO filename %q (allowed: letters, digits, dots, underscores, hyphens; must end .iso)", name)
+	}
+
+	dir, err := LXDISODir(pool)
+	if err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	job := &LXDISOFetchJob{
+		URL:       rawURL,
+		Pool:      pool,
+		Name:      name,
+		Status:    "running",
+		StartedAt: time.Now().Unix(),
+		cancel:    cancel,
+	}
+	id := NewLXDISOFetchJobID()
+	lxdISOFetchJobs.Store(id, job)
+
+	go func() {
+		defer cancel()
+		err := lxdRunISOFetch(ctx, job, dir)
+		job.mu.Lock()
+		if err != nil {
+			job.Status = "error"
+			job.Error = err.Error()
+		} else {
+			job.Status = "done"
+		}
+		finalName := job.Name
+		job.mu.Unlock()
+		if onComplete != nil {
+			if err != nil {
+				onComplete(false, err.Error(), finalName)
+			} else {
+				onComplete(true, "", finalName)
+			}
+		}
+		// Best-effort GC: drop completed/errored jobs after 10 min so the
+		// map doesn't accrete forever during a long ZNAS session.
+		go func() {
+			time.Sleep(10 * time.Minute)
+			lxdISOFetchJobs.Delete(id)
+		}()
+	}()
+	return id, nil
+}
+
+// lxdRunISOFetch is the actual download body. Streams to a temp file
+// inside the same pool's ISO directory (to keep the rename atomic), then
+// validates the ISO 9660 magic and moves it to the target name.
+func lxdRunISOFetch(ctx context.Context, job *LXDISOFetchJob, dir string) error {
+	// Make sure the ISO directory exists before we touch it. LXDSaveISO
+	// already does this on upload; mirror it here.
+	if out, err := exec.Command("sudo", "mkdir", "-p", dir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mkdir %s: %s", dir, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("sudo", "chmod", "0775", dir).CombinedOutput(); err != nil {
+		return fmt.Errorf("chmod %s: %s", dir, strings.TrimSpace(string(out)))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, job.URL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "ZNAS/iso-fetch")
+	client := &http.Client{Timeout: 0} // no timeout; ISOs can take hours on slow links
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("download: HTTP %d %s", resp.StatusCode, resp.Status)
+	}
+	if resp.ContentLength > 0 {
+		job.mu.Lock()
+		job.TotalBytes = resp.ContentLength
+		job.mu.Unlock()
+	}
+
+	// Stream to a temp file in the same dir (so the final move is a
+	// rename inside one filesystem). The .part suffix tells anybody
+	// looking that this isn't a finished file.
+	tmpName := job.Name + ".part"
+	tmpPath := filepath.Join(dir, tmpName)
+	// `sudo tee` keeps ownership consistent with uploads (root-owned).
+	cmd := exec.CommandContext(ctx, "sudo", "tee", tmpPath)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Pipe response → progress counter → tee. Errors from copy abort
+	// the tee process so we don't leave a half-written file.
+	pc := &progressCountingWriter{job: job}
+	mw := io.MultiWriter(stdin, pc)
+	_, copyErr := io.Copy(mw, resp.Body)
+	stdin.Close()
+	if waitErr := cmd.Wait(); waitErr != nil && copyErr == nil {
+		copyErr = fmt.Errorf("tee: %w", waitErr)
+	}
+	if copyErr != nil {
+		_ = exec.Command("sudo", "rm", "-f", tmpPath).Run()
+		return copyErr
+	}
+
+	// ISO 9660 magic check: bytes 0x8001..0x8005 == "CD001".
+	if err := lxdAssertISO9660(tmpPath); err != nil {
+		_ = exec.Command("sudo", "rm", "-f", tmpPath).Run()
+		return fmt.Errorf("downloaded file is not an ISO 9660 image: %w", err)
+	}
+
+	// Move into place. mv stays atomic on the same filesystem.
+	finalPath := filepath.Join(dir, job.Name)
+	if out, err := exec.Command("sudo", "mv", "-f", tmpPath, finalPath).CombinedOutput(); err != nil {
+		_ = exec.Command("sudo", "rm", "-f", tmpPath).Run()
+		return fmt.Errorf("mv: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// lxdAssertISO9660 reads the volume descriptor sector and verifies the
+// "CD001" identifier. Used as a cheap "is this actually an ISO?" gate
+// after a URL fetch — a HTML 404 page or an .img with the wrong name
+// fails quickly here.
+func lxdAssertISO9660(path string) error {
+	// Use sudo cat to bypass the root-owned tmp file's mode. We only need
+	// 5 bytes; pipe through head so we don't slurp the whole file.
+	out, err := exec.Command("sudo", "/usr/bin/dd",
+		"if="+path, "bs=1", "skip=32769", "count=5", "status=none").Output()
+	if err != nil {
+		return fmt.Errorf("read magic: %w", err)
+	}
+	if string(out) != "CD001" {
+		return fmt.Errorf("expected ISO 9660 signature CD001 at offset 0x8001, got %q", string(out))
+	}
+	return nil
+}
+
+// progressCountingWriter atomically increments BytesDone on the job as
+// the response stream flows through. Used inside the io.MultiWriter that
+// also feeds `sudo tee`.
+type progressCountingWriter struct {
+	job *LXDISOFetchJob
+}
+
+func (w *progressCountingWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	w.job.mu.Lock()
+	w.job.BytesDone += int64(n)
+	w.job.mu.Unlock()
+	return n, nil
 }

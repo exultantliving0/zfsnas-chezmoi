@@ -65,10 +65,20 @@ var lxdConfigKeys = []struct {
 
 // GetLXDGlobalConfig fetches the current values for every allow-listed key.
 // Missing keys come back as empty strings / nil booleans.
+//
+// Tries plain `incus query` first (fast path once the service has the
+// `incus-admin` group); falls back to `sudo incus query` so the call
+// still works inside the enable wizard, where `usermod -a -G incus-admin
+// zfsnas` was just run but the service hasn't re-execed and so doesn't
+// yet have the new group membership in its kernel-side credentials.
 func GetLXDGlobalConfig() (*LXDGlobalConfig, error) {
 	out, err := exec.Command("incus", "query", "/1.0").Output()
 	if err != nil {
-		return nil, fmt.Errorf("lxc query /1.0: %w", err)
+		if out2, err2 := exec.Command("sudo", "incus", "query", "/1.0").Output(); err2 == nil {
+			out = out2
+		} else {
+			return nil, fmt.Errorf("lxc query /1.0: %w", err)
+		}
 	}
 	var resp struct {
 		Config map[string]string `json:"config"`
@@ -200,13 +210,30 @@ func EnableLXDMetricsListener() (status, currentVal string, err error) {
 	if cur.MetricsAddress == LXDMetricsAddress {
 		return "ok", LXDMetricsAddress, nil
 	}
-	if out, err := exec.Command("incus", "config", "set", "core.metrics_address", LXDMetricsAddress).CombinedOutput(); err != nil {
+	if out, err := incusConfigSet("core.metrics_address", LXDMetricsAddress); err != nil {
 		return "error", "", fmt.Errorf("set core.metrics_address: %s", strings.TrimSpace(string(out)))
 	}
 	// Loopback-only listener — disable mTLS so the portal can scrape without
 	// also issuing a client cert. Safe because nothing off-host can reach it.
-	exec.Command("incus", "config", "set", "core.metrics_authentication", "false").Run() //nolint:errcheck
+	_, _ = incusConfigSet("core.metrics_authentication", "false")
 	return "ok", LXDMetricsAddress, nil
+}
+
+// incusConfigSet runs `incus config set <key> <value>`, falling back to
+// the sudo form when the bare invocation fails with a permission error.
+// This is the same group-lag dance GetLXDGlobalConfig uses (see comment
+// there) — keeps the metrics-listener step working inside the enable
+// wizard without forcing every other call site through sudo.
+func incusConfigSet(key, value string) ([]byte, error) {
+	out, err := exec.Command("incus", "config", "set", key, value).CombinedOutput()
+	if err == nil {
+		return out, nil
+	}
+	out2, err2 := exec.Command("sudo", "incus", "config", "set", key, value).CombinedOutput()
+	if err2 == nil {
+		return out2, nil
+	}
+	return out, err
 }
 
 // DisableLXDMetricsListener removes core.metrics_address and metrics_auth.

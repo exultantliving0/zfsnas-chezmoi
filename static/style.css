@@ -1470,6 +1470,78 @@ body.tron-legacy .sysinfo-chip.is-system    { --chip-accent: #ffe600; }
 body.tron .sysinfo-chip.is-ctrl,
 body.tron-legacy .sysinfo-chip.is-ctrl      { --chip-accent: #ff9d00; }
 
+/* SMBIOS type1 sub-section inside the Firmware row of VM Create / Edit.
+   Renders as a tighter sibling of the existing collapsibles — matches the
+   visual weight of `vm-hw-row` headers without re-implementing the click
+   handler (uses native <details>/<summary>). */
+.vm-smbios-details summary {
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  padding: 6px 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px dashed var(--border);
+  margin-top: 6px;
+}
+.vm-smbios-details summary::-webkit-details-marker { display: none; }
+.vm-smbios-details summary::before {
+  content: "▶";
+  font-size: 9px;
+  color: var(--text-3);
+  width: 10px;
+  text-align: center;
+  transition: transform 0.15s;
+}
+.vm-smbios-details[open] summary::before { transform: rotate(90deg); }
+.vm-smbios-details summary:hover { color: var(--text); }
+
+/* VM Edit modal — compact disks table. The default 13px/16px padding plus
+   regular 14px input height pushes the disks list past 1300px wide, which
+   overflows the modal on common 1366×768 / split-screen layouts. The
+   tighter rules here cut the row height roughly in half and clip ZFS-path
+   cells to a fixed width with ellipsis; the wrapper falls back to a
+   horizontal scrollbar when even that isn't enough so every column stays
+   reachable. */
+.vm-edit-disks-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.vm-edit-disks-table {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.vm-edit-disks-table th,
+.vm-edit-disks-table td {
+  padding: 4px 6px;
+  vertical-align: middle;
+  border-top: 1px solid var(--border);
+}
+.vm-edit-disks-table thead th {
+  padding: 4px 6px;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-top: none;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-weight: 600;
+  text-align: left;
+}
+.vm-edit-disks-table .input {
+  padding: 2px 4px;
+  height: 22px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+.vm-edit-disks-table input[type="checkbox"] {
+  margin: 0;
+}
+
 /* SysInfo CPU chip — P/E core breakdown highlights. Colours chosen so they
    read clearly on both light and dark surfaces; Tron picks up its neon palette. */
 .sysinfo-pcore { color: #d97706; font-weight: 700; }

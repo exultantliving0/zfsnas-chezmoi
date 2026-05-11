@@ -473,15 +473,58 @@ html, body { width:100%%; height:100%%; background:#000; overflow:hidden; displa
 #toolbar button { background:#2a2a2a; color:#ccc; border:1px solid #444; border-radius:4px; padding:3px 10px; cursor:pointer; font-size:12px; }
 #toolbar button:hover { background:#3a3a3a; color:#fff; }
 #status { margin-left:auto; font-size:12px; color:#666; }
+/* Close-window button — sits to the right of the SPICE connection status
+   (which itself is pushed to the far right by margin-left:auto) so it lands
+   in the canonical "X to close" corner. window.close() works because the
+   VGA viewer is always opened via window.open() in the parent ZNAS UI;
+   browsers allow JS-opened windows to close themselves even with the
+   noopener flag the parent uses. Square shape + red-on-hover signals a
+   destructive action without putting it in the regular toolbar flow. */
+#close-btn { padding:3px 8px; font-size:13px; line-height:1; min-width:24px; }
+#close-btn:hover { background:#bf3a3a; color:#fff; border-color:#7a2a2a; }
 #kbd-wrap { position:relative; display:inline-block; }
 #kbd-menu { display:none; position:absolute; top:calc(100%% + 4px); left:0; background:#2a2a2a; border:1px solid #444; border-radius:4px; min-width:170px; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,.6); }
 .kbd-item { padding:7px 14px; cursor:pointer; font-size:12px; color:#ccc; white-space:nowrap; }
 .kbd-item:hover { background:#3a3a3a; color:#fff; }
+/* Function-key grid in the keyboard menu — for users whose physical keyboard
+   has no F-row (some laptops, ChromeOS devices, on-screen keyboards). Sending
+   F12 here is the manual workaround when OVMF auto-boot fails to find the
+   CDROM and the user wants the boot picker. */
+#fk-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:6px 8px; }
+.fk-btn { background:#1f1f24; border:1px solid #3a3a3a; color:#ccc; border-radius:3px; padding:5px 0; font-size:11px; cursor:pointer; text-align:center; }
+.fk-btn:hover { background:#3a3a3a; color:#fff; }
+/* Power dropdown — button label tracks live VM status and color-codes it
+   the same way the rest of the app does (Running=green, Stopped=grey,
+   Frozen/transient=amber, Error=red). Shares the dropdown stylesheet
+   with kbd-menu / cur-menu so it stays visually consistent. */
+#pwr-wrap { position:relative; display:inline-block; }
+#pwr-btn { font-weight:600; min-width:84px; }
+#pwr-menu { display:none; position:absolute; top:calc(100%% + 4px); left:0; background:#2a2a2a; border:1px solid #444; border-radius:4px; min-width:200px; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,.6); }
 #status.ok   { color:#4ade80; }
 #status.err  { color:#f87171; }
 #status.warn { color:#fbbf24; }
-#spice-area { flex:1; overflow:hidden; position:relative; display:flex; align-items:center; justify-content:center; }
-#spice-area canvas { display:block; }
+/* spice-html5 forcibly sets style.height = <guest framebuffer height>px
+   on #spice-area whenever the primary surface arrives (see vendor file
+   ~5811). On guests rendering at 1024x768 / 1280x1024 etc., that inline
+   height frequently exceeds the body's flex share, so the bottom rows of
+   the canvas fall outside the viewport — the "missing pixels at the
+   bottom" symptom. !important here beats the inline style and the flex
+   item keeps its 1fr share. min-height:0 is the standard flexbox dodge
+   that allows a column-flex item to shrink below its content size.
+
+   v6.5.30: the canvas box is sized to EXACTLY match the container
+   (width:100%%/height:100%% on the canvas) and object-fit:contain handles
+   aspect preservation INSIDE the box. The previous max-*+width:auto
+   approach allowed the canvas to keep its intrinsic height when
+   align-items:center was on the parent — leaving a few rows clipped at
+   the bottom. Sizing the box to the container removes the possibility of
+   overflow entirely; any aspect mismatch produces letterbox instead of
+   clip. Pointer coords are re-mapped to framebuffer pixels by the
+   _znasMouseFB helper in spice-html5.js, which is aware of the letterbox
+   so clicks in the letterbox area still resolve to the nearest valid
+   framebuffer pixel rather than out-of-bounds coords. */
+#spice-area { flex:1 1 0 !important; min-height:0 !important; height:auto !important; overflow:hidden; position:relative; display:flex; align-items:stretch; justify-content:stretch; }
+#spice-area canvas { display:block; width:100%%; height:100%%; object-fit:contain; }
 #notice { position:absolute; color:#666; font-size:13px; text-align:center; line-height:1.7; pointer-events:none; }
 /* Pointer-style overrides applied to the SPICE canvas. spice-html5 sets an
    inline cursor style on every frame (often "none" when the guest doesn't
@@ -516,10 +559,34 @@ html, body { width:100%%; height:100%%; background:#000; overflow:hidden; displa
 <div id="toolbar">
   <span>VGA Console — <strong>%s</strong></span>
   <button onclick="reconnect()">Reconnect</button>
+  <div id="pwr-wrap">
+    <button id="pwr-btn" onclick="togglePwrMenu(event)" title="VM power state">…</button>
+    <div id="pwr-menu">
+      <div class="kbd-item" data-pwr-action="start"   onclick="pwrAction('start')">▶ Start</div>
+      <div class="kbd-item" data-pwr-action="restart" onclick="pwrAction('restart')">⟳ Restart (graceful)</div>
+      <div class="kbd-item" data-pwr-action="reset"   onclick="pwrAction('reset')" style="color:#ff8a8a;">⚡ Hard Reboot</div>
+      <div class="kbd-item" data-pwr-action="stop"    onclick="pwrAction('stop')" style="color:#fbbf24;">■ Stop</div>
+    </div>
+  </div>
   <div id="kbd-wrap">
     <button onclick="toggleKbdMenu(event)" title="Send keyboard shortcut">⌨</button>
     <div id="kbd-menu">
       <div class="kbd-item" onclick="kbdCtrlAltDel()">Ctrl+Alt+Delete</div>
+      <div class="kbd-sub" style="border-top:1px solid #3a3a3a;margin-top:4px;padding-top:6px;">Function keys</div>
+      <div id="fk-grid">
+        <div class="fk-btn" onclick="sendVGAKey(0x3B)">F1</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x3C)">F2</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x3D)">F3</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x3E)">F4</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x3F)">F5</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x40)">F6</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x41)">F7</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x42)">F8</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x43)">F9</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x44)">F10</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x57)">F11</div>
+        <div class="fk-btn" onclick="sendVGAKey(0x58)">F12</div>
+      </div>
     </div>
   </div>
   <div id="cdrom-wrap" style="position:relative;display:none;">
@@ -539,11 +606,12 @@ html, body { width:100%%; height:100%%; background:#000; overflow:hidden; displa
   </div>
   <button onclick="document.getElementById('spice-area').requestFullscreen()">Fullscreen</button>
   <span id="status">Connecting…</span>
+  <button id="close-btn" onclick="window.close()" title="Close console window">✕</button>
 </div>
 <div id="spice-area">
   <span id="notice">Connecting to VGA console…</span>
 </div>
-<script src="/static/vendor/spice-html5.js?v=6.5.2-webcrypto"></script>
+<script src="/static/vendor/spice-html5.js?v=6.5.30-letterbox"></script>
 <script>
 const name = %q;
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -740,7 +808,7 @@ function bindCanvasFocus(canvas) {
 }
 
 function _closeAllToolbarMenus() {
-  ['kbd-menu','cur-menu','cdrom-menu'].forEach(function(id) {
+  ['kbd-menu','cur-menu','cdrom-menu','pwr-menu'].forEach(function(id) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
@@ -751,6 +819,36 @@ function toggleKbdMenu(e) {
   const open = m.style.display !== 'block';
   _closeAllToolbarMenus();
   if (open) m.style.display = 'block';
+}
+function togglePwrMenu(e) {
+  e.stopPropagation();
+  const m = document.getElementById('pwr-menu');
+  const open = m.style.display !== 'block';
+  _closeAllToolbarMenus();
+  if (open) m.style.display = 'block';
+}
+
+// sendVGAKey emits a single key-down/key-up pair through the SPICE input
+// channel. Used by the F1-F12 buttons in the keyboard menu so users on
+// laptops without a physical F-row can still send those scancodes — the
+// most common use is pressing F12 to reach OVMF's boot picker when an
+// installer ISO needs to be selected manually.
+//
+// Scancodes are PS/2 set 1 (the same encoding spice-html5 uses everywhere
+// else for key.code). F1-F10 are 0x3B-0x44 contiguous; F11/F12 jump to
+// 0x57/0x58 because IBM ran out of room in the original AT keyboard's
+// scancode block.
+function sendVGAKey(scancode) {
+  if (!sc || !sc.inputs || sc.inputs.state !== 'ready') return;
+  const msg = new SpiceMiniData();
+  const down = new SpiceMsgcKeyDown();
+  down.code = scancode;
+  msg.build_msg(SPICE_MSGC_INPUTS_KEY_DOWN, down);
+  sc.inputs.send_msg(msg);
+  const up = new SpiceMsgcKeyUp();
+  up.code = scancode;
+  msg.build_msg(SPICE_MSGC_INPUTS_KEY_UP, up);
+  sc.inputs.send_msg(msg);
 }
 function toggleCursorMenu(e) {
   e.stopPropagation();
@@ -875,6 +973,141 @@ async function swapCDROM(filename) {
 function kbdCtrlAltDel() {
   document.getElementById('kbd-menu').style.display = 'none';
   sendCtrlAltDel(sc);
+}
+
+// pwrAction routes the four power-button entries to their respective Incus
+// endpoints. start / stop / restart are the standard graceful lifecycle
+// actions; reset is the "physical reset button" hard reboot used when
+// Ctrl+Alt+Del or a graceful restart can't unstick a frozen OS, BSOD, or
+// hung OVMF setup. Each destructive action confirms in-DOM (project policy:
+// no native confirm() popups). After any action that resets the CPU
+// (start/restart/reset/stop) the SPICE channel is reconnected so the user
+// doesn't sit on a stale frame.
+function pwrAction(action) {
+  document.getElementById('pwr-menu').style.display = 'none';
+  const meta = {
+    start:   { label: 'Start',        verbing: 'Starting',   danger: false, body: 'Power on <strong>' + name + '</strong>?' },
+    stop:    { label: 'Stop',         verbing: 'Stopping',   danger: true,  body: 'Stop <strong>' + name + '</strong>? Sends ACPI shutdown; if the guest does not respond Incus forces it off after a timeout.' },
+    restart: { label: 'Restart',      verbing: 'Restarting', danger: true,  body: 'Restart <strong>' + name + '</strong>? The guest receives ACPI shutdown then is started again.' },
+    reset:   { label: 'Hard Reboot',  verbing: 'Resetting',  danger: true,  body: 'Hard reboot <strong>' + name + '</strong>? This power-cycles the VM immediately — unsaved guest state is lost (same effect as the physical Reset button). Use when Ctrl+Alt+Del or a graceful restart can\'t unstick a frozen OS.' },
+  }[action];
+  if (!meta) return;
+  // Start is non-destructive — skip the confirm dialog so users don't have
+  // to click twice on the common case of "VM stopped, hit Start".
+  const run = async () => {
+    setStatus(meta.verbing + '…', 'warn');
+    try {
+      const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/' + action, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      if (!r.ok) {
+        const t = await r.text().catch(() => '');
+        setStatus(meta.label + ' failed', 'err');
+        setNotice(meta.label + ' failed: ' + (t || ('HTTP ' + r.status)));
+        return;
+      }
+      // CPU reset / cold start invalidates whatever SPICE was rendering;
+      // reconnect to grab the new frame buffer instead of leaving a stale
+      // image on screen.
+      if (action !== 'stop') reconnect();
+      refreshVMStatus();
+    } catch (e) {
+      setStatus(meta.label + ' error', 'err');
+      setNotice(meta.label + ' error: ' + (e && e.message || e));
+    }
+  };
+  if (!meta.danger) { run(); return; }
+  _vgaConfirm({
+    title: meta.label + ' VM',
+    body:  meta.body,
+    confirmLabel: meta.label,
+    danger: meta.danger,
+    onConfirm: run,
+  });
+}
+
+// refreshVMStatus polls the Incus instance status endpoint and re-paints the
+// power button label + color to match. Status names come from Incus directly
+// ("Running", "Stopped", "Frozen", "Starting", "Stopping", "Error"); the
+// color palette mirrors the rest of the app for consistency
+// (Running=green / Stopped=grey / Error=red / transient=amber). The Start
+// item is hidden when the VM is already running and the destructive entries
+// are hidden when it's already stopped, so the dropdown only ever offers
+// applicable actions.
+let _pwrStatusTimer = null;
+async function refreshVMStatus() {
+  let status = 'Unknown';
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/status', { cache:'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && typeof j.status === 'string' && j.status) status = j.status;
+    }
+  } catch(_) {}
+  const btn = document.getElementById('pwr-btn');
+  if (!btn) return;
+  let color = '#f0b429';                    // amber default for transient/unknown
+  if (status === 'Running')      color = '#3fb950';
+  else if (status === 'Stopped') color = '#6e7681';
+  else if (status === 'Error')   color = '#ff453a';
+  btn.textContent = status;
+  btn.style.color = color;
+  // Toggle which dropdown entries are visible based on power state.
+  const menu = document.getElementById('pwr-menu');
+  if (menu) {
+    const running = status === 'Running' || status === 'Frozen';
+    const stopped = status === 'Stopped';
+    menu.querySelectorAll('[data-pwr-action]').forEach(function(el) {
+      const a = el.getAttribute('data-pwr-action');
+      let show = true;
+      if (a === 'start')                       show = stopped;
+      else if (a === 'stop' || a === 'restart' || a === 'reset') show = running;
+      el.style.display = show ? '' : 'none';
+    });
+  }
+}
+function _startPwrPolling() {
+  if (_pwrStatusTimer) return;
+  refreshVMStatus();
+  _pwrStatusTimer = setInterval(refreshVMStatus, 5000);
+}
+_startPwrPolling();
+
+// Tiny in-DOM confirm modal styled to match the rest of the VGA toolbar.
+// Avoids window.confirm() (project popup convention) without pulling in
+// the main app's modal stack — the VGA viewer is a standalone HTML page.
+function _vgaConfirm(opts) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);'
+    + 'display:flex;align-items:center;justify-content:center;z-index:9999;'
+    + 'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#e2e2e6;';
+  const card = document.createElement('div');
+  card.style.cssText = 'min-width:360px;max-width:90vw;background:#202028;'
+    + 'border:1px solid #3a3a44;border-radius:6px;'
+    + 'box-shadow:0 12px 40px rgba(0,0,0,0.6);overflow:hidden;';
+  card.innerHTML =
+      '<div style="padding:14px 18px;font-size:14px;font-weight:600;'
+    +   'border-bottom:1px solid #3a3a44;background:rgba(255,138,138,0.08);">' + opts.title + '</div>'
+    + '<div style="padding:16px 18px;font-size:13px;line-height:1.5;color:#cccccd;">' + opts.body + '</div>'
+    + '<div style="padding:10px 14px;display:flex;justify-content:flex-end;gap:8px;background:#1a1a22;'
+    +   'border-top:1px solid #3a3a44;">'
+    + '  <button data-cancel  style="background:#2a2a34;color:#e2e2e6;border:1px solid #3a3a44;'
+    +       'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Cancel</button>'
+    + '  <button data-confirm style="background:' + (opts.danger ? '#bf3a3a' : '#5a5aff') + ';color:#fff;'
+    +       'border:none;padding:5px 14px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;">'
+    +       (opts.confirmLabel || 'OK') + '</button>'
+    + '</div>';
+  wrap.appendChild(card);
+  document.body.appendChild(wrap);
+  const close = () => wrap.remove();
+  card.querySelector('[data-cancel]').addEventListener('click', close);
+  card.querySelector('[data-confirm]').addEventListener('click', () => { close(); opts.onConfirm && opts.onConfirm(); });
+  // Esc cancels; Enter confirms.
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+    if (ev.key === 'Enter')  { close(); document.removeEventListener('keydown', onKey); opts.onConfirm && opts.onConfirm(); }
+  };
+  document.addEventListener('keydown', onKey);
 }
 
 // Persist the chosen pointer style across reconnects and across viewer

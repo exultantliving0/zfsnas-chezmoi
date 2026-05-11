@@ -5,15 +5,101 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"zfsnas/internal/config"
 )
+
+// bridgeKernelStanzaTail emits the kernel-version-dependent tail of the
+// `iface vmbr0 inet static|dhcp` block — i.e. MAC pinning plus the
+// bridge_ports / bridge_stp / bridge_fd lines, conditionally followed by
+// VLAN-aware filtering directives.
+//
+// Two shapes, selected by k7 (true ⇒ kernel ≥ 7.0):
+//
+//   - Kernel ≤ 6.x — historical shape that ZNAS shipped before May 2026:
+//     `hwaddress ether <MAC>` for MAC pinning, `bridge-vlan-aware yes` +
+//     `bridge-vids 2-4094` for per-port VLAN filtering on vmbr0.
+//   - Kernel ≥ 7.0 — kernel-safe shape: MAC pinning via
+//     `pre-up /usr/sbin/ip link set <br> address <MAC>` (the 7.0 bridge
+//     code rejects `hwaddress ether` with EADDRINUSE when the slaved
+//     port already has the same MAC). VLAN-aware directives are
+//     **deliberately omitted**: 7.0 has a regression in the per-port
+//     `vlan_filtering` path that drops VID 1 (the default PVID, i.e.
+//     untagged management traffic) the moment any explicit VID is added
+//     to the slaved port — confirmed live on 192.168.2.5
+//     (Ubuntu 26.04 + kernel 7.0.0-15-generic, May 2026): the SSH
+//     session dropped instantly when we ran `bridge vlan add dev
+//     enp2s0f0 vid 2-4094` after enabling `vlan_filtering=1`.
+//
+// VLAN tagging on kernel ≥ 7.0 is still available through ZNAS'
+// "Compute Networking" mode, which uses 8021q sub-interfaces (e.g.
+// enp2s0f0.500) on the physical NIC with one bridge per VLAN — that
+// path doesn't depend on bridge VLAN filtering and is unaffected.
+//
+// Pulled out of rewriteInterfacesForBridges so unit tests can pin both
+// shapes without depending on the test runner's actual kernel.
+func bridgeKernelStanzaTail(c bridgeCandidate, k7 bool) string {
+	var b strings.Builder
+	if c.MAC != "" {
+		if k7 {
+			fmt.Fprintf(&b, "    pre-up /usr/sbin/ip link set %s address %s\n", c.Bridge, c.MAC)
+		} else {
+			fmt.Fprintf(&b, "    hwaddress ether %s\n", c.MAC)
+		}
+	}
+	fmt.Fprintf(&b, "    bridge_ports %s\n    bridge_stp off\n    bridge_fd 0\n", c.NIC)
+	if !k7 {
+		b.WriteString("    bridge-vlan-aware yes\n    bridge-vids 2-4094\n")
+	}
+	return b.String()
+}
+
+// kernelGTE7 returns true when the running Linux kernel's major version is
+// >= 7. Used by the bridge emitter (Step 3) to pick a kernel-7.0-safe shape
+// — the 7.0 cycle introduced regressions in `hwaddress ether` and per-port
+// `vlan_filtering` handling that lock hosts out at boot if the older
+// directives are written. Cached; the kernel doesn't change at runtime.
+//
+// Failure to read /proc/sys/kernel/osrelease is treated as ≤ 6.x — better
+// to emit the historical config (works on every Linux ZNAS has shipped on
+// before May 2026) than to silently drop MAC pinning + VLAN filtering on
+// a host where they would have worked.
+var (
+	kernel7Once  sync.Once
+	kernel7Cache bool
+)
+
+func kernelGTE7() bool {
+	kernel7Once.Do(func() {
+		data, err := os.ReadFile("/proc/sys/kernel/osrelease")
+		if err != nil {
+			return
+		}
+		v := strings.TrimSpace(string(data))
+		// Format: "<major>.<minor>.<patch>-<rest>" — we only need major.
+		dot := strings.IndexByte(v, '.')
+		if dot <= 0 {
+			return
+		}
+		maj, err := strconv.Atoi(v[:dot])
+		if err != nil {
+			return
+		}
+		if maj >= 7 {
+			kernel7Cache = true
+		}
+	})
+	return kernel7Cache
+}
 
 // lxdBinaryPath returns the absolute path to the incus daemon CLI binary
 // (used by `sudo incus admin init`), checking /usr/bin (Debian) then /usr/sbin
@@ -28,17 +114,28 @@ func lxdBinaryPath() string {
 }
 
 // LXDEnablePrereqResult is returned by LXDEnableCheckPrereqs.
+//
+// 6.5.6: OS is now a 2-state ✓/✗. Ubuntu 26.04+ is first-class supported
+// (same install path as Debian 13: apt incus + EnsureOVMFCompat for the
+// OVMF naming difference). Older Ubuntu remains a hard blocker because
+// Incus packages diverge in those repos and the netplan migration step
+// has only been validated on 26.04.
+//
+// NetworkCanFix=true tells the UI to surface the "Switch to systemd
+// Networking" button on the Network row — set when netplan is the only
+// network configuration on the host (see netplan_migrate.go).
 type LXDEnablePrereqResult struct {
-	SudoersOK   bool     `json:"sudoers_ok"`
-	NetworkOK   bool     `json:"network_ok"`
-	IsDebian    bool     `json:"is_debian"`
-	HasPools    bool     `json:"has_pools"`
-	AllOK       bool     `json:"all_ok"`
-	SudoersNote string   `json:"sudoers_note,omitempty"`
-	NetworkNote string   `json:"network_note,omitempty"`
-	OSNote      string   `json:"os_note,omitempty"`
-	PoolsNote   string   `json:"pools_note,omitempty"`
-	ZFSPools    []string `json:"zfs_pools"`
+	SudoersOK     bool     `json:"sudoers_ok"`
+	NetworkOK     bool     `json:"network_ok"`
+	NetworkCanFix bool     `json:"network_can_fix,omitempty"`
+	OSSupported   bool     `json:"os_supported"`
+	HasPools      bool     `json:"has_pools"`
+	AllOK         bool     `json:"all_ok"`
+	SudoersNote   string   `json:"sudoers_note,omitempty"`
+	NetworkNote   string   `json:"network_note,omitempty"`
+	OSNote        string   `json:"os_note,omitempty"`
+	PoolsNote     string   `json:"pools_note,omitempty"`
+	ZFSPools      []string `json:"zfs_pools"`
 }
 
 // LXDEnableStepStatus tracks one step of the enablement job.
@@ -120,32 +217,65 @@ func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 		res.SudoersNote = "No sudo access detected. The service account needs passwordless sudo to install packages."
 	}
 
-	// 2. Network: /etc/network/interfaces exists and no netplan files present
-	if _, err := os.Stat("/etc/network/interfaces"); err == nil {
-		// Check for netplan files
-		netplanFiles, _ := filepath.Glob("/etc/netplan/*.yaml")
-		if len(netplanFiles) > 0 {
-			res.NetworkNote = "Netplan configuration detected (/etc/netplan/*.yaml). This feature requires /etc/network/interfaces (ifupdown)."
-		} else {
-			res.NetworkOK = true
-		}
-	} else {
+	// 2. Network: /etc/network/interfaces exists and netplan is not the
+	// authoritative network manager. When netplan is the *only* config
+	// (Ubuntu default), the user can click "Switch to systemd Networking"
+	// — NetworkCanFix=true tells the UI to show that button.
+	//
+	// Mixed state (both /etc/network/interfaces and /etc/netplan/*.yaml
+	// present) is OK as long as systemd-networkd is inactive — netplan
+	// only takes effect through networkd, and many migrated hosts still
+	// have the dormant YAMLs sitting in /etc/netplan/. Hard-failing in
+	// that case sends users in circles after a successful migration +
+	// uninstall + re-enable cycle.
+	_, ifupErr := os.Stat("/etc/network/interfaces")
+	netplanFiles, _ := filepath.Glob("/etc/netplan/*.yaml")
+	hasIfupdown := ifupErr == nil
+	hasNetplan := len(netplanFiles) > 0
+	netplanActive := hasNetplan && systemdNetworkdActive()
+	switch {
+	case hasIfupdown && !hasNetplan:
+		res.NetworkOK = true
+	case hasIfupdown && hasNetplan && !netplanActive:
+		// Dormant netplan YAMLs alongside an authoritative ifupdown setup
+		// — accept and just inform the user.
+		res.NetworkOK = true
+		res.NetworkNote = "Netplan YAML files exist in /etc/netplan/ but systemd-networkd is inactive — ifupdown is authoritative."
+	case hasIfupdown && hasNetplan:
+		// systemd-networkd is actually running — both configs would compete.
+		res.NetworkNote = "Both /etc/network/interfaces and /etc/netplan/*.yaml present and systemd-networkd is active. This feature requires only ifupdown — disable systemd-networkd or remove the netplan files."
+	case !hasIfupdown && hasNetplan:
+		res.NetworkNote = "Netplan configuration detected (/etc/netplan/*.yaml). This feature requires ifupdown — click \"Switch to systemd Networking\" on the right to migrate."
+		res.NetworkCanFix = true
+	default:
 		res.NetworkNote = "/etc/network/interfaces not found. This feature requires the ifupdown networking system."
 	}
 
-	// 3. OS is Debian (not Ubuntu or other)
+	// 3. OS is Debian, or Ubuntu ≥ 26.04 (both first-class supported).
 	osRelease := readOSRelease()
-	if id, ok := osRelease["ID"]; ok && strings.EqualFold(id, "debian") {
-		res.IsDebian = true
-	} else {
-		name := osRelease["NAME"]
+	id := osRelease["ID"]
+	switch {
+	case strings.EqualFold(id, "debian"):
+		res.OSSupported = true
+	case strings.EqualFold(id, "ubuntu") && ubuntuVersionAtLeast(osRelease["VERSION_ID"], 26, 4):
+		// Ubuntu 26.04+ uses the same Incus install path as Debian
+		// (apt install incus + EnsureOVMFCompat for the OVMF naming
+		// difference). Older Ubuntu stays blocked: their Incus packages
+		// are too divergent and the netplan migration step has only been
+		// validated on 26.04.
+		res.OSSupported = true
+	default:
+		name := osRelease["PRETTY_NAME"]
+		if name == "" {
+			name = osRelease["NAME"]
+		}
 		if name == "" {
 			name = osRelease["ID"]
 		}
 		if name == "" {
 			name = "unknown OS"
 		}
-		res.OSNote = fmt.Sprintf("Detected: %s. This feature requires Debian Linux.", name)
+		res.OSNote = fmt.Sprintf("Detected: %s. This feature requires Debian Linux or Ubuntu 26.04+.", name)
 	}
 
 	// 4. At least one ZFS pool
@@ -159,8 +289,50 @@ func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 		res.PoolsNote = "No ZFS storage pools found. Create a pool first before enabling VMs & Containers."
 	}
 
-	res.AllOK = res.SudoersOK && res.NetworkOK && res.IsDebian && res.HasPools
+	res.AllOK = res.SudoersOK && res.NetworkOK && res.OSSupported && res.HasPools
 	return res
+}
+
+// systemdNetworkdActive returns true when systemd-networkd is currently
+// running and managing the network. Used to distinguish "active netplan"
+// (which would compete with ifupdown) from "dormant netplan YAMLs left
+// behind after a migration" (harmless).
+func systemdNetworkdActive() bool {
+	out, err := exec.Command("/usr/bin/systemctl", "is-active", "systemd-networkd").Output()
+	if err != nil {
+		// is-active returns non-zero for inactive/failed/dead — treat
+		// every error as "not active" rather than blocking the user.
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "active"
+}
+
+// ubuntuVersionAtLeast parses a VERSION_ID like "26.04" / "24.10" and reports
+// whether it is ≥ minMajor.minMinor. Returns false on any parse failure so a
+// malformed /etc/os-release defaults to the conservative "block" behaviour.
+func ubuntuVersionAtLeast(versionID string, minMajor, minMinor int) bool {
+	parts := strings.SplitN(versionID, ".", 2)
+	if len(parts) == 0 {
+		return false
+	}
+	major, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return false
+	}
+	if major > minMajor {
+		return true
+	}
+	if major < minMajor {
+		return false
+	}
+	if len(parts) < 2 {
+		return false
+	}
+	minor, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return false
+	}
+	return minor >= minMinor
 }
 
 func readOSRelease() map[string]string {
@@ -301,19 +473,29 @@ func runCmdLog(ctx context.Context, job *LXDEnableJob, name string, args ...stri
 func lxdStep1Packages(ctx context.Context, job *LXDEnableJob) error {
 	job.setStep(1, "running", "")
 	pkgs := []string{
-		// Incus 6.0+ ships in Debian 13 main. The five sub-packages cover daemon
-		// (incus-base + incus), client (incus-client), the in-VM agent
-		// (incus-agent), and the integration tooling (incus-extra). The
-		// `incus-extra` package also bundles `lxd-to-incus`, the upstream
-		// migration helper, on Debian — there is no separate `incus-tools`
-		// package on Debian 13 (deb just folds it in).
+		// Incus 6.0+ ships in Debian 13 main. The five sub-packages cover
+		// daemon (incus-base + incus), client (incus-client), the in-VM
+		// agent (incus-agent), and the integration tooling (incus-extra).
 		"incus", "incus-base", "incus-client", "incus-extra", "incus-agent",
 		"bridge-utils",
-		"qemu-system-x86", "qemu-kvm",
+		// qemu-system-x86 is the actual binary (same on Debian and Ubuntu).
+		// We deliberately do NOT pull `qemu-kvm`: on Debian 13 it's a
+		// transition metapackage that just depends on qemu-system-x86, but
+		// on Ubuntu (24.04+) it became a virtual package with multiple
+		// providers (qemu-system-x86 vs qemu-system-x86-hwe), and apt
+		// refuses to auto-resolve, breaking the install with
+		// `E: Package 'qemu-kvm' has no installation candidate`.
+		"qemu-system-x86",
 		"dnsmasq-base",
-		"swtpm",    // required for VMs with virtual TPM devices
-		"ovmf",     // UEFI firmware for x86 VMs (OVMF_CODE.4MB.fd)
-		"sshpass",  // required for InterLink push operations
+		"swtpm",        // required for VMs with virtual TPM devices
+		"ovmf",         // UEFI firmware for x86 VMs (OVMF_CODE.4MB.fd)
+		"sshpass",      // required for InterLink push operations
+		"genisoimage",  // mkisofs implementation Incus uses to build the
+		                // agent:config ISO on the fly when an image declares
+		                // image.requirements.cdrom_agent=true (AlmaLinux 10,
+		                // Rocky, CentOS Stream, RHEL-family in general).
+		                // Without this, those VMs fail to start with
+		                // "Neither mkisofs nor genisoimage could be found".
 	}
 	job.log("Running apt-get update…")
 	if err := runCmdLog(ctx, job, "/usr/bin/apt-get", "update"); err != nil {
@@ -416,45 +598,121 @@ func lxdStep2Init(ctx context.Context, storagePool, hostname string, job *LXDEna
 		job.log("Incus client certificate ready.")
 	}
 
-	// Register the Ubuntu cloud-images simplestreams remotes. Incus only
-	// ships the `images:` remote (linuxcontainers.org) by default — the
-	// Ubuntu and ubuntu-daily remotes that LXD users were used to need to
-	// be added explicitly. We do it here so the Create VM / Create
-	// Container wizard immediately offers Ubuntu images without forcing
-	// the user to drop into a shell.
-	ensureImageRemotes(ctx, job)
+	// Image remotes: the default `images:` remote (linuxcontainers.org)
+	// already ships Ubuntu container + VM images for every supported
+	// release (lookup with `incus image list images: ubuntu`), so no
+	// extra remotes are added here.
+	//
+	// 6.5.6 explicitly removes any leftover `ubuntu` / `ubuntu-daily`
+	// remotes added by previous releases. Canonical no longer publishes
+	// LXD/Incus-format streams at https://cloud-images.ubuntu.com — the
+	// JSON only contains aws/gce/azure cloud-native variants now and
+	// those simplestreams remotes return empty image lists in the Create
+	// VM/Container wizard. Removing them keeps the wizard's remote
+	// dropdown accurate.
+	cleanupDeadImageRemotes(ctx, job)
+
+	// ZNAS' preseed creates `host-nat` as the managed NAT bridge, but a
+	// host that previously ran `incus admin init --auto` (or an older
+	// ZNAS release) will also have an `incusbr0` lying around — sometimes
+	// with a kernel-level IP that the network-list UI surfaces, making
+	// it look like a second NAT network. Remove it if it isn't being
+	// used by anything; users get a single, named NAT.
+	cleanupRedundantIncusbr0(ctx, job)
 
 	return nil
 }
 
-// ensureImageRemotes registers the Ubuntu cloud-images remotes if they're
-// not already present. Idempotent — `incus remote add` errors out cleanly if
-// the remote exists, which we treat as a no-op.
-func ensureImageRemotes(ctx context.Context, job *LXDEnableJob) {
-	remotes := []struct {
-		name, url string
-	}{
-		{"ubuntu", "https://cloud-images.ubuntu.com/releases"},
-		{"ubuntu-daily", "https://cloud-images.ubuntu.com/daily"},
+// cleanupRedundantIncusbr0 removes the leftover `incusbr0` bridge that
+// `incus admin init --auto` (or older ZNAS releases) used to create with
+// its own NAT subnet. ZNAS' preseed creates `host-nat` as the canonical
+// managed NAT, so a co-existing `incusbr0` is at best confusing (two
+// "NAT" entries in the network list) and at worst a routing-priority
+// problem.
+//
+// We refuse to remove it when:
+//   * it doesn't exist (nothing to do)
+//   * its name is `host-nat` (we'd be deleting our own bridge)
+//   * Incus reports it has any users (`used_by` non-empty) — someone
+//     attached an instance/profile to it explicitly; leave it alone.
+//
+// On the delete path we try the Incus-managed form first; if that
+// errors because the bridge is unmanaged at the kernel level (no
+// matching network entry to delete), we fall back to `ip link delete`
+// to take the kernel bridge down. Either way, the entry stops showing
+// in the UI.
+func cleanupRedundantIncusbr0(ctx context.Context, job *LXDEnableJob) {
+	const target = "incusbr0"
+
+	// Quick existence probe via `incus network show`. Non-zero exit → not
+	// known to Incus AT ALL; fall through to the kernel-link probe.
+	knownToIncus := exec.Command("incus", "network", "show", target).Run() == nil
+
+	// Pull a JSON view to learn whether anything is using it.
+	if knownToIncus {
+		out, err := exec.Command("incus", "network", "list", "--format", "json").Output()
+		if err == nil {
+			var raw []struct {
+				Name   string   `json:"name"`
+				UsedBy []string `json:"used_by"`
+			}
+			if json.Unmarshal(out, &raw) == nil {
+				for _, n := range raw {
+					if n.Name == target && len(n.UsedBy) > 0 {
+						job.log(fmt.Sprintf("Skipping %s cleanup: %d user(s) reference it.", target, len(n.UsedBy)))
+						return
+					}
+				}
+			}
+		}
 	}
-	for _, r := range remotes {
+
+	// Kernel-link probe. If the device doesn't exist there either, we're
+	// fully clean — nothing to do.
+	linkOut, _ := exec.Command("ip", "link", "show", "dev", target).Output()
+	if len(linkOut) == 0 && !knownToIncus {
+		return
+	}
+
+	job.log("Removing redundant " + target + " bridge (host-nat is the canonical NAT now)…")
+
+	// Incus-side delete first. Tolerate failure — the bridge may be a
+	// pure kernel object with no Incus record.
+	if knownToIncus {
+		_ = runLXCLog(ctx, job, "network", "delete", target)
+	}
+
+	// Kernel-link delete cleans up the bridge interface itself when the
+	// network was unmanaged (no `incus network` record but a real bridge
+	// device with an IP that the UI surfaced). Best-effort.
+	if exec.Command("ip", "link", "show", "dev", target).Run() == nil {
+		out, err := exec.Command("sudo", "/usr/sbin/ip", "link", "delete", "dev", target).CombinedOutput()
+		if err != nil {
+			job.log("Warning: " + target + " kernel link still present: " + strings.TrimSpace(string(out)))
+		}
+	}
+}
+
+// cleanupDeadImageRemotes removes the legacy `ubuntu` / `ubuntu-daily`
+// remotes if they are present. Idempotent — `incus remote remove`
+// returns non-zero when the remote is absent, which we silently tolerate.
+func cleanupDeadImageRemotes(ctx context.Context, job *LXDEnableJob) {
+	for _, name := range []string{"ubuntu", "ubuntu-daily"} {
 		out, _ := exec.Command("incus", "remote", "list", "--format", "csv").Output()
-		if strings.Contains(string(out), r.name+",") {
-			job.log("Image remote " + r.name + " already registered.")
+		if !strings.Contains(string(out), name+",") {
 			continue
 		}
-		job.log("Adding image remote " + r.name + " (" + r.url + ")…")
-		if err := runLXCLog(ctx, job, "remote", "add", r.name, r.url,
-			"--protocol=simplestreams", "--public"); err != nil {
-			job.log("Warning: could not register " + r.name + " remote: " + err.Error())
+		job.log("Removing legacy image remote " + name + " (no longer publishes Incus-compatible streams)…")
+		if err := runLXCLog(ctx, job, "remote", "remove", name); err != nil {
+			job.log("Warning: could not remove " + name + " remote: " + err.Error())
 		}
 	}
 }
 
 // lxdInitFreshPreseed runs `sudo incus admin init --preseed` for a brand-new
-// Incus installation. Preseed schema is identical to LXD's (Incus is a hard
-// fork) — ZNAS keeps the dataset name "LXD-<hostname>" so `lxd-to-incus` style
-// in-place migrations don't have to rename the backing dataset.
+// Incus installation. Dataset name "LXD-<hostname>" is kept for historical
+// continuity with portal versions ≤ 6.4.x that ran LXD; a name change today
+// would force every existing host to recreate its storage pool.
 func lxdInitFreshPreseed(ctx context.Context, storagePool, hostname string, job *LXDEnableJob) error {
 	dataset := storagePool + "/LXD-" + hostname
 	preseed := fmt.Sprintf(`config:
@@ -493,22 +751,163 @@ projects:
   name: default
 `, dataset)
 
-	lxdBin := lxdBinaryPath()
-	job.log("Running incus admin init --preseed (" + lxdBin + ")…")
-	cmd := exec.CommandContext(ctx, "sudo", lxdBin, "admin", "init", "--preseed")
-	cmd.Stdin = strings.NewReader(preseed)
-	out, err := cmd.CombinedOutput()
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line != "" {
-			job.log(line)
+	// Pre-flight: a leftover dataset from a prior failed init is the #1 cause
+	// of `incus admin init --preseed` returning "Provided ZFS pool (or dataset)
+	// isn't empty". Detect and clean it up before init so the wizard works on
+	// retry without manual zfs commands.
+	if datasetExistsAndIncusEmpty(dataset) {
+		job.log("Found pre-existing empty Incus dataset " + dataset + " from a previous attempt — destroying so init can proceed.")
+		out, err := exec.Command("sudo", "/usr/sbin/zfs", "destroy", "-r", dataset).CombinedOutput()
+		if err != nil {
+			msg := "stale dataset " + dataset + " could not be removed: " + strings.TrimSpace(string(out)) +
+				" — destroy it manually with `sudo zfs destroy -r " + dataset + "` and retry"
+			job.setStep(2, "error", msg)
+			return fmt.Errorf("preseed cleanup: %s", msg)
 		}
 	}
+
+	lxdBin := lxdBinaryPath()
+
+	// Gate the preseed on the daemon being ready. Right after `apt install
+	// incus` on a fresh Ubuntu 26.04 host, incus.socket is registered with
+	// systemd but the incusd process is still starting; calling
+	// `incus admin init` in that window can block silently on the unix
+	// socket connect. `waitready` triggers socket activation explicitly
+	// and returns as soon as the daemon answers — or with a clear error
+	// after `--timeout`. 120 s matches the Ubuntu Incus package's own
+	// `ExecStartPost=incusd waitready --timeout=120` so we never wait
+	// longer than the system would have on its own.
+	job.log("Waiting for the Incus daemon socket (incus admin waitready, max 120 s)…")
+	waitCtx, waitCancel := context.WithTimeout(ctx, 130*time.Second)
+	if out, err := exec.CommandContext(waitCtx, "sudo", lxdBin, "admin", "waitready", "--timeout=120").CombinedOutput(); err != nil {
+		waitCancel()
+		errMsg := lastNonEmptyLine(string(out))
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		full := "incus admin waitready failed (daemon not responding): " + errMsg
+		job.setStep(2, "error", full)
+		return fmt.Errorf("incus admin waitready: %s", errMsg)
+	}
+	waitCancel()
+
+	// Wrap the preseed itself in a hard timeout so a stuck init can't sit
+	// silently forever. 5 minutes is generous — on a healthy host the
+	// preseed is sub-second; if it's still running at 5 min something
+	// systemic is wrong (network drop, ZFS pool unresponsive, etc.) and
+	// the user is better off seeing a clear error than the spinner.
+	job.log("Running incus admin init --preseed (" + lxdBin + ")…")
+	initCtx, initCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer initCancel()
+	cmd := exec.CommandContext(initCtx, "sudo", lxdBin, "admin", "init", "--preseed")
+	cmd.Stdin = strings.NewReader(preseed)
+
+	// Stream stderr line-by-line into the activity log instead of using
+	// CombinedOutput. The buffered form held back any progress incus
+	// emits so the UI couldn't tell apart "still working" from "stuck"
+	// — a real production failure on 192.168.2.5 (Ubuntu 26.04, fresh
+	// install, May 2026) lost SSH while this call was outstanding and
+	// the activity panel had no clue why.
+	stderrPipe, perr := cmd.StderrPipe()
+	if perr != nil {
+		job.setStep(2, "error", "stderr pipe: "+perr.Error())
+		return fmt.Errorf("stderr pipe: %w", perr)
+	}
+	stdoutPipe, perr := cmd.StdoutPipe()
+	if perr != nil {
+		job.setStep(2, "error", "stdout pipe: "+perr.Error())
+		return fmt.Errorf("stdout pipe: %w", perr)
+	}
+	if err := cmd.Start(); err != nil {
+		job.setStep(2, "error", "start: "+err.Error())
+		return fmt.Errorf("start: %w", err)
+	}
+	var (
+		combined strings.Builder
+		combMu   sync.Mutex
+		drained  sync.WaitGroup
+	)
+	streamReader := func(r io.Reader) {
+		defer drained.Done()
+		buf := bufio.NewScanner(r)
+		buf.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for buf.Scan() {
+			line := buf.Text()
+			if line == "" {
+				continue
+			}
+			job.log(line)
+			combMu.Lock()
+			combined.WriteString(line)
+			combined.WriteByte('\n')
+			combMu.Unlock()
+		}
+	}
+	drained.Add(2)
+	go streamReader(stderrPipe)
+	go streamReader(stdoutPipe)
+	err := cmd.Wait()
+	drained.Wait()
 	if err != nil {
-		job.setStep(2, "error", "incus admin init failed: "+err.Error())
-		return fmt.Errorf("incus admin init: %w", err)
+		// Distinguish a context-timeout from a real init error so the
+		// surfaced message matches the actual failure mode.
+		errMsg := lastNonEmptyLine(combined.String())
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		if initCtx.Err() == context.DeadlineExceeded {
+			full := "incus admin init timed out after 5 minutes (daemon may have hung — check `incus admin sql global \"select * from instances\"` and the system journal). Cleanup any stale dataset under " + dataset + " and retry."
+			job.setStep(2, "error", full)
+			return fmt.Errorf("incus admin init: timeout: %s", errMsg)
+		}
+		full := "incus admin init failed: " + errMsg
+		job.setStep(2, "error", full)
+		return fmt.Errorf("incus admin init: %s", errMsg)
 	}
 	job.setStep(2, "done", "")
 	return nil
+}
+
+// datasetExistsAndIncusEmpty returns true when the named dataset exists AND
+// Incus has no storage pool registered yet. The combination indicates a stale
+// dataset left behind by a previous failed `incus admin init` run.
+func datasetExistsAndIncusEmpty(dataset string) bool {
+	// Probe dataset existence. Use absolute path because /usr/sbin is not on
+	// the systemd-spawned service's PATH by default.
+	if err := exec.Command("/usr/sbin/zfs", "list", "-H", "-o", "name", dataset).Run(); err != nil {
+		return false
+	}
+	// Probe Incus storage list. Run via sudo because the running zfsnas
+	// service was added to the `incus-admin` group earlier in the same job
+	// (`usermod -a -G incus-admin zfsnas`), but the kernel only refreshes
+	// supplementary groups when the process re-execs. Without sudo here,
+	// `incus storage list` fails with "permission denied", the function
+	// returns false (conservative), the stale-dataset cleanup is skipped,
+	// and the preseed init then dies with "isn't empty". Sudo bypasses
+	// the group check entirely.
+	out, err := exec.Command("sudo", lxdBinaryPath(), "storage", "list", "--format", "csv").Output()
+	if err != nil {
+		// If we still can't query incus (daemon down, etc.), be
+		// conservative and leave the dataset alone.
+		return false
+	}
+	return len(strings.TrimSpace(string(out))) == 0
+}
+
+// lastNonEmptyLine returns the last non-empty line of s. Used to surface
+// the most actionable error message when a CLI tool prints multiple lines.
+func lastNonEmptyLine(s string) string {
+	for i := len(s) - 1; i >= 0; i-- {
+		// Find end-of-line backwards.
+	}
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l != "" {
+			return l
+		}
+	}
+	return ""
 }
 
 // lxdConfigureExisting applies incremental configuration to an already-initialised LXD:
@@ -569,10 +968,12 @@ func lxdConfigureExisting(ctx context.Context, storagePool, hostname string, job
 
 type bridgeCandidate struct {
 	NIC     string
+	MAC     string // L2 address of the source NIC, copied to the bridge to preserve DHCP leases
 	IP      string
 	Prefix  int
 	Gateway string
 	Bridge  string
+	IsDHCP  bool // when true, the bridge is written as `inet dhcp` instead of `inet static`
 }
 
 func lxdStep3Bridges(ctx context.Context, job *LXDEnableJob) error {
@@ -624,6 +1025,18 @@ func lxdStep3Bridges(ctx context.Context, job *LXDEnableJob) error {
 		return fmt.Errorf("write /etc/network/interfaces: %w", err)
 	}
 
+	// Pin a stable DHCP Client-ID for each bridge that uses DHCP. With
+	// `hwaddress ether <mac>` the bridge inherits the source NIC's MAC,
+	// but dhcpcd's default RFC-4361 Client-ID embeds a freshly-generated
+	// DUID with a creation timestamp — so the DHCP server still sees a
+	// "new" client and hands out a different lease. Writing a Type-1
+	// hardware-address client-id (`01:<mac>`) for the bridge name makes
+	// the same lease come back, keeping the host's IP stable across the
+	// bridge step. Best-effort.
+	if err := pinDhcpcdBridgeClientIDs(candidates, func(s string) { job.log(s) }); err != nil {
+		job.log("Warning: could not pin dhcpcd client-id for bridge(s): " + err.Error() + " (IP may change)")
+	}
+
 	// Restart networking
 	job.log("Restarting networking (your connection may briefly drop)…")
 	if err := runCmdLog(ctx, job, "/usr/bin/systemctl", "restart", "networking"); err != nil {
@@ -635,16 +1048,63 @@ func lxdStep3Bridges(ctx context.Context, job *LXDEnableJob) error {
 	return nil
 }
 
+// dhcpcdBridgeMarkerStart and dhcpcdBridgeMarkerEnd wrap the bridge-step
+// section of /etc/dhcpcd.conf so it can be re-written idempotently across
+// repeated enable/uninstall cycles without bloating the file.
+const (
+	dhcpcdBridgeMarkerStart = "# >>> ZNAS bridge step — vmbrN clientid pinning >>>"
+	dhcpcdBridgeMarkerEnd   = "# <<< ZNAS bridge step — vmbrN clientid pinning <<<"
+)
+
+// pinDhcpcdBridgeClientIDs writes per-bridge `clientid` directives into
+// /etc/dhcpcd.conf so dhcpcd presents the SAME identifier to the DHCP
+// server it would have presented for the underlying NIC (Type-1 hardware
+// address: `01:<mac>`). Without this, the bridge step gets a new lease
+// even though the bridge inherits the NIC's L2 address.
+func pinDhcpcdBridgeClientIDs(cands []bridgeCandidate, log func(string)) error {
+	const path = "/etc/dhcpcd.conf"
+	var block strings.Builder
+	block.WriteString(dhcpcdBridgeMarkerStart + "\n")
+	wrote := 0
+	for _, c := range cands {
+		if !c.IsDHCP || c.MAC == "" {
+			continue
+		}
+		// `formatDhcpcdClientID` lives in netplan_migrate.go and converts
+		// "10666af8c2f0" to "10:66:6a:f8:c2:f0" — but we already have the
+		// MAC in colon form here, so prefix `01:` directly.
+		fmt.Fprintf(&block, "interface %s\n    clientid 01:%s\n", c.Bridge, c.MAC)
+		wrote++
+		log(fmt.Sprintf("    %s ← clientid 01:%s (matches inherited MAC, keeps DHCP lease stable)",
+			c.Bridge, c.MAC))
+	}
+	block.WriteString(dhcpcdBridgeMarkerEnd + "\n")
+	if wrote == 0 {
+		return nil
+	}
+
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	stripped := stripBlockBetweenMarkers(string(existing), dhcpcdBridgeMarkerStart, dhcpcdBridgeMarkerEnd)
+	stripped = strings.TrimRight(stripped, "\n") + "\n\n"
+	out := stripped + block.String()
+	return writeRoot(path, []byte(out), 0o644)
+}
+
 // ipAddrIface is a minimal parse of one entry from `ip -j addr`.
 type ipAddrIface struct {
 	IfName   string `json:"ifname"`
 	LinkType string `json:"link_type"`
+	Address  string `json:"address"` // L2 address, used to keep DHCP leases stable when bridging
 	Flags    []string `json:"flags"`
 	Master   string `json:"master"`
 	AddrInfo []struct {
 		Family    string `json:"family"`
 		Local     string `json:"local"`
 		PrefixLen int    `json:"prefixlen"`
+		Dynamic   bool   `json:"dynamic,omitempty"` // true on DHCP-assigned addresses
 	} `json:"addr_info"`
 }
 
@@ -657,6 +1117,33 @@ type ipRouteEntry struct {
 
 // virtualIfRe matches names that are clearly not physical NICs.
 var virtualIfRe = regexp.MustCompile(`^(vmbr|lxdbr|br-|virbr|docker|tap|tun|dummy|lo|bond|team)`)
+
+// ifupdownNICIsDHCP reports whether /etc/network/interfaces declares the
+// given NIC as `inet dhcp`. Used as a fallback when the runtime
+// `addr_info[].dynamic` flag is missing (e.g. the lease has been renewed
+// manually with a static address). Returns false on any read/parse failure
+// — defaults to "treat as static" which preserves the existing IP as a
+// safer fallback than guessing DHCP wrong.
+func ifupdownNICIsDHCP(nic string) bool {
+	data, err := os.ReadFile("/etc/network/interfaces")
+	if err != nil {
+		return false
+	}
+	want := "iface " + nic + " inet "
+	for _, line := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, want) {
+			continue
+		}
+		mode := strings.TrimSpace(strings.TrimPrefix(t, want))
+		// Stanza may continue with extra tokens; check only the first.
+		if i := strings.IndexAny(mode, " \t"); i >= 0 {
+			mode = mode[:i]
+		}
+		return mode == "dhcp"
+	}
+	return false
+}
 
 func detectBridgeCandidates() ([]bridgeCandidate, error) {
 	// Get all interfaces
@@ -701,16 +1188,28 @@ func detectBridgeCandidates() ([]bridgeCandidate, error) {
 		if _, err := os.Stat("/sys/class/net/" + iface.IfName + "/device"); err != nil {
 			continue
 		}
-		// Must already be a bridge member or have an IP we can move
-		// Find IPv4 address
+		// Must already be a bridge member or have an IP we can move.
+		// Capture both the address and whether it was DHCP-assigned so the
+		// bridge stanza preserves the original mode (DHCP→DHCP, static→static)
+		// — otherwise a host on DHCP gets pinned to whatever IP it happened
+		// to hold at enable time, and DHCP can later lease that IP elsewhere.
 		ip := ""
 		prefix := 0
+		isDHCP := false
 		for _, a := range iface.AddrInfo {
 			if a.Family == "inet" {
 				ip = a.Local
 				prefix = a.PrefixLen
+				isDHCP = a.Dynamic
 				break
 			}
+		}
+		// Cross-check against /etc/network/interfaces for the source NIC's
+		// stanza — if the file already says `inet dhcp`, trust that over the
+		// runtime flag (more reliable for hosts where the address became
+		// non-dynamic mid-session, e.g. after a manual edit).
+		if !isDHCP && ifupdownNICIsDHCP(iface.IfName) {
+			isDHCP = true
 		}
 		if ip == "" {
 			continue
@@ -719,10 +1218,12 @@ func detectBridgeCandidates() ([]bridgeCandidate, error) {
 		bridgeIdx++
 		candidates = append(candidates, bridgeCandidate{
 			NIC:     iface.IfName,
+			MAC:     iface.Address,
 			IP:      ip,
 			Prefix:  prefix,
 			Gateway: gwByDev[iface.IfName],
 			Bridge:  bridge,
+			IsDHCP:  isDHCP,
 		})
 	}
 	return candidates, nil
@@ -820,21 +1321,33 @@ func rewriteInterfacesForBridges(content string, candidates []bridgeCandidate) s
 		if meta != nil && meta.mtu != "" {
 			nicBlock += fmt.Sprintf("    mtu %s\n", meta.mtu)
 		}
-		bridgeBlock := fmt.Sprintf("\nauto %s\niface %s inet static\n    address %s/%d\n",
-			c.Bridge, c.Bridge, c.IP, c.Prefix)
-		if c.Gateway != "" {
-			bridgeBlock += fmt.Sprintf("    gateway %s\n", c.Gateway)
-		}
-		if meta != nil && meta.dns != "" {
-			bridgeBlock += fmt.Sprintf("    dns-nameservers %s\n", meta.dns)
-		}
-		if meta != nil && meta.search != "" {
-			bridgeBlock += fmt.Sprintf("    dns-search %s\n", meta.search)
+		// Preserve the source NIC's addressing mode on the bridge: if the
+		// host was on DHCP, write `inet dhcp` so the bridge keeps renewing
+		// its lease; if it was static, write `inet static` with the captured
+		// address/gateway/DNS. Pinning a DHCP host to its current IP
+		// silently breaks if the DHCP server later leases that IP elsewhere.
+		var bridgeBlock string
+		if c.IsDHCP {
+			bridgeBlock = fmt.Sprintf("\nauto %s\niface %s inet dhcp\n", c.Bridge, c.Bridge)
+			// dns-nameservers under inet dhcp is a no-op without resolvconf;
+			// kept off so we don't suggest a config the system won't apply.
+		} else {
+			bridgeBlock = fmt.Sprintf("\nauto %s\niface %s inet static\n    address %s/%d\n",
+				c.Bridge, c.Bridge, c.IP, c.Prefix)
+			if c.Gateway != "" {
+				bridgeBlock += fmt.Sprintf("    gateway %s\n", c.Gateway)
+			}
+			if meta != nil && meta.dns != "" {
+				bridgeBlock += fmt.Sprintf("    dns-nameservers %s\n", meta.dns)
+			}
+			if meta != nil && meta.search != "" {
+				bridgeBlock += fmt.Sprintf("    dns-search %s\n", meta.search)
+			}
 		}
 		if meta != nil && meta.mtu != "" {
 			bridgeBlock += fmt.Sprintf("    mtu %s\n", meta.mtu)
 		}
-		bridgeBlock += fmt.Sprintf("    bridge_ports %s\n    bridge_stp off\n    bridge_fd 0\n    bridge-vlan-aware yes\n    bridge-vids 2-4094\n", c.NIC)
+		bridgeBlock += bridgeKernelStanzaTail(c, kernelGTE7())
 		result += nicBlock + bridgeBlock
 	}
 	return result
@@ -887,7 +1400,7 @@ func lxdStep5MemComp(ctx context.Context, job *LXDEnableJob) {
 	}
 
 	job.log("Enabling memory compression with Balanced profile (25% RAM, zstd)…")
-	if err := ApplyMemCompConfig(MemCompConfig{Enabled: true, PercentRAM: 25, Algorithm: "zstd"}); err != nil {
+	if _, err := ApplyMemCompConfig(MemCompConfig{Enabled: true, PercentRAM: 25, Algorithm: "zstd"}); err != nil {
 		job.log("Warning: enable memory compression failed: " + err.Error())
 		job.setStep(5, "error", "enable memory compression failed: "+err.Error())
 		return

@@ -54,6 +54,7 @@ const (
 	ActionMemCompDisable  = "mem_comp_disable"
 	ActionMemCompConfig   = "mem_comp_config"
 	ActionMemCompInstall  = "mem_comp_install"
+	ActionNetworkMigrate  = "network_migrate"
 	ActionApplyUpdates    = "apply_updates"
 	ActionGrowPool        = "grow_pool"
 	ActionExportPool      = "export_pool"
@@ -150,15 +151,19 @@ const (
 	ActionIncusDeleteSnapshot   = "incus_delete_snapshot"
 	ActionIncusClone            = "incus_clone"
 	ActionIncusMoveStorage      = "incus_move_storage"
+	ActionIncusDiskMove         = "incus_disk_move" // v6.5.37 — per-disk move via Related Objects burger menu
 	ActionProxmoxImport         = "proxmox_import"
 	ActionIncusEnable           = "incus_enable"
+	ActionIncusUninstall        = "incus_uninstall"
 	ActionIncusStorageCreate    = "incus_storage_create"
 	ActionIncusStorageEdit      = "incus_storage_edit"
 	ActionIncusStorageDelete    = "incus_storage_delete"
 	ActionIncusMetricsToggle    = "incus_metrics_toggle"     // v6.4.28 — enable/disable Incus prometheus endpoint + portal scraper
 	ActionIncusGlobalConfigEdit = "incus_global_config_edit" // v6.4.28 — admin edited Incus global config keys
-	ActionIncusMigrate          = "incus_migrate_from_lxd"   // v6.5.2 — one-shot LXD → Incus migration via lxd-to-incus
 	ActionIncusStateChange      = "incus_state_change"       // v6.5.3 — VM/container changed runtime state (logged by the state watcher, including out-of-band changes)
+	ActionISOUpload             = "iso_upload"               // v6.5.8 — ISO uploaded into <pool>/.isos/ via the ISO Management modal
+	ActionISOFetch              = "iso_fetch"                // v6.5.8 — ISO downloaded from URL into <pool>/.isos/ via the server-side fetch job
+	ActionISODelete             = "iso_delete"               // v6.5.8 — ISO removed from <pool>/.isos/
 
 	// Back-compat Go aliases. Old callers compile unchanged. ZNAS now writes
 	// the new strings, but these aliases let imports that still say e.g.
@@ -180,6 +185,7 @@ const (
 	ActionLXDClone            = ActionIncusClone
 	ActionLXDMoveStorage      = ActionIncusMoveStorage
 	ActionLXDEnable           = ActionIncusEnable
+	ActionLXDUninstall        = ActionIncusUninstall
 	ActionLXDStorageCreate    = ActionIncusStorageCreate
 	ActionLXDStorageEdit      = ActionIncusStorageEdit
 	ActionLXDStorageDelete    = ActionIncusStorageDelete

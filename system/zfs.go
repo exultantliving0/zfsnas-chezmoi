@@ -1177,7 +1177,13 @@ func CreatePool(name, layout string, ashift int, compression, dedup string, devi
 		devPaths = append(devPaths, puPath)
 	}
 
+	// `cachefile=/etc/zfs/zpool.cache` is critical: without it, OpenZFS
+	// 2.x leaves the cache property at "none" for newly-created pools,
+	// so `zfs-import-cache.service` never finds the pool at boot and
+	// the user comes back to "no pools available". Same dance applied
+	// in ImportPool / ImportPoolForce so an imported pool also persists.
 	args := []string{"zpool", "create", "-f",
+		"-o", "cachefile=/etc/zfs/zpool.cache",
 		"-o", fmt.Sprintf("ashift=%d", ashift),
 		"-O", "atime=off",
 	}
@@ -1869,9 +1875,12 @@ func DestroyPool(name string) error {
 	return nil
 }
 
-// ImportPool imports a named pool.
+// ImportPool imports a named pool. `-o cachefile=/etc/zfs/zpool.cache`
+// records the pool in the system cache so zfs-import-cache.service brings
+// it back up automatically after the next reboot.
 func ImportPool(name string) error {
-	out, err := exec.Command("sudo", "zpool", "import", name).CombinedOutput()
+	out, err := exec.Command("sudo", "zpool", "import",
+		"-o", "cachefile=/etc/zfs/zpool.cache", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
@@ -1890,9 +1899,11 @@ func UpgradePool(name string) error {
 }
 
 // ImportPoolForce imports a named pool with -f (force), bypassing the
-// "previously in use" safety check.
+// "previously in use" safety check. Same cachefile semantics as
+// ImportPool — persists the pool across reboots.
 func ImportPoolForce(name string) error {
-	out, err := exec.Command("sudo", "zpool", "import", "-f", name).CombinedOutput()
+	out, err := exec.Command("sudo", "zpool", "import", "-f",
+		"-o", "cachefile=/etc/zfs/zpool.cache", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}

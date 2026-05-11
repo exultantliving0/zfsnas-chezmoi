@@ -23,8 +23,19 @@ func HandleMemCompStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleMemCompConfig applies a new configuration. The request body is the
-// MemCompConfig struct in system/memcomp.go. ApplyMemCompConfig handles the
-// reconfigure-safety check itself; we just translate its error into a 4xx.
+// MemCompConfig struct in system/memcomp.go.
+//
+// Three response shapes:
+//   - 200 + status snapshot — applied live (Outcome.Status="applied").
+//   - 200 + outcome JSON    — saved for next reboot (Outcome.Status="deferred",
+//                             requested by the UI with Mode="defer").
+//   - 409 + outcome JSON    — needs_decision: too much data is currently
+//                             held in zram to safely shrink it now. The body
+//                             carries OrigDataBytes/HeadroomBytes so the UI
+//                             can show the user the breakdown and offer the
+//                             "wait & retry" or "apply on next reboot" paths.
+//
+// Hard errors (validation, systemctl) still return 500/400 with {error: …}.
 // PUT /api/memcomp/config
 func HandleMemCompConfig(w http.ResponseWriter, r *http.Request) {
 	var cfg system.MemCompConfig
@@ -35,24 +46,30 @@ func HandleMemCompConfig(w http.ResponseWriter, r *http.Request) {
 	sess := MustSession(r)
 	prev := system.GetMemCompStatus()
 
-	if err := system.ApplyMemCompConfig(cfg); err != nil {
+	outcome, err := system.ApplyMemCompConfig(cfg)
+	if err != nil {
 		audit.Log(audit.Entry{
 			User: sess.Username, Role: sess.Role,
 			Action: audit.ActionMemCompConfig, Result: audit.ResultError,
 			Details: err.Error(),
 		})
-		// Reconfigure-safety errors are 4xx (the user can fix them by freeing
-		// RAM); other errors (systemctl failures etc.) are 5xx.
-		status := http.StatusInternalServerError
-		if cfg.Enabled && prev.Enabled && cfg.PercentRAM < prev.PercentRAM {
-			status = http.StatusConflict
-		}
-		jsonErr(w, status, err.Error())
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if outcome.Status == "needs_decision" {
+		// 409 Conflict — the UI shows its 3-button modal and re-calls this
+		// endpoint with Mode="defer" or after the user has freed memory.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(outcome)
 		return
 	}
 
 	// Pick the right audit action so the audit log differentiates between
-	// "first turn-on", "shut off", and "tweak in place".
+	// "first turn-on", "shut off", and "tweak in place" — and tag deferred
+	// applies so an admin grepping the log can see why a host's live state
+	// disagrees with its on-disk config until the next reboot.
 	action := audit.ActionMemCompConfig
 	switch {
 	case cfg.Enabled && !prev.Enabled:
@@ -63,9 +80,14 @@ func HandleMemCompConfig(w http.ResponseWriter, r *http.Request) {
 	audit.Log(audit.Entry{
 		User: sess.Username, Role: sess.Role,
 		Action: action, Result: audit.ResultOK,
-		Details: fmt.Sprintf("enabled=%v percent_ram=%d algorithm=%s",
-			cfg.Enabled, cfg.PercentRAM, cfg.Algorithm),
+		Details: fmt.Sprintf("enabled=%v percent_ram=%d algorithm=%s mode=%s",
+			cfg.Enabled, cfg.PercentRAM, cfg.Algorithm, outcome.Status),
 	})
+
+	if outcome.Status == "deferred" {
+		jsonOK(w, outcome)
+		return
+	}
 	jsonOK(w, system.GetMemCompStatus())
 }
 

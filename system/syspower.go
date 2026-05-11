@@ -12,11 +12,12 @@ import (
 
 // SystemPowerAvailability contains current settings and feature availability flags.
 type SystemPowerAvailability struct {
-	Current             config.SystemPowerConfig `json:"current"`
-	CPUFreqAvailable    bool                     `json:"cpufreq_available"`
-	PowerProfilesAvail  bool                     `json:"power_profiles_available"`
-	AvailableGovernors  []string                 `json:"available_governors"`
-	PCIeASPMAvailable   bool                     `json:"pcie_aspm_available"`
+	Current                config.SystemPowerConfig `json:"current"`
+	CPUFreqAvailable       bool                     `json:"cpufreq_available"`
+	PowerProfilesAvail     bool                     `json:"power_profiles_available"`
+	AvailableGovernors     []string                 `json:"available_governors"`
+	PCIeASPMAvailable      bool                     `json:"pcie_aspm_available"`
+	AvailableASPMPolicies  []string                 `json:"available_aspm_policies"`
 }
 
 // GetSystemPowerAvailability reads current active settings + detects feature support.
@@ -54,17 +55,26 @@ func GetSystemPowerAvailability() SystemPowerAvailability {
 		avail.Current.USBAutosuspend = &enabled
 	}
 
-	// PCIe ASPM
+	// PCIe ASPM. Format is like `[default] performance powersave powersupersave`
+	// — bracketed token is the CURRENT policy, the rest are also valid choices.
+	// The set of policies the kernel will accept is exactly the tokens
+	// present on this line; on hosts where ASPM is disabled at compile time
+	// or via the boot cmdline, fewer tokens appear and writes to other
+	// values are rejected. Surface the parsed list so the UI can filter the
+	// dropdown to only show what's actually accepted, same pattern as the
+	// CPU-governor handling above.
 	aspmPath := "/sys/module/pcie_aspm/parameters/policy"
 	if data, err := os.ReadFile(aspmPath); err == nil {
 		avail.PCIeASPMAvailable = true
-		// Format is like: [default] performance powersave powersupersave
 		raw := strings.TrimSpace(string(data))
 		for _, token := range strings.Fields(raw) {
-			if strings.HasPrefix(token, "[") && strings.HasSuffix(token, "]") {
-				avail.Current.PCIeASPM = strings.Trim(token, "[]")
-				break
+			policy := token
+			isCurrent := strings.HasPrefix(token, "[") && strings.HasSuffix(token, "]")
+			if isCurrent {
+				policy = strings.Trim(token, "[]")
+				avail.Current.PCIeASPM = policy
 			}
+			avail.AvailableASPMPolicies = append(avail.AvailableASPMPolicies, policy)
 		}
 	}
 

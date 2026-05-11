@@ -364,8 +364,22 @@ func getAllSystemUsersGroupsWithIDs() (users []UserEntry, groups []GroupEntry, e
 
 // ── userGroupExists ───────────────────────────────────────────────────────────
 
-// userExists checks that owner is present in /etc/passwd.
+// numericIDRe matches a bare unsigned integer up to 10 digits — wide enough
+// for any Linux UID/GID (they're uint32, max 4294967295, 10 digits) but
+// narrow enough to keep ChownPath's owner/group strings free of shell
+// metacharacters before they reach `sudo chown`.
+var numericIDRe = regexp.MustCompile(`^[0-9]{1,10}$`)
+
+// userExists accepts either a name present in /etc/passwd OR a bare
+// numeric UID. The numeric path supports the File Browser's "Custom ID"
+// dropdown entry — chown(1) takes numeric UIDs natively, and the
+// `chown *` sudoers rule already covers them. Path scoping for the
+// resulting chown is enforced by SafeJoin in the handler, so a numeric
+// UID can't escape the dataset/share root the user is currently inside.
 func userExists(owner string) bool {
+	if numericIDRe.MatchString(owner) {
+		return true
+	}
 	f, err := os.Open("/etc/passwd")
 	if err != nil {
 		return false
@@ -381,8 +395,12 @@ func userExists(owner string) bool {
 	return false
 }
 
-// groupExists checks that group is present in /etc/group.
+// groupExists accepts either a name present in /etc/group OR a bare
+// numeric GID — same rationale as userExists above.
 func groupExists(group string) bool {
+	if numericIDRe.MatchString(group) {
+		return true
+	}
 	f, err := os.Open("/etc/group")
 	if err != nil {
 		return false

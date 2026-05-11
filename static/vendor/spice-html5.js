@@ -4250,6 +4250,67 @@ SpiceMsgCursorSet.prototype =
 }
 
 
+// znas-patch (v6.5.28, v6.5.30 letterbox-aware): compute the pointer
+// position in framebuffer-space pixels from a DOM mouse event.
+//
+// ZNAS' VGA console sizes the canvas box to exactly match its container
+// (width:100%/height:100%) and uses object-fit:contain to fit the drawing
+// inside while preserving the guest aspect ratio. When the container's
+// aspect doesn't match the guest's, there's a letterbox band on one axis.
+// The upstream `e.clientX - canvas.offsetLeft` math:
+//   1) ignores CSS scaling (broke on v6.5.28 — fixed via rect-scaling)
+//   2) ignores letterbox offsets (broke a click in the letterbox area —
+//      the upstream code would map the click to the same letterbox
+//      coordinate on the framebuffer, sending bogus out-of-range coords)
+//
+// This version computes the actual drawn-content region inside the canvas
+// box (subtracting the letterbox pad on the shorter axis), maps the
+// pointer into that region, then clamps to the framebuffer extent so a
+// click in the letterbox snaps to the nearest edge of the framebuffer
+// (cv.width-1 / cv.height-1) rather than an out-of-bounds coord.
+function _znasMouseFB(sc, e) {
+    var cv = sc.display.surfaces[sc.display.primary_surface].canvas;
+    var rect = cv.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || cv.width <= 0 || cv.height <= 0) {
+        return { x: 0, y: 0 };
+    }
+
+    // Figure out the drawn-content region inside the box. object-fit:contain
+    // scales the content to fit either width or height (whichever is
+    // tighter) and centers it; the other axis gets equal padding on both
+    // sides.
+    var contentAspect = cv.width / cv.height;
+    var boxAspect     = rect.width / rect.height;
+    var drawnW, drawnH, padX, padY;
+    if (boxAspect > contentAspect) {
+        // Box wider than content → height fits exactly, horizontal pad.
+        drawnH = rect.height;
+        drawnW = drawnH * contentAspect;
+        padX = (rect.width - drawnW) / 2;
+        padY = 0;
+    } else {
+        // Box taller than content (or aspect equal) → width fits exactly,
+        // vertical pad. The "missing pixels at the bottom" case usually
+        // lands here because guest framebuffers are typically wider than
+        // the available console area once the toolbar is subtracted.
+        drawnW = rect.width;
+        drawnH = drawnW / contentAspect;
+        padX = 0;
+        padY = (rect.height - drawnH) / 2;
+    }
+
+    var localX = e.clientX - rect.left - padX;
+    var localY = e.clientY - rect.top  - padY;
+    var fbX = Math.round(localX * cv.width  / drawnW);
+    var fbY = Math.round(localY * cv.height / drawnH);
+    // Clamp to framebuffer extent so a click in the letterbox doesn't
+    // produce a negative or out-of-range coord — SPICE rejects those and
+    // the guest desktop sees no event at all.
+    if (fbX < 0) fbX = 0; else if (fbX > cv.width  - 1) fbX = cv.width  - 1;
+    if (fbY < 0) fbY = 0; else if (fbY > cv.height - 1) fbY = cv.height - 1;
+    return { x: fbX, y: fbY };
+}
+
 function SpiceMsgcMousePosition(sc, e)
 {
     // FIXME - figure out how to correctly compute display_id
@@ -4257,11 +4318,9 @@ function SpiceMsgcMousePosition(sc, e)
     this.buttons_state = sc.buttons_state;
     if (e)
     {
-        var scrollTop = document.body.scrollTop || document.documentElement.scrollTop;
-        var scrollLeft = document.body.scrollLeft || document.documentElement.scrollLeft;
-
-        this.x = e.clientX - sc.display.surfaces[sc.display.primary_surface].canvas.offsetLeft + scrollLeft;
-        this.y = e.clientY - sc.display.surfaces[sc.display.primary_surface].canvas.offsetTop + scrollTop;
+        var p = _znasMouseFB(sc, e);
+        this.x = p.x;
+        this.y = p.y;
         sc.mousex = this.x;
         sc.mousey = this.y;
     }
@@ -4296,16 +4355,22 @@ function SpiceMsgcMouseMotion(sc, e)
     this.buttons_state = sc.buttons_state;
     if (e)
     {
-        this.x = e.clientX - sc.display.surfaces[sc.display.primary_surface].canvas.offsetLeft;
-        this.y = e.clientY - sc.display.surfaces[sc.display.primary_surface].canvas.offsetTop;
+        // znas-patch (v6.5.28): use framebuffer-space coords (see
+        // _znasMouseFB above). The relative-motion delta below is computed
+        // against the previous framebuffer-space mousex/mousey, so we
+        // store the framebuffer values — not the raw CSS-pixel offsets the
+        // upstream code used — to keep the next motion event correct.
+        var p = _znasMouseFB(sc, e);
+        this.x = p.x;
+        this.y = p.y;
 
         if (sc.mousex !== undefined)
         {
             this.x -= sc.mousex;
             this.y -= sc.mousey;
         }
-        sc.mousex = e.clientX - sc.display.surfaces[sc.display.primary_surface].canvas.offsetLeft;
-        sc.mousey = e.clientY - sc.display.surfaces[sc.display.primary_surface].canvas.offsetTop;
+        sc.mousex = p.x;
+        sc.mousey = p.y;
     }
     else
     {

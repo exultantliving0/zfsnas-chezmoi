@@ -3,6 +3,7 @@ package system
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -29,6 +30,20 @@ type ProxmoxVMNIC struct {
 	MAC    string `json:"mac"`    // "AA:BB:CC:DD:EE:FF"
 }
 
+// ProxmoxVMTPM describes a tpmstate0 entry on a Proxmox VM.
+//
+// Proxmox provisions a 4 MiB volume per TPM-equipped VM and runs swtpm
+// with `--tpmstate backend-uri=file://<path>` against it, so the volume's
+// raw bytes ARE the swtpm state (single-file backend, not a filesystem).
+// Incus uses swtpm's directory backend with a `tpm2-00.permall` file; the
+// inner blob format is shared, which is why a drop-in import is worth a
+// best-effort attempt.
+type ProxmoxVMTPM struct {
+	StorageVol string `json:"storage_vol"`     // "<storage>:<volume>"
+	Version    string `json:"version"`         // "v2.0" | "v1.2"
+	SizeBytes  int64  `json:"size_bytes"`
+}
+
 // ProxmoxVMDisk describes one disk on a Proxmox VM.
 type ProxmoxVMDisk struct {
 	Device     string `json:"device"`      // "scsi0", "ide0"
@@ -49,6 +64,8 @@ type ProxmoxVM struct {
 	IsUEFI     bool            `json:"is_uefi"`            // true when bios: ovmf
 	BootDevice string          `json:"boot_device"`        // first device in boot: order=
 	EFIDisk    *ProxmoxVMDisk  `json:"efi_disk,omitempty"` // efidisk0 entry (OVMF vars)
+	SMBIOS1    *LXDSMBIOSType1 `json:"smbios1,omitempty"`  // parsed from "smbios1:" qm config line
+	TPM        *ProxmoxVMTPM   `json:"tpm,omitempty"`      // parsed from "tpmstate0:" qm config line
 	Error      string          `json:"error,omitempty"`
 }
 
@@ -268,7 +285,8 @@ func parseQmConfig(raw string, vm *ProxmoxVM) {
 	diskDevRe := regexp.MustCompile(`^(?:scsi|ide|virtio|sata)\d+$`)
 	efidiskRe := regexp.MustCompile(`^efidisk\d+$`)
 	nicDevRe := regexp.MustCompile(`^net\d+$`)
-	skipDevRe := regexp.MustCompile(`^(?:usb|hostpci|serial|audio|parallel|unused|tpmstate)\d*$`)
+	skipDevRe := regexp.MustCompile(`^(?:usb|hostpci|serial|audio|parallel|unused)\d*$`)
+	tpmstateRe := regexp.MustCompile(`^tpmstate\d+$`)
 
 	var cores, sockets int
 	for _, line := range strings.Split(raw, "\n") {
@@ -304,6 +322,10 @@ func parseQmConfig(raw string, vm *ProxmoxVM) {
 			}
 		case "bios":
 			vm.IsUEFI = (val == "ovmf")
+		case "smbios1":
+			if s := parseProxmoxSMBIOS1(val); s != nil {
+				vm.SMBIOS1 = s
+			}
 		case "boot":
 			// New format: "order=scsi0;ide2"   Old format: "c" / "dc"
 			for _, part := range strings.Split(val, ";") {
@@ -342,6 +364,16 @@ func parseQmConfig(raw string, vm *ProxmoxVM) {
 					SizeBytes:  proxmoxParseDiskSize(sizeStr),
 					SizeStr:    sizeStr,
 				})
+			} else if tpmstateRe.MatchString(key) {
+				if !strings.HasPrefix(val, "none") {
+					storageVol := strings.SplitN(val, ",", 2)[0]
+					sizeStr := proxmoxDiskSizeStr(val)
+					vm.TPM = &ProxmoxVMTPM{
+						StorageVol: storageVol,
+						Version:    proxmoxParseTPMVersion(val),
+						SizeBytes:  proxmoxParseDiskSize(sizeStr),
+					}
+				}
 			} else if nicDevRe.MatchString(key) {
 				driver, mac := proxmoxParseNIC(val)
 				vm.NICs = append(vm.NICs, ProxmoxVMNIC{
@@ -379,6 +411,173 @@ func parseQmConfig(raw string, vm *ProxmoxVM) {
 			}
 		}
 	}
+}
+
+// proxmoxParseTPMVersion extracts the version field from a tpmstate0 value.
+// Format example: "<storage>:vm-100-disk-1,size=4M,version=v2.0".
+func proxmoxParseTPMVersion(val string) string {
+	for _, p := range strings.Split(val, ",") {
+		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, "version=") {
+			return strings.TrimPrefix(p, "version=")
+		}
+	}
+	return ""
+}
+
+// runRemoteSSHBytes is the binary-safe sibling of runRemoteSSH: stdout is
+// returned untouched and stderr is captured separately so an SSH banner or
+// progress line never lands inside the bytes the caller is about to write
+// to disk. Used to stream the Proxmox TPM volume.
+func runRemoteSSHBytes(conn ProxmoxSSHConn, cmdStr string) ([]byte, error) {
+	cmd := exec.Command("sshpass", "-e", "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "BatchMode=no",
+		"-o", "ConnectTimeout=15",
+		"-o", "ServerAliveInterval=30",
+		fmt.Sprintf("%s@%s", conn.User, conn.Host),
+		cmdStr,
+	)
+	cmd.Env = append(os.Environ(), "SSHPASS="+conn.Password)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s", err.Error(), strings.TrimSpace(stderr.String()))
+	}
+	return out, nil
+}
+
+// shellSingleQuote wraps a string for safe inclusion inside a single-quoted
+// remote shell argument. Embedded single quotes are closed, escaped, and
+// reopened — the standard POSIX-portable trick.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// importProxmoxTPM is the best-effort TPM state migration from Proxmox to
+// the just-created Incus VM. Compatibility gates:
+//
+//	- TPM v2.0 only (Incus' swtpm has no TPM 1.2 support).
+//	- swtpm available on the local host.
+//	- File size in [64 B, 4 MiB].
+//
+// On success, the TPM device is added to the Incus VM and the state file
+// is placed at the standard Incus path. On any failure the function
+// returns an error and adds nothing — the caller logs and continues, so
+// a TPM-state import problem never blocks the rest of the import.
+//
+// Caveat: Proxmox uses swtpm's `file=` backend (single binary), Incus uses
+// the `dir=` backend (`tpm2-00.permall`). The blob magic header is shared,
+// so the drop-in works for many guests; if it doesn't, the user can
+// disable the device via the Edit UI.
+func importProxmoxTPM(conn ProxmoxSSHConn, vm ProxmoxVM, vmName, poolName string, log func(string)) error {
+	if vm.TPM.Version != "v2.0" {
+		return fmt.Errorf("Proxmox TPM is %q — only v2.0 is supported by Incus' swtpm", vm.TPM.Version)
+	}
+	if _, err := exec.LookPath("swtpm"); err != nil {
+		return fmt.Errorf("swtpm is not installed on this host (apt install swtpm)")
+	}
+
+	// Resolve the local path on the Proxmox side. `pvesm path` works for
+	// every storage type (ZFS zvol, dir, LVM, …) and prints exactly one path.
+	pathOut, err := runRemoteSSH(conn, "pvesm path "+shellSingleQuote(vm.TPM.StorageVol))
+	if err != nil {
+		return fmt.Errorf("pvesm path %s: %v", vm.TPM.StorageVol, err)
+	}
+	remotePath := strings.TrimSpace(pathOut)
+	if remotePath == "" {
+		return fmt.Errorf("pvesm returned an empty path for %s", vm.TPM.StorageVol)
+	}
+
+	// Cap the read at 4 MiB — Proxmox always provisions exactly that and
+	// reading further off a /dev/zvol would just be zeros.
+	body, err := runRemoteSSHBytes(conn, fmt.Sprintf("head -c %d %s",
+		4*1024*1024, shellSingleQuote(remotePath)))
+	if err != nil {
+		return fmt.Errorf("read TPM state: %v", err)
+	}
+	if len(body) < 64 {
+		return fmt.Errorf("TPM state implausibly short (%d bytes)", len(body))
+	}
+
+	// Place into Incus' standard TPM dir. This is the package-install path;
+	// the snap install would use /var/snap/incus/common/incus/... — out of
+	// scope, since the rest of the importer also targets the package layout.
+	const deviceName = "tpm"
+	tpmDir := fmt.Sprintf("/var/lib/incus/storage-pools/%s/virtual-machines/%s/tpm.%s",
+		poolName, vmName, deviceName)
+	if out, err := exec.Command("sudo", "mkdir", "-p", tpmDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mkdir %s: %s", tpmDir, strings.TrimSpace(string(out)))
+	}
+	statePath := tpmDir + "/tpm2-00.permall"
+	teeCmd := exec.Command("sudo", "tee", statePath)
+	teeCmd.Stdin = bytes.NewReader(body)
+	if out, err := teeCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("write %s: %s", statePath, strings.TrimSpace(string(out)))
+	}
+
+	// Add the TPM device LAST so a failure earlier doesn't leave the VM
+	// pointing at an empty / half-written state directory.
+	if out, err := exec.Command("incus", "config", "device", "add",
+		vmName, deviceName, "tpm").CombinedOutput(); err != nil {
+		return fmt.Errorf("incus config device add tpm: %s", strings.TrimSpace(string(out)))
+	}
+	log(fmt.Sprintf("  ✓ TPM v2.0 state imported (%d KiB) and TPM device enabled.",
+		len(body)/1024))
+	return nil
+}
+
+// parseProxmoxSMBIOS1 decodes a Proxmox "smbios1:" config value into an
+// LXDSMBIOSType1 so the imported VM can inherit the same DMI identity. The
+// Proxmox format is comma-separated key=value pairs; when the special key
+// "base64=1" is present, every other field's value is base64-encoded so it
+// can safely contain commas, equals or spaces. Returns nil when no usable
+// fields are found.
+func parseProxmoxSMBIOS1(val string) *LXDSMBIOSType1 {
+	parts := strings.Split(val, ",")
+	raw := map[string]string{}
+	encoded := false
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		eq := strings.IndexByte(p, '=')
+		if eq <= 0 {
+			continue
+		}
+		k := strings.ToLower(strings.TrimSpace(p[:eq]))
+		v := strings.TrimSpace(p[eq+1:])
+		if k == "base64" {
+			encoded = (v == "1" || strings.EqualFold(v, "true"))
+			continue
+		}
+		raw[k] = v
+	}
+	decode := func(k string) string {
+		v := raw[k]
+		if v == "" {
+			return ""
+		}
+		// Per Proxmox: uuid is always plain text; other fields obey base64=1.
+		if encoded && k != "uuid" {
+			if b, err := base64.StdEncoding.DecodeString(v); err == nil {
+				return string(b)
+			}
+		}
+		return v
+	}
+	out := &LXDSMBIOSType1{
+		UUID:         decode("uuid"),
+		Manufacturer: decode("manufacturer"),
+		Product:      decode("product"),
+		Version:      decode("version"),
+		Serial:       decode("serial"),
+		SKU:          decode("sku"),
+		Family:       decode("family"),
+	}
+	if *out == (LXDSMBIOSType1{}) {
+		return nil
+	}
+	return out
 }
 
 // proxmoxParseNIC parses a Proxmox NIC value like "virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0".
@@ -576,6 +775,23 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 	}
 	if vm.BootDevice != "" {
 		log(fmt.Sprintf("  Boot device: %s (disk 0 = root).", vm.BootDevice))
+	}
+
+	// Replicate the Proxmox SMBIOS type 1 (System Information) identity so
+	// guest-side bindings (Windows OEM activation, license servers, hypervisor
+	// fingerprinting) keep working after the move. Merge into any existing
+	// raw.qemu (e.g. the SeaBIOS -bios clause set just above) rather than
+	// overwriting it.
+	if vm.SMBIOS1 != nil {
+		existing, _ := exec.Command("incus", "config", "get", vmName, "raw.qemu").Output()
+		newRaw := updateRawQEMUSMBIOSType1(strings.TrimSpace(string(existing)), vm.SMBIOS1)
+		if newRaw == "" {
+			exec.Command("incus", "config", "unset", vmName, "raw.qemu").Run() //nolint:errcheck
+		} else if out, err := exec.Command("incus", "config", "set", vmName, "raw.qemu="+newRaw).CombinedOutput(); err != nil {
+			log(fmt.Sprintf("  ⚠ Could not apply SMBIOS type 1 from Proxmox: %s", strings.TrimSpace(string(out))))
+		} else {
+			log("  ✓ SMBIOS type 1 (System Information) replicated from Proxmox.")
+		}
 	}
 
 	// Step 2: For each disk, create the backing zvol first (with no space
@@ -859,6 +1075,18 @@ fi`, disk.StorageVol)
 			}
 		} else {
 			log(fmt.Sprintf("  ✓ NIC %s connected (MAC=%s).", nic.Device, nic.MAC))
+		}
+	}
+
+	// TPM import (best-effort). Skipped silently when no Proxmox tpmstate0
+	// is configured; the VM was created without a TPM device above, so the
+	// "skip + disable" branch is the no-op default.
+	if vm.TPM != nil {
+		log(fmt.Sprintf("Detected Proxmox TPM (%s, %s).",
+			vm.TPM.Version, formatBytes(uint64(vm.TPM.SizeBytes))))
+		if err := importProxmoxTPM(conn, vm, vmName, req.StoragePool, log); err != nil {
+			log("  ⚠ TPM import skipped: " + err.Error())
+			log("  ⚠ TPM device NOT added to imported VM. Enable manually via VM Edit if desired.")
 		}
 	}
 

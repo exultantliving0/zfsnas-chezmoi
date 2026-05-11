@@ -90,11 +90,16 @@ Cmnd_Alias ZFSNAS_NFS = \
 # since v3.0.0 — NVMe health and temperature monitoring
 # since v6.5.3 — DMI/SMBIOS reads for motherboard, BIOS, and per-DIMM memory
 #   inventory shown in the SysInfo popup
+# NOTE: on sudo-rs hosts (Ubuntu 26.04+) the trailing
+#   /usr/bin/cat /proc/*/smaps_rollup line is widened to /usr/bin/cat *
+#   because sudo-rs only accepts `*` as the entire trailing argument and
+#   refuses any wildcard with a literal prefix or suffix. The portal-side
+#   PID filter in system/memprocs.go remains the boundary.
 Cmnd_Alias ZFSNAS_SMART = \
     /usr/sbin/smartctl *, \
     /usr/bin/nvme smart-log -o json *, \
     /usr/sbin/dmidecode *, \
-    /usr/bin/cat /proc/*/smaps_rollup
+    /usr/bin/cat /proc/*/smaps_rollup    # or `cat *` on sudo-rs hosts
 
 # ── Disk preparation & wipe ───────────────────────────────────────────────────
 # since v1.0.0 — wipe and partition a disk before adding it to a pool;
@@ -242,63 +247,98 @@ Cmnd_Alias ZFSNAS_NTP = \
     /usr/bin/tee /etc/chrony/chrony.conf, \
     /usr/bin/systemctl restart chronyd
 
-# ── Virtualization (Incus VMs & Containers) — OPTIONAL ──────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTIONAL: Virtualization (Incus VMs & Containers)
+# ─────────────────────────────────────────────────────────────────────────────
 #
-# This single block contains every sudoers entry needed by the optional
-# **VMs & Containers** feature (Incus). It is *not* required for storage-only
-# ZNAS deployments. Pure-NAS hosts can omit the entire `ZFSNAS_INCUS` alias
-# below AND drop `ZFSNAS_INCUS` from the trailing User_Spec line on the
-# `zfsnas ALL=(ALL) NOPASSWD:` row — the portal will still install, run, and
-# manage every storage feature (ZFS pools, datasets, SMB, NFS, iSCSI, S3,
-# UPS, replication) without it.
+# The three blocks below (ZFSNAS_INCUSNET, ZFSNAS_INCUS, ZFSNAS_VMSETUP)
+# are *only* needed for the optional **VMs & Containers** feature. Pure
+# storage deployments can omit all three aliases AND drop them from the
+# trailing User_Spec line on the `zfsnas ALL=(ALL) NOPASSWD:` row — the
+# portal will still install, run, and manage every storage feature
+# (ZFS pools, datasets, SMB, NFS, iSCSI, S3, UPS, replication) without
+# them.
 #
-# Coverage (history):
-#   • since v6.4.19 — ifup/ifdown for VLAN bridges (Networking mode of the
-#     Compute section). /etc/network/interfaces edits are performed
-#     in-process (root only); no sudo entry exists for that path.
-#   • since v6.4.21 — Proxmox live VM import streams raw disk images into
-#     ZFS volumes that back Incus VM disks. volmode=dev exposes a /dev/zdX
-#     kernel block device; dd writes to it (bypassing /dev/zvol symlinks
-#     which can be blocked by stale files from a prior failed import).
-#     partx, mount, umount handle UEFI ESP fix-up.
-#   • since v6.4.22 — ISO Management: .isos directory inside the ZFS pool
-#     root is created with mkdir -p, chmod 0775, then tee writes the ISO
-#     uploads (directory is root-owned). rm -f cleans up partial uploads.
-#   • since v6.4.28 — final cat entry reads /var/log/incus/<name>/console.log
-#     (root-owned 0600) for the container Output tab when Incus'
-#     `incus console --show-log` API errors with "open : no such file or
-#     directory". The portal picks one of two forms at install time
-#     depending on whether the active sudo is classic sudo or sudo-rs
-#     (Ubuntu 26.04+):
-#       classic sudo →  /usr/bin/cat /var/log/incus/*/console.log
-#                         Tight: the literal /console.log suffix locks the
-#                         rule to that one filename pattern.
-#       sudo-rs      →  /usr/bin/cat *
-#                         Wider: sudo-rs only accepts `*` as the entire
-#                         trailing argument. Path scoping is still enforced
-#                         server-side: the portal regex-validates the
-#                         instance name against the live Incus instance
-#                         list before invoking cat.
-#   • since v6.5.2 — `incus admin init --preseed` initialises the Incus
-#     daemon from a generated YAML; usermod adds the service account to
-#     `incus-admin`; service lifecycle entries cover daemon start/restart;
-#     ln -sf creates cross-distro OVMF firmware symlinks so VMs pushed
-#     between Ubuntu (OVMF_CODE.4MB.fd) and Debian (OVMF_CODE_4M.fd) start
-#     on either host. lxd-to-incus is the upstream one-shot migration
-#     helper used by the Migrate-from-LXD wizard.
-#   • since v6.5.3 — Memory Compression (zram-tools) entries: tee writes
-#     /etc/default/zramswap; systemctl {start,stop,restart,enable,disable}
-#     zramswap controls the unit. journalctl -k / --since let the state
-#     watcher attribute a Running→Stopped instance transition to a kernel
-#     OOM-kill (read-only). ntfsfix, blkid, python3, losetup support the
-#     Windows-import boot fix-up flow.
+# Splitting (since v6.5.2): the previous combined ZFSNAS_INCUS alias has
+# been broken into three narrower aliases so the Sudoers Review UI can
+# explain which sudoers entries each sub-feature requires:
+#   • ZFSNAS_INCUSNET — VLAN sub-interface management only (ifup/ifdown).
+#   • ZFSNAS_INCUS    — runtime entries used while VMs/containers are
+#                       running: Proxmox live import, ISO Management,
+#                       per-instance console.log read, OOM-kill
+#                       attribution via journalctl.
+#   • ZFSNAS_VMSETUP  — one-shot install/setup entries: `incus admin
+#                       init --preseed`, incus-admin group, service
+#                       lifecycle, zram-tools (Memory Compression),
+#                       netplan→ifupdown migration.
 #
-# NOTE: partx, mount, umount, sgdisk live under /usr/bin/ or /sbin/
-# depending on distribution. Verify with `which <command>` if a sudoers
-# error occurs.
-Cmnd_Alias ZFSNAS_INCUS = \
+# NOTE: on sudo-rs hosts (Ubuntu 26.04+) the following narrow rules are
+# rewritten to broader "command *" forms because sudo-rs only accepts `*`
+# as the entire trailing argument and rejects any wildcard with a literal
+# prefix or suffix (visudo prints "wildcards are not allowed in command
+# arguments" and refuses to load the whole file). The portal applies this
+# rewrite automatically when /usr/bin/sudo is sudo-rs. Path scoping moves
+# from sudoers to Go (the call sites build the exact paths before invoking
+# sudo):
+#     classic                                                        sudo-rs
+#     /usr/bin/journalctl --since=*                              →   /usr/bin/journalctl *
+#     /usr/bin/rm -f /run/systemd/network/*.network              →   /usr/bin/rm -f *
+#     /usr/bin/ip addr flush dev * scope global                  →   /usr/bin/ip *
+#     /usr/bin/ip route flush dev * scope global                 →   /usr/bin/ip *
+#     /usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled
+#                                                                →   /usr/bin/mv *
+#     /usr/bin/cat /etc/netplan/*.yaml                           →   /usr/bin/cat *
+#     /usr/bin/tee /etc/network/interfaces.pre-znas-*            →   /usr/bin/tee *
+
+# ── OPTIONAL: Incus Network Bridges (VLAN interfaces) ────────────────────────
+# since v6.4.19 — ifup/ifdown bring VLAN sub-interfaces up/down without a
+#   reboot when the Networking mode of the Compute section is in use.
+#   /etc/network/interfaces edits are performed in-process (root only);
+#   no sudo entry exists for that path.
+Cmnd_Alias ZFSNAS_INCUSNET = \
     /usr/sbin/ifup *, \
-    /usr/sbin/ifdown *, \
+    /usr/sbin/ifdown *
+
+# ── OPTIONAL: Incus Compute (Proxmox Import + ISO Management + Migration) ────
+# since v6.4.21 — Proxmox live VM import streams raw disk images into the
+#   ZFS volumes (zvols) that back Incus VM disks. `volmode=dev` exposes a
+#   /dev/zdX kernel block device; dd writes to it (bypassing /dev/zvol
+#   symlinks which can be blocked by stale files from a prior failed
+#   import). partx, mount, umount handle UEFI ESP fix-up.
+# since v6.4.22 — ISO Management: the .isos directory inside the ZFS pool
+#   root is created with mkdir -p, chmod 0775, then tee writes the ISO
+#   uploads (directory is root-owned). rm -f cleans up partial uploads.
+# since v6.4.28 — the trailing cat entry reads /var/log/incus/<name>/console.log
+#   (root-owned 0600) for the container Output tab when Incus'
+#   `incus console --show-log` API errors with "open : no such file or
+#   directory". The portal picks one of two forms at install time
+#   depending on whether the active sudo is classic sudo or sudo-rs:
+#     classic sudo →  /usr/bin/cat /var/log/incus/*/console.log
+#                       Tight: the literal /console.log suffix locks the
+#                       rule to that one filename pattern.
+#     sudo-rs      →  /usr/bin/cat *
+#                       Wider: sudo-rs only accepts `*` as the entire
+#                       trailing argument. Path scoping is still enforced
+#                       server-side: the portal regex-validates the
+#                       instance name against the live Incus instance
+#                       list before invoking cat.
+# since v6.5.2 — Windows-import boot fix-up: ntfsfix clears the NTFS dirty
+#   bit on a partition attached via losetup; blkid is used to skip non-NTFS
+#   partitions; python3 runs a fixed-content libhivex script to patch the
+#   Windows BCD on the imported ESP.
+# since v6.5.3 — journalctl -k / journalctl --since let the state watcher
+#   attribute a Running→Stopped instance transition to a kernel OOM-kill
+#   (read-only).
+# since v6.5.8 — ISO Management URL fetch (download from URL): tee streams
+#   into <pool>/.isos/<name>.part, the ISO 9660 magic is verified, then
+#   `mv -f` renames the .part file to its final name. The filename is
+#   regex-validated against isoNameRe (no path traversal, no shell metas)
+#   before invocation; mv is granted as `mv -f *` because sudo-rs does not
+#   allow wildcards in non-trailing positions.
+#
+# NOTE: partx, mount, umount may live under /usr/bin/ or /sbin/ depending
+# on distribution. Verify with `which <command>` if a sudoers error occurs.
+Cmnd_Alias ZFSNAS_INCUS = \
     /usr/bin/dd *, \
     /usr/bin/partx *, \
     /usr/bin/mount *, \
@@ -307,13 +347,46 @@ Cmnd_Alias ZFSNAS_INCUS = \
     /usr/bin/chmod 0775 *, \
     /usr/bin/tee *, \
     /usr/bin/rm -f *, \
+    /usr/bin/mv -f *, \
     /usr/bin/ntfsfix *, \
     /usr/bin/blkid -o value -s TYPE *, \
     /usr/bin/python3 - *, \
     /usr/sbin/losetup *, \
     /usr/bin/journalctl -k *, \
     /usr/bin/journalctl --since=*, \
-    /usr/bin/lxd-to-incus *, \
+    /usr/bin/cat /var/log/incus/*/console.log   # or `cat *` on sudo-rs hosts
+
+# ── OPTIONAL: VMs & Containers feature setup ─────────────────────────────────
+# since v6.5.2 — one-time enablement of Incus compute support (replaces
+#   the v6.4.24 LXD setup commands):
+#     incus admin init --preseed: initialises the Incus daemon from a
+#       generated YAML.
+#     usermod -a -G incus-admin zfsnas: adds the service account to the
+#       `incus-admin` group.
+#     systemctl restart networking: applies bridge config after rewrite.
+#     systemctl {enable,start,restart} incus: service lifecycle during setup.
+#     ln -sf /usr/share/OVMF/*: creates cross-distro OVMF firmware symlinks
+#       so VMs pushed between Ubuntu (OVMF_CODE.4MB.fd) and Debian
+#       (OVMF_CODE_4M.fd) start on either host without manual intervention.
+# since v6.5.3 — Memory Compression (zram-tools): tee writes
+#   /etc/default/zramswap; systemctl {start,stop,restart,enable,disable}
+#   zramswap controls the unit.
+# since v6.5.5 — Memory Compression resize: swapoff /dev/zram0,
+#   modprobe -r zram, and systemctl reset-failed zramswap. Required because
+#   `systemctl stop zramswap` is a no-op when the unit is in `failed` state
+#   (Type=oneshot RemainAfterExit=true), so the portal drives the device
+#   teardown itself before retrying start.
+# since v6.5.6 — Netplan→ifupdown migration (Ubuntu 26.04 first-class
+#   support). The "Switch to systemd Networking" button on the VMs &
+#   Containers prereqs page disables systemd-networkd[.socket], renames
+#   /etc/netplan/*.yaml to .znas-disabled, writes a generated
+#   /etc/network/interfaces (DHCP/static + DNS preserved from the live
+#   `ip -j` / `resolvectl` snapshot), and brings up networking.service.
+#   `cat /etc/netplan/*.yaml` is needed for the YAML scan since those files
+#   are root-owned 0600 on Ubuntu 26.04.
+# /etc/network/interfaces edits and backups are performed in-process
+# (root only); no sudo entry is granted for that path.
+Cmnd_Alias ZFSNAS_VMSETUP = \
     /usr/bin/incus admin init --preseed, \
     /usr/sbin/incus admin init --preseed, \
     /usr/sbin/usermod -a -G incus-admin zfsnas, \
@@ -326,9 +399,47 @@ Cmnd_Alias ZFSNAS_INCUS = \
     /usr/bin/systemctl restart zramswap, \
     /usr/bin/systemctl enable zramswap, \
     /usr/bin/systemctl disable zramswap, \
+    /usr/bin/systemctl reset-failed zramswap, \
+    /usr/sbin/swapoff /dev/zram0, \
+    /usr/sbin/modprobe -r zram, \
     /usr/bin/tee /etc/default/zramswap, \
-    /usr/bin/ln -sf *, \
-    /usr/bin/cat /var/log/incus/*/console.log   # or `cat *` on sudo-rs hosts
+    /usr/bin/systemctl enable systemd-networkd, \
+    /usr/bin/systemctl disable systemd-networkd, \
+    /usr/bin/systemctl start systemd-networkd, \
+    /usr/bin/systemctl stop systemd-networkd, \
+    /usr/bin/systemctl enable systemd-networkd.socket, \
+    /usr/bin/systemctl disable systemd-networkd.socket, \
+    /usr/bin/systemctl start systemd-networkd.socket, \
+    /usr/bin/systemctl stop systemd-networkd.socket, \
+    /usr/bin/systemctl enable systemd-networkd-varlink.socket, \
+    /usr/bin/systemctl disable systemd-networkd-varlink.socket, \
+    /usr/bin/systemctl start systemd-networkd-varlink.socket, \
+    /usr/bin/systemctl stop systemd-networkd-varlink.socket, \
+    /usr/bin/systemctl enable systemd-networkd-resolve-hook.socket, \
+    /usr/bin/systemctl disable systemd-networkd-resolve-hook.socket, \
+    /usr/bin/systemctl start systemd-networkd-resolve-hook.socket, \
+    /usr/bin/systemctl stop systemd-networkd-resolve-hook.socket, \
+    /usr/bin/rm -f /run/systemd/network/*.network, \
+    /usr/bin/rm -f /etc/resolv.conf, \
+    /usr/bin/tee /etc/resolv.conf, \
+    /usr/bin/tee /etc/dhcpcd.conf, \
+    /usr/bin/tee /etc/dhcpcd.exit-hook, \
+    /usr/bin/chmod 0755 /etc/dhcpcd.exit-hook, \
+    /usr/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf, \
+    /usr/bin/systemctl enable systemd-resolved, \
+    /usr/bin/systemctl start systemd-resolved, \
+    /usr/bin/ip addr flush dev * scope global, \
+    /usr/bin/ip route flush dev * scope global, \
+    /usr/bin/systemctl enable networking, \
+    /usr/bin/systemctl disable networking, \
+    /usr/bin/systemctl start networking, \
+    /usr/bin/systemctl stop networking, \
+    /usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled, \
+    /usr/bin/cat /etc/netplan/*.yaml, \
+    /usr/bin/tee /etc/network/interfaces, \
+    /usr/bin/tee /etc/network/interfaces.pre-znas-*, \
+    /usr/bin/tee /etc/cloud/cloud.cfg.d/99-znas-disable-network-config.cfg, \
+    /usr/bin/ln -sf *
 
 # ── OS updates & service installation ────────────────────────────────────────
 # since v1.0.0 — prerequisite package install (apt-get install) and
@@ -375,11 +486,12 @@ Cmnd_Alias ZFSNAS_SYSPOWER = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 #
-# Storage-only deployments — drop `ZFSNAS_INCUS` from the list below; the
-# entire `Cmnd_Alias ZFSNAS_INCUS = …` block above can also be removed.
+# Storage-only deployments — drop `ZFSNAS_INCUSNET`, `ZFSNAS_INCUS`, and
+# `ZFSNAS_VMSETUP` from the list below; the three optional virtualization
+# alias blocks above can also be removed.
 # To enable the optional Sudoers Hardening UI feature, also add `ZFSNAS_SECURITY`.
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_INCUS, ZFSNAS_APT, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_INCUSNET, ZFSNAS_INCUS, ZFSNAS_VMSETUP, ZFSNAS_APT
 ```
 
 ### 3 — Run the portal as the service account
@@ -398,7 +510,7 @@ ExecStart=/opt/zfsnas/zfsnas
 - **Web terminal** — the browser terminal runs a shell as the `zfsnas` user. With the restricted sudoers entry above, any `sudo` command typed in that terminal is still limited to the whitelist. If you do not use the web terminal feature you can remove the `/ws/terminal` route or simply accept that a logged-in admin can run a shell with the same restrictions.
 - **`chgrp sambashare *`** (in `ZFSNAS_SMB`) — sets group ownership of every newly created SMB share directory to `sambashare`. The path wildcard is required because share directories can live at any path within your ZFS mount hierarchy.
 - **`chmod *` / `chmod -R *`** (in `ZFSNAS_FILES`) — covers all permission changes: 0777 for NFS share paths, 0770 for SMB share directories, and 0700 for user home directories. The portal itself enforces path scoping (every target is validated against known dataset mountpoints and share roots before the command runs) because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions. The previous `chmod * /mnt/*` form is no longer expressible.
-- **`tee` for config files** — `tee` is granted as `tee *` in `ZFSNAS_INCUS` and `ZFSNAS_SYSPOWER` (where the target paths are dynamic — per-CPU scaling governor, per-USB-device autosuspend, ISO Management uploads, zramswap config). Specific tee paths (`smb.conf`, `exports`, `zfsnas.service`, `zfs.conf`, ARC sysfs paths, `/etc/hdparm.conf`, `/etc/network/interfaces`, `/etc/chrony/chrony.conf`) remain in their feature-specific aliases for clarity, even though `tee *` would cover them.
+- **`tee` for config files** — `tee` is granted as `tee *` in `ZFSNAS_INCUS` and `ZFSNAS_SYSPOWER` (where the target paths are dynamic — per-CPU scaling governor, per-USB-device autosuspend, ISO Management uploads). The `zramswap` config tee lives in `ZFSNAS_VMSETUP`. Specific tee paths (`smb.conf`, `exports`, `zfsnas.service`, `zfs.conf`, ARC sysfs paths, `/etc/hdparm.conf`, `/etc/network/interfaces`, `/etc/chrony/chrony.conf`) remain in their feature-specific aliases for clarity, even though `tee *` would cover them.
 - **`dd` / `wipefs` / `sgdisk`** — used by the "Wipe Disk" feature before adding a disk to a pool. These are destructive by design; ensure only trusted admins have access to the portal.
 - **`dd *`** (in `ZFSNAS_INCUS`) — used by the Proxmox live VM import feature (v6.4.21+) to stream raw disk images into ZFS volume block devices. Before writing, `volmode=dev` is set on each zvol so ZFS creates a `/dev/zdX` kernel block device. dd writes directly to that device (bypassing `/dev/zvol/` symlinks, which may be blocked by stale regular files from prior failed imports). Broadened from `dd of=/dev/zd* *` to `dd *` because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.
 - **`zfs load-key` / `zfs unload-key`** — used for ZFS native encryption (v5.0.0+). Key files are stored in `config/keystore/` and are only readable by the `zfsnas` user.
