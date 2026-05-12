@@ -327,7 +327,7 @@ func applySMBConf(shares []SMBShare) error {
 		if s.RecycleBin {
 			vfsObjs = append(vfsObjs, "recycle")
 		}
-		if s.TimeMachine || s.WindowsACL {
+		if s.TimeMachine || s.WindowsACL || s.AppleEncoding {
 			vfsObjs = append(vfsObjs, "fruit", "streams_xattr")
 		}
 		if len(vfsObjs) > 0 {
@@ -350,9 +350,14 @@ func applySMBConf(shares []SMBShare) error {
 			sb.WriteString("   force create mode = 0755\n")
 		}
 
-		// Apple-style character encoding (catia)
+		// Apple-style character encoding (catia) + fruit settings for macOS
+		// extended-attribute compatibility (prevents read-only errors on macOS).
 		if s.AppleEncoding {
 			sb.WriteString("   catia:mappings = 0x22:0xf022,0x2a:0xf02a,0x2f:0xf02f,0x3a:0xf03a,0x3c:0xf03c,0x3e:0xf03e,0x3f:0xf03f,0x5c:0xf05c,0x7c:0xf07c\n")
+			sb.WriteString("   fruit:aapl = yes\n")
+			sb.WriteString("   fruit:nfs_aces = no\n")
+			sb.WriteString("   fruit:metadata = stream\n")
+			sb.WriteString("   fruit:encoding = native\n")
 		}
 
 		// Recycle Bin
