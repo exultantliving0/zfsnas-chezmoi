@@ -130,17 +130,29 @@ func HandleTestAlertWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleAlertsWS upgrades the connection and registers it with the AlertsHub.
+// The session role is captured so role-scoped broadcasts (e.g.,
+// interlink-relay-forwarded alerts → admins only) can target appropriately.
+//
+// Server-to-server interlink-relay subscriber connections (identified by the
+// X-Interlink-Relay-User header) register with role "interlink" so the local
+// BroadcastJSONToAdmins fan-out does NOT echo back to the originating peer —
+// that would create a feedback loop between the two hubs.
 func HandleAlertsWS(w http.ResponseWriter, r *http.Request) {
 	hub := alerts.GetHub()
 	if hub == nil {
 		jsonErr(w, http.StatusServiceUnavailable, "alerts websocket hub not initialised")
 		return
 	}
+	sess := MustSession(r)
+	role := sess.Role
+	if r.Header.Get("X-Interlink-Relay-User") != "" {
+		role = "interlink"
+	}
 	conn, err := wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	hub.Register(conn)
+	hub.Register(conn, role)
 }
 
 const alertDedup = 24 * time.Hour

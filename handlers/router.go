@@ -137,6 +137,13 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// when they aggregate; not for browser use.
 	r.HandleFunc("/api/audit/peer-list", HandleAuditPeerList(appCfg)).Methods("POST")
 
+	// --- Live alerts (server-side mirror of the browser's registry, for
+	//     interlink aggregation across servers in relay mode) ---
+	r.Handle("/api/live-alerts",
+		RequireAuth(HandleLiveAlerts(appCfg))).Methods("GET")
+	r.Handle("/api/live-alerts/aggregate",
+		RequireAuth(HandleLiveAlertsAggregate(appCfg))).Methods("GET")
+
 	// --- Pool ---
 	r.Handle("/api/pools",
 		RequireAuth(http.HandlerFunc(HandleGetPools))).Methods("GET")

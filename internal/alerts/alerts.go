@@ -36,6 +36,13 @@ const (
 	EventUserCreated        EventKey = "user_created_deleted"
 	EventShareCreated    EventKey = "share_created_deleted"
 	EventPoolActions     EventKey = "pool_actions"
+	EventVMStartFailure     EventKey = "vm_start_failure"
+	EventVMUnexpectedStop   EventKey = "vm_unexpected_stop"
+	EventVMCreatedDeleted   EventKey = "vm_created_deleted"
+	EventVMSnapshotFailure  EventKey = "vm_snapshot_failure"
+	EventVMBackupFailure    EventKey = "vm_backup_failure"
+	EventVMDiskFull         EventKey = "vm_disk_full"
+	EventVMHostSaturation   EventKey = "vm_host_saturation"
 	EventTest            EventKey = "test" // always passes filter
 )
 
@@ -56,6 +63,13 @@ func matchesEvent(key EventKey, ev EventConfig) bool {
 	case EventUserCreated:        return ev.UserCreatedDeleted
 	case EventShareCreated:    return ev.ShareCreatedDeleted
 	case EventPoolActions:     return ev.PoolActions
+	case EventVMStartFailure:    return ev.VMStartFailure
+	case EventVMUnexpectedStop:  return ev.VMUnexpectedStop
+	case EventVMCreatedDeleted:  return ev.VMCreatedDeleted
+	case EventVMSnapshotFailure: return ev.VMSnapshotFailure
+	case EventVMBackupFailure:   return ev.VMBackupFailure
+	case EventVMDiskFull:        return ev.VMDiskFull
+	case EventVMHostSaturation:  return ev.VMHostSaturation
 	}
 	return false
 }
@@ -87,6 +101,18 @@ type EventConfig struct {
 	UserCreatedDeleted   bool `json:"user_created_deleted"`
 	ShareCreatedDeleted  bool `json:"share_created_deleted"`
 	PoolActions          bool `json:"pool_actions"`
+
+	// Virtualization events — only meaningful when the optional LXD/Incus
+	// feature is installed. Hidden in the UI on servers without it but kept
+	// in the persisted JSON so subscriptions survive an LXD reinstall.
+	VMStartFailure          bool `json:"vm_start_failure"`
+	VMUnexpectedStop        bool `json:"vm_unexpected_stop"`
+	VMCreatedDeleted        bool `json:"vm_created_deleted"`
+	VMSnapshotFailure       bool `json:"vm_snapshot_failure"`
+	VMBackupFailure         bool `json:"vm_backup_failure"`
+	VMDiskFull              bool `json:"vm_disk_full"`
+	VMDiskFullThresholdPct  int  `json:"vm_disk_full_threshold_pct"`
+	VMHostSaturation        bool `json:"vm_host_saturation"`
 }
 
 type EmailTarget struct {
@@ -287,9 +313,40 @@ func Save(cfg *AlertConfig) error {
 
 // ── Failed login counter ──────────────────────────────────────────────────────
 
-func RecordFailedLogin()       { atomic.AddInt64(&failedLogins, 1) }
-func ResetFailedLogins()       { atomic.StoreInt64(&failedLogins, 0) }
-func FailedLoginCount() int64  { return atomic.LoadInt64(&failedLogins) }
+// RecordFailedLogin increments the failed-login counter and, if the
+// configured threshold is reached, immediately fires the alert and resets
+// the counter. The standalone 5-min health poller also checks the counter,
+// but waiting up to 5 min for a "1 attempt" alert is useless — and any
+// subsequent successful login resets the counter to 0 before the poller
+// runs, masking the failure. Doing the check inline closes that gap.
+func RecordFailedLogin() {
+	count := atomic.AddInt64(&failedLogins, 1)
+	go checkFailedLoginThresholdAt(count)
+}
+
+func ResetFailedLogins()      { atomic.StoreInt64(&failedLogins, 0) }
+func FailedLoginCount() int64 { return atomic.LoadInt64(&failedLogins) }
+
+func checkFailedLoginThresholdAt(count int64) {
+	cfg, err := Load()
+	if err != nil {
+		return
+	}
+	enabled, threshold := MinFailedLoginThreshold(cfg)
+	if !enabled || threshold <= 0 || count < int64(threshold) {
+		return
+	}
+	// Reset first to avoid duplicate alerts on a racing concurrent failure.
+	ResetFailedLogins()
+	if err := Send(
+		EventFailedLogin,
+		fmt.Sprintf("Failed logins: %d attempts", count),
+		"Failed Login Threshold Exceeded",
+		fmt.Sprintf("%d failed login attempt(s) were detected.", count),
+	); err != nil {
+		log.Printf("[alerts] failed-login alert send: %v", err)
+	}
+}
 
 // ── Threshold helpers (used by health poller) ─────────────────────────────────
 

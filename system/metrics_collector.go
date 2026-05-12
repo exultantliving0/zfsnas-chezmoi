@@ -210,7 +210,7 @@ func readMemStats() (used, cache, arc, app float64) {
 	}
 	defer f.Close()
 
-	var total, free, buffers, cached, available uint64
+	var total, free, buffers, cached, shmem, available uint64
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -227,6 +227,8 @@ func readMemStats() (used, cache, arc, app float64) {
 			buffers = val
 		case "Cached:":
 			cached = val
+		case "Shmem:":
+			shmem = val
 		case "MemAvailable:":
 			available = val
 		}
@@ -235,18 +237,28 @@ func readMemStats() (used, cache, arc, app float64) {
 		return -1, -1, -1, -1
 	}
 
+	// /proc/meminfo's "Cached" lumps in Shmem (tmpfs + qemu memfd/hugetlb guest
+	// RAM), which makes VM memory look like reclaimable page cache. Subtract
+	// Shmem so VMs land in "app" memory where they belong.
+	pageCache := cached
+	if pageCache > shmem {
+		pageCache -= shmem
+	} else {
+		pageCache = 0
+	}
+
 	arcKB := readARCSize()
 	// Cap ARC at the app memory headroom to avoid going negative.
 	var appKB uint64
-	if total > free+buffers+cached {
-		appKB = total - free - buffers - cached
+	if total > free+buffers+pageCache {
+		appKB = total - free - buffers - pageCache
 	}
 	if arcKB > appKB {
 		arcKB = appKB
 	}
 
 	used = float64(total-available) / float64(total) * 100
-	cache = float64(buffers+cached) / float64(total) * 100
+	cache = float64(buffers+pageCache) / float64(total) * 100
 	arc = float64(arcKB) / float64(total) * 100
 	app = float64(appKB-arcKB) / float64(total) * 100
 	return used, cache, arc, app

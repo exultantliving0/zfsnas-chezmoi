@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"zfsnas/internal/alerts"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
 	"zfsnas/internal/interlink"
@@ -158,6 +159,7 @@ func HandleInterlinkAcceptLink(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "failed to save config")
 			return
 		}
+		alerts.ReconcileLinkedServerSubscribers(appCfg)
 
 		audit.Log(audit.Entry{
 			User:    req.AdminUsername,
@@ -179,6 +181,7 @@ func HandleInterlinkAcceptLink(appCfg *config.AppConfig) http.HandlerFunc {
 					if appCfg.InterLink[i].ID == callerLSID {
 						appCfg.InterLink[i].TLSFingerprint = callerFP
 						config.SaveAppConfig(appCfg) //nolint:errcheck
+						alerts.ReconcileLinkedServerSubscribers(appCfg)
 						break
 					}
 				}
@@ -536,6 +539,7 @@ func HandleInterlinkLink(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "failed to save config")
 			return
 		}
+		alerts.ReconcileLinkedServerSubscribers(appCfg)
 		setStatus(ls.ID, serverStatus{Online: true, RemoteVersion: "", FetchedAt: time.Now()})
 
 		// Ensure our local user has ZFS access, then push our SSH key to the remote.
@@ -733,6 +737,7 @@ func propagateInterlink(r *http.Request, appCfg *config.AppConfig, sess *session
 		if err := config.SaveAppConfig(appCfg); err != nil {
 			log.Printf("interlink propagate: SaveAppConfig: %v", err)
 		}
+		alerts.ReconcileLinkedServerSubscribers(appCfg)
 	}
 	return result
 }
@@ -792,6 +797,7 @@ func HandleInterlinkUnlink(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "failed to save config")
 			return
 		}
+		alerts.ReconcileLinkedServerSubscribers(appCfg)
 
 		statusCacheMu.Lock()
 		delete(statusCache, id)
@@ -1006,6 +1012,7 @@ func HandleInterlinkRemoteUnlink(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		appCfg.InterLink = kept
 		config.SaveAppConfig(appCfg) //nolint:errcheck
+		alerts.ReconcileLinkedServerSubscribers(appCfg)
 
 		statusCacheMu.Lock()
 		delete(statusCache, matched.ID)
@@ -1118,6 +1125,7 @@ func HandleInterlinkSetRelayMode(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusInternalServerError, "failed to save config")
 			return
 		}
+		alerts.ReconcileLinkedServerSubscribers(appCfg)
 		jsonOK(w, map[string]bool{"ok": true})
 	}
 }

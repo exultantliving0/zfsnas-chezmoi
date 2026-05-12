@@ -351,11 +351,12 @@
           </a>
           <span id="logo-lxd-badge" title="Compute (LXD) available" onclick="switchSidebarMode('compute')" style="display:none;position:absolute;top:11px;left:142px;font-size:24px;font-weight:900;color:#fbbf24;line-height:1;cursor:pointer;text-shadow:0 0 8px #fbbf24,0 0 16px #f59e0b,0 0 2px #fff;">+</span>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;padding-left:4px;padding-right:4px;margin-top:0;width:100%;">
-          <span id="app-version" style="font-size:11px;font-family:'SF Mono',monospace;color:var(--text-2);letter-spacing:.02em;">v…</span>
-          <span id="app-version-latest" style="font-size:11px;font-family:'SF Mono',monospace;color:var(--accent-warn);letter-spacing:.02em;display:none;">→ v…</span>
+        <div style="display:flex;align-items:center;gap:6px;padding-left:4px;padding-right:4px;margin-top:0;width:100%;white-space:nowrap;">
+          <span style="display:inline-flex;align-items:center;white-space:nowrap;">
+            <span id="app-version" style="font-size:11px;font-family:'SF Mono',monospace;color:var(--text-2);letter-spacing:.02em;">v…</span><span id="app-version-latest" style="font-size:11px;font-family:'SF Mono',monospace;color:var(--accent-warn);letter-spacing:.02em;display:none;">→v…</span>
+          </span>
           <button id="sysinfo-btn" onclick="openSysInfo()" title="View hardware details"
-            style="margin-left:auto;background:none;border:none;padding:0;cursor:pointer;font-size:11px;font-style:italic;font-weight:600;letter-spacing:.02em;color:#0a84ff;text-decoration:none;line-height:1;transition:color .15s,text-decoration-color .15s;"
+            style="margin-left:auto;background:none;border:none;padding:0;cursor:pointer;font-size:11px;font-style:italic;font-weight:600;letter-spacing:.02em;color:#0a84ff;text-decoration:none;line-height:1;white-space:nowrap;transition:color .15s,text-decoration-color .15s;"
             onmouseover="this.style.color='#3aa0ff';this.style.textDecoration='underline'"
             onmouseout="this.style.color='#0a84ff';this.style.textDecoration='none'">SysInfo</button>
         </div>
@@ -4404,9 +4405,15 @@ Select the Console tab to load.</pre>
           </div>
           <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
             <button type="button" onclick="toggleEventSubs('em')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
-              <span>Event Subscriptions</span><span id="al-em-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+              <span>Storage Event Subscriptions</span><span id="al-em-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
             </button>
             <div id="al-em-events-body" style="display:none;padding:0 14px 10px;"></div>
+          </div>
+          <div id="al-em-virt-section" style="display:none;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
+            <button type="button" onclick="toggleVirtEventSubs('em')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
+              <span>Virtualization Event Subscriptions</span><span id="al-em-virt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+            </button>
+            <div id="al-em-virt-events-body" style="display:none;padding:0 14px 10px;"></div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <button class="btn btn-primary btn-sm" onclick="saveAlerts('em')">Apply</button>
@@ -4437,9 +4444,15 @@ Select the Console tab to load.</pre>
           </div>
           <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
             <button type="button" onclick="toggleEventSubs('gt')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
-              <span>Event Subscriptions</span><span id="al-gt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+              <span>Storage Event Subscriptions</span><span id="al-gt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
             </button>
             <div id="al-gt-events-body" style="display:none;padding:0 14px 10px;"></div>
+          </div>
+          <div id="al-gt-virt-section" style="display:none;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
+            <button type="button" onclick="toggleVirtEventSubs('gt')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
+              <span>Virtualization Event Subscriptions</span><span id="al-gt-virt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+            </button>
+            <div id="al-gt-virt-events-body" style="display:none;padding:0 14px 10px;"></div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <button class="btn btn-primary btn-sm" onclick="saveAlerts('gt')">Apply</button>
@@ -4460,9 +4473,15 @@ Select the Console tab to load.</pre>
           <div id="notif-ws-ok"    class="alert alert-success hidden" style="margin-bottom:12px;"></div>
           <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
             <button type="button" onclick="toggleEventSubs('ws')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
-              <span>Event Subscriptions</span><span id="al-ws-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+              <span>Storage Event Subscriptions</span><span id="al-ws-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
             </button>
             <div id="al-ws-events-body" style="display:none;padding:0 14px 10px;"></div>
+          </div>
+          <div id="al-ws-virt-section" style="display:none;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
+            <button type="button" onclick="toggleVirtEventSubs('ws')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
+              <span>Virtualization Event Subscriptions</span><span id="al-ws-virt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+            </button>
+            <div id="al-ws-virt-events-body" style="display:none;padding:0 14px 10px;"></div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <button class="btn btn-primary btn-sm" onclick="saveAlerts('ws')">Apply</button>
@@ -4501,9 +4520,15 @@ Select the Console tab to load.</pre>
           </div>
           <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
             <button type="button" onclick="toggleEventSubs('nt')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
-              <span>Event Subscriptions</span><span id="al-nt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+              <span>Storage Event Subscriptions</span><span id="al-nt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
             </button>
             <div id="al-nt-events-body" style="display:none;padding:0 14px 10px;"></div>
+          </div>
+          <div id="al-nt-virt-section" style="display:none;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
+            <button type="button" onclick="toggleVirtEventSubs('nt')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
+              <span>Virtualization Event Subscriptions</span><span id="al-nt-virt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+            </button>
+            <div id="al-nt-virt-events-body" style="display:none;padding:0 14px 10px;"></div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <button class="btn btn-primary btn-sm" onclick="saveAlerts('nt')">Apply</button>
@@ -4543,9 +4568,15 @@ Select the Console tab to load.</pre>
           </div>
           <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
             <button type="button" onclick="toggleEventSubs('po')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
-              <span>Event Subscriptions</span><span id="al-po-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+              <span>Storage Event Subscriptions</span><span id="al-po-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
             </button>
             <div id="al-po-events-body" style="display:none;padding:0 14px 10px;"></div>
+          </div>
+          <div id="al-po-virt-section" style="display:none;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
+            <button type="button" onclick="toggleVirtEventSubs('po')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
+              <span>Virtualization Event Subscriptions</span><span id="al-po-virt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+            </button>
+            <div id="al-po-virt-events-body" style="display:none;padding:0 14px 10px;"></div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <button class="btn btn-primary btn-sm" onclick="saveAlerts('po')">Apply</button>
@@ -4597,9 +4628,15 @@ Select the Console tab to load.</pre>
           </div>
           <div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
             <button type="button" onclick="toggleEventSubs('sl')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
-              <span>Event Subscriptions</span><span id="al-sl-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+              <span>Storage Event Subscriptions</span><span id="al-sl-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
             </button>
             <div id="al-sl-events-body" style="display:none;padding:0 14px 10px;"></div>
+          </div>
+          <div id="al-sl-virt-section" style="display:none;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;margin-bottom:8px;">
+            <button type="button" onclick="toggleVirtEventSubs('sl')" style="display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 14px;background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px;font-weight:600;">
+              <span>Virtualization Event Subscriptions</span><span id="al-sl-virt-ev-chevron" style="transition:transform .15s;color:var(--text-3);">▶</span>
+            </button>
+            <div id="al-sl-virt-events-body" style="display:none;padding:0 14px 10px;"></div>
           </div>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <button class="btn btn-primary btn-sm" onclick="saveAlerts('sl')">Apply</button>
@@ -4961,6 +4998,13 @@ Select the Console tab to load.</pre>
         <span class="activity-bar-title" id="ab-bar-title">Activity &amp; Events</span>
         <span id="ab-jobs-badge" class="badge badge-ok hidden" style="font-size:10px;"></span>
         <div style="flex:1"></div>
+        <button id="ab-all-servers-btn" onclick="toggleAbAllServers();event.stopPropagation();"
+          title="Aggregate activity from this server and every linked server in relay mode"
+          style="display:none;margin-right:8px;padding:2px 8px;font-size:10px;font-weight:600;
+                 border:1px solid var(--border);border-radius:5px;background:var(--surface2);
+                 color:var(--text-2);cursor:pointer;line-height:1.4;white-space:nowrap;">
+          All Servers
+        </button>
         <div class="ab-tab-strip" onclick="event.stopPropagation()">
           <button class="ab-tab ab-tab-active" id="ab-tab-events-btn" onclick="switchAbTab('events')">Activity &amp; Events</button>
           <button class="ab-tab" id="ab-tab-alerts-btn" onclick="switchAbTab('alerts')">Live Alerts<span id="ab-alerts-count" class="hidden" style="margin-left:5px;background:#ff453a;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:700;line-height:1.4;vertical-align:middle;"></span></button>
@@ -9858,6 +9902,7 @@ let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS toolt
 
   await loadSettings();
   initAlertsWebSocket();
+  _initAbAllServersGating();
   const _initialPage = (() => {
     try {
       const stored = sessionStorage.getItem('znas-intended-page');
@@ -9982,8 +10027,10 @@ let _virtStatusTimer = null;
 // refresh (via /api/version which already publishes other gates).
 function updateVirtTabVisibility(lxdAvailable) {
   const btn = document.getElementById('stab-virt');
-  if (!btn) return;
-  btn.style.display = lxdAvailable ? '' : 'none';
+  if (btn) btn.style.display = lxdAvailable ? '' : 'none';
+  // Show / hide the Virtualization Event Subscriptions section in each
+  // Notifications card whenever the LXD availability flag changes.
+  if (typeof _applyVirtEventsVisibility === 'function') _applyVirtEventsVisibility();
 }
 
 // v6.5.3+: cached snapshot of the last-loaded server state. Each card's
@@ -10878,9 +10925,21 @@ async function _pollServerOpStatus() {
 }
 
 async function refreshActivityBar() {
+  // When the "All Servers" toggle is on, pull the cross-server audit log
+  // so entries from every linked peer appear in the table alongside local
+  // ones. Falls back to /api/audit on any failure.
+  const useAgg = !!_abAllServers;
+  const url = useAgg ? '/api/audit/aggregate' : '/api/audit';
   try {
-    const resp = await fetch('/api/audit');
-    if (!resp.ok) return;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      if (useAgg) {
+        const r2 = await fetch('/api/audit');
+        if (!r2.ok) return;
+        renderActivityBar((await r2.json()) || []);
+      }
+      return;
+    }
     const entries = await resp.json();
     renderActivityBar(entries || []);
   } catch {}
@@ -10958,12 +11017,20 @@ function renderActivityBar(entries) {
     entriesEl.innerHTML = '<div style="color:var(--text-3);font-size:12px;padding:6px 0;">No activity yet.</div>';
     return;
   }
-  const recent = [...entries].reverse().slice(0, 15);
+  // Aggregate mode: entries arrive newest-first from /api/audit/aggregate
+  // (server-side sort). Local mode: oldest-first, so reverse for display.
+  const recent = _abAllServers ? entries.slice(0, 15) : [...entries].reverse().slice(0, 15);
   entriesEl.innerHTML = recent.map(e => {
     const ev = _auditEventMeta(e);
+    // Inline hostname chip — only in aggregate mode, so the local-only
+    // view stays uncluttered. e.system is stamped by the audit reader.
+    const hostChip = (_abAllServers && e.system)
+      ? `<span class="ab-host" title="Originating server" style="display:inline-block;background:var(--surface2);color:var(--text-2);font-size:10px;font-family:'SF Mono',monospace;border-radius:3px;padding:0 5px;margin-right:4px;">${esc(e.system)}</span>`
+      : '';
     return `
     <div class="ab-row" style="${ev.rowStyle}">
       <span class="ab-time">${shortTime(e.timestamp)}</span>
+      ${hostChip}
       <span class="ab-icon">${ev.icon}</span>
       <span>
         ${ev.isSystem ? '' : `<span class="ab-user">${esc(e.user)}</span>`}
@@ -11573,10 +11640,17 @@ function _clearLiveAlert(id) {
   delete _liveAlertsRegistry[id];
   _renderLiveAlertsTab();
 }
+// When _abAllServers is on, we replace the client-side _liveAlertsRegistry
+// with the server-aggregated set from /api/live-alerts/aggregate. Each entry
+// carries `system` (hostname) and renders a hostname chip. Refreshed by
+// _refreshAggregatedLiveAlerts on a 10s ticker while the toggle is on.
+let _remoteLiveAlerts = [];
+
 function _renderLiveAlertsTab() {
   const el = document.getElementById('ab-live-alerts');
   const countEl = document.getElementById('ab-alerts-count');
-  const alerts = Object.values(_liveAlertsRegistry);
+  const useAgg = !!_abAllServers;
+  const alerts = useAgg ? _remoteLiveAlerts : Object.values(_liveAlertsRegistry);
   if (countEl) {
     if (alerts.length > 0) {
       countEl.textContent = alerts.length;
@@ -11597,14 +11671,52 @@ function _renderLiveAlertsTab() {
     let nav = '';
     if (a.onclick)     nav = ` onclick="${esc(a.onclick)};switchAbTab('events')" style="cursor:pointer;"`;
     else if (a.page)   nav = ` onclick="showPage('${esc(a.page)}');switchAbTab('events')" style="cursor:pointer;"`;
+    // Inline hostname chip — only in aggregate mode, matching the
+    // Activity & Events table style.
+    const hostChip = (useAgg && a.system)
+      ? `<span class="ab-host" title="Originating server" style="display:inline-block;background:var(--surface2);color:var(--text-2);font-size:10px;font-family:'SF Mono',monospace;border-radius:3px;padding:0 5px;margin-right:4px;">${esc(a.system)}</span>`
+      : '';
     return `<div class="ab-row" style="border-left:2px solid ${color};padding-left:6px;"${nav}>
       <span class="ab-icon">${icon}</span>
+      ${hostChip}
       <span style="flex:1;min-width:0;">
         <span style="font-weight:600;color:${color};">${esc(a.label)}</span>
         ${a.message ? `<span class="ab-target"> — ${esc(a.message)}</span>` : ''}
       </span>
     </div>`;
   }).join('');
+}
+
+// ----- Aggregated live alerts poller -----
+// Active only while _abAllServers is on. 10s cadence (matches the audit
+// refresh) so the user sees state changes from any linked peer without
+// hammering the fan-out endpoint.
+let _remoteLiveAlertsTimer = null;
+
+async function _refreshAggregatedLiveAlerts() {
+  if (!_abAllServers) return;
+  try {
+    const resp = await fetch('/api/live-alerts/aggregate');
+    if (!resp.ok) return;
+    _remoteLiveAlerts = (await resp.json()) || [];
+  } catch {
+    return;
+  }
+  _renderLiveAlertsTab();
+}
+
+function _startRemoteLiveAlertsPoller() {
+  if (_remoteLiveAlertsTimer) return;
+  _refreshAggregatedLiveAlerts();
+  _remoteLiveAlertsTimer = setInterval(_refreshAggregatedLiveAlerts, 10000);
+}
+
+function _stopRemoteLiveAlertsPoller() {
+  if (_remoteLiveAlertsTimer) {
+    clearInterval(_remoteLiveAlertsTimer);
+    _remoteLiveAlertsTimer = null;
+  }
+  _remoteLiveAlerts = [];
 }
 function switchAbTab(tab) {
   _abCurrentTab = tab;
@@ -11625,6 +11737,95 @@ function switchAbTab(tab) {
     evPane && (evPane.style.display = 'none');
     alPane && (alPane.style.display = '');
     if (title) title.textContent = 'Live Alerts';
+  }
+}
+
+// ===== "All Servers" toggle =====
+// When on, refreshActivityBar fans the audit log query across this server
+// and every linked server in relay mode (one row per entry, hostname
+// column). Persisted across page loads.
+let _abAllServers = (() => { try { return localStorage.getItem('znas_ab_all_servers') === '1'; } catch { return false; } })();
+
+function toggleAbAllServers() {
+  _abAllServers = !_abAllServers;
+  try { localStorage.setItem('znas_ab_all_servers', _abAllServers ? '1' : '0'); } catch {}
+  _applyAbAllServersBtnState();
+  if (typeof refreshActivityBar === 'function') refreshActivityBar();
+  if (_abAllServers) {
+    _startRemoteLiveAlertsPoller();
+  } else {
+    _stopRemoteLiveAlertsPoller();
+    _renderLiveAlertsTab();
+  }
+}
+
+function _applyAbAllServersBtnState() {
+  const btn = document.getElementById('ab-all-servers-btn');
+  if (!btn) return;
+  if (_abAllServers) {
+    // Active: light tinted blue — clearly "on" without being heavy.
+    // Text uses var(--text) so it stays readable on the pastel-blue tint
+    // in both themes (white on dark theme, black on light theme).
+    btn.style.background   = 'rgba(10,132,255,0.30)';
+    btn.style.color        = 'var(--text)';
+    btn.style.borderColor  = 'rgba(10,132,255,0.55)';
+  } else {
+    // Inactive: subdued surface, secondary text, neutral border.
+    btn.style.background   = 'var(--surface2)';
+    btn.style.color        = 'var(--text-2)';
+    btn.style.borderColor  = 'var(--border)';
+  }
+}
+
+// Show the button only when global relay mode is on AND there's at least
+// one linked server. Re-evaluated whenever those inputs change.
+function updateAbAllServersBtnVisibility() {
+  const btn = document.getElementById('ab-all-servers-btn');
+  if (!btn) return;
+  const links = Array.isArray(window._interlinkServersCache) ? window._interlinkServersCache.length : 0;
+  const show = !!window._interlinkRelayMode && links > 0;
+  btn.style.display = show ? 'inline-block' : 'none';
+  if (show) _applyAbAllServersBtnState();
+  else if (_abAllServers) {
+    // If gating drops (relay disabled or all links removed), force the
+    // aggregate view off so we don't keep firing the aggregate endpoint
+    // with no remotes to fan to.
+    _abAllServers = false;
+    try { localStorage.setItem('znas_ab_all_servers', '0'); } catch {}
+    if (typeof _stopRemoteLiveAlertsPoller === 'function') _stopRemoteLiveAlertsPoller();
+    if (typeof refreshActivityBar === 'function') refreshActivityBar();
+    if (typeof _renderLiveAlertsTab === 'function') _renderLiveAlertsTab();
+  }
+}
+
+// Fetch the two flags that gate the "All Servers" button: global relay mode
+// and the linked-servers list. Called once at boot and re-called whenever
+// either input may have changed (relay-mode toggle, link add/remove).
+// Also kicks off the remote live-alerts poller if the toggle was persisted
+// on across reloads.
+async function _initAbAllServersGating() {
+  try {
+    const r = await fetch('/api/interlink/relay-mode', { credentials: 'same-origin' });
+    if (r.ok) {
+      const d = await r.json();
+      window._interlinkRelayMode = !!d.relay_mode;
+    }
+  } catch {}
+  // Warm the linked-servers cache so visibility kicks in immediately even
+  // if no other page has populated it yet.
+  if (!Array.isArray(window._interlinkServersCache) || window._interlinkServersCache.length === 0) {
+    try {
+      const r = await fetch('/api/interlink/servers/fast', { credentials: 'same-origin' });
+      if (r.ok) window._interlinkServersCache = (await r.json()) || [];
+    } catch {}
+  }
+  updateAbAllServersBtnVisibility();
+  // If the user left the toggle on across reloads (and the gating still
+  // passes), start the remote live-alerts poller so the Live Alerts pane
+  // populates immediately.
+  if (_abAllServers && !!window._interlinkRelayMode
+      && Array.isArray(window._interlinkServersCache) && window._interlinkServersCache.length > 0) {
+    _startRemoteLiveAlertsPoller();
   }
 }
 
@@ -13400,6 +13601,14 @@ function toggleEventSubs(prefix) {
   chevron.style.transform = open ? '' : 'rotate(90deg)';
 }
 
+function toggleVirtEventSubs(prefix) {
+  const body    = document.getElementById(`al-${prefix}-virt-events-body`);
+  const chevron = document.getElementById(`al-${prefix}-virt-ev-chevron`);
+  const open    = body.style.display !== 'none';
+  body.style.display      = open ? 'none' : 'block';
+  chevron.style.transform = open ? '' : 'rotate(90deg)';
+}
+
 function toggleSMTPConfig() {
   const body    = document.getElementById('al-smtp-body');
   const chevron = document.getElementById('al-smtp-chevron');
@@ -13428,6 +13637,17 @@ function _buildEventSubsHTML(p) {
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-pool-actions"><span>ZFS Pool actions (pool destroyed / disconnected / imported, dataset created / deleted, zvol created / deleted)</span></label>`;
 }
 
+function _buildVirtEventSubsHTML(p) {
+  return `
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-start-fail"><span>VM / Container failed to start</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-unexpected-stop"><span>VM / Container stopped unexpectedly (crash / OOM)</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-created-deleted"><span>VM / Container created or deleted</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-snapshot-fail"><span>VM / Container snapshot failure</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-backup-fail"><span>VM / Container backup / replication failure</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-disk-full"><span>VM / Container disk usage exceeds <input type="number" id="al-${p}-vm-disk-pct" value="90" min="1" max="100" onclick="event.stopPropagation()">%</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-host-saturation"><span>Host resource saturation from running VMs / Containers (CPU or RAM)</span></label>`;
+}
+
 function _loadEventSubs(p, ev) {
   const el = document.getElementById(`al-${p}-events-body`);
   if (!el) return;
@@ -13448,6 +13668,15 @@ function _loadEventSubs(p, ev) {
   setChk(`al-${p}-ev-users`,        ev.user_created_deleted);
   setChk(`al-${p}-ev-shares`,       ev.share_created_deleted);
   setChk(`al-${p}-ev-pool-actions`, ev.pool_actions);
+  // Virtualization events — same EventConfig object, separate UI section.
+  setChk(`al-${p}-ev-vm-start-fail`,        ev.vm_start_failure);
+  setChk(`al-${p}-ev-vm-unexpected-stop`,   ev.vm_unexpected_stop);
+  setChk(`al-${p}-ev-vm-created-deleted`,   ev.vm_created_deleted);
+  setChk(`al-${p}-ev-vm-snapshot-fail`,     ev.vm_snapshot_failure);
+  setChk(`al-${p}-ev-vm-backup-fail`,       ev.vm_backup_failure);
+  setChk(`al-${p}-ev-vm-disk-full`,         ev.vm_disk_full);
+  setNum(`al-${p}-vm-disk-pct`,             ev.vm_disk_full_threshold_pct, 90);
+  setChk(`al-${p}-ev-vm-host-saturation`,   ev.vm_host_saturation);
 }
 
 function _collectEventSubs(p) {
@@ -13467,7 +13696,27 @@ function _collectEventSubs(p) {
     user_created_deleted:   chk(`al-${p}-ev-users`),
     share_created_deleted:  chk(`al-${p}-ev-shares`),
     pool_actions:           chk(`al-${p}-ev-pool-actions`),
+    vm_start_failure:             chk(`al-${p}-ev-vm-start-fail`),
+    vm_unexpected_stop:           chk(`al-${p}-ev-vm-unexpected-stop`),
+    vm_created_deleted:           chk(`al-${p}-ev-vm-created-deleted`),
+    vm_snapshot_failure:          chk(`al-${p}-ev-vm-snapshot-fail`),
+    vm_backup_failure:            chk(`al-${p}-ev-vm-backup-fail`),
+    vm_disk_full:                 chk(`al-${p}-ev-vm-disk-full`),
+    vm_disk_full_threshold_pct:   num(`al-${p}-vm-disk-pct`, 90),
+    vm_host_saturation:           chk(`al-${p}-ev-vm-host-saturation`),
   };
+}
+
+// Show / hide the Virtualization Event Subscriptions section based on whether
+// the virtualization feature is available on this server. Called from
+// loadAlerts() and re-called whenever _lxdAvailable changes (e.g., after
+// installing/uninstalling LXD).
+function _applyVirtEventsVisibility() {
+  const show = !!window._lxdAvailable;
+  ['em','nt','gt','po','sl','ws'].forEach(p => {
+    const sec = document.getElementById(`al-${p}-virt-section`);
+    if (sec) sec.style.display = show ? '' : 'none';
+  });
 }
 
 async function loadAlerts() {
@@ -13486,7 +13735,10 @@ async function loadAlerts() {
     ['em','nt','gt','po','sl','ws'].forEach(p => {
       const el = document.getElementById(`al-${p}-events-body`);
       if (el && !el.hasChildNodes()) el.innerHTML = _buildEventSubsHTML(p);
+      const ve = document.getElementById(`al-${p}-virt-events-body`);
+      if (ve && !ve.hasChildNodes()) ve.innerHTML = _buildVirtEventSubsHTML(p);
     });
+    _applyVirtEventsVisibility();
 
     // Email
     document.getElementById('al-em-enabled').checked          = !!d.email?.enabled;
@@ -24061,7 +24313,9 @@ async function _sidebarVersionCheck() {
       const dot = document.getElementById('nav-updates-dot');
       if (dot) dot.style.display = 'inline-block';
       const latSpan = document.getElementById('app-version-latest');
-      if (latSpan) { latSpan.textContent = '→ v' + data.latest; latSpan.style.display = 'inline'; }
+      if (latSpan) { latSpan.textContent = '→v' + data.latest; latSpan.style.display = 'inline'; }
+      const sysBtn = document.getElementById('sysinfo-btn');
+      if (sysBtn) sysBtn.textContent = 'Sys';
       _setLiveAlert('update-available', { severity: 'warn', label: 'ZNAS update available', message: data.latest ? 'v' + data.latest : '', page: 'updates' });
     }
   } catch {}
@@ -24086,7 +24340,9 @@ async function _autoBinaryVersionCheck() {
       uptodateEl.classList.add('hidden');
       if (dot) dot.style.display = 'inline-block';
       const latSpan = document.getElementById('app-version-latest');
-      if (latSpan) { latSpan.textContent = '→ v' + data.latest; latSpan.style.display = 'inline'; }
+      if (latSpan) { latSpan.textContent = '→v' + data.latest; latSpan.style.display = 'inline'; }
+      const sysBtn = document.getElementById('sysinfo-btn');
+      if (sysBtn) sysBtn.textContent = 'Sys';
       _setLiveAlert('update-available', { severity: 'warn', label: 'ZNAS update available', message: data.latest ? 'v' + data.latest : '', page: 'updates' });
     } else {
       latestEl.style.color = '';
@@ -24094,6 +24350,8 @@ async function _autoBinaryVersionCheck() {
       if (dot) dot.style.display = 'none';
       const latSpan = document.getElementById('app-version-latest');
       if (latSpan) latSpan.style.display = 'none';
+      const sysBtn = document.getElementById('sysinfo-btn');
+      if (sysBtn) sysBtn.textContent = 'SysInfo';
       _clearLiveAlert('update-available');
     }
   }
@@ -30171,6 +30429,8 @@ function runReplicationTask(id, name) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ relay_mode: enabled })
       });
+      window._interlinkRelayMode = !!enabled;
+      if (typeof updateAbAllServersBtnVisibility === 'function') updateAbAllServersBtnVisibility();
     } catch(e) {
       _showToast('Failed to save relay mode: ' + e.message, 'error');
       loadGlobalRelayMode(); // revert checkbox on failure

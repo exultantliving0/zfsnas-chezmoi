@@ -319,6 +319,11 @@ func main() {
 		log.Printf("Open https://%s:%d in your browser.", ip, appCfg.Port)
 	}
 
+	// ===== Interlink relay-mode notification subscribers =====
+	// When global relay mode is enabled, dial /ws/alerts on every linked
+	// server so admins on this box see in-app toasts from across the fleet.
+	alerts.ReconcileLinkedServerSubscribers(appCfg)
+
 	// ===== HTTP Server =====
 	addr := fmt.Sprintf(":%d", appCfg.Port)
 	srv := &http.Server{
