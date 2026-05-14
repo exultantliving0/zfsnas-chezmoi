@@ -195,17 +195,19 @@ func HandleLXDCloneFromSnapshot(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NewName     string `json:"new_name"`
 		Description string `json:"description"`
+		TargetPool  string `json:"target_pool"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.NewName) == "" {
 		jsonErr(w, http.StatusBadRequest, "new_name is required")
 		return
 	}
 	newName := strings.TrimSpace(req.NewName)
+	targetPool := strings.TrimSpace(req.TargetPool)
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
 	job := &lxdJob{Status: "running"}
 	lxdJobs.Store(jobID, job)
 	go func() {
-		err := system.CloneLXDFromSnapshot(name, snap, newName, req.Description)
+		err := system.CloneLXDFromSnapshot(name, snap, newName, req.Description, targetPool)
 		job.mu.Lock()
 		defer job.mu.Unlock()
 		if err != nil {
@@ -270,17 +272,19 @@ func HandleLXDCloneInstance(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NewName     string `json:"new_name"`
 		Description string `json:"description"`
+		TargetPool  string `json:"target_pool"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.NewName) == "" {
 		jsonErr(w, http.StatusBadRequest, "new_name is required")
 		return
 	}
 	newName := strings.TrimSpace(req.NewName)
+	targetPool := strings.TrimSpace(req.TargetPool)
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
 	job := &lxdJob{Status: "running"}
 	lxdJobs.Store(jobID, job)
 	go func() {
-		err := system.CloneLXDInstance(name, newName, req.Description)
+		err := system.CloneLXDInstance(name, newName, req.Description, targetPool)
 		job.mu.Lock()
 		defer job.mu.Unlock()
 		if err != nil {

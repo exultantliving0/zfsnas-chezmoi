@@ -493,7 +493,8 @@ func poolCacheDevs(poolName string) (raw, resolved []string) {
 		if i < len(resolvedNames) {
 			res = resolvedNames[i]
 		}
-		if res == "" || strings.Contains(res, "/by-partuuid/") || strings.Contains(res, "/by-id/") ||
+		if res == "" || isPartuuidString(res) ||
+			strings.Contains(res, "/by-partuuid/") || strings.Contains(res, "/by-id/") ||
 			looksLikeByIDBasename(res) {
 			res = resolveDevPath(r)
 		}

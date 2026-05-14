@@ -332,6 +332,12 @@ func GetLXDInstanceRealtime(instance string) (*LXDInstanceRealtime, error) {
 		}
 		switch s.metric {
 		case "lxd_cpu_seconds_total":
+			// Exclude idle/steal — they grow at ~1 sec/sec/vCPU
+			// independent of actual guest load, which would peg the
+			// derived %CPU at vCPU_count × 100 forever.
+			if m := s.labels["mode"]; m == "idle" || m == "steal" {
+				continue
+			}
 			cpuTotal += s.value
 		case "lxd_memory_Active_anon_bytes":
 			if s.value > memActiveAnon {

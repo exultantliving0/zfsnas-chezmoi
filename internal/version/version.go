@@ -1,6 +1,6 @@
 package version
 
-const Version = "6.5.11"
+const Version = "6.5.14"
 const ReleasesURL = "https://github.com/macgaver/zfsnas-chezmoi/releases"
 
 var experimentalMode bool

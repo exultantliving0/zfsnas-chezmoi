@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,6 +120,44 @@ func GetLXDInstanceMetricsDB(instance string) *capacityrrd.DB {
 	}
 	lxdMetricsDBs[instance] = db
 	return db
+}
+
+// ListLXDMetricInstances returns the names of every LXD instance that has a
+// per-instance RRD on disk. Combines the in-memory open-DB cache with a
+// scan of lxd_metrics/*.rrd.json so we don't miss instances whose DB
+// hasn't been opened in this process yet.
+func ListLXDMetricInstances() []string {
+	seen := map[string]struct{}{}
+	lxdMetricsMu.Lock()
+	for name := range lxdMetricsDBs {
+		seen[name] = struct{}{}
+	}
+	dir := lxdMetricsDir
+	lxdMetricsMu.Unlock()
+	if dir != "" {
+		if entries, err := os.ReadDir(dir); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				n := e.Name()
+				if !strings.HasSuffix(n, ".rrd.json") {
+					continue
+				}
+				name := strings.TrimSuffix(n, ".rrd.json")
+				if name == "" {
+					continue
+				}
+				seen[name] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // DeleteLXDInstanceMetrics removes the per-instance RRD file and drops the
@@ -304,6 +343,13 @@ func scrapeLXDMetricsOnce(now time.Time) error {
 		}
 		switch s.metric {
 		case "lxd_cpu_seconds_total":
+			// Sum only "busy" CPU modes. idle and steal grow at ~1 sec
+			// per real second per vCPU regardless of guest load, so
+			// including them pegs the rate at vCPU_count × 100% and
+			// flattens the chart.
+			if m := s.labels["mode"]; m == "idle" || m == "steal" {
+				continue
+			}
 			cpuSums[instance] += s.value
 		case "lxd_memory_Active_anon_bytes":
 			if s.value > memActiveAnon[instance] {

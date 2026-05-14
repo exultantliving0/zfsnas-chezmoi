@@ -734,7 +734,7 @@ func ImportProxmoxVM(ctx context.Context, conn ProxmoxSSHConn, vm ProxmoxVM, req
 		return fmt.Errorf("set cpu: %s: %s", err.Error(), strings.TrimSpace(string(out)))
 	}
 	if out, err := exec.Command("incus", "config", "set", vmName,
-		fmt.Sprintf("limits.memory=%dMB", vm.MemoryMB)).CombinedOutput(); err != nil {
+		fmt.Sprintf("limits.memory=%dMiB", vm.MemoryMB)).CombinedOutput(); err != nil {
 		rollback()
 		return fmt.Errorf("set memory: %s: %s", err.Error(), strings.TrimSpace(string(out)))
 	}

@@ -500,9 +500,21 @@ type LXDInstanceStats struct {
 	MemUsedBytes  int64   `json:"mem_used_bytes"`
 	MemPeakBytes  int64   `json:"mem_peak_bytes"`
 	MemLimitBytes int64   `json:"mem_limit_bytes"` // 0 = unlimited
-	DiskUsedBytes int64   `json:"disk_used_bytes"`
-	DiskSizeBytes int64   `json:"disk_size_bytes"` // 0 = unlimited / unknown
-	Processes     int     `json:"processes"`
+	// Guest-reported MemTotal from the Incus Prometheus endpoint. For VMs
+	// this is the virtio-balloon driver's reported total; non-zero means
+	// the balloon driver is loaded and reporting stats. For containers
+	// this is the cgroup memory total — the frontend only renders this in
+	// VM context where it is meaningful.
+	BalloonCurrentBytes int64 `json:"balloon_current_bytes,omitempty"`
+	// Sum across ALL disk devices on the instance — not just the root disk.
+	// Includes attached zvols / extra disks. The synthetic Incus "agent"
+	// share is excluded.
+	DiskUsedBytes int64 `json:"disk_used_bytes"`
+	DiskSizeBytes int64 `json:"disk_size_bytes"` // 0 = unlimited / unknown
+	// Weighted-by-configured-size average ZFS compressratio across all
+	// disks (e.g. "1.34x"). Empty when no disk reports a ratio.
+	DiskAvgCompRatio string `json:"disk_avg_comp_ratio,omitempty"`
+	Processes        int    `json:"processes"`
 }
 
 // parseLXDBytes converts LXD size strings like "4GB", "2GiB", "512MB" to bytes.
@@ -620,18 +632,62 @@ func LXDGetInstanceStats(name string) (LXDInstanceStats, error) {
 
 	memLimit := parseLXDBytes(cfg.MemoryLimit)
 
-	// Disk size: find root disk config.
+	// Aggregate disk size + weighted compressratio across ALL disks on
+	// the instance, not just the root. Excludes the synthetic Incus agent
+	// share (source=agent:config). The weighted-average ratio uses each
+	// disk's configured size as the weight, so a tiny scratch zvol with
+	// an outlier ratio doesn't skew the headline number for a 200 GB root.
 	diskSize := int64(0)
+	var ratioWeighted float64
+	var ratioWeight int64
 	for _, d := range cfg.Disks {
-		if d.IsRoot {
-			diskSize = parseLXDBytes(d.Size)
-			break
+		if d.IsAgent {
+			continue
+		}
+		s := parseLXDBytes(d.Size)
+		if s <= 0 {
+			continue
+		}
+		diskSize += s
+		r := parseCompRatioFloat(d.CompRatio)
+		if r > 0 {
+			ratioWeighted += float64(s) * r
+			ratioWeight += s
 		}
 	}
+	avgCompRatio := ""
+	if ratioWeight > 0 {
+		avgCompRatio = fmt.Sprintf("%.2fx", ratioWeighted/float64(ratioWeight))
+	}
 
+	// Incus's instance/state JSON only reports the root disk's usage
+	// under raw2.Disk["root"] — attached zvols and extra disks are NOT
+	// listed there, so summing raw2.Disk grossly under-counts on
+	// multi-disk instances. Query the actual `used` value from ZFS
+	// directly for every non-agent disk in one batched `zfs get` call
+	// and sum those. Fall back to raw2.Disk only when no ZFSPath is
+	// known (non-ZFS storage backend).
+	var zfsPaths []string
+	for _, d := range cfg.Disks {
+		if d.IsAgent || d.ZFSPath == "" {
+			continue
+		}
+		zfsPaths = append(zfsPaths, d.ZFSPath)
+	}
+	usedByPath := zfsGetUsedForPaths(zfsPaths)
 	disk := int64(0)
-	if root, ok := raw2.Disk["root"]; ok {
-		disk = root.Usage
+	for _, d := range cfg.Disks {
+		if d.IsAgent || d.ZFSPath == "" {
+			continue
+		}
+		disk += usedByPath[d.ZFSPath]
+	}
+	if disk == 0 {
+		for _, d := range raw2.Disk {
+			if d.Usage > 0 {
+				disk += d.Usage
+			}
+		}
 	}
 
 	var uptimeSec int64
@@ -660,12 +716,14 @@ func LXDGetInstanceStats(name string) (LXDInstanceStats, error) {
 	// piggy-backing on its rate cache here means the Live Info card,
 	// when it polls every 3 s, reuses whatever baseline the realtime row
 	// last established.
-	if memUsed == 0 {
-		if used, total := lxdPromMemoryFor(name); used > 0 {
-			memUsed = used
-			if memLimit == 0 && total > 0 {
-				memLimit = total
-			}
+	// Always sample the prom endpoint — it gives us the guest-reported
+	// MemTotal (= virtio-balloon current size for VMs) in addition to the
+	// memUsed fallback we already use for agent-less VMs.
+	promUsed, promTotal := lxdPromMemoryFor(name)
+	if memUsed == 0 && promUsed > 0 {
+		memUsed = promUsed
+		if memLimit == 0 && promTotal > 0 {
+			memLimit = promTotal
 		}
 	}
 	if rt, rerr := GetLXDInstanceRealtime(name); rerr == nil && rt != nil {
@@ -689,18 +747,35 @@ func LXDGetInstanceStats(name string) (LXDInstanceStats, error) {
 	}
 
 	return LXDInstanceStats{
-		Status:        raw2.Status,
-		UptimeSec:     uptimeSec,
-		CPUUsageNs:    raw2.CPU.Usage,
-		CPUPct:        cpuPct,
-		CPUCount:      cpuCount,
-		MemUsedBytes:  memUsed,
-		MemPeakBytes:  memPeak,
-		MemLimitBytes: memLimit,
-		DiskUsedBytes: disk,
-		DiskSizeBytes: diskSize,
-		Processes:     raw2.Processes,
+		Status:              raw2.Status,
+		UptimeSec:           uptimeSec,
+		CPUUsageNs:          raw2.CPU.Usage,
+		CPUPct:              cpuPct,
+		CPUCount:            cpuCount,
+		MemUsedBytes:        memUsed,
+		MemPeakBytes:        memPeak,
+		MemLimitBytes:       memLimit,
+		BalloonCurrentBytes: promTotal,
+		DiskUsedBytes:       disk,
+		DiskSizeBytes:       diskSize,
+		DiskAvgCompRatio:    avgCompRatio,
+		Processes:           raw2.Processes,
 	}, nil
+}
+
+// parseCompRatioFloat turns a ZFS compressratio string like "1.23x" (or
+// "1.23") into a float. Returns 0 when the value can't be parsed or is
+// <= 1 (no compression).
+func parseCompRatioFloat(s string) float64 {
+	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "x"))
+	if s == "" {
+		return 0
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
 }
 
 // lxdPromMemoryFor scrapes the LXD Prometheus endpoint and returns
@@ -2265,6 +2340,32 @@ func lxdZFSPoolForLXDPool(lxdPool string) string {
 		return v
 	}
 	return sp.Config["source"]
+}
+
+// zfsGetUsedForPaths returns a map of zfs path → "used" bytes for the
+// supplied paths in a single `zfs get` fork. Used by LXDGetInstanceStats
+// to aggregate disk usage across every disk on an instance — Incus's
+// own state JSON only reports the root disk.
+func zfsGetUsedForPaths(paths []string) map[string]int64 {
+	out := map[string]int64{}
+	if len(paths) == 0 {
+		return out
+	}
+	args := append([]string{"get", "-Hp", "-o", "name,value", "used"}, paths...)
+	data, err := exec.Command("zfs", args...).Output()
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if v, perr := strconv.ParseInt(fields[1], 10, 64); perr == nil {
+			out[fields[0]] = v
+		}
+	}
+	return out
 }
 
 // zfsGetCompRatio returns the compressratio property for a ZFS dataset/zvol.
@@ -4107,7 +4208,7 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		args = append(args, "-c", fmt.Sprintf("limits.cpu=%d", req.VCPU))
 	}
 	if req.MemoryMB > 0 {
-		args = append(args, "-c", fmt.Sprintf("limits.memory=%dMB", req.MemoryMB))
+		args = append(args, "-c", fmt.Sprintf("limits.memory=%dMiB", req.MemoryMB))
 	}
 	if req.MemoryHugepages {
 		args = append(args, "-c", "limits.memory.hugepages=true")
@@ -4529,7 +4630,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		args = append(args, "-c", fmt.Sprintf("limits.cpu.allowance=%dms/100ms", req.CPULimitPct))
 	}
 	if req.MemoryMB > 0 {
-		args = append(args, "-c", fmt.Sprintf("limits.memory=%dMB", req.MemoryMB))
+		args = append(args, "-c", fmt.Sprintf("limits.memory=%dMiB", req.MemoryMB))
 	}
 	// LXD's limits.memory.swap is a boolean (allow swapping or not), NOT a
 	// size — there's no per-instance swap-size knob in LXD. Translate the
@@ -5202,10 +5303,17 @@ func RestoreLXDSnapshot(name, snapName string, removeSubsequent bool) error {
 }
 
 // CloneLXDFromSnapshot creates a new instance by copying from source/snapshot.
+// If targetPool is non-empty, the clone's root disk is placed in that
+// storage pool (`incus copy -s <pool>`); otherwise the source pool is reused.
 // The description is applied via a PATCH to the LXD API after creation.
-func CloneLXDFromSnapshot(sourceName, snapName, newName, description string) error {
+func CloneLXDFromSnapshot(sourceName, snapName, newName, description, targetPool string) error {
 	src := sourceName + "/" + snapName
-	if out, err := exec.Command("incus", "copy", src, newName).CombinedOutput(); err != nil {
+	args := []string{"copy"}
+	if targetPool != "" {
+		args = append(args, "-s", targetPool)
+	}
+	args = append(args, src, newName)
+	if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	if description != "" {
@@ -5218,9 +5326,16 @@ func CloneLXDFromSnapshot(sourceName, snapName, newName, description string) err
 }
 
 // CloneLXDInstance copies an instance directly (no snapshot needed).
+// If targetPool is non-empty, the clone's root disk is placed in that
+// storage pool (`incus copy -s <pool>`); otherwise the source pool is reused.
 // The source may be running; LXD will take a live copy.
-func CloneLXDInstance(sourceName, newName, description string) error {
-	if out, err := exec.Command("incus", "copy", sourceName, newName).CombinedOutput(); err != nil {
+func CloneLXDInstance(sourceName, newName, description, targetPool string) error {
+	args := []string{"copy"}
+	if targetPool != "" {
+		args = append(args, "-s", targetPool)
+	}
+	args = append(args, sourceName, newName)
+	if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}
 	if description != "" {

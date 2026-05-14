@@ -734,6 +734,11 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleLXDMetricsStatus))).Methods("GET")
 	r.Handle("/api/lxd/instance-perf",
 		RequireAuth(http.HandlerFunc(HandleLXDInstancePerf))).Methods("GET")
+	// Workload tab — aggregator over every per-instance RRD; returns
+	// cpu/mem/net_rx/net_tx/disk_r/disk_w per instance so the frontend
+	// can render top-N stacked charts without N HTTP requests.
+	r.Handle("/api/lxd/workload-perf",
+		RequireAuth(http.HandlerFunc(HandleLXDWorkloadPerf))).Methods("GET")
 	r.Handle("/api/lxd/instance-realtime",
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceRealtime))).Methods("GET")
 	r.Handle("/api/lxd/instances",

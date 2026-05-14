@@ -171,6 +171,14 @@
     }
     .pool-cards-grid { display:grid; grid-template-columns:1fr 0.7fr 1fr; gap:20px; }
     @media (max-width:900px) { .pool-cards-grid { grid-template-columns:1fr; } }
+    /* VM / container detail page Summary tab — three cards (Virtual
+       Hardware, Live Information, Related Objects). Use auto-fit with a
+       360 px floor so cards re-flow 3 → 2 → 1 as the viewport narrows
+       instead of crushing all three side-by-side until an arbitrary
+       breakpoint flips straight to a single column. Height no longer
+       triggers a column collapse — a short viewport shouldn't force the
+       cards to stack horizontally. */
+    .ci-cards-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:20px; }
     .io-chart-wrap {
       flex: 1;
       display: flex;
@@ -674,6 +682,8 @@
         <!-- Tab bar flush at top (Global + one tab per pool, built dynamically) -->
         <div id="dash-tab-bar" style="display:flex;gap:2px;margin-bottom:20px;border-bottom:1px solid var(--border);margin-left:-32px;margin-right:-32px;padding:0 32px;">
           <button class="cap-tab active" id="perf-tab-btn-global" onclick="switchPerfTab('global')">Global</button>
+          <!-- Workload tab (revealed when LXD/Incus is available) -->
+          <button class="cap-tab" id="perf-tab-btn-workload" onclick="switchPerfTab('workload')" style="display:none;">Workload</button>
         </div>
 
         <!-- ── Global tab content ── -->
@@ -798,6 +808,88 @@
           </div>
         </div>
         </div><!-- end perf-tab-global -->
+
+        <!-- ── Workload tab content (revealed when LXD/Incus available) ── -->
+        <div id="perf-tab-workload" class="hidden">
+          <!-- Controls bar — same range + Avg/Min/Max selector as other
+               perf tabs; setPerfRange / setPerfAgg already update every
+               matching button on the page, so state stays in sync. -->
+          <div style="display:flex;align-items:center;margin-bottom:20px;gap:6px;flex-wrap:wrap;">
+            <div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <button id="perf-reset-zoom-btn-workload" onclick="resetPerfZoom('workload')" class="hidden"
+                      style="background:rgba(255,159,10,0.15);border:1px solid rgba(255,159,10,0.4);color:#ff9f0a;
+                             border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔍 Reset Zoom</button>
+              <div style="display:flex;gap:4px;">
+                <button class="cap-range-btn perf-range-btn active" data-range="all"   onclick="setPerfRange('all')"  >Since Data</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="4h"    onclick="setPerfRange('4h')"   >4 Hours</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="day"   onclick="setPerfRange('day')"  >Day</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="week"  onclick="setPerfRange('week')" >Week</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="month" onclick="setPerfRange('month')">Month</button>
+                <button class="cap-range-btn perf-range-btn"        data-range="year"  onclick="setPerfRange('year')" >Year</button>
+              </div>
+              <select onchange="setPerfAgg(this.value)"
+                      style="padding:3px 20px 3px 4px;font-size:12px;font-weight:600;width:62px;
+                             border-radius:6px;border:1px solid rgba(191,90,242,0.4);
+                             background:rgba(191,90,242,0.12) url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23bf5af2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;) no-repeat right 4px center;
+                             color:var(--accent-1);cursor:pointer;appearance:none;-webkit-appearance:none;">
+                <option value="avg" selected>Avg</option>
+                <option value="min">Min</option>
+                <option value="max">Max</option>
+              </select>
+            </div>
+          </div>
+          <div id="workload-perf-empty" style="display:none;color:var(--text-3);font-size:13px;padding:24px;text-align:center;">
+            Collecting workload data… check back in a few minutes.
+          </div>
+          <div id="workload-perf-charts">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+              <div class="card-sm" style="position:relative;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Top VMs / Containers · CPU</div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span id="workload-max-cpu" style="font-size:11px;color:var(--text-3);"></span>
+                    <i class="info-tip tip-left" data-tip="Stacked CPU consumption of the top 10 VMs / containers by peak rate in the selected time window.&#10;&#10;Source: incus_cpu_seconds_total per instance, scraped every 5 min by ZNAS and stored in per-instance RRDs (no new RRD added for this tab — the Workload aggregator reads the same files).&#10;&#10;Plotted as the rate of busy seconds (user + system + iowait + irq + softirq + nice) in % of ONE host CPU per instance, then stacked."></i>
+                  </div>
+                </div>
+                <div id="workload-legend-cpu" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;font-size:11px;"></div>
+                <div style="position:relative;height:180px;"><canvas id="workload-chart-cpu"></canvas><div id="workload-zoom-sel-cpu" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+              </div>
+              <div class="card-sm" style="position:relative;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Top VMs / Containers · Memory</div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span id="workload-max-mem" style="font-size:11px;color:var(--text-3);"></span>
+                    <i class="info-tip tip-left" data-tip="Stacked memory footprint of the top 10 VMs / containers by peak in the selected window.&#10;&#10;Source: incus_memory_MemTotal_bytes − incus_memory_MemAvailable_bytes per instance (5-min RRDs).&#10;&#10;Excludes reclaimable page cache, so this is the &quot;real working set&quot; — what each guest can't easily give back. Useful for sizing total host memory pressure."></i>
+                  </div>
+                </div>
+                <div id="workload-legend-mem" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;font-size:11px;"></div>
+                <div style="position:relative;height:180px;"><canvas id="workload-chart-mem"></canvas><div id="workload-zoom-sel-mem" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+              </div>
+              <div class="card-sm" style="position:relative;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Top VMs / Containers · Network</div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span id="workload-max-net" style="font-size:11px;color:var(--text-3);"></span>
+                    <i class="info-tip tip-left" data-tip="Stacked network throughput of the top 10 VMs / containers, ranked by combined RX+TX peak in the selected window.&#10;&#10;Source: incus_network_(receive|transmit)_bytes_total summed across every device per instance (5-min RRDs), expressed in bit/s.&#10;&#10;TX is stacked above the x-axis, RX below — each instance's colour appears in both halves, hence one chip per name in the legend."></i>
+                  </div>
+                </div>
+                <div id="workload-legend-net" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;font-size:11px;"></div>
+                <div style="position:relative;height:180px;"><canvas id="workload-chart-net"></canvas><div id="workload-zoom-sel-net" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+              </div>
+              <div class="card-sm" style="position:relative;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Top VMs / Containers · Disk</div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span id="workload-max-disk" style="font-size:11px;color:var(--text-3);"></span>
+                    <i class="info-tip tip-left" data-tip="Stacked disk throughput of the top 10 VMs / containers, ranked by combined Read+Write peak in the selected window.&#10;&#10;Source: incus_disk_(read|written)_bytes_total summed across whole-disk devices per instance (sda, vda, nvme0n1, dev-incus_root, …). Partitions, dm-* (LVM), loop\d+ and QEMU firmware blockers are excluded so I/O isn't double-counted across layered devices.&#10;&#10;Reads stacked above the x-axis, Writes below."></i>
+                  </div>
+                </div>
+                <div id="workload-legend-disk" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;font-size:11px;"></div>
+                <div style="position:relative;height:180px;"><canvas id="workload-chart-disk"></canvas><div id="workload-zoom-sel-disk" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <!-- Pool performance tabs (built dynamically by buildPerfPoolTabs) -->
         <div id="perf-pool-tabs"></div>
@@ -3748,7 +3840,7 @@
 
         <!-- Summary tab content -->
         <div id="ci-tab-content-summary" style="padding:20px 0;">
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;">
+          <div class="ci-cards-grid">
 
             <!-- VM Hardware card -->
             <div class="card" style="margin-bottom:0;">
@@ -3875,6 +3967,9 @@
               <i class="info-tip" data-tip="Charts below are populated from the LXD Prometheus endpoint, scraped every 5 minutes. Data accumulates over time; a brand-new instance will show the empty state until the first scrape lands."></i>
             </div>
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <button id="ci-mon-reset-zoom-btn" onclick="_ciMonResetZoom()" class="hidden"
+                      style="background:rgba(255,159,10,0.15);border:1px solid rgba(255,159,10,0.4);color:#ff9f0a;
+                             border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">🔍 Reset Zoom</button>
               <button class="cap-range-btn perf-range-btn active" data-range="all"   onclick="_ciMonSetRange('all')">Since Data</button>
               <button class="cap-range-btn perf-range-btn"        data-range="4h"    onclick="_ciMonSetRange('4h')">4 Hours</button>
               <button class="cap-range-btn perf-range-btn"        data-range="day"   onclick="_ciMonSetRange('day')">Day</button>
@@ -3898,33 +3993,42 @@
             <div class="card-sm" style="margin-bottom:16px;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                 <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">CPU usage %</div>
-                <span id="ci-mon-max-cpu" style="font-size:11px;color:var(--text-3);"></span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span id="ci-mon-max-cpu" style="font-size:11px;color:var(--text-3);"></span>
+                  <i class="info-tip tip-left" data-tip="Source: incus_cpu_seconds_total from the Incus Prometheus endpoint, scraped every 5 min.&#10;&#10;Plotted as the rate of busy CPU seconds (user + system + iowait + irq + softirq + nice — idle and steal are excluded), in percent of ONE host CPU. A 4-vCPU instance saturating all cores reads up to ~400%."></i>
+                </div>
               </div>
-              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-cpu"></canvas></div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-cpu"></canvas><div id="ci-mon-zoom-sel-cpu" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
             </div>
             <div class="card-sm" style="margin-bottom:16px;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                 <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Memory</div>
-                <span id="ci-mon-max-mem" style="font-size:11px;color:var(--text-3);"></span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span id="ci-mon-max-mem" style="font-size:11px;color:var(--text-3);"></span>
+                  <i class="info-tip tip-left" data-tip="Source: incus_memory_MemTotal_bytes − incus_memory_MemAvailable_bytes from the Incus Prometheus endpoint, scraped every 5 min.&#10;&#10;Reclaimable page cache is excluded — this is the &quot;real working set&quot; the guest can't easily give back. May read lower than the Live Information card, which counts everything the cgroup is charged with (including cache)."></i>
+                </div>
               </div>
-              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-mem"></canvas></div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-mem"></canvas><div id="ci-mon-zoom-sel-mem" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
             </div>
             <div class="card-sm" style="margin-bottom:16px;">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                 <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Network bit/s</div>
-                <span id="ci-mon-max-net" style="font-size:11px;color:var(--text-3);"></span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span id="ci-mon-max-net" style="font-size:11px;color:var(--text-3);"></span>
+                  <i class="info-tip tip-left" data-tip="Source: incus_network_receive_bytes_total / incus_network_transmit_bytes_total per device, scraped every 5 min and differenced to a byte-rate, then ×8 for bit/s.&#10;&#10;Filtered to predictable physical-NIC names the guest sees (enp*, ens*, eth*, wlan*, …). Loopback, docker / bridge / veth / vxlan / overlay interfaces are excluded so the line reflects the VM's actual uplink.&#10;&#10;TX is plotted above the x-axis, RX below."></i>
+                </div>
               </div>
-              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-net"></canvas></div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-net"></canvas><div id="ci-mon-zoom-sel-net" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
             </div>
             <div class="card-sm">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);display:flex;align-items:center;gap:6px;">
-                  Disk MB/s
-                  <i class="info-tip" data-tip="Devices reading 0 B/s are hidden from the hover tooltip so the readout focuses on disks that are actually busy. Idle/empty queues, loop pseudo-devices and unattached firmware blockers (system.flash0/1) typically sit at zero and would otherwise crowd the popup."></i>
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk MB/s</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span id="ci-mon-max-disk" style="font-size:11px;color:var(--text-3);"></span>
+                  <i class="info-tip tip-left" data-tip="Source: incus_disk_read_bytes_total / incus_disk_written_bytes_total per device, scraped every 5 min and differenced to a byte-rate.&#10;&#10;Restricted to whole block devices the guest sees as real hardware (sda, vda, nvme0n1, dev-incus_root, …). Partitions, dm-* (LVM), and loop\d+ (snap / docker mounts) are dropped so summed I/O isn't double-counted across layered devices.&#10;&#10;Names are remapped to the disk identifiers in Related Objects (root, disk1, …). Reads above the x-axis; writes below."></i>
                 </div>
-                <span id="ci-mon-max-disk" style="font-size:11px;color:var(--text-3);"></span>
               </div>
-              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-disk"></canvas></div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-disk"></canvas><div id="ci-mon-zoom-sel-disk" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
             </div>
           </div>
         </div><!-- /ci-tab-content-monitor -->
@@ -4064,9 +4168,13 @@ Select the Console tab to load.</pre>
               <label class="form-label">Instance ID <span style="color:var(--text-3);font-size:11px;">(no spaces)</span></label>
               <input type="text" id="ci-clone-name" class="form-control" style="font-family:monospace;" placeholder="clone-myvm">
             </div>
-            <div class="form-group" style="margin-bottom:20px;">
+            <div class="form-group" style="margin-bottom:12px;">
               <label class="form-label">Description</label>
               <input type="text" id="ci-clone-desc" class="form-control" placeholder="Clone of …">
+            </div>
+            <div class="form-group" style="margin-bottom:20px;">
+              <label class="form-label">Datastore</label>
+              <select id="ci-clone-pool" class="input"></select>
             </div>
             <div style="display:flex;gap:10px;justify-content:flex-end;">
               <button class="btn btn-ghost" onclick="_ciShowActionsView()">Cancel</button>
@@ -4114,6 +4222,10 @@ Select the Console tab to load.</pre>
             <div class="form-group">
               <label class="form-label">Display Name <span style="color:var(--text-3);font-size:11px;">(optional)</span></label>
               <input type="text" id="lxd-clone-desc" class="form-control" placeholder="e.g. My VM Copy">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Datastore</label>
+              <select id="lxd-clone-pool" class="input"></select>
             </div>
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
               <button class="btn btn-ghost" onclick="closeLXDCloneModal()">Cancel</button>
@@ -10094,10 +10206,11 @@ async function _memCompComputeVMCommit() {
     let mb = 0;
     for (const i of (list || [])) {
       if (String(i.status) !== 'Running') continue;
-      const m = String(i.memory_limit || '').match(/^([\d.]+)\s*(MB|GB)?$/i);
+      const m = String(i.memory_limit || '').match(/^([\d.]+)\s*(MiB|GiB|MB|GB)?$/i);
       if (!m) continue;
       const n = parseFloat(m[1]);
-      mb += (m[2] || '').toUpperCase() === 'GB' ? n*1024 : n;
+      const u = (m[2] || '').toUpperCase();
+      mb += (u === 'GB' || u === 'GIB') ? n*1024 : n;
     }
     return mb;
   } catch (_) { return 0; }
@@ -13944,8 +14057,8 @@ function fmtBitsPerSec(bytesPerSec) {
   const suffixes = ['bit/s', 'Kbit/s', 'Mbit/s', 'Gbit/s', 'Tbit/s'];
   let idx = 0;
   while (bits >= 1000 && idx < suffixes.length - 1) { bits /= 1000; idx++; }
-  return (bits % 1 === 0 ? bits.toFixed(0) : bits < 10 ? bits.toFixed(2) : bits.toFixed(1))
-    + ' ' + suffixes[idx];
+  // Cap at 1 decimal — no need for sub-Kbit precision on chart tooltips.
+  return (bits % 1 === 0 ? bits.toFixed(0) : bits.toFixed(1)) + ' ' + suffixes[idx];
 }
 function fmtBytesInt(n) {
   if (!n || n <= 0) return '0 B';
@@ -13962,9 +14075,9 @@ function fmtBytesInt(n) {
 
 // Strip partition suffix from a /dev/ path so sdb1 → /dev/sdb, nvme0n1p1 → /dev/nvme0n1.
 function stripPart(p) {
-  if (/\/nvme\d+n\d+p\d+$/.test(p)) return p.replace(/p\d+$/, '');
-  if (/\/sd[a-z]+\d+$/.test(p))     return p.replace(/\d+$/, '');
-  if (/\/hd[a-z]+\d+$/.test(p))     return p.replace(/\d+$/, '');
+  if (/\/nvme\d+n\d+p\d+$/.test(p))    return p.replace(/p\d+$/, '');
+  if (/\/mmcblk\d+p\d+$/.test(p))      return p.replace(/p\d+$/, '');
+  if (/\/(sd|vd|hd|xvd)[a-z]+\d+$/.test(p)) return p.replace(/\d+$/, '');
   return p;
 }
 
@@ -20097,7 +20210,7 @@ function renderDisks(el, disks) {
     html += diskTableHeaderWithPool();
     html += '<tbody>';
     html += zfsAssigned.map(d => diskRowWithPool(d, diskOwnerPool(d))).join('');
-    html += cacheDiskList.map(d => diskRowWithPool(d, '⚡ Cache')).join('');
+    html += cacheDiskList.map(d => diskRowWithPool(d, 'Cache')).join('');
     html += '</tbody></table></div>';
   }
 
@@ -25053,7 +25166,7 @@ function _ioExternalTooltip(context) {
   if (title) html += `<div style="font-weight:600;margin-bottom:6px;color:var(--text-2);font-size:12px;">${esc(title)}</div>`;
   tooltip.dataPoints.forEach(dp => {
     const color = dp.dataset.borderColor || '#888';
-    const val   = typeof dp.parsed.y === 'number' ? dp.parsed.y.toFixed(2) : '—';
+    const val   = typeof dp.parsed.y === 'number' ? dp.parsed.y.toFixed(1) : '—';
     html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
       <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${color};flex-shrink:0;"></span>
       <span style="flex:1;color:var(--text);font-size:12px;">${esc(dp.dataset.label || '')}</span>
@@ -25796,9 +25909,327 @@ async function loadDashboard() {
 
 // Reload the currently visible performance tab.
 function _reloadActivePerfTab() {
-  if (_perfActiveTab === 'global') _loadGlobalPerfData();
-  else if (_perfActiveTab === 'ups') _loadUPSPerfData();
-  else _loadPoolPerfData(_perfActiveTab);
+  if (_perfActiveTab === 'global')        _loadGlobalPerfData();
+  else if (_perfActiveTab === 'ups')      _loadUPSPerfData();
+  else if (_perfActiveTab === 'workload') _loadWorkloadPerfData();
+  else                                    _loadPoolPerfData(_perfActiveTab);
+}
+
+// ===== Workload tab — top-N VM/container stacked charts =====
+// Pulls cpu/mem/net/disk per-instance series from /api/incus/workload-perf
+// (an aggregator over the existing per-instance RRDs — no new collector
+// required) and stacks the top-10 contributors per metric.
+
+const _WORKLOAD_TOP_N = 10;
+const _WORKLOAD_PALETTE = [
+  '#0a84ff','#bf5af2','#30d158','#ff9f0a','#ff453a',
+  '#64d2ff','#ffd60a','#34d399','#a78bfa','#f472b6',
+];
+const _workloadCharts = {};
+let _workloadOldestTs;
+
+async function _loadWorkloadPerfData() {
+  const emptyEl   = document.getElementById('workload-perf-empty');
+  const chartsEl  = document.getElementById('workload-perf-charts');
+  if (!emptyEl || !chartsEl) return;
+
+  // Auto-tier requires an "oldest sample" reference. Re-use the global
+  // perf oldest_ts: the workload aggregator reads from the same RRDs so
+  // the same tier mapping applies.
+  if (_perfOldestTs['global'] === undefined) {
+    try {
+      const or = await fetch('/api/perf/global-oldest');
+      _perfOldestTs['global'] = or.ok ? ((await or.json()).oldest_ts || 0) : 0;
+    } catch (_) { _perfOldestTs['global'] = 0; }
+  }
+  _perfOldestTs['workload'] = _perfOldestTs['global'];
+
+  const tier  = _perfTierForRange('workload');
+  const since = _perfSinceTs();
+  let url = `/api/incus/workload-perf?tier=${tier}`;
+  if (since > 0) url += `&since=${since}`;
+
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      emptyEl.style.display = ''; chartsEl.style.display = 'none';
+      return;
+    }
+    const data = await r.json();
+    const metrics = data.metrics || {};
+    const hasAny = Object.values(metrics).some(m =>
+      m && Object.values(m).some(arr => Array.isArray(arr) && arr.length > 0));
+    if (!hasAny) {
+      emptyEl.style.display = ''; chartsEl.style.display = 'none';
+      return;
+    }
+    emptyEl.style.display = 'none'; chartsEl.style.display = '';
+    _renderWorkloadCharts(metrics, tier);
+  } catch (_) {
+    emptyEl.style.display = ''; chartsEl.style.display = 'none';
+  }
+}
+
+// Pick the N instances with the largest peak average across the time
+// window. Returns [{name, samples}] sorted by peak descending.
+function _workloadTopN(metricObj, n) {
+  const entries = Object.entries(metricObj || {}).map(([name, samples]) => {
+    let peak = 0;
+    for (const s of (samples || [])) {
+      const v = s && s.avg != null ? Math.abs(s.avg) : 0;
+      if (v > peak) peak = v;
+    }
+    return { name, samples: samples || [], peak };
+  }).filter(e => e.peak > 0);
+  entries.sort((a, b) => b.peak - a.peak);
+  return entries.slice(0, n);
+}
+
+// Build aligned datasets: one per top-N instance, sharing the union of
+// timestamps. Each dataset's data is an array of {x: ts*1000, y: avg}
+// with `null` for timestamps the instance didn't sample.
+function _workloadBuildDatasets(top, sign, colorOffset) {
+  const tsSet = new Set();
+  top.forEach(t => t.samples.forEach(s => tsSet.add(s.ts)));
+  const ts = [...tsSet].sort((a, b) => a - b);
+  return top.map((t, i) => {
+    const byTs = new Map(t.samples.map(s => [s.ts, s.avg]));
+    const color = _WORKLOAD_PALETTE[(i + (colorOffset || 0)) % _WORKLOAD_PALETTE.length];
+    const data  = ts.map(x => {
+      const v = byTs.get(x);
+      return { x: x * 1000, y: v == null ? null : v * (sign || 1) };
+    });
+    return {
+      label: t.name,
+      data,
+      borderColor: color,
+      backgroundColor: color + '80',
+      borderWidth: 0,
+      pointRadius: 0,
+      tension: 0.25,
+      spanGaps: true,
+      _peak: t.peak,
+    };
+  });
+}
+
+function _workloadRenderLegend(elId, datasets) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = datasets.map(d => {
+    const c = d.borderColor;
+    return `<span style="display:inline-flex;align-items:center;gap:4px;color:var(--text-2);"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${c};"></span>${esc(d.label)}</span>`;
+  }).join('');
+}
+
+function _workloadMakeChart(canvasId, datasets, unit, mirrored) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  if (_workloadCharts[canvasId]) { _workloadCharts[canvasId].destroy(); }
+  // Pin the visible window to the selected range OR to the active mouse-
+  // drag zoom (mirrors the Global tab). Without explicit min/max, Chart.js
+  // auto-fits the x axis to the data it received, so picking "Year" with
+  // only a week of samples renders a week-wide chart — not a year-wide one.
+  const _wlSince  = _perfSinceTs();
+  const _wlOldest = _perfOldestTs['workload'] || _perfOldestTs['global'] || 0;
+  const _wlNowMs  = Date.now();
+  const xMax = _perfZoom ? _perfZoom.max : _wlNowMs;
+  const xMin = _perfZoom ? _perfZoom.min
+             : _wlSince > 0  ? _wlSince * 1000
+             : _wlOldest > 0 ? _wlOldest * 1000
+             :                 _wlNowMs - 7 * 86400 * 1000;
+  // Tooltip colours — read the active theme's CSS vars so custom themes
+  // (midnight, forest, etc.) match the rest of the UI, with safe fallbacks
+  // for light/dark. Mirrors _perfChartOpts on the Global tab.
+  const style     = getComputedStyle(document.body);
+  const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
+  const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
+  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+  const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
+  const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
+  const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+  const zeroGridColor = isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)';
+  // Max one decimal on every workload graph axis/tooltip readout.
+  const oneDec = v => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
+  const fmtY = a => {
+    if (unit === '%')      return oneDec(a) + '%';
+    if (unit === 'bit/s')  return fmtBitsPerSec(a);   // already capped
+    if (unit === 'B' || unit === 'B/s') return fmtBytes(a) + (unit === 'B/s' ? '/s' : '');
+    return oneDec(a) + ' ' + unit;
+  };
+  // Fill the area from the previous dataset (in the same stack) up to
+  // the current. For the first dataset of every stack group, fill from
+  // y=0 instead. Without this Chart.js renders each layer as a separate
+  // area pinned to 0, which destroys the stack visually.
+  const stackSeen = new Set();
+  const dsWithFill = datasets.map(ds => {
+    const stackKey = ds.stack || 'default';
+    const first = !stackSeen.has(stackKey);
+    stackSeen.add(stackKey);
+    return { ...ds, fill: first ? 'origin' : '-1' };
+  });
+  _workloadCharts[canvasId] = new Chart(canvas, {
+    type: 'line',
+    data: { datasets: dsWithFill },
+    plugins: [_perfTooltipPlugin],
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      // xDedup + the always-on tooltip plugin match the Global tab:
+      // one datapoint per dataset (no flickering dupes between samples),
+      // tooltip visible whenever the cursor is over the chart area.
+      interaction: { mode: 'xDedup', intersect: false },
+      layout: { padding: { top: 24, right: 16, left: 4, bottom: 4 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: tipBg,
+          borderColor: tipBorder,
+          borderWidth: 1,
+          titleColor: tipTitle,
+          bodyColor: tipBody,
+          padding: 10,
+          filter: item => item.parsed.y !== null && item.parsed.y !== undefined,
+          callbacks: {
+            title: items => {
+              if (!items.length) return '';
+              const d = new Date(items[0].parsed.x);
+              const pad = n => String(n).padStart(2, '0');
+              return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+                   + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+            },
+            label: ctx => {
+              if (ctx.parsed.y == null) return null;
+              const v = mirrored ? Math.abs(ctx.parsed.y) : ctx.parsed.y;
+              return '  ' + ctx.dataset.label + ': ' + fmtY(v);
+            },
+          },
+        },
+      },
+      scales: {
+        x: { type: 'linear', min: xMin, max: xMax,
+             ticks: { color: tickColor, font: { size: 10 }, maxTicksLimit: 8,
+             callback: v => new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) },
+             grid: { color: gridColor } },
+        y: {
+          stacked: true,
+          ...(mirrored ? {} : { min: 0 }),
+          ticks: { color: tickColor, font: { size: 10 }, callback: v => fmtY(Math.abs(v)) },
+          grid: mirrored ? {
+            color:     ctx => ctx.tick && ctx.tick.value === 0 ? zeroGridColor : gridColor,
+            lineWidth: ctx => ctx.tick && ctx.tick.value === 0 ? 1.5 : 1,
+          } : { color: gridColor },
+        },
+      },
+    },
+  });
+  return _workloadCharts[canvasId];
+}
+
+function _renderWorkloadCharts(metrics) {
+  // CPU + Mem: simple positive stacks.
+  const cpuTop = _workloadTopN(metrics.cpu || {}, _WORKLOAD_TOP_N);
+  const cpuDs  = _workloadBuildDatasets(cpuTop, +1, 0);
+  _workloadRenderLegend('workload-legend-cpu', cpuDs);
+  _workloadMakeChart('workload-chart-cpu', cpuDs, '%', false);
+  document.getElementById('workload-max-cpu').textContent =
+    cpuTop.length ? 'top ' + cpuTop.length : '';
+
+  const memTop = _workloadTopN(metrics.mem || {}, _WORKLOAD_TOP_N);
+  const memDs  = _workloadBuildDatasets(memTop, +1, 0);
+  _workloadRenderLegend('workload-legend-mem', memDs);
+  _workloadMakeChart('workload-chart-mem', memDs, 'B', false);
+  document.getElementById('workload-max-mem').textContent =
+    memTop.length ? 'top ' + memTop.length : '';
+
+  // Network: pick the top-10 by combined rx+tx peak, then stack TX above
+  // 0 and RX (negated) below. Each instance contributes both lines.
+  const netTotals = {};
+  const merge = (obj, sign) => Object.entries(obj || {}).forEach(([n, s]) => {
+    let peak = 0;
+    for (const x of (s || [])) { const v = Math.abs(x.avg || 0); if (v > peak) peak = v; }
+    netTotals[n] = (netTotals[n] || 0) + peak;
+  });
+  merge(metrics.net_rx, -1);
+  merge(metrics.net_tx, +1);
+  const netNames = Object.entries(netTotals).sort((a, b) => b[1] - a[1])
+                     .slice(0, _WORKLOAD_TOP_N).map(e => e[0]);
+  const netTxSel = {}; const netRxSel = {};
+  netNames.forEach(n => {
+    if (metrics.net_tx && metrics.net_tx[n]) netTxSel[n] = metrics.net_tx[n];
+    if (metrics.net_rx && metrics.net_rx[n]) netRxSel[n] = metrics.net_rx[n];
+  });
+  const txDs = _workloadBuildDatasets(
+    Object.entries(netTxSel).map(([name, samples]) => ({ name, samples, peak: 1 })), +1, 0);
+  const rxDs = _workloadBuildDatasets(
+    Object.entries(netRxSel).map(([name, samples]) => ({ name, samples, peak: 1 })), -1, 0);
+  // One chip per instance — both directions share the same colour, so
+  // doubling them up just adds noise. Build the legend off the canonical
+  // top-N name list (preserves order + covers RX-only / TX-only edge
+  // cases) before we mutate the dataset labels with direction suffixes.
+  const netLegend = netNames.map((name, i) => ({
+    label: name,
+    borderColor: _WORKLOAD_PALETTE[i % _WORKLOAD_PALETTE.length],
+  }));
+  txDs.forEach(d => { d.stack = 'tx'; d.label = d.label + ' (TX)'; });
+  rxDs.forEach(d => { d.stack = 'rx'; d.label = d.label + ' (RX)'; });
+  _workloadRenderLegend('workload-legend-net', netLegend);
+  _workloadMakeChart('workload-chart-net', [...txDs, ...rxDs], 'bit/s', true);
+  document.getElementById('workload-max-net').textContent =
+    netNames.length ? 'top ' + netNames.length : '';
+
+  // Disk: top-10 by combined read+write peak, write stacked below 0.
+  const diskTotals = {};
+  const mergeDisk = (obj) => Object.entries(obj || {}).forEach(([n, s]) => {
+    let peak = 0;
+    for (const x of (s || [])) { const v = Math.abs(x.avg || 0); if (v > peak) peak = v; }
+    diskTotals[n] = (diskTotals[n] || 0) + peak;
+  });
+  mergeDisk(metrics.disk_r); mergeDisk(metrics.disk_w);
+  const diskNames = Object.entries(diskTotals).sort((a, b) => b[1] - a[1])
+                      .slice(0, _WORKLOAD_TOP_N).map(e => e[0]);
+  const drSel = {}; const dwSel = {};
+  diskNames.forEach(n => {
+    if (metrics.disk_r && metrics.disk_r[n]) drSel[n] = metrics.disk_r[n];
+    if (metrics.disk_w && metrics.disk_w[n]) dwSel[n] = metrics.disk_w[n];
+  });
+  const rDs = _workloadBuildDatasets(
+    Object.entries(drSel).map(([name, samples]) => ({ name, samples, peak: 1 })), +1, 0);
+  const wDs = _workloadBuildDatasets(
+    Object.entries(dwSel).map(([name, samples]) => ({ name, samples, peak: 1 })), -1, 0);
+  // Same rationale as the net chart — one chip per instance.
+  const diskLegend = diskNames.map((name, i) => ({
+    label: name,
+    borderColor: _WORKLOAD_PALETTE[i % _WORKLOAD_PALETTE.length],
+  }));
+  rDs.forEach(d => { d.stack = 'r'; d.label = d.label + ' (Read)'; });
+  wDs.forEach(d => { d.stack = 'w'; d.label = d.label + ' (Write)'; });
+  _workloadRenderLegend('workload-legend-disk', diskLegend);
+  _workloadMakeChart('workload-chart-disk', [...rDs, ...wDs], 'B/s', true);
+  document.getElementById('workload-max-disk').textContent =
+    diskNames.length ? 'top ' + diskNames.length : '';
+
+  _initWorkloadPerfZoom();
+}
+
+// Wire mouse-drag zoom on every workload chart canvas. Mirrors
+// _initGlobalPerfZoom / _initUPSPerfZoom: mousedown captures the start
+// position, the document-level mousemove/mouseup pair (defined further
+// down) draws the selection rectangle and commits the zoom range.
+function _initWorkloadPerfZoom() {
+  if (_perfZoomReady['workload']) return;
+  _perfZoomReady['workload'] = true;
+  for (const metric of ['cpu', 'mem', 'net', 'disk']) {
+    const canvas = document.getElementById('workload-chart-' + metric);
+    const sel    = document.getElementById('workload-zoom-sel-' + metric);
+    if (!canvas || !sel) continue;
+    canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      const rect = canvas.getBoundingClientRect();
+      _perfDragState = { pool: 'workload', metric, canvas, sel, startX: e.clientX - rect.left, rect };
+    });
+  }
 }
 
 async function _loadHardwareInfo() {
@@ -25909,14 +26340,14 @@ function _renderGlobalPerfCharts(series, ifaces) {
         if (pt && pt.x >= xMin && pt.x <= xMax && (pt.y ?? 0) > pk) pk = pt.y;
     return pk;
   }
-  function makeChart(canvasId, datasets, yLabel, yMax, stacked, labelFn) {
+  function makeChart(canvasId, datasets, yLabel, yMax, stacked, labelFn, mirrored = false) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     if (_dashCharts[canvasId]) { _dashCharts[canvasId].destroy(); }
     _dashCharts[canvasId] = new Chart(canvas, {
       type: 'line',
       data: { datasets },
-      options: _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked, labelFn),
+      options: _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked, labelFn, mirrored),
       plugins: [_perfTooltipPlugin],
     });
   }
@@ -25955,7 +26386,7 @@ function _renderGlobalPerfCharts(series, ifaces) {
     const gb  = _hwTotalRamBytes > 0
       ? ' (' + (pct / 100 * _hwTotalRamBytes / 1073741824).toFixed(1) + ' GB)'
       : '';
-    return '  ' + ctx.dataset.label + ':  ' + pct.toFixed(2) + '%' + gb;
+    return '  ' + ctx.dataset.label + ':  ' + pct.toFixed(1) + '%' + gb;
   };
 
   const memDatasets = [
@@ -25980,11 +26411,15 @@ function _renderGlobalPerfCharts(series, ifaces) {
   const _NIC_RX = ['#32d74b', '#64d2ff', '#ff453a', '#a78bfa'];
   const _NIC_TX = ['#ff9f0a', '#bf5af2', '#ffd60a', '#34d399'];
   let netDs = []; let legendHtml = '';
+  // Negate y values for the RX/Write direction so the chart mirrors
+  // around y=0 (TX/Read above, RX/Write below). The point objects carry
+  // x as well, so we map a shallow copy with `y: -y`.
+  const negatePts = pts => pts.map(p => p && p.y != null ? { x: p.x, y: -p.y } : p);
   ifaces.forEach((iface, i) => {
     const rxColor = _NIC_RX[i % _NIC_RX.length];
     const txColor = _NIC_TX[i % _NIC_TX.length];
-    netDs.push({ label: iface + ' RX', data: makePts('net_' + iface + '_rx'), fill: false, borderColor: rxColor, backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true });
-    netDs.push({ label: iface + ' TX', data: makePts('net_' + iface + '_tx'), fill: false, borderColor: txColor, backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true });
+    netDs.push({ label: iface + ' RX', data: negatePts(makePts('net_' + iface + '_rx')), fill: 'origin', borderColor: rxColor, backgroundColor: rxColor + '1a', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true });
+    netDs.push({ label: iface + ' TX', data:           makePts('net_' + iface + '_tx'),  fill: 'origin', borderColor: txColor, backgroundColor: txColor + '1a', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true });
     legendHtml += `<span style="font-size:11px;color:${rxColor};">▬ ${iface} RX</span> `;
     legendHtml += `<span style="font-size:11px;color:${txColor};">▬ ${iface} TX</span> `;
   });
@@ -25993,7 +26428,8 @@ function _renderGlobalPerfCharts(series, ifaces) {
     const canvas = document.getElementById('dash-chart-net');
     if (!canvas) return;
     if (_dashCharts['dash-chart-net']) { _dashCharts['dash-chart-net'].destroy(); }
-    const opts = _perfChartOpts('Mbit/s', null, xMin, xMax, tickFmt, false);
+    // Mirrored=true → y-axis straddles 0, dark 0-gridline, abs tick labels.
+    const opts = _perfChartOpts('Mbit/s', null, xMin, xMax, tickFmt, false, null, true);
     opts.plugins.tooltip = Object.assign({}, opts.plugins.tooltip, {
       enabled: false,
       external: _netExternalTooltip,
@@ -26005,19 +26441,31 @@ function _renderGlobalPerfCharts(series, ifaces) {
       plugins: [_netTooltipPlugin],
     });
   })();
-  const netMax = peakMax(netDs.map(ds => ({ data: inRange(ds.data) })));
+  // Max label uses absolute magnitudes so the RX-mirror doesn't pull peak negative.
+  const peakAbs = datasets => {
+    let pk = 0;
+    for (const ds of datasets)
+      for (const pt of (Array.isArray(ds.data) ? ds.data : []))
+        if (pt && pt.x >= xMin && pt.x <= xMax) {
+          const a = Math.abs(pt.y ?? 0);
+          if (a > pk) pk = a;
+        }
+    return pk;
+  };
+  const netMax = peakAbs(netDs);
   const netMaxEl = document.getElementById('dash-max-net');
-  if (netMaxEl) netMaxEl.textContent = netMax > 0 ? 'max ' + netMax.toFixed(2) + ' Mbit/s' : '';
+  if (netMaxEl) netMaxEl.textContent = netMax > 0 ? 'max ' + netMax.toFixed(1) + ' Mbit/s' : '';
 
-  // Disk I/O (not stacked)
-  const dskR = makePts('disk_read'); const dskW = makePts('disk_write');
+  // Disk I/O (mirrored: writes plot below 0)
+  const dskR = makePts('disk_read');
+  const dskW = makePts('disk_write');
   makeChart('dash-chart-disk', [
-    { label: 'Read MB/s',  data: dskR, fill: false, borderColor: '#64d2ff', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
-    { label: 'Write MB/s', data: dskW, fill: false, borderColor: '#ffd60a', backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
-  ], 'MB/s', null, false);
-  const dskMax = Math.max(peakMax([{ data: inRange(dskR) }]), peakMax([{ data: inRange(dskW) }]));
+    { label: 'Read MB/s',  data:           dskR,  fill: 'origin', borderColor: '#64d2ff', backgroundColor: '#64d2ff1a', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
+    { label: 'Write MB/s', data: negatePts(dskW), fill: 'origin', borderColor: '#ffd60a', backgroundColor: '#ffd60a1a', borderWidth: 1.5, pointRadius: 0, tension: 0.3, spanGaps: true },
+  ], 'MB/s', null, false, null, true);
+  const dskMax = Math.max(peakAbs([{ data: inRange(dskR) }]), peakAbs([{ data: inRange(dskW) }]));
   const dskMaxEl = document.getElementById('dash-max-disk');
-  if (dskMaxEl) dskMaxEl.textContent = dskMax > 0 ? 'max ' + dskMax.toFixed(2) + ' MB/s' : '';
+  if (dskMaxEl) dskMaxEl.textContent = dskMax > 0 ? 'max ' + dskMax.toFixed(1) + ' MB/s' : '';
 
   // Disk Busy (single line)
   const busyPts = makePts('disk_busy');
@@ -26082,7 +26530,7 @@ function _dashBuild24h(seriesArr) {
   return { labels, dataArrays };
 }
 
-function _dashChartOpts(yLabel, yMax, stacked = false) {
+function _dashChartOpts(yLabel, yMax, stacked = false, mirrored = false) {
   const style     = getComputedStyle(document.body);
   const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
@@ -26091,6 +26539,10 @@ function _dashChartOpts(yLabel, yMax, stacked = false) {
   const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
   const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
   const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+  // Mirrored charts (net / disk) plot one direction below 0 — tick & tooltip
+  // labels display absolute magnitudes; the y=0 gridline is darker so the
+  // mirror axis stands out from the regular grid.
+  const zeroGridColor = isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)';
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -26109,7 +26561,11 @@ function _dashChartOpts(yLabel, yMax, stacked = false) {
         filter: item => item.parsed.y !== null && item.parsed.y !== undefined,
         callbacks: {
           title: items => items[0]?.label ?? '',
-          label: ctx => ctx.parsed.y == null ? null : '  ' + ctx.dataset.label + ':  ' + ctx.parsed.y.toFixed(1) + ' ' + yLabel,
+          label: ctx => {
+            if (ctx.parsed.y == null) return null;
+            const v = mirrored ? Math.abs(ctx.parsed.y) : ctx.parsed.y;
+            return '  ' + ctx.dataset.label + ':  ' + v.toFixed(1) + ' ' + yLabel;
+          },
         },
       },
     },
@@ -26120,14 +26576,20 @@ function _dashChartOpts(yLabel, yMax, stacked = false) {
       },
       y: {
         stacked,
-        min: 0,
+        ...(mirrored ? {} : { min: 0 }),
         ...(yMax != null ? { max: yMax } : {}),
         ticks: {
           color: tickColor,
           font: { size: 10 },
-          callback: val => yMax === 100 ? val + '%' : val + ' ' + yLabel,
+          callback: val => {
+            const a = mirrored ? Math.abs(val) : val;
+            return yMax === 100 ? a + '%' : a + ' ' + yLabel;
+          },
         },
-        grid: { color: gridColor },
+        grid: mirrored ? {
+          color: ctx => ctx.tick && ctx.tick.value === 0 ? zeroGridColor : gridColor,
+          lineWidth: ctx => ctx.tick && ctx.tick.value === 0 ? 1.5 : 1,
+        } : { color: gridColor },
       },
     },
   };
@@ -26188,14 +26650,14 @@ function _makeDashChartStacked(canvasId, datasets, labels, yLabel, yMax, drawPhy
   return chart;
 }
 
-function _makeDashChart(canvasId, datasets, labels, yLabel, yMax) {
+function _makeDashChart(canvasId, datasets, labels, yLabel, yMax, mirrored = false) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
   if (_dashCharts[canvasId]) { _dashCharts[canvasId].destroy(); }
   const chart = new Chart(canvas, {
     type: 'line',
     data: { labels, datasets },
-    options: _dashChartOpts(yLabel, yMax),
+    options: _dashChartOpts(yLabel, yMax, false, mirrored),
     plugins: [_perfTooltipPlugin],
   });
   _dashCharts[canvasId] = chart;
@@ -26206,7 +26668,9 @@ function _makeDashChartNet(canvasId, datasets, labels) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
   if (_dashCharts[canvasId]) { _dashCharts[canvasId].destroy(); }
-  const base = _dashChartOpts('Mbit/s', null);
+  // Mirrored: per-NIC RX is plotted below 0 (negated at the dataset
+  // level), TX above. Tick & tooltip labels render absolute magnitudes.
+  const base = _dashChartOpts('Mbit/s', null, false, true);
   // Override tooltip to use external renderer
   base.plugins.tooltip = Object.assign({}, base.plugins.tooltip, {
     enabled: false,
@@ -26223,11 +26687,17 @@ function _makeDashChartNet(canvasId, datasets, labels) {
 }
 
 function _dashDS(label, color, values, fill) {
+  // fill="origin" gets a very light area tint (10% alpha) — used by the
+  // mirrored net/disk charts so each line has a soft volume cue without
+  // crowding overlapping series.
+  const bg = fill === 'origin' ? color + '1a'
+           : fill              ? color + '33'
+           : 'transparent';
   return {
     label,
     data: values,
     borderColor: color,
-    backgroundColor: fill ? color + '33' : 'transparent',
+    backgroundColor: bg,
     borderWidth: 1.5,
     pointRadius: 0,
     fill,
@@ -26306,7 +26776,9 @@ function _renderDashboardCharts(data, ifaceIPs = {}) {
   _makeDashChartStacked('dash-chart-mem', memDatasets, memD.labels, '%',
     memHasZram ? memCeilZram : 100, memHasZram);
 
-  // Network: one RX + one TX dataset per NIC, shared time grid
+  // Network: one RX + one TX dataset per NIC, shared time grid. RX is
+  // negated so it plots below the x-axis, mirror-style; the chart's
+  // y-axis tick & external tooltip render absolute magnitudes.
   let netDatasets = [];
   let netLabels   = [];
   let legendHtml  = '';
@@ -26316,13 +26788,14 @@ function _renderDashboardCharts(data, ifaceIPs = {}) {
     const built = _dashBuild24h([...rxSeries, ...txSeries]);
     netLabels = built.labels;
     const half = nicNames.length;
+    const negate = arr => arr.map(v => v == null ? null : -v);
     nicNames.forEach((iface, i) => {
       const rxColor  = _NIC_RX_COLORS[i % _NIC_RX_COLORS.length];
       const txColor  = _NIC_TX_COLORS[i % _NIC_TX_COLORS.length];
       const ipSuffix = ifaceIPs[iface] ? ' (' + ifaceIPs[iface] + ')' : '';
       const label    = iface + ipSuffix;
-      netDatasets.push(_dashDS(label + ' RX', rxColor, built.dataArrays[i],        false));
-      netDatasets.push(_dashDS(label + ' TX', txColor, built.dataArrays[half + i], false));
+      netDatasets.push(_dashDS(label + ' RX', rxColor, negate(built.dataArrays[i]), 'origin'));
+      netDatasets.push(_dashDS(label + ' TX', txColor,       built.dataArrays[half + i], 'origin'));
       legendHtml += `<span style="font-size:11px;color:${rxColor};">▬ ${label} RX</span> `;
       legendHtml += `<span style="font-size:11px;color:${txColor};">▬ ${label} TX</span> `;
     });
@@ -26332,10 +26805,12 @@ function _renderDashboardCharts(data, ifaceIPs = {}) {
   document.getElementById('dash-net-legend').innerHTML = legendHtml;
   _makeDashChartNet('dash-chart-net', netDatasets, netLabels);
 
+  // Disk I/O: same mirror treatment — Write below, Read above.
+  const negateArr = arr => arr.map(v => v == null ? null : -v);
   _makeDashChart('dash-chart-disk', [
-    _dashDS('Read MB/s',  '#64d2ff', dskD.dataArrays[0], false),
-    _dashDS('Write MB/s', '#ffd60a', dskD.dataArrays[1], false),
-  ], dskD.labels, 'MB/s', null);
+    _dashDS('Read MB/s',  '#64d2ff',          dskD.dataArrays[0],  'origin'),
+    _dashDS('Write MB/s', '#ffd60a', negateArr(dskD.dataArrays[1]), 'origin'),
+  ], dskD.labels, 'MB/s', null, true);
   _makeDashChart('dash-chart-busy', [_dashDS('Busy %', '#ff453a', busyD.dataArrays[0], true)], busyD.labels, '%', 100);
 
   // ── Max-seen labels ──────────────────────────────────────────────────────────
@@ -26744,9 +27219,11 @@ function switchPerfTab(name) {
 
   // Show/hide content.
   document.getElementById('perf-tab-global').classList.toggle('hidden', name !== 'global');
-  document.getElementById('perf-pool-tabs').classList.toggle('hidden', name === 'global' || name === 'ups');
+  document.getElementById('perf-pool-tabs').classList.toggle('hidden', name === 'global' || name === 'ups' || name === 'workload');
   const upsTab = document.getElementById('perf-tab-ups');
   if (upsTab) upsTab.classList.toggle('hidden', name !== 'ups');
+  const wlTab = document.getElementById('perf-tab-workload');
+  if (wlTab) wlTab.classList.toggle('hidden', name !== 'workload');
   for (const pool of _perfPools) {
     const el = document.getElementById('perf-tab-pool-' + pool);
     if (el) el.classList.toggle('hidden', pool !== name);
@@ -26770,6 +27247,11 @@ function setPerfRange(range) {
 function setPerfAgg(agg) {
   _perfAgg = agg;
   try { localStorage.setItem(PERF_LS_AGG, agg); } catch(_) {}
+  // Multiple tabs (global, workload, …) each have their own select —
+  // keep them in sync so switching tabs doesn't show a stale value.
+  document.querySelectorAll('select[onchange*="setPerfAgg"]').forEach(s => {
+    if (s.value !== agg) s.value = agg;
+  });
   _reloadActivePerfTab();
 }
 
@@ -27090,9 +27572,10 @@ function resetPerfZoom(pool) {
   _perfZoom = null;
   const zb = document.getElementById('perf-reset-zoom-btn-' + pool);
   if (zb) zb.classList.add('hidden');
-  if (pool === 'global') _loadGlobalPerfData();
-  else if (pool === 'ups') _loadUPSPerfData();
-  else _loadPoolPerfData(pool);
+  if      (pool === 'global')   _loadGlobalPerfData();
+  else if (pool === 'ups')      _loadUPSPerfData();
+  else if (pool === 'workload') _loadWorkloadPerfData();
+  else                          _loadPoolPerfData(pool);
 }
 
 function _initPerfZoom(pool) {
@@ -27132,8 +27615,10 @@ function _initPerfZoom(pool) {
     const endX = e.clientX - d.rect.left;
     const dx   = Math.abs(endX - d.startX);
     if (dx < 4) return;
-    const chart = d.pool === 'global' ? _dashCharts[d.metric]
-                : d.pool === 'ups'    ? _upsChart
+    const chart = d.pool === 'global'   ? _dashCharts[d.metric]
+                : d.pool === 'ups'      ? _upsChart
+                : d.pool === 'workload' ? _workloadCharts['workload-chart-' + d.metric]
+                : d.pool === 'cimon'    ? _ciMonHist[d.metric]
                 : (_perfCharts[d.pool] && _perfCharts[d.pool][d.metric]);
     if (!chart) return;
     const scale = chart.scales.x;
@@ -27141,11 +27626,24 @@ function _initPerfZoom(pool) {
     const tsMin = scale.getValueForPixel(Math.min(d.startX, endX));
     const tsMax = scale.getValueForPixel(Math.max(d.startX, endX));
     if (!tsMin || !tsMax || tsMax <= tsMin) return;
+    // The per-instance Monitor lives in its own modal and runs independently
+    // of the Performance page — store its zoom in a separate variable so
+    // switching to Monitor doesn't reuse a leftover _perfZoom from the
+    // Performance page (and vice versa).
+    if (d.pool === 'cimon') {
+      _ciMonZoom = { min: tsMin, max: tsMax };
+      const zbm = document.getElementById('ci-mon-reset-zoom-btn');
+      if (zbm) zbm.classList.remove('hidden');
+      _ciMonLoadHistory();
+      return;
+    }
     _perfZoom = { min: tsMin, max: tsMax };
     const zb = document.getElementById('perf-reset-zoom-btn-' + d.pool);
     if (zb) zb.classList.remove('hidden');
-    if (d.pool === 'global') _loadGlobalPerfData();
-    else _loadPoolPerfData(d.pool);
+    if      (d.pool === 'global')   _loadGlobalPerfData();
+    else if (d.pool === 'ups')      _loadUPSPerfData();
+    else if (d.pool === 'workload') _loadWorkloadPerfData();
+    else                            _loadPoolPerfData(d.pool);
   });
 })();
 
@@ -27208,9 +27706,11 @@ function _netExternalTooltip(context) {
   if (!tooltip || tooltip.opacity === 0) { tip.style.display = 'none'; return; }
   const items = tooltip.dataPoints || [];
   if (!items.length) { tip.style.display = 'none'; return; }
-  // Sort by value descending (nulls last)
+  // Sort by absolute value descending — RX is plotted as a negative
+  // number so the natural numeric sort would always rank RX last.
+  const absY = p => Math.abs(p.parsed.y ?? 0);
   const sorted = [...items].filter(p => p.parsed.y != null)
-    .sort((a, b) => (b.parsed.y ?? -Infinity) - (a.parsed.y ?? -Infinity));
+    .sort((a, b) => absY(b) - absY(a));
   if (!sorted.length) { tip.style.display = 'none'; return; }
   // Build timestamp title
   const d   = new Date(sorted[0].parsed.x);
@@ -27227,10 +27727,10 @@ function _netExternalTooltip(context) {
   let html = `<div style="font-size:11px;color:${isLight?'#6c6c70':'#8e8e93'};margin-bottom:6px;">${ts}</div>`;
   let visibleCount = 0;
   sorted.forEach(p => {
-    if (p.parsed.y < 0.0005) return; // hide zero entries
+    if (Math.abs(p.parsed.y) < 0.0005) return; // hide zero entries
     visibleCount++;
     const color = p.dataset.borderColor || '#fff';
-    const val   = p.parsed.y.toFixed(3);
+    const val   = Math.abs(p.parsed.y).toFixed(1);
     html += `<div style="display:flex;align-items:center;gap:7px;padding:2px 0;">
       <span style="width:10px;height:2px;background:${color};flex-shrink:0;display:inline-block;border-radius:1px;"></span>
       <span style="flex:1;color:${isLight?'#1c1c1e':'#f5f5f7'};white-space:nowrap;">${esc(p.dataset.label)}</span>
@@ -27286,7 +27786,7 @@ const _netTooltipPlugin = {
   },
 };
 
-function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, labelFn = null) {
+function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, labelFn = null, mirrored = false) {
   const style     = getComputedStyle(document.body);
   const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
@@ -27295,6 +27795,9 @@ function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, label
   const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
   const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
   const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+  // Mirrored axis: y=0 sits in the middle, RX/W plot below. Tick + tooltip
+  // labels render absolute magnitudes; y=0 gridline is darker.
+  const zeroGridColor = isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)';
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -27321,7 +27824,9 @@ function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, label
           },
           label: ctx => {
             if (ctx.parsed.y == null) return null;
-            return labelFn ? labelFn(ctx) : '  ' + ctx.dataset.label + ':  ' + ctx.parsed.y.toFixed(2) + ' ' + yLabel;
+            if (labelFn) return labelFn(ctx);
+            const v = mirrored ? Math.abs(ctx.parsed.y) : ctx.parsed.y;
+            return '  ' + ctx.dataset.label + ':  ' + v.toFixed(1) + ' ' + yLabel;
           },
         },
       },
@@ -27336,14 +27841,20 @@ function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, label
       },
       y: {
         stacked,
-        ...(_perfDynFloor ? {} : { min: 0 }),
+        ...(mirrored ? {} : (_perfDynFloor ? {} : { min: 0 })),
         ...(yMax != null ? { max: yMax } : {}),
         ticks: {
           color: tickColor,
           font: { size: 10 },
-          callback: val => yLabel === '%' ? val + '%' : val.toFixed(1) + ' ' + yLabel,
+          callback: val => {
+            const a = mirrored ? Math.abs(val) : val;
+            return yLabel === '%' ? a + '%' : a.toFixed(1) + ' ' + yLabel;
+          },
         },
-        grid: { color: gridColor },
+        grid: mirrored ? {
+          color: ctx => ctx.tick && ctx.tick.value === 0 ? zeroGridColor : gridColor,
+          lineWidth: ctx => ctx.tick && ctx.tick.value === 0 ? 1.5 : 1,
+        } : { color: gridColor },
       },
     },
   };
@@ -31032,7 +31543,7 @@ function _lxdGetSortKey(inst, col) {
     case 'ipv4':   return inst.ipv4 || '';
     case 'image':  return inst.image || '';
     case 'cpu':    return parseInt(inst.cpu_limit) || 0;
-    case 'ram':    return inst.memory_limit || '';
+    case 'ram':    return parseIncusMemoryBytes(inst.memory_limit) || 0;
     case 'status':    return inst.status || '';
     case 'autostart': return inst.autostart ? 1 : 0;
     default:          return '';
@@ -31395,6 +31906,7 @@ function _ciShowCloneView() {
   document.getElementById('ci-clone-desc').value = defaultName;
   document.getElementById('ci-clone-submit-btn').disabled = false;
   document.getElementById('ci-clone-submit-btn').textContent = 'Create Clone';
+  _populateClonePoolSelect('ci-clone-pool');
   setTimeout(() => document.getElementById('ci-clone-name').select(), 60);
 }
 
@@ -31469,17 +31981,19 @@ function ciConfirmDeleteSnap() {
 async function ciSubmitClone() {
   const newName = (document.getElementById('ci-clone-name').value || '').trim();
   const desc    = (document.getElementById('ci-clone-desc').value || '').trim();
+  const pool    = ((document.getElementById('ci-clone-pool') || {}).value || '').trim();
   const alertEl = document.getElementById('ci-snap-clone-alert');
   const btn     = document.getElementById('ci-clone-submit-btn');
   if (!newName) { alertEl.textContent = 'Instance ID is required.'; alertEl.classList.remove('hidden'); return; }
   alertEl.classList.add('hidden');
   btn.disabled = true; btn.textContent = 'Starting…';
+  if (pool) { try { localStorage.setItem(_LXD_LAST_CLONE_POOL_KEY, pool); } catch {} }
   try {
     const res = await fetch(
       '/api/incus/instances/' + encodeURIComponent(_ciCurrentName) +
       '/snapshots/' + encodeURIComponent(_ciSnapActionTarget) + '/clone',
       { method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({new_name: newName, description: desc || newName}) }
+        body: JSON.stringify({new_name: newName, description: desc || newName, target_pool: pool}) }
     );
     const d = await res.json();
     if (!res.ok) {
@@ -31682,16 +32196,23 @@ let _ciMonAgg      = 'avg';
 const CI_MON_BUFFER_MAX = 100; // ~5 min @ 3 s
 
 // updateMonitorTabVisibility shows/hides the Monitor tab based on the
-// LXDMetricsEnabled feature flag and whether LXD is available.
+// LXDMetricsEnabled feature flag and whether LXD is available. Also
+// shows the Performance page's "Workload" tab under the same condition.
 function updateMonitorTabVisibility() {
-  const btn = document.getElementById('ci-tab-monitor');
-  if (!btn) return;
   const show = !!window._lxdAvailable && !!window._lxdMetricsEnabled;
-  btn.style.display = show ? '' : 'none';
+  const btn = document.getElementById('ci-tab-monitor');
+  if (btn) btn.style.display = show ? '' : 'none';
   // If the user was on the Monitor tab and it's no longer available,
   // bounce them to Summary so the page isn't stuck on a hidden tab.
-  if (!show && _ciActiveTab === 'monitor') {
+  if (!show && typeof _ciActiveTab !== 'undefined' && _ciActiveTab === 'monitor') {
     _ciSwitchTab('summary');
+  }
+  const wlBtn = document.getElementById('perf-tab-btn-workload');
+  if (wlBtn) wlBtn.style.display = show ? '' : 'none';
+  // Similarly bounce the perf page off the workload tab if it disappears.
+  if (!show && typeof _perfActiveTab !== 'undefined' && _perfActiveTab === 'workload'
+      && typeof switchPerfTab === 'function') {
+    switchPerfTab('global');
   }
 }
 
@@ -31889,8 +32410,17 @@ function _ciMonRedrawSparks() {
 
 // ── Historical row ────────────────────────────────────────────────────────
 
+// Per-instance Monitor zoom — separate from _perfZoom so opening Monitor
+// doesn't inherit a leftover zoom from the global Performance page and
+// vice versa.
+let _ciMonZoom      = null;     // { min: ms, max: ms } when zoomed, else null
+let _ciMonZoomReady = false;    // mousedown listeners attached once
+
 function _ciMonSetRange(r) {
   _ciMonRange = r;
+  _ciMonZoom = null;
+  const zb = document.getElementById('ci-mon-reset-zoom-btn');
+  if (zb) zb.classList.add('hidden');
   document.querySelectorAll('#ci-tab-content-monitor .perf-range-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.range === r);
   });
@@ -31900,6 +32430,32 @@ function _ciMonSetRange(r) {
 function _ciMonSetAgg(v) {
   _ciMonAgg = v;
   _ciMonLoadHistory();
+}
+
+function _ciMonResetZoom() {
+  _ciMonZoom = null;
+  const zb = document.getElementById('ci-mon-reset-zoom-btn');
+  if (zb) zb.classList.add('hidden');
+  _ciMonLoadHistory();
+}
+
+// Wire mouse-drag zoom on every per-instance Monitor chart canvas.
+// Mirrors _initWorkloadPerfZoom; the shared mouseup handler picks up
+// _perfDragState.pool === 'cimon' and writes _ciMonZoom.
+function _initCIMonZoom() {
+  if (_ciMonZoomReady) return;
+  _ciMonZoomReady = true;
+  for (const metric of ['cpu', 'mem', 'net', 'disk']) {
+    const canvas = document.getElementById('ci-mon-chart-' + metric);
+    const sel    = document.getElementById('ci-mon-zoom-sel-' + metric);
+    if (!canvas || !sel) continue;
+    canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      const rect = canvas.getBoundingClientRect();
+      _perfDragState = { pool: 'cimon', metric, canvas, sel, startX: e.clientX - rect.left, rect };
+    });
+  }
 }
 
 function _ciMonSinceTs() {
@@ -31940,38 +32496,140 @@ async function _ciMonLoadHistory() {
     _ciMonRenderHistChart('mem',  series, ['mem'],                       'B',     1);
     // Network rendered in bits per second (industry standard for network
     // throughput); the values in the RRD are bytes/sec — the renderer
-    // multiplies by 8 when 'bit/s' is the unit.
-    _ciMonRenderHistChart('net',  series, keys.filter(k => k.startsWith('net_rx:') || k.startsWith('net_tx:')), 'bit/s', 1);
-    _ciMonRenderHistChart('disk', series, keys.filter(k => k.startsWith('disk_r:') || k.startsWith('disk_w:')), 'B/s',   1);
+    // multiplies by 8 when 'bit/s' is the unit. Filter to physical-looking
+    // interfaces (enp*/ens*/eno*/eth*/wlan*/wlp*) — drops loopback,
+    // docker0, br-*, veth*, tun*, vnet*, virbr*, vxlan/geneve and the
+    // dozens of container-side virtual NICs that otherwise clutter the
+    // chart and mask the actual VM uplink traffic.
+    const netKeys = keys.filter(k => {
+      const m = k.match(/^net_(?:rx|tx):(.+)$/);
+      return m && _isPhysicalIface(m[1]);
+    });
+    _ciMonRenderHistChart('net',  series, netKeys, 'bit/s', 1);
+    // Disks: only the whole block devices the VM / container guest sees
+    // as actual hardware (sda, sdb, vda, nvme0n1, …). Strip out
+    // partitions, dm-* (device-mapper / LVM), loop\d+ (snap / docker
+    // mounts) — those clutter the chart with traffic the user can't act
+    // on. For VMs we also relabel `sd[a-z]`/`vd[a-z]`/`nvme<n>n1` back
+    // to the configured disk name from Related Objects (root, disk1, …)
+    // so the tooltip reads in the same vocabulary as the rest of the UI.
+    const diskKeys = keys.filter(k => {
+      const m = k.match(/^disk_(?:r|w):(.+)$/);
+      return m && _isPhysicalDisk(m[1]);
+    });
+    const diskLabelMap = _buildDiskLabelMap(_ciLastCfg);
+    _ciMonRenderHistChart('disk', series, diskKeys, 'B/s', 1, diskLabelMap);
+    _initCIMonZoom();
   } catch (e) {
     empty.style.display = ''; charts.style.display = 'none';
     empty.textContent = 'Could not load history: ' + e.message;
   }
 }
 
-function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor) {
+// _isPhysicalIface — true if the interface name looks like a real NIC
+// (matching predictable kernel / systemd-udev names) rather than a
+// virtual / container / bridge / overlay device. Used to filter the
+// per-instance Monitor network chart down to the uplink the user
+// actually cares about.
+function _isPhysicalIface(dev) {
+  if (!dev) return false;
+  const d = String(dev);
+  // Hard-exclude common virtual / container / overlay prefixes first.
+  if (/^(lo|docker|br-|virbr|veth|vnet|tap|tun|cali|flannel|wg|vxlan|geneve|fwbr|fwln|fwpr|bond\d|vlan\d|kube|cni|ovs|gre|lxcbr|lxdbr|incbr|incusbr)/i.test(d)) return false;
+  // Allow common predictable Ethernet names + Wi-Fi.
+  return /^(enp|ens|eno|enx|eth\d|em\d|p\dp\d|wlp|wlan|wls)/i.test(d);
+}
+
+// _isPhysicalDisk — true only for whole-disk block devices the VM /
+// container guest sees as actual storage (sda, vda, nvme0n1, …). Drops
+// partitions (sda1), device-mapper (dm-0, LVM), and loopback (loop0 —
+// snap / docker / iso mounts), since those represent slices of the
+// underlying VM disk rather than the disk itself and just clutter the
+// chart with overlapping traffic.
+function _isPhysicalDisk(dev) {
+  if (!dev) return false;
+  // Whole block devices, no partition suffix:
+  //   sda, sdb, ... · vda, vdb, ... (virtio) · xvda (xen)
+  //   nvme0n1, nvme1n2, ... (nvme namespace, no "p<part>" suffix)
+  return /^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+n\d+)$/.test(dev);
+}
+
+// _buildDiskLabelMap — for VMs, maps guest-kernel block device names
+// (sda, sdb, vda, nvme0n1, …) back to the configured disk names from
+// /api/incus/instances/<name>/config (the same names shown in the
+// Related Objects card: "root", "disk1", "disk2", …). Returns null for
+// containers since they see the host's disks directly and a remap
+// wouldn't be meaningful.
+function _buildDiskLabelMap(cfg) {
+  if (!cfg || !cfg.is_vm || !Array.isArray(cfg.disks)) return null;
+  const phys = cfg.disks.filter(d => !d.is_agent);
+  if (!phys.length) return null;
+  // Root first, then the user-added disks in attach order — this
+  // mirrors QEMU's device-add ordering, which is what the guest kernel
+  // enumerates as sda, sdb, …
+  phys.sort((a, b) => (b.is_root ? 1 : 0) - (a.is_root ? 1 : 0));
+  const map = {};
+  phys.forEach((d, i) => {
+    const friendly = d.is_root ? 'root' : (d.name || ('disk' + (i + 1)));
+    const letter = String.fromCharCode('a'.charCodeAt(0) + i);
+    map['sd'  + letter] = friendly;
+    map['vd'  + letter] = friendly;
+    map['xvd' + letter] = friendly;
+    map['nvme' + i + 'n1'] = friendly;
+  });
+  return map;
+}
+
+function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor, labelMap) {
   const canvasId = 'ci-mon-chart-' + slot;
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   if (_ciMonHist[slot]) { _ciMonHist[slot].destroy(); }
   const palette = ['#0a84ff','#bf5af2','#30d158','#ff9f0a','#ff453a','#64d2ff','#ffd60a'];
+  // Mirror-style chart: on the network slot, RX is plotted below 0; on the
+  // disk slot, writes are plotted below 0. Outgoing/reads stay positive, so
+  // the two flow directions read as opposing wings around the x-axis.
+  const isMirrored = (k) => k.startsWith('net_rx:') || k.startsWith('disk_w:');
+  // Optional friendly relabel: when a labelMap is provided, rewrite the
+  // device part of the key for display ("disk_r:sda" → "disk_r:root")
+  // so tooltips read in the same vocabulary as the rest of the UI.
+  const displayLabel = (k) => {
+    if (!labelMap) return k;
+    const m = k.match(/^(disk_(?:r|w)):(.+)$/);
+    if (!m) return k;
+    const friendly = labelMap[m[2]];
+    return friendly ? (m[1] + ':' + friendly) : k;
+  };
   const datasets = keys.map((k, i) => {
     const samples = series[k] || [];
     const color = palette[i % palette.length];
+    const sign = isMirrored(k) ? -1 : 1;
     return {
-      label: k,
-      data: samples.map(s => ({ x: s.ts * 1000, y: (s[_ciMonAgg] ?? null) })),
+      label: displayLabel(k),
+      data: samples.map(s => {
+        const v = s[_ciMonAgg];
+        return { x: s.ts * 1000, y: (v == null ? null : v * sign) };
+      }),
       borderColor: color,
-      backgroundColor: color + '33',
+      // Very light area fill — colour-coded but barely-there. For
+      // mirrored charts (net/disk) fill toward y=0 so positive lines
+      // fill downward and negative lines fill upward, visually
+      // anchoring each direction's volume to the centre axis.
+      backgroundColor: color + '1a',
       borderWidth: 1.2,
       pointRadius: 0,
       tension: 0.3,
-      fill: false,
+      fill: 'origin',
       spanGaps: true,
     };
   });
+  // Peak compares absolute values so the mirrored series (negative y) is
+  // still ranked correctly against the positive ones.
   let peak = 0;
-  for (const ds of datasets) for (const pt of ds.data) if ((pt.y ?? 0) > peak) peak = pt.y;
+  for (const ds of datasets) for (const pt of ds.data) {
+    const a = Math.abs(pt.y ?? 0);
+    if (a > peak) peak = a;
+  }
   const maxEl = document.getElementById('ci-mon-max-' + slot);
   if (maxEl) {
     if (peak <= 0) maxEl.textContent = '';
@@ -31980,13 +32638,17 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor) {
     else if (unit === 'B' || unit === 'B/s') maxEl.textContent = 'max ' + fmtBytes(peak) + (unit === 'B/s' ? '/s' : '');
     else maxEl.textContent = 'max ' + peak.toFixed(1) + ' ' + unit;
   }
-  const isLight = document.body.classList.contains('light') || document.body.classList.contains('dawn');
-  const tickColor = isLight ? '#6c6c70' : '#8e8e93';
+  // Tooltip + tick colours read from the active theme's CSS vars so custom
+  // themes (midnight, forest, etc.) match the rest of the UI. Mirrors the
+  // Global tab's _perfChartOpts.
+  const style     = getComputedStyle(document.body);
+  const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
+  const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
   const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
-  const tipBg     = isLight ? '#ffffff' : '#1c1c1e';
+  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
   const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
-  const tipTitle  = isLight ? '#3a3a3c' : '#c7c7cc';
-  const tipBody   = isLight ? '#1c1c1e' : '#f5f5f7';
+  const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
+  const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
   _ciMonHist[slot] = new Chart(canvas, {
     type: 'line',
     data: { datasets },
@@ -31995,6 +32657,7 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor) {
       // xDedup: same hover model as the global Performance page — one
       // datapoint per dataset, no alternating duplicates between samples.
       interaction: { mode: 'xDedup', intersect: false },
+      layout: { padding: { top: 24, right: 16, left: 4, bottom: 4 } },
       plugins: {
         // Legend hidden — net/disk charts often have many series (one per
         // device per direction), and the legend swallows half the chart.
@@ -32007,17 +32670,12 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor) {
           titleColor: tipTitle,
           bodyColor: tipBody,
           padding: 10,
-          // Disk I/O chart: hide rows that read as 0 B/s. Most VMs have
-          // many disk devices that idle at zero (loop pseudo-devices,
-          // unused virtio queues), so the tooltip otherwise gets noisy
-          // with a long list of "0 B/s" lines that crowd out the rates
-          // that actually matter. The 0.5 threshold avoids float-noise
-          // ticks like 0.0003 B/s sneaking in.
-          filter: item => {
-            if (item.parsed.y === null || item.parsed.y === undefined) return false;
-            if (slot === 'disk' && Math.abs(item.parsed.y) < 0.5) return false;
-            return true;
-          },
+          // Only drop null/undefined; show every disk including idle 0
+          // B/s rows so the user can confirm a disk is being watched.
+          // (Pre-existing disk filter dropped <0.5 B/s when loop / dm
+          // pseudo-devices spammed the tooltip; with the physical-disk
+          // filter upstream those never reach this chart anymore.)
+          filter: item => item.parsed.y != null,
           callbacks: {
             title: items => {
               if (!items.length) return '';
@@ -32028,22 +32686,70 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor) {
             },
             label: ctx => {
               if (ctx.parsed.y == null) return null;
-              if (unit === '%')      return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + '%';
-              if (unit === 'bit/s')  return '  ' + ctx.dataset.label + ': ' + fmtBitsPerSec(ctx.parsed.y);
-              if (unit === 'B' || unit === 'B/s') return '  ' + ctx.dataset.label + ': ' + fmtBytes(ctx.parsed.y) + (unit === 'B/s' ? '/s' : '');
-              return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(2) + ' ' + unit;
+              // Mirror-chart values render with their sign stripped — the
+              // direction is already conveyed by the series label
+              // (net_rx vs net_tx, disk_r vs disk_w) and the line's side
+              // of the x-axis.
+              const v = Math.abs(ctx.parsed.y);
+              if (unit === '%')      return '  ' + ctx.dataset.label + ': ' + v.toFixed(1) + '%';
+              if (unit === 'bit/s')  return '  ' + ctx.dataset.label + ': ' + fmtBitsPerSec(v);
+              if (unit === 'B' || unit === 'B/s') return '  ' + ctx.dataset.label + ': ' + fmtBytes(v) + (unit === 'B/s' ? '/s' : '');
+              return '  ' + ctx.dataset.label + ': ' + v.toFixed(1) + ' ' + unit;
             },
           },
         },
       },
       scales: {
-        x: { type: 'linear', ticks: { color: tickColor, font: { size: 10 }, maxTicksLimit: 8, callback: v => new Date(v).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) }, grid: { color: gridColor } },
-        y: { beginAtZero: true, ticks: { color: tickColor, font: { size: 10 },
-          callback: v => unit === '%'     ? v + '%'
-                       : unit === 'bit/s' ? fmtBitsPerSec(v)
-                       : (unit === 'B' || unit === 'B/s') ? fmtBytes(v)
-                       : v.toFixed(1)
-        }, grid: { color: gridColor } },
+        // Pin the visible window to the range button OR to the active
+        // mouse-drag zoom (mirrors the Global tab; without min/max
+        // Chart.js auto-fits to the returned data and silently shortens
+        // the window). For the "Since Data" / 'all' button with no zoom,
+        // fall back to the earliest sample so the chart still spans every
+        // datapoint we have.
+        x: (() => {
+          const nowMs = Date.now();
+          let xMin, xMax;
+          if (_ciMonZoom) {
+            xMin = _ciMonZoom.min;
+            xMax = _ciMonZoom.max;
+          } else {
+            const since = _ciMonSinceTs();
+            xMax = nowMs;
+            if (since > 0) xMin = since * 1000;
+            else {
+              let earliest = Infinity;
+              for (const ds of datasets)
+                for (const pt of (ds.data || []))
+                  if (pt && pt.x != null && pt.x < earliest) earliest = pt.x;
+              xMin = earliest === Infinity ? nowMs - 7 * 86400 * 1000 : earliest;
+            }
+          }
+          return {
+            type: 'linear', min: xMin, max: xMax,
+            ticks: { color: tickColor, font: { size: 10 }, maxTicksLimit: 8, callback: v => new Date(v).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) },
+            grid: { color: gridColor },
+          };
+        })(),
+        // For mirrored charts (network / disk), the y-axis straddles 0:
+        // positive half = TX / reads, negative half = RX / writes.
+        // beginAtZero=false lets Chart.js auto-extend below 0; tick labels
+        // strip the sign so both halves read as positive magnitudes. The
+        // y=0 gridline is rendered darker than the rest so the mirror
+        // axis stands out.
+        y: { beginAtZero: !(slot === 'net' || slot === 'disk'), ticks: { color: tickColor, font: { size: 10 },
+          callback: v => {
+            const a = Math.abs(v);
+            return unit === '%'     ? a + '%'
+                 : unit === 'bit/s' ? fmtBitsPerSec(a)
+                 : (unit === 'B' || unit === 'B/s') ? fmtBytes(a)
+                 : a.toFixed(1);
+          }
+        }, grid: {
+          color: ctx => ctx.tick && ctx.tick.value === 0
+            ? (isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)')
+            : gridColor,
+          lineWidth: ctx => ctx.tick && ctx.tick.value === 0 ? 1.5 : 1,
+        } },
       },
     },
     // _perfTooltipPlugin keeps the overlay visible while the cursor is
@@ -32252,13 +32958,27 @@ function _ciCloseTermMenu() { document.getElementById('ci-term-menu').classList.
 
 function ciTerminalNewTab()    { _ciCloseTermMenu(); if (_ciCurrentName) openLXDConsole(_ciCurrentName); }
 function ciTerminalNewWindow() { _ciCloseTermMenu(); if (_ciCurrentName) window.open('/incus-console/' + encodeURIComponent(_ciCurrentName), 'lxdterm_' + _ciCurrentName, 'width=1080,height=680,noopener'); }
+// In relay mode the VGA console URL must target the remote server's origin —
+// /incus-vga-console/{name} runs on the LOCAL server's incus socket, so a
+// relative URL would 502 with "Instance not found" for any VM that lives on
+// the relayed peer.
+function _vgaConsoleURL(name) {
+  const path = '/incus-vga-console/' + encodeURIComponent(name);
+  if (_relayActive) {
+    try {
+      const relayUrl = localStorage.getItem('znas_relay_url');
+      if (relayUrl) return new URL(path, relayUrl).href;
+    } catch (_) {}
+  }
+  return path;
+}
 // Window dimensions sized so the SPICE canvas area (everything below the
 // toolbar) gets ~800px of usable height — matches the historical "800
 // tall" intent. The toolbar (~40px: 6px padding + ~22px content + 6px
 // padding + 1px border, rounded up to absorb browser font/zoom variance)
 // is added on top, so the OS-level frame opens at 840 inner pixels. Same
 // number used in the burger-menu launcher in modal-lxd-instances.
-function ciVGAConsole()       { _ciCloseTermMenu(); if (_ciCurrentName) window.open('/incus-vga-console/' + encodeURIComponent(_ciCurrentName), 'lxdvga_' + _ciCurrentName, 'width=1280,height=840,noopener'); }
+function ciVGAConsole()       { _ciCloseTermMenu(); if (_ciCurrentName) window.open(_vgaConsoleURL(_ciCurrentName), 'lxdvga_' + _ciCurrentName, 'width=1280,height=840,noopener'); }
 
 function ciTerminalBottom() {
   _ciCloseTermMenu();
@@ -32605,7 +33325,7 @@ async function loadComputeInstanceDetail(name, type) {
     const _idLabel = type === 'virtual-machine' ? 'VM ID' : 'Container ID';
     html += _ciRow(_idLabel, `<span style="font-family:monospace;color:var(--text-2);">${esc(name)}</span>`);
     html += _ciRow('CPU Limit',    cfg.cpu_limit    ? esc(cfg.cpu_limit)    : '<span style="color:var(--text-3);">Unlimited</span>');
-    html += _ciRow('Memory Limit', cfg.memory_limit ? esc(cfg.memory_limit) : '<span style="color:var(--text-3);">Unlimited</span>');
+    html += _ciRow('Memory Limit', cfg.memory_limit ? esc(fmtIncusMemory(cfg.memory_limit)) : '<span style="color:var(--text-3);">Unlimited</span>');
     html += _ciRow('Autostart',    cfg.autostart
       ? '<span style="color:#3fb950;font-weight:600;">Enabled</span>'
       : '<span style="color:var(--text-3);">Disabled</span>');
@@ -32780,9 +33500,14 @@ function _ciRenderLiveInfo(stats, cfg) {
     return;
   }
 
-  // Find root disk comp_ratio from cfg for the Storage Consumed label.
-  const rootDisk = cfg && cfg.disks ? cfg.disks.find(d => d.is_root) : null;
-  const diskCompRatio = rootDisk && rootDisk.comp_ratio ? _fmtRatio(rootDisk.comp_ratio) : '';
+  // Weighted-by-size avg compressratio across ALL disks, computed
+  // server-side in LXDGetInstanceStats. Falls back to the root disk's
+  // ratio for backward compatibility with peers running pre-v6.5.x.
+  let diskCompRatio = stats.disk_avg_comp_ratio ? _fmtRatio(stats.disk_avg_comp_ratio) : '';
+  if (!diskCompRatio && cfg && cfg.disks) {
+    const rootDisk = cfg.disks.find(d => d.is_root);
+    if (rootDisk && rootDisk.comp_ratio) diskCompRatio = _fmtRatio(rootDisk.comp_ratio);
+  }
 
   let html = '';
 
@@ -32814,6 +33539,39 @@ function _ciRenderLiveInfo(stats, cfg) {
   html += _ciGaugeRow('Memory Used', stats.mem_used_bytes, memMax, '#58a6ff', 'bytes');
   if (stats.mem_peak_bytes > 0) {
     html += _ciGaugeRow('Memory Peak', stats.mem_peak_bytes, memMax, 'rgba(88,166,255,0.45)', 'bytes');
+  }
+
+  // Virtio-balloon line — only meaningful for VMs.
+  //
+  // Detection: Incus populates incus_memory_MemTotal_bytes (= our
+  // balloon_current_bytes) from the configured memory size as soon as the
+  // VM starts, even when no guest driver is loaded — so MemTotal alone is
+  // NOT a "driver loaded" signal. The signal that actually requires the
+  // guest to be reporting back to QEMU is non-trivial guest memory
+  // consumption. A real OS (Linux idle, Windows boot) uses hundreds of
+  // MB; an unbooted VM sitting at UEFI / no media reports only ~100 MB
+  // of host-side handshake overhead. 256 MB is a safe threshold.
+  if (cfg && cfg.is_vm) {
+    const bCur    = stats.balloon_current_bytes || 0;
+    const bTarget = stats.mem_limit_bytes || 0;
+    const bUsed   = stats.mem_used_bytes || 0;
+    const active  = bUsed > 256 * 1024 * 1024;
+    const stateHtml = active
+      ? `<span style="color:#3fb950;">●</span> <span style="font-weight:600;">Active</span>`
+      : `<span style="color:var(--accent-warn);">●</span> <span style="color:var(--text-3);">Driver not loaded</span>`;
+    const sepStyle = 'color:var(--text-3);margin:0 6px;';
+    const valStyle = 'font-family:monospace;color:var(--text);';
+    const lblStyle = 'color:var(--text-3);font-size:11px;margin-right:3px;';
+    const targetHtml = bTarget > 0
+      ? `<span style="${sepStyle}">·</span><span style="${lblStyle}">target</span><span style="${valStyle}">${_fmtBytes(bTarget)}</span>`
+      : '';
+    const currentHtml = active
+      ? `<span style="${sepStyle}">·</span><span style="${lblStyle}">current</span><span style="${valStyle}">${_fmtBytes(bCur)}</span>`
+      : '';
+    html += `<div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:baseline;font-size:13px;gap:8px;flex-wrap:nowrap;">
+      <span style="color:var(--text-3);white-space:nowrap;">Memory balloon</span>
+      <span style="display:inline-flex;align-items:baseline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${stateHtml}${targetHtml}${currentHtml}</span>
+    </div>`;
   }
 
   const diskMax = stats.disk_size_bytes > 0 ? stats.disk_size_bytes : stats.disk_used_bytes;
@@ -32870,6 +33628,33 @@ function _fmtBytes(b) {
   if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
   if (b < 1024*1024*1024) return (b/1024/1024).toFixed(1) + ' MB';
   return (b/1024/1024/1024).toFixed(2) + ' GB';
+}
+
+// parseIncusMemoryBytes parses any limits.memory string (e.g. "8GB", "8GiB",
+// "8192MiB") into bytes using BINARY semantics for both GB and GiB. Matches
+// our "GB means GiB everywhere for memory" convention so legacy decimal
+// values (8GB) line up with their newly-written binary counterparts. Returns
+// 0 if the string can't be parsed.
+function parseIncusMemoryBytes(raw) {
+  if (!raw) return 0;
+  const m = String(raw).match(/^(\d+(?:\.\d+)?)\s*(MiB|GiB|KiB|MB|GB|KB|B)?$/i);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  switch ((m[2] || '').toUpperCase()) {
+    case 'GIB': case 'GB': return n * 1024 * 1024 * 1024;
+    case 'MIB': case 'MB': return n * 1024 * 1024;
+    case 'KIB': case 'KB': return n * 1024;
+    case 'B':   case '':   return n;
+  }
+  return 0;
+}
+
+// fmtIncusMemory renders a memory string with binary divisor and decimal
+// labels (8 GB, 512 MB). Falls back to the raw string if unparseable so the
+// user always sees something.
+function fmtIncusMemory(raw) {
+  const b = parseIncusMemoryBytes(raw);
+  return b > 0 ? _fmtBytes(b) : (raw || '—');
 }
 
 function _fmtUptime(sec) {
@@ -33082,7 +33867,7 @@ function _lxdRenderRows(instances) {
       ${imgCell}
       <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
       <td style="text-align:center;color:var(--text-2);">${esc(inst.cpu_limit || '—')}</td>
-      <td style="color:var(--text-2);">${esc(inst.memory_limit || '—')}</td>
+      <td style="color:var(--text-2);">${esc(fmtIncusMemory(inst.memory_limit))}</td>
       <td style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
       <td style="text-align:center;">${inst.autostart ? '<span style="color:#3fb950;font-size:13px;font-weight:600;">&#x2714;</span>' : '<span style="color:var(--text-3);font-size:13px;">&#x2014;</span>'}</td>
       <td class="lxd-row-actions" onclick="event.stopPropagation()"><span class="lxd-tbl-icon${inst.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${inst.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${inst.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
@@ -33108,7 +33893,7 @@ function toggleLXDTermMenu(e, name, type) {
   };
   const isVM = type === 'virtual-machine';
   if (isVM) {
-    mkItem('VGA Console Window', () => window.open('/incus-vga-console/' + encodeURIComponent(name), 'lxdvga_' + name, 'width=1280,height=840,noopener'));
+    mkItem('VGA Console Window', () => window.open(_vgaConsoleURL(name), 'lxdvga_' + name, 'width=1280,height=840,noopener'));
     const sep = document.createElement('hr'); sep.className = 'menu-sep'; dd.appendChild(sep);
   }
   mkItem('LXD Bottom Terminal', () => {
@@ -33950,12 +34735,16 @@ async function openLXDEditModal(name, type) {
       if (pinInp) pinInp.value = cfg.cpu_pin || '';
     }
     const _memStr = cfg.memory_limit || '';
-    const _memM = _memStr.match(/^(\d+(?:\.\d+)?)\s*(MB|GB)?$/i);
+    const _memM = _memStr.match(/^(\d+(?:\.\d+)?)\s*(MiB|GiB|MB|GB)?$/i);
     const _memNumInp  = document.getElementById('lxd-edit-memory');
     const _memUnitSel = document.getElementById('lxd-edit-memory-unit');
     if (_memM) {
       _memNumInp.value = _memM[1];
-      if (_memUnitSel) _memUnitSel.value = (_memM[2] || 'GB').toUpperCase();
+      // Normalise the displayed unit to the dropdown's MB/GB option — the
+      // user typed "GB" / "MB" and the submit path re-attaches the "iB" so
+      // the value goes back to incus as the binary MiB/GiB variant.
+      const u = (_memM[2] || 'GB').toUpperCase();
+      if (_memUnitSel) _memUnitSel.value = (u === 'GIB' || u === 'GB') ? 'GB' : 'MB';
     } else {
       _memNumInp.value = _memStr.replace(/[^0-9]/g, '') || '';
       if (_memUnitSel) _memUnitSel.value = 'GB';
@@ -34059,7 +34848,7 @@ async function openLXDEditModal(name, type) {
     lxdEditRenderDisks();
     // Update hardware panel summaries
     const cpuVal = document.getElementById('lxd-edit-cpu')?.value || '—';
-    const memVal = cfg.memory_limit || '—';
+    const memVal = fmtIncusMemory(cfg.memory_limit);
     document.getElementById('edithw-resources-summary').textContent = cpuVal + ' vCPU' + (+cpuVal === 1 ? '' : 's');
     document.getElementById('edithw-memory-summary').textContent = memVal;
     const nicCount = _lxdEditNICs.filter(n => !n._deleted).length;
@@ -34147,7 +34936,7 @@ async function submitLXDEdit() {
     cpu_pin:              _lxdEditIsVM ? (document.getElementById('lxd-edit-cpu-pin')?.value.trim() || '') : '',
     cpu_sockets:          _lxdEditIsVM ? (parseInt(document.getElementById('lxd-edit-sockets')?.value)||0) : 0,
     detach_disks:         _lxdEditDisks.filter(d => d._deleted && d._detach).map(d => d.name),
-    memory_limit:         (() => { const v = document.getElementById('lxd-edit-memory').value.trim(); const u = document.getElementById('lxd-edit-memory-unit')?.value || 'GB'; return v ? v + u : ''; })(),
+    memory_limit:         (() => { const v = document.getElementById('lxd-edit-memory').value.trim(); const u = document.getElementById('lxd-edit-memory-unit')?.value || 'GB'; return v ? v + (u === 'GB' ? 'GiB' : 'MiB') : ''; })(),
     memory_hugepages:     _lxdEditIsVM && document.getElementById('lxd-edit-hugepages').checked,
     memory_reservation:   _lxdEditIsVM ? _editGetMemReservation() : '',
     nesting:              !_lxdEditIsVM && document.getElementById('lxd-edit-nesting').checked,
@@ -35240,7 +36029,43 @@ function _doOpenLXDCloneModal() {
   const btn = document.getElementById('lxd-clone-submit-btn');
   btn.disabled = false; btn.textContent = 'Clone';
   document.getElementById('modal-lxd-clone').classList.remove('hidden');
+  _populateClonePoolSelect('lxd-clone-pool');
   setTimeout(() => document.getElementById('lxd-clone-name').select(), 60);
+}
+
+// Shared datastore-dropdown loader for both clone modals.
+// - Fetches /api/incus/storage-pools.
+// - Defaults selection to the last-used pool (localStorage key
+//   'znas_lxd_last_clone_pool') if it exists in the current list,
+//   otherwise the first pool.
+// - Selecting an option updates the persisted default immediately so the
+//   next modal open remembers it even without submitting.
+const _LXD_LAST_CLONE_POOL_KEY = 'znas_lxd_last_clone_pool';
+
+async function _populateClonePoolSelect(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Loading…</option>';
+  let pools = [];
+  try {
+    const r = await fetch('/api/incus/storage-pools', { credentials: 'same-origin' });
+    if (r.ok) pools = (await r.json()) || [];
+  } catch {}
+  if (!pools.length) {
+    sel.innerHTML = '<option value="">No datastores available</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  let preferred = '';
+  try { preferred = localStorage.getItem(_LXD_LAST_CLONE_POOL_KEY) || ''; } catch {}
+  if (!pools.includes(preferred)) preferred = pools[0];
+  sel.innerHTML = pools.map(p =>
+    `<option value="${esc(p)}"${p === preferred ? ' selected' : ''}>${esc(p)}</option>`
+  ).join('');
+  sel.onchange = () => {
+    try { localStorage.setItem(_LXD_LAST_CLONE_POOL_KEY, sel.value); } catch {}
+  };
 }
 
 function closeLXDCloneModal() {
@@ -35250,17 +36075,19 @@ function closeLXDCloneModal() {
 async function submitLXDClone() {
   const newName = document.getElementById('lxd-clone-name').value.trim();
   const desc    = document.getElementById('lxd-clone-desc').value.trim();
+  const pool    = (document.getElementById('lxd-clone-pool').value || '').trim();
   const alertEl = document.getElementById('lxd-clone-alert');
   const btn     = document.getElementById('lxd-clone-submit-btn');
   if (!newName) { alertEl.textContent = 'Instance ID is required.'; alertEl.classList.remove('hidden'); return; }
   alertEl.classList.add('hidden');
   btn.disabled = true; btn.textContent = 'Starting…';
+  if (pool) { try { localStorage.setItem(_LXD_LAST_CLONE_POOL_KEY, pool); } catch {} }
   try {
     // Clone without a specific snapshot — LXD copies the current state.
     const res = await fetch('/api/incus/instances/' + encodeURIComponent(_lxdCloneSourceName) + '/clone', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({new_name: newName, description: desc || newName})
+      body: JSON.stringify({new_name: newName, description: desc || newName, target_pool: pool})
     });
     const d = await res.json();
     if (!res.ok) { alertEl.textContent = d.error || 'Clone failed'; alertEl.classList.remove('hidden'); btn.disabled = false; btn.textContent = 'Clone'; return; }
@@ -40060,7 +40887,7 @@ function _bmMakeChartOpts(textColor, tickColor, gridColor) {
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { display: false },
-      tooltip: { callbacks: { label: ctx => { const v = ctx.parsed.y; return ` ${ctx.dataset.label}: ${v >= 1 ? v.toFixed(2)+' Mbps' : (v*1000).toFixed(0)+' Kbps'}`; } } }
+      tooltip: { callbacks: { label: ctx => { const v = ctx.parsed.y; return ` ${ctx.dataset.label}: ${v >= 1 ? v.toFixed(1)+' Mbps' : (v*1000).toFixed(0)+' Kbps'}`; } } }
     },
     scales: {
       x: { display: false },
@@ -40316,7 +41143,7 @@ async function loadBridgeMembers() {
         ${hasImg ? `<td style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}">${esc(imgTrunc || '—')}</td>` : ''}
         <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
         <td style="text-align:center;color:var(--text-2);">${esc(m.cpu_limit || '—')}</td>
-        <td style="color:var(--text-2);">${esc(m.memory_limit || '—')}</td>
+        <td style="color:var(--text-2);">${esc(fmtIncusMemory(m.memory_limit))}</td>
         <td style="text-align:center;">${powerBtn}</td>
         ${actionsCell}
       </tr>`;
@@ -40752,7 +41579,7 @@ async function loadDatastoreMembers() {
         ${hasImg ? `<td style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}">${esc(imgTrunc || '—')}</td>` : ''}
         <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
         <td style="text-align:center;color:var(--text-2);">${esc(m.cpu_limit || '—')}</td>
-        <td style="color:var(--text-2);">${esc(m.memory_limit || '—')}</td>
+        <td style="color:var(--text-2);">${esc(fmtIncusMemory(m.memory_limit))}</td>
         <td style="text-align:center;">${powerBtn}</td>
         ${actionsCell}
       </tr>`;
