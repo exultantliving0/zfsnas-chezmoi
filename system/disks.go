@@ -40,7 +40,12 @@ type DiskInfo struct {
 	SmartMsg   string      `json:"smart_msg"`
 	SmartAttrs []SmartAttr `json:"smart_attrs,omitempty"` // full attribute table
 	InUse      bool        `json:"in_use"`
-	UpdatedAt  time.Time   `json:"updated_at"`
+	// PowerState is the current ATA power mode reported by `hdparm -C`:
+	// "active/idle" | "standby" | "sleeping" | "unknown" | "" (unsupported,
+	// e.g. NVMe, or hdparm missing). Read-only check, won't spin up the
+	// drive — uses the SMART CHECK POWER MODE command.
+	PowerState string    `json:"power_state"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 const smartCacheFile = "smart_cache.json"
@@ -150,8 +155,9 @@ func ListDisks(configDir string) ([]DiskInfo, error) {
 			info.RPM = fetchRPMQuick(info.Device)
 		}
 		info.SpeedLabel = computeSpeedLabel(info)
+		info.PowerState = diskPowerState(info.Device)
 
-		debugLog("  → adding disk %s (type=%s in_use=%v)", info.Device, info.DiskType, info.InUse)
+		debugLog("  → adding disk %s (type=%s in_use=%v power=%s)", info.Device, info.DiskType, info.InUse, info.PowerState)
 		disks = append(disks, info)
 	}
 
@@ -504,6 +510,41 @@ var (
 	reNVMePart  = regexp.MustCompile(`^(nvme\d+n\d+)p\d+$`)
 	reSATAPart  = regexp.MustCompile(`^([a-z]+)\d+$`)
 )
+
+// diskPowerState returns the current ATA power mode for dev via
+// `hdparm -C` ("active/idle", "standby", "sleeping", "unknown"), or ""
+// when the check is unsupported (NVMe, virtual disks) or hdparm is
+// missing. `-C` issues the SMART CHECK POWER MODE command, which is
+// explicitly designed to be safe on standby/sleeping drives — it does
+// NOT spin them back up.
+func diskPowerState(dev string) string {
+	// hdparm typically lives at /usr/sbin; if it's not installed at all,
+	// short-circuit so we don't pay a fork+exec per disk for nothing.
+	if _, err := exec.LookPath("hdparm"); err != nil {
+		return ""
+	}
+	out, err := exec.Command("sudo", "hdparm", "-C", dev).CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return ""
+	}
+	// Expected output:
+	//   /dev/sda:
+	//    drive state is:  active/idle
+	// NVMe / unsupported devices print something like
+	//   "HDIO_DRIVE_CMD(identify) failed: Inappropriate ioctl for device"
+	// in which case we return "" (column reads as "—" on the UI).
+	for _, line := range strings.Split(string(out), "\n") {
+		i := strings.Index(line, "drive state is:")
+		if i < 0 {
+			continue
+		}
+		state := strings.TrimSpace(line[i+len("drive state is:"):])
+		// Normalise: hdparm sometimes prints extra whitespace.
+		state = strings.Join(strings.Fields(state), " ")
+		return state
+	}
+	return ""
+}
 
 // diskBaseName strips a partition suffix from a kernel device name.
 // Examples: sda1 → sda, nvme0n1p2 → nvme0n1, sdb → sdb.

@@ -20236,6 +20236,7 @@ function diskTableHeader(withActions) {
     <th>Type</th><th>Speed</th>
     <th>Wearout <i class="info-tip tip-left tip-down" data-tip="Drive endurance consumed (% of rated P/E cycles or TBW used). From SMART attribute 177 (SSD wear levelling) or 231 (SSD life left). N/A for HDDs without an endurance rating."></i></th>
     <th>Temp <i class="info-tip tip-left tip-down" data-tip="Current drive temperature from SMART data. Read from smartctl JSON (temperature.current field for ATA/NVMe, or attribute IDs 194/190 for older drives). Updated on each SMART refresh."></i></th>
+    <th>Power <i class="info-tip tip-left tip-down" data-tip="Current ATA power mode reported by &quot;hdparm -C&quot; (active/idle, standby, sleeping). Uses the SMART CHECK POWER MODE command — read-only, will not spin up sleeping drives. NVMe and virtual disks show — (the command is ATA-only)."></i></th>
     <th>SMART <i class="info-tip tip-left tip-down" data-tip="Overall drive health from smartctl self-assessment. PASSED: drive reports no critical errors. FAILED: one or more SMART thresholds exceeded — consider replacing the drive. Unknown: SMART data not yet collected (click ↻ Refresh SMART)."></i></th>
     ${withActions && hasPerm('manage_pool_dataset') ? '<th></th>' : ''}
   </tr></thead>`;
@@ -20247,9 +20248,23 @@ function diskTableHeaderWithPool() {
     <th>Type</th><th>Speed</th>
     <th>Wearout <i class="info-tip tip-left tip-down" data-tip="Drive endurance consumed (% of rated P/E cycles or TBW used). From SMART attribute 177 (SSD wear levelling) or 231 (SSD life left). N/A for HDDs without an endurance rating."></i></th>
     <th>Temp <i class="info-tip tip-left tip-down" data-tip="Current drive temperature from SMART data. Read from smartctl JSON (temperature.current field for ATA/NVMe, or attribute IDs 194/190 for older drives). Updated on each SMART refresh."></i></th>
+    <th>Power <i class="info-tip tip-left tip-down" data-tip="Current ATA power mode reported by &quot;hdparm -C&quot; (active/idle, standby, sleeping). Uses the SMART CHECK POWER MODE command — read-only, will not spin up sleeping drives. NVMe and virtual disks show — (the command is ATA-only)."></i></th>
     <th>SMART <i class="info-tip tip-left tip-down" data-tip="Overall drive health from smartctl self-assessment. PASSED: drive reports no critical errors. FAILED: one or more SMART thresholds exceeded — consider replacing the drive. Unknown: SMART data not yet collected (click ↻ Refresh SMART)."></i></th>
     <th>Pool</th>
   </tr></thead>`;
+}
+
+// Coloured pill for the Power column: green for active/idle, amber for
+// standby (parked), grey for sleeping/unknown, and an em dash when the
+// drive doesn't support the ATA CHECK POWER MODE command (NVMe, virtual).
+function diskPowerCell(d) {
+  const s = (d.power_state || '').toLowerCase();
+  if (!s) return `<td style="font-size:12px;color:var(--text-3);">—</td>`;
+  let color = 'var(--text-3)';
+  if (s.includes('active') || s.includes('idle'))    color = 'var(--accent-3)';
+  else if (s === 'standby' || s.startsWith('standby')) color = 'var(--accent-warn)';
+  else if (s.includes('sleep'))                         color = 'var(--text-3)';
+  return `<td style="font-size:12px;font-weight:600;color:${color};text-transform:capitalize;white-space:nowrap;">${esc(d.power_state)}</td>`;
 }
 
 function diskSpeedCell(d, dimmed) {
@@ -20281,6 +20296,7 @@ function diskRow(d, dimmed, withActions) {
     ${diskSpeedCell(d, dimmed)}
     <td>${wearoutBar(d, dimmed)}</td>
     <td id="disk-temp-${ck}">${tempBadge(d)}</td>
+    ${diskPowerCell(d)}
     <td id="disk-smart-${ck}">${smartBadge(d)}</td>
     ${actionCell}
   </tr>`;
@@ -20297,6 +20313,7 @@ function diskRowWithPool(d, poolName) {
     ${diskSpeedCell(d, false)}
     <td>${wearoutBar(d, false)}</td>
     <td id="disk-temp-${ck}">${tempBadge(d)}</td>
+    ${diskPowerCell(d)}
     <td id="disk-smart-${ck}">${smartBadge(d)}</td>
     <td>${poolName === '⚡ Cache'
       ? `<span style="font-size:12px;font-weight:600;color:#bf5af2;">⚡ L2ARC Cache</span>`
@@ -39780,21 +39797,21 @@ function renderDiskPowerBody(d) {
       </div>
       <div class="form-group">
         <label style="font-size:13px;">APM Level
-          <i class="info-tip" data-tip="Advanced Power Management level. 1–127 allows the drive to spin down when idle; 128–254 prevents spindown. 255 disables APM (maximum performance, no power saving). Typical NAS value: 127. 0 = not configured."></i>
+          <i class="info-tip" data-tip="Advanced Power Management level (runs hdparm -B). Controls how aggressively the drive parks heads and reduces motor power during short idle gaps — NOT the same as a full spindown (that's set below).&#10;&#10;Lower number = more aggressive power saving (more head parks). 1–127 = aggressive (the drive itself may spin down on its own); 128–254 = power saving without auto-spindown; 255 = disable APM entirely (maximum performance).&#10;&#10;Typical NAS values: 127 (balanced), 254 (perf, spindown handled by the timeout below). 0 = leave drive at vendor default.&#10;&#10;Many SSDs and some HDDs ignore this setting silently."></i>
         </label>
         <input type="number" id="dp-apm" value="${cfg.apm_level||0}" min="0" max="255" style="width:100px;">
         <span style="font-size:12px;color:var(--text-3);margin-left:8px;">0 = not configured, 1–127 = allow spindown, 128–254 = no spindown, 255 = disable APM</span>
       </div>
       <div class="form-group">
         <label style="font-size:13px;">Spindown Timeout
-          <i class="info-tip" data-tip="Idle time before the disk spins down. 0 = disabled. Note: frequent spin-up/spin-down cycles can reduce disk lifespan on spinning rust drives."></i>
+          <i class="info-tip" data-tip="Idle time before the drive spins its motor down (runs hdparm -S).&#10;&#10;IMPORTANT: this is NOT a raw number of seconds — it's an ATA-encoded value:&#10;  • 0 = disabled (drive never spins down on idle)&#10;  • 1–240 = N × 5 seconds (1 = 5 s, 12 = 1 min, 120 = 10 min, 240 = 20 min)&#10;  • 241–251 = N × 30 minutes (241 = 30 min, 246 = 3 h, 251 = 5.5 h)&#10;&#10;Reasonable values: 120 (10 min) or 240 (20 min) for a casually used NAS; 0 for an always-active pool.&#10;&#10;Frequent spin-up/spin-down cycles wear out HDD bearings — pick a timeout long enough that the drive isn't cycling several times an hour."></i>
         </label>
         <input type="number" id="dp-spindown" value="${cfg.spindown_timeout||0}" min="0" max="251" style="width:100px;">
-        <span style="font-size:12px;color:var(--text-3);margin-left:8px;">0 = disabled</span>
+        <span style="font-size:12px;color:var(--text-3);margin-left:8px;">0 = disabled · 1–240 = N × 5 s (max 20 min) · 241–251 = N × 30 min (max 5.5 h)</span>
       </div>
       <div class="form-group">
         <label style="font-size:13px;">Write Cache
-          <i class="info-tip" data-tip="Enables the drive's internal write buffer. Disabling it reduces performance but eliminates data loss risk on sudden power failure (ZFS journaling protects data separately)."></i>
+          <i class="info-tip" data-tip="Toggles the drive's onboard DRAM write buffer (runs hdparm -W).&#10;&#10;Enable (recommended for ZFS): the drive batches writes in its cache for higher throughput. ZFS issues cache-flush (FUA) commands at the right moments, so a sudden power loss won't corrupt the pool.&#10;&#10;Disable: every write is sync — much slower, but data is immediately on-platter. Only useful for non-ZFS filesystems on a server without a UPS.&#10;&#10;Don't set: leave whatever the drive booted with (vendor default).&#10;&#10;Some drives ignore the setting."></i>
         </label>
         <div style="display:flex;gap:16px;align-items:center;">
           <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -39810,7 +39827,7 @@ function renderDiskPowerBody(d) {
       </div>
       <div class="form-group">
         <label style="font-size:13px;">Acoustic Management
-          <i class="info-tip" data-tip="Reduces drive seek noise by limiting seek speed. Quiet (128) = minimum noise; Fast (254) = maximum performance. Most modern drives ignore this setting."></i>
+          <i class="info-tip" data-tip="Limits the drive's seek speed to reduce noise (runs hdparm -M, AAM = Automatic Acoustic Management).&#10;&#10;Quiet (128) = slowest seeks, lowest noise.&#10;Fast (254) = full seek speed, normal noise.&#10;Off = explicitly disables AAM.&#10;Not configured = leave drive at vendor default.&#10;&#10;AAM is largely deprecated — most drives manufactured after ~2010 ignore this command silently. Only useful for older noisy drives in a quiet room."></i>
         </label>
         <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
           <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
