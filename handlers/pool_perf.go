@@ -107,13 +107,15 @@ func HandleGetPoolPerfData(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(devices)
 
-	// Build the full key list: read/write/busy × device, plus L2ARC series.
+	// Build the full key list: read/write/busy/pwr/temp × device, plus L2ARC series.
 	var keys []string
 	for _, dev := range devices {
 		keys = append(keys,
 			"read:"+pool+":"+dev,
 			"write:"+pool+":"+dev,
 			"busy:"+pool+":"+dev,
+			"pwr:"+pool+":"+dev,
+			"temp:"+pool+":"+dev,
 		)
 	}
 	keys = append(keys, "l2size:"+pool, "l2hitpct:"+pool)

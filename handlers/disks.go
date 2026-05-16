@@ -61,7 +61,9 @@ func HandleRefreshDisks(w http.ResponseWriter, r *http.Request) {
 	sess := MustSession(r)
 	log.Printf("[disks] SMART refresh requested by %s", sess.Username)
 
-	if err := system.RefreshSMART(config.Dir()); err != nil {
+	// User clicked the explicit "Refresh SMART" button — forceWake=true
+	// is the only path allowed to spin up a sleeping drive.
+	if err := system.RefreshSMART(config.Dir(), true); err != nil {
 		jsonErr(w, http.StatusInternalServerError, "SMART refresh failed: "+err.Error())
 		return
 	}
@@ -145,7 +147,10 @@ func StartDailySmartRefresh() {
 
 		if needsRefresh {
 			log.Println("[disks] Starting initial SMART refresh…")
-			if err := system.RefreshSMART(config.Dir()); err != nil {
+			// Standby-safe: drives currently spun down keep their previous
+			// cached entry untouched and we'll catch them next time they're
+			// awake (or when the user clicks Refresh SMART).
+			if err := system.RefreshSMART(config.Dir(), false); err != nil {
 				log.Printf("[disks] SMART refresh error: %v", err)
 			} else {
 				log.Println("[disks] SMART refresh complete.")
@@ -160,7 +165,7 @@ func StartDailySmartRefresh() {
 		defer ticker.Stop()
 		for range ticker.C {
 			log.Println("[disks] Running daily SMART refresh…")
-			if err := system.RefreshSMART(config.Dir()); err != nil {
+			if err := system.RefreshSMART(config.Dir(), false); err != nil {
 				log.Printf("[disks] Daily SMART refresh error: %v", err)
 			} else {
 				log.Println("[disks] Daily SMART refresh complete.")

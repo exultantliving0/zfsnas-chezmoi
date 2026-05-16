@@ -139,8 +139,21 @@ func HandleSetup(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"message": "admin account created"})
 }
 
+// sessionDurationsFor turns the configured WebSessionPolicy into the
+// (hard cap, idle timeout) pair the session.Store wants. In default
+// mode idle timeout is 0 (only the hard cap applies); in inactivity
+// mode the hard cap is a very long fallback (30 days) so an actively
+// used session can't drift forever.
+func sessionDurationsFor(p config.WebSessionPolicy) (time.Duration, time.Duration) {
+	if p.Mode == config.WebSessionModeInactivity {
+		return session.InactivityHardCap, time.Duration(p.IdleTimeoutMinutes) * time.Minute
+	}
+	return session.DefaultSessionDuration, 0
+}
+
 // HandleLogin authenticates a user and creates a session.
-func HandleLogin(w http.ResponseWriter, r *http.Request) {
+func HandleLogin(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 
 	// Rate limit check — before any DB access so brute-force is cheap to block.
@@ -212,7 +225,8 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := session.Default.Create(user.ID, user.Username, user.Role)
+	hardCap, idle := sessionDurationsFor(appCfg.WebSession)
+	sess, err := session.Default.Create(user.ID, user.Username, user.Role, hardCap, idle)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to create session")
 		return
@@ -228,15 +242,17 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Details: "from " + ip,
 	})
 
-	SetSessionCookie(w, sess.Token)
+	SetSessionCookie(w, sess.Token, hardCap)
 	jsonOK(w, map[string]interface{}{
 		"username": user.Username,
 		"role":     user.Role,
 	})
+	}
 }
 
 // HandleTOTPLogin completes two-step login by verifying a TOTP code.
-func HandleTOTPLogin(w http.ResponseWriter, r *http.Request) {
+func HandleTOTPLogin(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 
 	if locked, retryAfter := loginLimiter.check(ip); locked {
@@ -287,7 +303,8 @@ func HandleTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := session.Default.Create(user.ID, user.Username, user.Role)
+	hardCap, idle := sessionDurationsFor(appCfg.WebSession)
+	sess, err := session.Default.Create(user.ID, user.Username, user.Role, hardCap, idle)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to create session")
 		return
@@ -302,11 +319,12 @@ func HandleTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		Details: "2FA verified, from " + ip,
 	})
 
-	SetSessionCookie(w, sess.Token)
+	SetSessionCookie(w, sess.Token, hardCap)
 	jsonOK(w, map[string]interface{}{
 		"username": user.Username,
 		"role":     user.Role,
 	})
+	}
 }
 
 // HandleTOTPSetup generates a new TOTP secret and URI for setup — does NOT save yet.

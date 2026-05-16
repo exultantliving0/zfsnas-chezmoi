@@ -277,6 +277,45 @@ type AppConfig struct {
 	InterLink            []LinkedServer    `json:"inter_link,omitempty"`
 	InterlinkRelayMode   bool              `json:"interlink_relay_mode,omitempty"` // global relay mode: proxy API calls through local server
 	LXDMetricsEnabled    bool              `json:"lxd_metrics_enabled,omitempty"`  // turns on LXD's Prometheus endpoint on 127.0.0.1:9101 + portal scraper for VM/container Monitor tabs (v6.4.28)
+	WebSession           WebSessionPolicy  `json:"web_session,omitempty"`          // browser session lifetime policy (default 24h vs sliding inactivity timeout)
+}
+
+// WebSessionPolicy controls how long a browser-side login lasts and how it
+// expires. Sessions are persisted to disk (encrypted) regardless of the
+// chosen mode so they survive a server restart.
+//   - Mode == "default":    session lasts 24 h from creation, no sliding window.
+//   - Mode == "inactivity": session expires N minutes after the last
+//     authenticated request. IdleTimeoutMinutes is clamped to [5, 10080]
+//     (5 min .. 7 days) on save.
+type WebSessionPolicy struct {
+	Mode               string `json:"mode"`                 // "default" | "inactivity"
+	IdleTimeoutMinutes int    `json:"idle_timeout_minutes"` // 5..10080, only used when Mode == "inactivity"
+}
+
+// WebSession bounds.
+const (
+	WebSessionModeDefault    = "default"
+	WebSessionModeInactivity = "inactivity"
+	WebSessionMinIdleMinutes = 5     // 5 minutes
+	WebSessionMaxIdleMinutes = 10080 // 7 days
+)
+
+// NormaliseWebSession fills in defaults and clamps out-of-range values so
+// callers can always trust the policy after a load. Called from
+// LoadAppConfig and from the settings save path.
+func NormaliseWebSession(p *WebSessionPolicy) {
+	if p.Mode != WebSessionModeDefault && p.Mode != WebSessionModeInactivity {
+		p.Mode = WebSessionModeDefault
+	}
+	if p.IdleTimeoutMinutes <= 0 {
+		p.IdleTimeoutMinutes = 60
+	}
+	if p.IdleTimeoutMinutes < WebSessionMinIdleMinutes {
+		p.IdleTimeoutMinutes = WebSessionMinIdleMinutes
+	}
+	if p.IdleTimeoutMinutes > WebSessionMaxIdleMinutes {
+		p.IdleTimeoutMinutes = WebSessionMaxIdleMinutes
+	}
 }
 
 // UserPreferences holds per-user UI preferences persisted across sessions.
@@ -452,6 +491,7 @@ func LoadAppConfig() (*AppConfig, error) {
 	if cfg.MaxSmbdProcesses == 0 {
 		cfg.MaxSmbdProcesses = 100
 	}
+	NormaliseWebSession(&cfg.WebSession)
 	if cfg.ISCSI.BaseName == "" {
 		cfg.ISCSI.BaseName = "iqn.2003-06.ca.chezmoi.zfsnas"
 	}

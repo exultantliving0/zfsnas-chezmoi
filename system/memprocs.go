@@ -23,6 +23,11 @@ type ProcMemInfo struct {
 	Cmd      string  `json:"cmd"`
 	MemMB    float64 `json:"mem_mb"`
 	MemPct   float64 `json:"mem_pct"`
+	// ShmemMB is the portion of MemMB backed by tmpfs / memfd / SysV-shm
+	// (= /proc/<pid>/status RssShmem). Surfaced in the MEM tooltip as a
+	// separate column so QEMU's memfd-backed guest RAM is visible
+	// distinctly from the process's anonymous + private-file RSS.
+	ShmemMB  float64 `json:"shmem_mb,omitempty"`
 	SwapMB   float64 `json:"swap_mb,omitempty"`
 	SwapPct  float64 `json:"swap_pct,omitempty"`
 	Category string  `json:"category"`
@@ -38,6 +43,14 @@ type MemProcsSnapshot struct {
 	VMPct        float64       `json:"vm_pct"`
 	ContainerPct float64       `json:"container_pct"`
 	OtherPct     float64       `json:"other_pct"`
+	// CachePct / CacheMB is the kernel's reclaimable buff/cache (Buffers +
+	// Cached + SReclaimable − Shmem, matching `free`'s "buff/cache" column).
+	// Stacked on top of the categorised RSS+ARC buckets in the MEM gauge so
+	// you can see how much RAM the OS is holding for performance reasons but
+	// could give back on demand. Distinct from ZFS ARC (which lives in the
+	// ZFS bucket already and is reported via arcstats, not /proc/meminfo).
+	CachePct     float64       `json:"cache_pct"`
+	CacheMB      float64       `json:"cache_mb"`
 	ArcMB        float64       `json:"arc_mb"`
 	TotalMB      float64       `json:"total_mb"`
 	UsedMB       float64       `json:"used_mb"`
@@ -122,8 +135,6 @@ func sampleMemProcs() *MemProcsSnapshot {
 		return nil
 	}
 	totalMB := float64(totalKB) / 1024.0
-	usedKB := totalKB - availKB
-	usedMB := float64(usedKB) / 1024.0
 
 	arcKB := readARCSize()
 	arcMB := float64(arcKB) / 1024.0
@@ -219,23 +230,48 @@ func sampleMemProcs() *MemProcsSnapshot {
 		CpuCatOther:     0,
 	}
 	for _, p := range procs {
+		// Use raw VmRSS for the per-category bucket. Shmem-heavy processes
+		// (e.g. QEMU memfd backing) keep their full RSS in the bucket
+		// because that memory is genuinely committed and won't be
+		// reclaimed without crashing the guest. The cache bucket only
+		// counts truly reclaimable file cache (Shmem already subtracted
+		// inside readBuffCacheKB), so there's no double-counting here.
 		catKB[p.category] += p.rssKB
 		catSwapKB[p.category] += p.swapKB
 	}
 	// Add ARC to the ZFS bucket (resident only — ARC isn't swappable).
 	catKB[CpuCatZFS] += arcKB
 
+	// "Unattributed Shmem" — Shmem pages the kernel keeps resident but no
+	// longer charges to any single process's PSS_Shmem (typically inactive
+	// memfd pages from running VMs). On a heavy-VM host this gap is
+	// several gigabytes and was previously folding into "Other", making
+	// it look like the kernel had a huge mystery allocation. Strip it from
+	// usedKB so it leaves "Other" entirely; the bar gets shorter, the
+	// readout drops accordingly, and the freed space at the top of the
+	// gauge correctly represents "RAM the kernel can reshuffle without
+	// killing anything visible".
+	var pidShmemKB uint64
+	for _, p := range procs {
+		pidShmemKB += p.shmemKB
+	}
+	totalShmemKB := readShmemKB()
+	unattributedShmemKB := uint64(0)
+	if totalShmemKB > pidShmemKB {
+		unattributedShmemKB = totalShmemKB - pidShmemKB
+	}
+
 	// Reconcile per-category RSS+ARC totals with /proc/meminfo's "used"
-	// (= MemTotal − MemAvailable). The categorised buckets only see what
-	// /proc/<pid>/status exposes as RSS plus ARC; slab caches, kernel
-	// buffers, hugepages, KVM EPT pages, and a handful of anonymous-page
-	// edge cases aren't visible there but very much count toward usedKB.
-	// Without this fold-in, the readout (used/total) and the bar segments
-	// (sum of categorised RSS) diverge — typically by 10-20 % — making the
-	// MEM gauge look ~half full when the system actually reports 60-70 %
-	// used. Folding the remainder into "Other" keeps each named bucket
-	// accurate (RSS+ARC where applicable) while letting the bar's filled
-	// height match the headline percentage.
+	// (= MemTotal − MemAvailable − unattributedShmem). The categorised
+	// buckets only see what /proc/<pid>/status exposes as RSS plus ARC;
+	// slab caches (SUnreclaim), kernel buffers, hugepages, KVM EPT pages,
+	// and a handful of anonymous-page edge cases aren't visible there but
+	// very much count toward used memory — those legitimately roll into
+	// "Other". Unattributed Shmem does NOT (see comment above).
+	usedKB := totalKB - availKB
+	if usedKB > unattributedShmemKB {
+		usedKB -= unattributedShmemKB
+	}
 	var trackedKB uint64
 	for _, kb := range catKB {
 		trackedKB += kb
@@ -315,6 +351,7 @@ func sampleMemProcs() *MemProcsSnapshot {
 			Cmd:      readProcCmdline(p.pid),
 			MemMB:    float64(p.rssKB) / 1024.0,
 			MemPct:   pct(p.rssKB),
+			ShmemMB:  float64(p.shmemKB) / 1024.0,
 			SwapMB:   float64(p.swapKB) / 1024.0,
 			Category: p.category,
 		}
@@ -348,6 +385,7 @@ func sampleMemProcs() *MemProcsSnapshot {
 			Cmd:      readProcCmdline(p.pid),
 			MemMB:    float64(p.rssKB) / 1024.0,
 			MemPct:   pct(p.rssKB),
+			ShmemMB:  float64(p.shmemKB) / 1024.0,
 			SwapMB:   float64(p.swapKB) / 1024.0,
 			SwapPct:  sp,
 			Category: p.category,
@@ -362,6 +400,15 @@ func sampleMemProcs() *MemProcsSnapshot {
 	const mb = float64(1 << 20)
 	swapTotalMB := float64(swapTotalKB) / 1024.0
 	swapUsedMB := float64(swapUsedKB) / 1024.0
+	// Truly-reclaimable cache (file cache, minus Shmem). Capped so the
+	// stacked bar (categorised buckets + cache) never exceeds 100 % of
+	// physical RAM in the rare case where MemAvailable's heuristic estimate
+	// undercounts and usedKB + cacheKB happens to overshoot.
+	buffCacheKB := readBuffCacheKB()
+	if usedKB+buffCacheKB > totalKB {
+		buffCacheKB = totalKB - usedKB
+	}
+	usedMB := float64(usedKB) / 1024.0
 	diskSwapTotalMB := float64(diskSwapTotalKB) / 1024.0
 	diskSwapUsedMB  := float64(diskSwapUsedKB) / 1024.0
 	zramSwapTotalMB := float64(zramSwapTotalKB) / 1024.0
@@ -384,6 +431,8 @@ func sampleMemProcs() *MemProcsSnapshot {
 		VMPct:        pct(catKB[CpuCatVM]),
 		ContainerPct: pct(catKB[CpuCatContainer]),
 		OtherPct:     pct(catKB[CpuCatOther]),
+		CachePct:     pct(buffCacheKB),
+		CacheMB:      float64(buffCacheKB) / 1024.0,
 		ArcMB:        arcMB,
 		TotalMB:      totalMB,
 		UsedMB:       usedMB,
@@ -457,6 +506,53 @@ func readSwapTotalUsedKBSplit() (diskTotalKB, diskUsedKB, zramTotalKB, zramUsedK
 	return diskTotalKB, diskUsedKB, zramTotalKB, zramUsedKB
 }
 
+// readBuffCacheKB returns the kernel's TRULY reclaimable buff/cache in kB.
+// Formula:
+//
+//	buff/cache = Buffers + Cached + SReclaimable − Shmem
+//
+// Why subtract Shmem: tmpfs, /dev/shm and QEMU memfd allocations are
+// included in /proc/meminfo's "Cached" but they are NOT reclaimable in any
+// useful sense — paging out a VM's memfd-backed RAM would crash the VM,
+// and tmpfs only shrinks when files are deleted. `top` and modern `free`
+// both display the gross figure (Buffers + Cached + SReclaimable, ~25 GB
+// on a heavy-VM host), which is misleading when the operator reads it as
+// "this much memory is free for the taking". The smaller "minus Shmem"
+// figure matches the true reclaimable file-cache portion (~2 % even on a
+// host with huge VMs) and is the value we surface on the gauge.
+//
+// Returns 0 silently on any read failure so a transient error doesn't
+// show as a 100 % cache spike.
+func readBuffCacheKB() uint64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	var buffers, cached, sreclaim, shmem uint64
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		v, _ := strconv.ParseUint(fields[1], 10, 64)
+		switch fields[0] {
+		case "Buffers:":
+			buffers = v
+		case "Cached:":
+			cached = v
+		case "SReclaimable:":
+			sreclaim = v
+		case "Shmem:":
+			shmem = v
+		}
+	}
+	sum := buffers + cached + sreclaim
+	if shmem > sum {
+		return 0
+	}
+	return sum - shmem
+}
+
 // readMemInfo reads MemTotal and MemAvailable from /proc/meminfo (values in kB).
 func readMemInfo() (totalKB, availKB uint64, err error) {
 	data, err := os.ReadFile("/proc/meminfo")
@@ -483,6 +579,57 @@ func readMemInfo() (totalKB, availKB uint64, err error) {
 		return 0, 0, fmt.Errorf("MemTotal not found in /proc/meminfo")
 	}
 	return totalKB, availKB, nil
+}
+
+// readMemFreeKB returns MemFree from /proc/meminfo, in kB. Distinct from
+// MemAvailable (which adds reclaimable cache); used here to compute the
+// "effective used" the bar's readout shows — `MemTotal − MemFree − cache`.
+// Returns 0 silently on any error.
+func readMemFreeKB() uint64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemFree:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0
+		}
+		v, _ := strconv.ParseUint(fields[1], 10, 64)
+		return v
+	}
+	return 0
+}
+
+// readShmemKB returns the kernel's Shmem total (tmpfs + memfd + SysV-shm)
+// from /proc/meminfo, in kB. Used to compute the "unattributed Shmem"
+// figure (= Shmem total − Σ per-process RssShmem) that we deliberately
+// REMOVE from the "Other" bucket: that gap is mostly inactive memfd pages
+// for VMs that the kernel is keeping resident but no longer attributing
+// to a single process's PSS. Surfacing it as "Other" was misleading;
+// stripping it lets the gauge read as "this much is reliably committed
+// to the named buckets, the rest is essentially free for the kernel to
+// reshuffle". Returns 0 silently on any error.
+func readShmemKB() uint64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "Shmem:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0
+		}
+		v, _ := strconv.ParseUint(fields[1], 10, 64)
+		return v
+	}
+	return 0
 }
 
 // readProcMemStatus reads process Name, VmRSS, and VmSwap from /proc/[pid]/status.

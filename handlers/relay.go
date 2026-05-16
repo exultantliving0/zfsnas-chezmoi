@@ -206,10 +206,13 @@ func relayWebSocket(w http.ResponseWriter, r *http.Request, ls *config.LinkedSer
 	dialHeader.Set("X-Interlink-Relay-TS", strconv.FormatInt(ts, 10))
 	dialHeader.Set("X-Interlink-Relay-Nonce", nonceHex)
 	dialHeader.Set("X-Interlink-Relay-HMAC", sig)
-	// Forward requested subprotocols to Server B so it can negotiate the right one.
-	if len(requestedProtos) > 0 {
-		dialHeader.Set("Sec-WebSocket-Protocol", strings.Join(requestedProtos, ", "))
-	}
+	// Subprotocols are forwarded via the Dialer.Subprotocols field below —
+	// gorilla/websocket inserts the Sec-WebSocket-Protocol header itself.
+	// Setting it explicitly here too triggers a "duplicate header not
+	// allowed: Sec-Websocket-Protocol" error from gorilla, which broke
+	// the VGA console relay specifically (SPICE is the only relayed WS
+	// that requests a subprotocol — "binary" — so other relayed paths
+	// like /ws/terminal and /ws/lxd-console were unaffected).
 
 	dialer := websocket.Dialer{
 		TLSClientConfig: system.InterlinkTLSConfigForRelay(ls.TLSFingerprint),

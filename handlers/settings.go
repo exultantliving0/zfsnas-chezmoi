@@ -28,6 +28,7 @@ func HandleGetSettings(appCfg *config.AppConfig) http.HandlerFunc {
 			"login_theme":          theme,
 			"live_update_enabled":  appCfg.LiveUpdateEnabled,
 			"max_smbd_processes":   appCfg.MaxSmbdProcesses,
+			"web_session":          appCfg.WebSession,
 		})
 	}
 }
@@ -41,6 +42,7 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 			LoginTheme        *string `json:"login_theme"`
 			LiveUpdateEnabled *bool   `json:"live_update_enabled"`
 			MaxSmbdProcesses  *int    `json:"max_smbd_processes"`
+			WebSession        *config.WebSessionPolicy `json:"web_session"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -84,6 +86,27 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 				return
 			}
 			appCfg.MaxSmbdProcesses = *req.MaxSmbdProcesses
+			changed = true
+		}
+		if req.WebSession != nil {
+			// Reject unknown modes outright (don't silently fall back to default)
+			// so the UI surfaces the validation error instead of pretending
+			// it saved a typo'd value.
+			if req.WebSession.Mode != config.WebSessionModeDefault &&
+				req.WebSession.Mode != config.WebSessionModeInactivity {
+				jsonErr(w, http.StatusBadRequest, "web_session.mode must be 'default' or 'inactivity'")
+				return
+			}
+			if req.WebSession.Mode == config.WebSessionModeInactivity {
+				if req.WebSession.IdleTimeoutMinutes < config.WebSessionMinIdleMinutes ||
+					req.WebSession.IdleTimeoutMinutes > config.WebSessionMaxIdleMinutes {
+					jsonErr(w, http.StatusBadRequest,
+						"web_session.idle_timeout_minutes must be between 5 and 10080 (5 minutes .. 7 days)")
+					return
+				}
+			}
+			appCfg.WebSession = *req.WebSession
+			config.NormaliseWebSession(&appCfg.WebSession)
 			changed = true
 		}
 

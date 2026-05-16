@@ -305,7 +305,8 @@ func HandleInterlinkLogin(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 
-		sess, err := session.Default.Create(user.ID, user.Username, user.Role)
+		hardCap, idle := sessionDurationsFor(appCfg.WebSession)
+		sess, err := session.Default.Create(user.ID, user.Username, user.Role, hardCap, idle)
 		if err != nil {
 			http.Redirect(w, r, "/login?reason=session_error", http.StatusSeeOther)
 			return
@@ -319,7 +320,7 @@ func HandleInterlinkLogin(appCfg *config.AppConfig) http.HandlerFunc {
 			Details: "InterLink switch from " + ls.Hostname,
 		})
 
-		SetSessionCookie(w, sess.Token)
+		SetSessionCookie(w, sess.Token, hardCap)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
 }

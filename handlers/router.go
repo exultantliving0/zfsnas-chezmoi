@@ -95,8 +95,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 
 	// --- Auth API ---
 	r.HandleFunc("/api/auth/setup", HandleSetup).Methods("POST")
-	r.HandleFunc("/api/auth/login", HandleLogin).Methods("POST")
-	r.HandleFunc("/api/auth/totp", HandleTOTPLogin).Methods("POST")
+	r.HandleFunc("/api/auth/login", HandleLogin(appCfg)).Methods("POST")
+	r.HandleFunc("/api/auth/totp", HandleTOTPLogin(appCfg)).Methods("POST")
 	r.HandleFunc("/api/auth/logout", HandleLogout).Methods("POST")
 	r.Handle("/api/auth/me", RequireAuth(http.HandlerFunc(HandleMe))).Methods("GET")
 	r.Handle("/api/prefs", RequireAuth(http.HandlerFunc(HandleUpdatePrefs))).Methods("PUT")

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -138,6 +139,14 @@ func ListDisks(configDir string) ([]DiskInfo, error) {
 		}
 		info.Rotational = isRotational(dev.Rota)
 		info.DiskType = diskType(dev.Tran, info.Rotational)
+		// Zram / zswap virtual block devices: present in /proc/partitions
+		// (so lsblk lists them) but they're RAM-backed compressed pools,
+		// not real storage. Tag them as "RAM" so the Physical Disks table
+		// doesn't mislabel them as SSD. The actual speed estimate happens
+		// in computeSpeedLabel.
+		if strings.HasPrefix(dev.Name, "zram") || strings.HasPrefix(dev.Name, "zswap") {
+			info.DiskType = "RAM"
+		}
 
 		if c, ok := cached[dev.Name]; ok {
 			info.WearoutPct = c.WearoutPct
@@ -149,13 +158,21 @@ func ListDisks(configDir string) ([]DiskInfo, error) {
 			info.UpdatedAt  = c.UpdatedAt
 			info.RPM        = c.RPM
 		}
+		// PowerState first — hdparm -C is read-only and never wakes the disk.
+		// We need it BEFORE deciding whether to call smartctl for RPM, so a
+		// drive that's currently spun-down stays spun-down.
+		info.PowerState = diskPowerState(info.Device)
+
 		// If HDD but RPM not in cache yet (first run after feature was added),
-		// fetch it quickly via smartctl -i (identity only, no full SMART scan).
-		if info.DiskType == "HDD" && info.RPM == 0 {
+		// fetch it via smartctl -i — but only when the drive is currently
+		// awake. We must NEVER wake a drive from standby just to populate
+		// the table; the RPM gets filled the next time the user clicks
+		// Refresh SMART, or naturally the next time the drive happens to
+		// be active when ListDisks runs.
+		if info.DiskType == "HDD" && info.RPM == 0 && diskAwakeForQuery(info.PowerState) {
 			info.RPM = fetchRPMQuick(info.Device)
 		}
 		info.SpeedLabel = computeSpeedLabel(info)
-		info.PowerState = diskPowerState(info.Device)
 
 		debugLog("  → adding disk %s (type=%s in_use=%v power=%s)", info.Device, info.DiskType, info.InUse, info.PowerState)
 		disks = append(disks, info)
@@ -165,8 +182,14 @@ func ListDisks(configDir string) ([]DiskInfo, error) {
 	return disks, nil
 }
 
-// RefreshSMART queries smartctl/nvme for all physical disks and writes the cache.
-func RefreshSMART(configDir string) error {
+// RefreshSMART queries smartctl/nvme for all physical disks and writes the
+// cache.  When forceWake is false (automatic startup/daily refresh, or any
+// implicit refresh triggered by another feature), drives that are currently
+// in ATA standby/sleeping mode are SKIPPED so the refresh doesn't spin them
+// up — their existing cache entry is preserved.  Only the explicit
+// "Refresh SMART" button on the Physical Disks page sets forceWake=true,
+// matching the user's contract that nothing else may wake a sleeping drive.
+func RefreshSMART(configDir string, forceWake bool) error {
 	out, err := exec.Command("lsblk", "-J", "-b",
 		"-o", "NAME,SIZE,TYPE,ROTA,TRAN,MOUNTPOINT,MOUNTPOINTS").Output()
 	if err != nil {
@@ -182,7 +205,14 @@ func RefreshSMART(configDir string) error {
 		return err
 	}
 
-	cache := make(map[string]DiskInfo)
+	// Start from the existing cache so any drive we deliberately skip
+	// (because it's in standby and we're not forcing wake) keeps the SMART
+	// data we recorded last time, rather than disappearing from the table.
+	cache, _ := loadSmartCache(configDir)
+	if cache == nil {
+		cache = make(map[string]DiskInfo)
+	}
+
 	for _, dev := range blkInfo.Blockdevices {
 		if !strings.EqualFold(dev.Type, "disk") {
 			continue
@@ -191,9 +221,20 @@ func RefreshSMART(configDir string) error {
 			continue
 		}
 
+		device := "/dev/" + dev.Name
+
+		// Standby gate — only meaningful for ATA. NVMe power states are
+		// fast transitions handled transparently by the controller, so
+		// skipping them here would just hide their SMART data forever.
+		if !forceWake && dev.Tran != "nvme" {
+			if !diskAwakeForQuery(diskPowerState(device)) {
+				continue
+			}
+		}
+
 		info := DiskInfo{
 			Name:      dev.Name,
-			Device:    "/dev/" + dev.Name,
+			Device:    device,
 			UpdatedAt: time.Now(),
 		}
 
@@ -207,6 +248,27 @@ func RefreshSMART(configDir string) error {
 	}
 
 	return saveSmartCache(configDir, cache)
+}
+
+// diskAwakeForQuery returns true when the ATA power state reported by
+// diskPowerState() means we can safely run smartctl against the drive
+// without spinning it up.  Anything that isn't recognised as standby /
+// sleeping (including the empty-string return from NVMe and virtual
+// devices, and "active/idle") counts as awake — for NVMe / virtio that's
+// the right answer because there's no sleep penalty to query them.
+func diskAwakeForQuery(state string) bool {
+	s := strings.ToLower(strings.TrimSpace(state))
+	if s == "" {
+		return true
+	}
+	// Be permissive on "unknown" / missing — that's what hdparm reports
+	// when it isn't installed or doesn't recognise the device, and we
+	// don't want a broken hdparm to silently disable every SMART scan.
+	// Only the two explicitly-recognised low-power states gate the query.
+	if strings.HasPrefix(s, "standby") || strings.HasPrefix(s, "sleeping") {
+		return false
+	}
+	return true
 }
 
 // querySMARTATA populates wearout/health for SATA/SAS/USB drives via smartctl.
@@ -607,6 +669,26 @@ func diskType(tran string, rotational bool) string {
 	return "SSD"
 }
 
+// zramEstimatedThroughputMBps returns a rough estimate of the compressed
+// throughput a zram device can sustain on this system. Zram is CPU-bound
+// (compression on every write, decompression on every read), so the
+// estimate is driven by the host's logical CPU count: each core gives us
+// ~1.5 GB/s under the default lzo-rle / lz4 algorithm, capped at 10 GB/s
+// because beyond ~6 cores the kernel's zram dispatcher (and the host
+// memory bandwidth) become the bottleneck. Not a benchmark, not a SLA —
+// a "what to expect" number for the Physical Disks page.
+func zramEstimatedThroughputMBps() int {
+	cpus := runtime.NumCPU()
+	if cpus < 1 {
+		cpus = 1
+	}
+	mbps := cpus * 1500
+	if mbps > 10000 {
+		mbps = 10000
+	}
+	return mbps
+}
+
 // formatBytes formats a byte count using 1024-based units (matching lsblk/OS conventions).
 // Labels use common convention (GB, TB) rather than IEC (GiB, TiB).
 func formatBytes(b uint64) string {
@@ -706,6 +788,9 @@ func computeSpeedLabel(d DiskInfo) string {
 		}
 	case "NVMe":
 		return nvmeSpdLabel(d.Name)
+	case "RAM":
+		mbps := zramEstimatedThroughputMBps()
+		return fmt.Sprintf("Zram (~%.1f GB/s)", float64(mbps)/1000.0)
 	}
 	return ""
 }
@@ -826,10 +911,14 @@ func fmtBW(gbps float64) string {
 	return fmt.Sprintf("%d MB/s", int(mbps))
 }
 
-// fetchRPMQuick calls "sudo smartctl -j -i <device>" to get only the rotation
-// rate without running a full SMART attribute scan. Returns 0 on any error.
+// fetchRPMQuick calls "sudo smartctl -j -n standby -i <device>" to get only
+// the rotation rate without running a full SMART attribute scan and without
+// waking the drive from standby. `-n standby` tells smartctl to exit
+// (status 2) without issuing any command if the drive is in standby mode,
+// which keeps the call safe to run during periodic disk-table refresh.
+// Returns 0 on any error or when the drive was sleeping.
 func fetchRPMQuick(device string) int {
-	out, err := exec.Command("sudo", "smartctl", "-j", "-i", device).Output()
+	out, err := exec.Command("sudo", "smartctl", "-j", "-n", "standby", "-i", device).Output()
 	if err != nil && len(out) == 0 {
 		return 0
 	}

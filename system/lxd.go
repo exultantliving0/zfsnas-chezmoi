@@ -390,6 +390,7 @@ type LXDCreateVMRequest struct {
 	Image             string            `json:"image"`
 	Profile           string            `json:"profile"`
 	AutoStart         bool              `json:"auto_start"`
+	ForceRunning      bool              `json:"force_running"`
 	VCPU              int               `json:"vcpu"`
 	MemoryMB          int               `json:"memory_mb"`
 	MemoryHugepages   bool              `json:"memory_hugepages"`
@@ -466,6 +467,7 @@ type LXDCreateContainerRequest struct {
 	Image         string                 `json:"image"`
 	Profile       string                 `json:"profile"`
 	AutoStart     bool                   `json:"auto_start"`
+	ForceRunning  bool                   `json:"force_running"`
 	CPUCores      int                    `json:"cpu_cores"`
 	CPUShares     int                    `json:"cpu_shares"`    // 1-10, maps to limits.cpu.priority
 	CPULimitPct   int                    `json:"cpu_limit_pct"` // 0=unlimited; 1-100 → limits.cpu.allowance
@@ -746,10 +748,21 @@ func LXDGetInstanceStats(name string) (LXDInstanceStats, error) {
 		}
 	}
 
+	// CPU cumulative time: /state reports cpu.usage=0 for VMs without
+	// lxd-agent (same reason memory falls back to prom above). Pull from
+	// the Prometheus endpoint instead — lxd_cpu_seconds_total summed across
+	// every busy mode is the canonical cumulative figure.
+	cpuUsageNs := raw2.CPU.Usage
+	if cpuUsageNs == 0 {
+		if v := lxdPromCPUFor(name); v > 0 {
+			cpuUsageNs = v
+		}
+	}
+
 	return LXDInstanceStats{
 		Status:              raw2.Status,
 		UptimeSec:           uptimeSec,
-		CPUUsageNs:          raw2.CPU.Usage,
+		CPUUsageNs:          cpuUsageNs,
 		CPUPct:              cpuPct,
 		CPUCount:            cpuCount,
 		MemUsedBytes:        memUsed,
@@ -776,6 +789,32 @@ func parseCompRatioFloat(s string) float64 {
 		return 0
 	}
 	return v
+}
+
+// lxdPromCPUFor scrapes the LXD/Incus Prometheus endpoint and returns the
+// cumulative busy CPU time for the named instance, in nanoseconds. Sums
+// `lxd_cpu_seconds_total` across every mode except idle and steal (those
+// grow ~1 s/s per vCPU regardless of guest load and would dwarf real work).
+// Used as a fallback when `/1.0/instances/<name>/state` reports cpu.usage=0
+// — typical for VMs that don't have lxd-agent installed inside the guest,
+// where the host-side cgroup never sees per-process CPU accounting.
+// Returns 0 on any error so the caller can keep its existing value.
+func lxdPromCPUFor(name string) int64 {
+	body, err := fetchLXDMetricsBody()
+	if err != nil {
+		return 0
+	}
+	var busySec float64
+	for _, s := range parsePromText(body) {
+		if s.labels["name"] != name || s.metric != "lxd_cpu_seconds_total" {
+			continue
+		}
+		if m := s.labels["mode"]; m == "idle" || m == "steal" {
+			continue
+		}
+		busySec += s.value
+	}
+	return int64(busySec * 1e9)
 }
 
 // lxdPromMemoryFor scrapes the LXD Prometheus endpoint and returns
@@ -1436,6 +1475,9 @@ func LXDStop(name string, force bool) error {
 	if !lxdNameRe.MatchString(name) {
 		return fmt.Errorf("invalid instance name")
 	}
+	// Tell the state watcher this is a portal-initiated stop so it doesn't
+	// emit the "VM stopped unexpectedly" alert.
+	MarkUserInitiatedStop(name)
 	args := []string{"stop", name}
 	if force {
 		args = append(args, "--force")
@@ -1458,6 +1500,7 @@ func LXDRestart(name string) error {
 	if !lxdNameRe.MatchString(name) {
 		return fmt.Errorf("invalid instance name")
 	}
+	MarkUserInitiatedStop(name)
 	out, err := exec.Command("incus", "restart", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
@@ -1475,6 +1518,7 @@ func LXDReset(name string) error {
 	if !lxdNameRe.MatchString(name) {
 		return fmt.Errorf("invalid instance name")
 	}
+	MarkUserInitiatedStop(name)
 	out, err := exec.Command("incus", "restart", "--force", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
@@ -1550,6 +1594,11 @@ type LXDInstanceConfig struct {
 	MemoryReservation string `json:"memory_reservation"` // "", "25", "50", "75", "100", or "custom:<size>"
 	Nesting           bool   `json:"nesting"`
 	Autostart         bool   `json:"autostart"`
+	// ForceRunning controls whether ZNAS auto-restarts the instance after an
+	// unexpected stop (guest poweroff, QEMU crash, OOM, external CLI stop).
+	// Stored as the Incus user.* key `user.zfsnas.force_running`, separate
+	// from Autostart so the two flags can be toggled independently.
+	ForceRunning      bool   `json:"force_running"`
 	StatefulSnapshots bool   `json:"stateful_snapshots"` // migration.stateful — VM-only
 	IsVM              bool   `json:"is_vm"`
 	// Container-specific features (only applied when ApplyContainerFeatures is true)
@@ -2466,6 +2515,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 		MemoryReservation: raw.Config["user.memory_reservation"],
 		Nesting:           raw.Config["security.nesting"] == "true",
 		Autostart:         raw.Config["boot.autostart"] == "true" || raw.Config["boot.autostart"] == "1",
+		ForceRunning:      raw.Config["user.zfsnas.force_running"] == "true" || raw.Config["user.zfsnas.force_running"] == "1",
 		StatefulSnapshots: raw.Config["migration.stateful"] == "true",
 		IsVM:              raw.Type == "virtual-machine",
 		Firmware:          firmware,
@@ -2994,6 +3044,16 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		autostart = "true"
 	}
 	if err := applyConf("boot.autostart", autostart); err != nil {
+		return err
+	}
+	// user.zfsnas.force_running — when "true", ZNAS auto-restarts the
+	// instance after an unexpected stop (guest poweroff / crash / OOM /
+	// external CLI stop). Empty string clears the key.
+	forceRunning := ""
+	if cfg.ForceRunning {
+		forceRunning = "true"
+	}
+	if err := applyConf("user.zfsnas.force_running", forceRunning); err != nil {
 		return err
 	}
 	// migration.stateful — VM-only; controls whether QEMU is initialised in a way
@@ -3696,6 +3756,8 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				// on hotplug failure — must stop, apply, then restart.
 				needStop := !rootIsInstance && isRunning
 				if needStop {
+					// Portal-initiated stop — suppress the unexpected-stop alert.
+					MarkUserInitiatedStop(name)
 					if err := exec.Command("incus", "stop", name, "--timeout=20").Run(); err != nil {
 						exec.Command("incus", "stop", name, "--force").Run() //nolint:errcheck
 					}
@@ -4218,6 +4280,9 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 	if req.AutoStart {
 		args = append(args, "-c", "boot.autostart=true")
 	}
+	if req.ForceRunning {
+		args = append(args, "-c", "user.zfsnas.force_running=true")
+	}
 	if req.CloudInit != "" {
 		args = append(args, "-c", "user.user-data="+req.CloudInit)
 	}
@@ -4646,6 +4711,9 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	if req.AutoStart {
 		args = append(args, "-c", "boot.autostart=true")
 	}
+	if req.ForceRunning {
+		args = append(args, "-c", "user.zfsnas.force_running=true")
+	}
 	if req.StartupOrder > 0 {
 		args = append(args, "-c", fmt.Sprintf("boot.autostart.priority=%d", req.StartupOrder))
 	}
@@ -4881,6 +4949,7 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	// Stop if we only started for post-init tasks and auto_start was not requested.
 	if !req.AutoStart && needStart {
 		log("Stopping container…")
+		MarkUserInitiatedStop(req.Name)
 		exec.Command("incus", "stop", req.Name).Run()
 	}
 

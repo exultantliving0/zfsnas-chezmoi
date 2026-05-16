@@ -92,6 +92,17 @@ func main() {
 	}
 	appCfg.ConfigDir = absConfig
 
+	// ===== Persistent session store =====
+	// Rehydrate any sessions persisted from a previous run so users
+	// stay logged in across `systemctl restart zfsnas`. Failures are
+	// non-fatal — if the file is missing or corrupted the session map
+	// just starts empty and the user logs in once.
+	if loaded, err := session.Default.BindPersistence(absConfig); err != nil {
+		log.Printf("[sessions] persistence init failed: %v — sessions will not survive restart", err)
+	} else if loaded > 0 {
+		log.Printf("[sessions] restored %d session(s) from disk", loaded)
+	}
+
 	// ===== --set-https-port override =====
 	if *setHTTPSPort != 0 {
 		if *setHTTPSPort < 1 || *setHTTPSPort > 65535 {
@@ -187,6 +198,17 @@ func main() {
 	// shutdown, qemu crash, host reboot recovery, autostart on boot). Costs
 	// nothing on hosts that haven't enabled the feature — the loop short-
 	// circuits when LXDAvailable() is false.
+	//
+	// Wire the alerts.Send dispatch for "VM stopped unexpectedly" — the
+	// callback lives on the system package so we don't create an import
+	// cycle (alerts already imports system via the interlink relay sub).
+	system.OnVMUnexpectedStop = func(name, details, cause string) {
+		subject := "[ZFS NAS] " + name + " stopped unexpectedly"
+		body := "Instance: " + name + "\nState change: " + details + "\nDetected cause: " + cause + "\n"
+		if err := alerts.Send(alerts.EventVMUnexpectedStop, subject, "vm_unexpected_stop", body); err != nil {
+			log.Printf("[alerts] vm_unexpected_stop send failed for %s: %v", name, err)
+		}
+	}
 	system.StartLXDStateWatcher()
 
 	// ===== Daily SMART refresh goroutine =====
@@ -347,6 +369,10 @@ func main() {
 
 	<-stop
 	log.Println("Shutting down…")
+	// Flush the latest session activity heartbeats to disk before exit so
+	// a clean restart doesn't lose the LastActivityAt timestamps the
+	// inactivity-timeout enforcement depends on.
+	session.Default.FlushNow()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)

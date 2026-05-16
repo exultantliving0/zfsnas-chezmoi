@@ -293,6 +293,23 @@
       outline:none; flex-shrink:0;
     }
     .cs-list { overflow-y:auto; max-height:260px; }
+    /* Web Login Timeout dropdowns sit in a small Settings card. The two
+       lists only have 2-3 options each, so the global 260 px max-height
+       + overflow:auto would leave a wasteful scrollbar gutter (especially
+       visible on iPad). Force a comfortable fixed-ish panel that always
+       fits every option without scrolling. Inline so the rule isn't
+       affected by an HTTP-cached style.css. */
+    .cs-panel[data-cs-id="ws-mode"],
+    .cs-panel[data-cs-id="ws-idle-unit"] {
+      overflow: visible !important;
+    }
+    .cs-panel[data-cs-id="ws-mode"]      .cs-list,
+    .cs-panel[data-cs-id="ws-idle-unit"] .cs-list {
+      max-height: none !important;
+      min-height: 0;
+      overflow: visible !important;
+      -webkit-overflow-scrolling: auto !important;
+    }
     .cs-opt {
       padding:7px 12px; font-size:13px; color:var(--text-1); cursor:pointer;
       white-space:nowrap; transition:background .1s;
@@ -484,7 +501,15 @@
     <div id="mem-gauge-panel">
       <div class="cpu-gauge-title">MEM</div>
       <div class="cpu-gauge-bar" id="mem-gauge-bar" style="position:relative;">
-        <!-- segments stack bottom-up via flex-direction:column-reverse -->
+        <!-- The bar uses `flex-direction: column-reverse`, so the FIRST DOM
+             child renders at the BOTTOM and the LAST DOM child renders at
+             the TOP. cache (#d8c5ff) must be the LAST child to land at the
+             very top of the coloured stack — adjacent to the empty "free"
+             space above it, matching its semantic of "almost free memory".
+             #d8c5ff is a red-shifted lighter shade of the ZFS purple
+             (#a78bfa, which has a noticeable blue cast); shifting toward
+             magenta keeps it clearly READS as purple even at small bar
+             sizes. -->
         <div class="cpu-gauge-seg" id="mem-seg-other"     style="background:#6b7280;height:0%"></div>
         <div class="cpu-gauge-seg" id="mem-seg-minio"     style="background:#f59e0b;height:0%"></div>
         <div class="cpu-gauge-seg" id="mem-seg-iscsi"     style="background:#06b6d4;height:0%"></div>
@@ -493,6 +518,7 @@
         <div class="cpu-gauge-seg" id="mem-seg-smb"       style="background:#fb923c;height:0%"></div>
         <div class="cpu-gauge-seg" id="mem-seg-container" style="background:#34d399;height:0%"></div>
         <div class="cpu-gauge-seg" id="mem-seg-vm"        style="background:#f472b6;height:0%"></div>
+        <div class="cpu-gauge-seg" id="mem-seg-cache"     style="background:#d8c5ff;height:0%"></div>
       </div>
       <!-- v6.5.3+: percentage readout under the bar. Mirrors the CPU
            readout: green <60 %, yellow 60-80 %, red >80 %.
@@ -635,6 +661,10 @@
               <button onclick="openMyPasswordModal();closeUserMenu();" style="width:100%;text-align:left;padding:9px 14px;background:none;border:none;color:var(--text);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;" onmouseover="this.style.background='var(--surface3,rgba(255,255,255,0.07))'" onmouseout="this.style.background='none'">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 My Password
+              </button>
+              <button id="user-menu-compact" onclick="toggleCompactHeader()" style="width:100%;text-align:left;padding:9px 14px;background:none;border:none;color:var(--text);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;" onmouseover="this.style.background='var(--surface3,rgba(255,255,255,0.07))'" onmouseout="this.style.background='none'" title="Toggle a single-row header that hides the capacity bar and live IO charts. Saved per browser only.">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                <span class="compact-label">Compact Header</span>
               </button>
               <div style="height:1px;background:var(--border);margin:2px 0;"></div>
               <button onclick="logout();closeUserMenu();" style="width:100%;text-align:left;padding:9px 14px;background:none;border:none;color:var(--text-2);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;" onmouseover="this.style.background='var(--surface3,rgba(255,255,255,0.07))'" onmouseout="this.style.background='none'">
@@ -1208,8 +1238,13 @@
 
       <!-- FULL ACTIVITY LOG PAGE -->
       <div class="page hidden" id="page-activity">
-        <div class="page-header">
-          <h2>Activity &amp; Events</h2>
+        <div class="page-header" style="gap:12px;flex-wrap:wrap;">
+          <h2 style="margin-right:auto;">Activity &amp; Events</h2>
+          <input type="search" id="audit-search" placeholder="Filter — text / user / hostname / target…"
+                 oninput="_auditSetFilter(this.value)"
+                 style="flex:1;min-width:220px;max-width:420px;padding:6px 10px;font-size:13px;
+                        background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);
+                        color:var(--text);outline:none;">
           <button class="btn btn-ghost btn-sm" onclick="loadAudit()">↻ Refresh</button>
         </div>
         <div class="card" id="activity-list">
@@ -1688,6 +1723,10 @@
             <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px;">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
                 <input type="checkbox" id="lxd-edit-autostart"> Auto-start on boot
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                <input type="checkbox" id="lxd-edit-force-running"> Force running
+                <i class="info-tip" data-tip="When enabled, ZNAS automatically brings this instance back up if it stops without a user action through this portal.&#10;&#10;Triggers a restart on:&#10;  • guest-issued poweroff (someone ran `poweroff` / `shutdown -h` inside)&#10;  • QEMU crash, kernel OOM-kill&#10;  • `incus stop` issued from a shell on the host&#10;&#10;Stuck-in-error escalation: if the instance enters Error / Crashed / Aborted, ZNAS first tries a soft `incus start` after ~2 s; if the instance is STILL in Error 120 s later, ZNAS issues a hard reset (`incus restart --force`) to break it out of the stuck state.&#10;&#10;Every auto-restart and hard reset is recorded in the audit log as a `system` action so you can tell them apart from your own start/restart actions in Activity & Events.&#10;&#10;Does NOT trigger when you click Stop / Restart in the ZNAS UI, or when an edit modal needs a stop-apply-start cycle to apply a change.&#10;&#10;Crash-loop guard: after each auto-restart we wait at least 90 s before restarting the same instance again, so a VM that keeps dying immediately doesn't spin in a tight loop.&#10;&#10;Independent of `Auto-start on boot` — that one only fires when the host (hypervisor) reboots. This one keeps the instance running between host reboots."></i>
               </label>
             </div>
             <p id="lxd-edit-note" style="font-size:12px;color:var(--text-3);margin:0 0 8px;"></p>
@@ -2203,9 +2242,15 @@
                   <input type="text" class="input" id="lxd-vm-name" placeholder="my-vm" pattern="[a-zA-Z0-9][a-zA-Z0-9\-]*" required>
                 </div>
               </div>
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
-                <input type="checkbox" id="lxd-vm-autostart"> Auto-start on boot
-              </label>
+              <div style="display:flex;flex-wrap:wrap;gap:14px;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                  <input type="checkbox" id="lxd-vm-autostart"> Auto-start on boot
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                  <input type="checkbox" id="lxd-vm-force-running"> Force running
+                  <i class="info-tip" data-tip="When enabled, ZNAS automatically brings this VM back up if it stops without a user action through this portal.&#10;&#10;Triggers a restart on:&#10;  • guest-issued poweroff (someone ran `poweroff` / `shutdown -h` inside)&#10;  • QEMU crash, kernel OOM-kill&#10;  • `incus stop` issued from a shell on the host&#10;&#10;Stuck-in-error escalation: if the VM enters Error / Crashed / Aborted, ZNAS first tries a soft `incus start` after ~2 s; if the VM is STILL in Error 120 s later, ZNAS issues a hard reset (`incus restart --force`) to break it out of the stuck state.&#10;&#10;Every auto-restart and hard reset is recorded in the audit log as a `system` action so you can tell them apart from your own start/restart actions in Activity & Events.&#10;&#10;Does NOT trigger when you click Stop / Restart in the ZNAS UI, or when an edit modal needs a stop-apply-start cycle to apply a change.&#10;&#10;Crash-loop guard: after each auto-restart we wait at least 90 s before restarting the same VM again, so a VM that keeps dying immediately doesn't spin in a tight loop.&#10;&#10;Independent of `Auto-start on boot` — that one only fires when the host (hypervisor) reboots. This one keeps the VM running between host reboots."></i>
+                </label>
+              </div>
             </div>
 
             <!-- Image selector -->
@@ -2617,6 +2662,10 @@
               <div style="display:flex;flex-wrap:wrap;gap:16px;">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
                   <input type="checkbox" id="lxd-ct-autostart"> Auto-start on boot
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                  <input type="checkbox" id="lxd-ct-force-running"> Force running
+                  <i class="info-tip" data-tip="When enabled, ZNAS automatically brings this container back up if it stops without a user action through this portal.&#10;&#10;Triggers a restart on:&#10;  • guest-issued poweroff (someone ran `poweroff` / `halt` inside)&#10;  • container process crash, kernel OOM-kill&#10;  • `incus stop` issued from a shell on the host&#10;&#10;Stuck-in-error escalation: if the container enters Error / Crashed / Aborted, ZNAS first tries a soft `incus start` after ~2 s; if it's STILL in Error 120 s later, ZNAS issues a hard reset (`incus restart --force`) to break it out of the stuck state.&#10;&#10;Every auto-restart and hard reset is recorded in the audit log as a `system` action so you can tell them apart from your own start/restart actions in Activity & Events.&#10;&#10;Does NOT trigger when you click Stop / Restart in the ZNAS UI, or when an edit modal needs a stop-apply-start cycle.&#10;&#10;Crash-loop guard: after each auto-restart we wait at least 90 s before restarting the same container again.&#10;&#10;Independent of `Auto-start on boot` — that one only fires when the host (hypervisor) reboots. This one keeps the container running between host reboots."></i>
                 </label>
               </div>
             </div>
@@ -4805,6 +4854,39 @@ Select the Console tab to load.</pre>
           </div>
           <div id="cert-list">
             <div style="color:var(--text-3);font-size:13px;">Loading…</div>
+          </div>
+        </div>
+
+        <!-- ── Web Login Timeout (admin-only via permission) ── -->
+        <div class="card" id="card-web-session">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;gap:10px;">
+            <div style="min-width:0;">
+              <h3 style="margin-bottom:2px;">Web Login Timeout</h3>
+              <div style="font-size:13px;color:var(--text-3);">Browser sessions are saved encrypted on disk and survive a server restart in either mode.</div>
+            </div>
+            <i class="info-tip tip-left" data-tip="Default — your login lasts 24 hours from the moment you sign in, regardless of activity. Same as today's behaviour, plus the session now persists across a server restart.&#10;&#10;Inactivity timeout — your session expires N minutes after your last action in the portal. Each authenticated request resets the timer. Useful in shared-device or kiosk situations where leaving the portal idle should require a fresh login." style="flex-shrink:0;margin-top:4px;"></i>
+          </div>
+          <div class="form-group" style="display:flex;align-items:center;flex-wrap:wrap;">
+            <select id="ws-mode" style="min-width:260px;" onchange="document.getElementById('ws-idle-row').style.display=this.value==='inactivity'?'flex':'none';">
+              <option value="default">Fixed 24-hour session (default)</option>
+              <option value="inactivity">Inactivity timeout</option>
+            </select>
+          </div>
+          <div class="form-group" id="ws-idle-row" style="display:none;align-items:center;gap:12px;flex-wrap:wrap;">
+            <label for="ws-idle-value" style="font-size:13px;color:var(--text-2);min-width:90px;">Idle timeout</label>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <input type="number" id="ws-idle-value" min="1" max="10080" value="60" style="width:90px;" oninput="_wsClampIdle()">
+              <select id="ws-idle-unit" style="min-width:110px;" onchange="_wsConvertIdle()">
+                <option value="minutes" selected>Minutes</option>
+                <option value="hours">Hours</option>
+                <option value="days">Days</option>
+              </select>
+            </div>
+            <span style="font-size:12px;color:var(--text-3);">5 minutes minimum, 7 days maximum</span>
+          </div>
+          <div id="ws-error" style="display:none;color:var(--accent-danger);font-size:12px;margin-top:6px;"></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+            <button class="btn btn-primary" onclick="saveWebSessionPolicy()">Save</button>
           </div>
         </div>
 
@@ -10741,6 +10823,10 @@ function showPage(name) {
   if (name === 'bridge-detail')   {} // loaded by openBridgeDetail
   if (name === 'lxd-datastores')  { loadLXDDatastores(); _setDatastoresRootActive(); }
   if (name === 'datastore-detail') {} // loaded by openDatastoreDetail
+  // Sweep any <select id="…"> that hasn't been wrapped with the styled
+  // custom dropdown yet. Idempotent — selects already initialised (or
+  // explicitly opted out, e.g. settings-timezone) are skipped.
+  if (typeof initAllCustomSelects === 'function') initAllCustomSelects();
   history.replaceState(null, '', '#' + name);
 }
 
@@ -13006,20 +13092,60 @@ function copyAPIKey() {
 // ===== Full Audit Log Page =====
 let _auditEntries = [];
 let _auditPage    = 0;
+let _auditFilter  = ''; // current search-box query, lowercase
 
 function _auditPerPage() {
   // Each row is ~48px tall. Reserve ~220px for topbar + page header + card padding + pagination.
   return Math.max(10, Math.floor((window.innerHeight - 220) / 48));
 }
 
+// _auditMatchesFilter — single search box matches against ANY of the
+// fields a user can reasonably see in the row: source hostname, user,
+// event action / label, target, details. Case-insensitive substring;
+// multiple whitespace-separated terms are ANDed so the user can type
+// "vm-1 start" and only see "vm-1 start" events.
+function _auditMatchesFilter(e, terms) {
+  if (terms.length === 0) return true;
+  const meta = (typeof _auditEventMeta === 'function') ? _auditEventMeta(e) : { label: e.action || '' };
+  const hay = [
+    e.system  || '',
+    e.user    || '',
+    e.action  || '',
+    meta.label || '',
+    e.target  || '',
+    e.details || '',
+    e.result  || '',
+    formatDate(e.timestamp),
+  ].join(' ').toLowerCase();
+  for (const t of terms) {
+    if (hay.indexOf(t) === -1) return false;
+  }
+  return true;
+}
+
+function _auditFilteredEntries() {
+  if (!_auditFilter) return _auditEntries;
+  const terms = _auditFilter.split(/\s+/).filter(Boolean);
+  return _auditEntries.filter(e => _auditMatchesFilter(e, terms));
+}
+
+// Called by the search box on every keystroke. Reset to page 0 so the
+// new result set always starts at the most recent matches.
+function _auditSetFilter(q) {
+  _auditFilter = (q || '').trim().toLowerCase();
+  _auditPage = 0;
+  _renderAuditPage();
+}
+
 function _renderAuditPage() {
   const el     = document.getElementById('activity-list');
   const pagEl  = document.getElementById('audit-pagination');
   const perPage = _auditPerPage();
-  const total   = _auditEntries.length;
+  const filtered = _auditFilteredEntries();
+  const total   = filtered.length;
   const pages   = Math.ceil(total / perPage);
   _auditPage    = Math.min(_auditPage, Math.max(0, pages - 1));
-  const slice   = _auditEntries.slice(_auditPage * perPage, (_auditPage + 1) * perPage);
+  const slice   = filtered.slice(_auditPage * perPage, (_auditPage + 1) * perPage);
 
   el.innerHTML = slice.map(e => {
     const ev = _auditEventMeta(e);
@@ -13041,7 +13167,9 @@ function _renderAuditPage() {
         ${e.details?`<div class="text-3 text-sm mt-1">${esc(e.details)}</div>`:''}
       </div>
     </div>`;
-  }).join('') || '<div style="color:var(--text-3);padding:16px;">No entries on this page.</div>';
+  }).join('') || (_auditFilter
+    ? `<div style="color:var(--text-3);padding:16px;">No entries match <span style="color:var(--text-2);">"${esc(_auditFilter)}"</span>.</div>`
+    : '<div style="color:var(--text-3);padding:16px;">No entries on this page.</div>');
 
   if (pages <= 1) {
     pagEl.style.display = 'none';
@@ -13266,6 +13394,26 @@ async function loadAudit() {
     trigger.style.opacity = disabled ? '0.5' : '';
     trigger.style.pointerEvents = disabled ? 'none' : '';
   };
+
+  // initAllCustomSelects is a one-shot sweep that wraps every <select id="…">
+  // in the document with the styled custom dropdown. initCustomSelect is
+  // idempotent (early-return on _csInit), so calling this from boot, after
+  // showPage(), or after a modal's first render is safe and cheap.
+  //
+  // Selects that need a non-default option (e.g. {searchable:true} for the
+  // timezone list) MUST have their explicit initCustomSelect(...) call run
+  // BEFORE this sweep — once _csInit is set, options can't be retrofitted.
+  // The skip list below mirrors those exceptions so the sweep doesn't race
+  // ahead and lock in default options for them.
+  var _csOptedOut = { 'settings-timezone': true };
+  window.initAllCustomSelects = function(root) {
+    var scope = root || document;
+    var nodes = scope.querySelectorAll('select[id]');
+    for (var i = 0; i < nodes.length; i++) {
+      if (_csOptedOut[nodes[i].id]) continue;
+      window.initCustomSelect(nodes[i].id);
+    }
+  };
 })();
 
 let _savedPort = null;
@@ -13288,6 +13436,7 @@ async function loadSettings() {
   loadTimezone();
   loadTreeMapScheduleSettings();
   loadNTPStatus();
+  loadWebSessionPolicy();
 }
 
 function checkPortChanged() {
@@ -13465,6 +13614,102 @@ async function saveTimezone() {
   if (!resp.ok) {
     alertEl.textContent = data.error || 'Failed to set timezone.';
     alertEl.classList.remove('hidden');
+  }
+}
+
+// ── Web Login Timeout (Security tab card) ───────────────────────────────────
+//
+// Loads the current WebSessionPolicy from /api/settings, fills the dropdown
+// and the duration field. The unit picker is purely cosmetic — values are
+// always converted to minutes before posting back to the server.
+async function loadWebSessionPolicy() {
+  try {
+    const r = await fetch('/api/settings');
+    if (!r.ok) return;
+    const data = await r.json();
+    const ws = data.web_session || { mode: 'default', idle_timeout_minutes: 60 };
+    const modeSel = document.getElementById('ws-mode');
+    const valInp  = document.getElementById('ws-idle-value');
+    const unitSel = document.getElementById('ws-idle-unit');
+    if (!modeSel || !valInp || !unitSel) return;
+    modeSel.value = ws.mode === 'inactivity' ? 'inactivity' : 'default';
+    document.getElementById('ws-idle-row').style.display =
+      modeSel.value === 'inactivity' ? 'flex' : 'none';
+    // Pick the friendliest unit that yields an integer.
+    const mins = ws.idle_timeout_minutes || 60;
+    if (mins >= 1440 && mins % 1440 === 0) { unitSel.value = 'days';    valInp.value = mins / 1440; }
+    else if (mins >= 60 && mins % 60 === 0) { unitSel.value = 'hours';   valInp.value = mins / 60; }
+    else                                    { unitSel.value = 'minutes'; valInp.value = mins; }
+    if (typeof csRefresh === 'function') { csRefresh('ws-mode'); csRefresh('ws-idle-unit'); }
+  } catch (_) {}
+}
+
+// _wsIdleMinutes returns the current field value expressed in minutes,
+// or NaN when the input is blank.
+function _wsIdleMinutes() {
+  const n = parseFloat(document.getElementById('ws-idle-value').value);
+  if (!Number.isFinite(n)) return NaN;
+  const u = document.getElementById('ws-idle-unit').value;
+  if (u === 'days')  return Math.round(n * 1440);
+  if (u === 'hours') return Math.round(n * 60);
+  return Math.round(n);
+}
+
+// _wsConvertIdle re-displays the current minute count in the newly-picked
+// unit (no precision loss when the value divides evenly; otherwise we
+// keep one decimal so the user sees the rounding).
+function _wsConvertIdle() {
+  // Read CURRENT input as the previously-selected unit. We can't tell what
+  // the previous unit was, so just trust the input as-is and reinterpret
+  // — the user is changing the unit, the value field stays the same number.
+  // No-op to avoid surprising rounding; range hint stays valid because
+  // _wsClampIdle uses minutes.
+  _wsClampIdle();
+}
+
+// _wsClampIdle highlights an out-of-range value in the inline error line
+// (5 min .. 7 days). Non-blocking — Save handler does the strict reject.
+function _wsClampIdle() {
+  const m = _wsIdleMinutes();
+  const err = document.getElementById('ws-error');
+  if (Number.isNaN(m) || m < 5 || m > 10080) {
+    err.textContent = 'Value must be between 5 minutes and 7 days.';
+    err.style.display = '';
+  } else {
+    err.style.display = 'none';
+  }
+}
+
+async function saveWebSessionPolicy() {
+  const mode = document.getElementById('ws-mode').value;
+  const body = { web_session: { mode: mode, idle_timeout_minutes: 60 } };
+  if (mode === 'inactivity') {
+    const m = _wsIdleMinutes();
+    if (Number.isNaN(m) || m < 5 || m > 10080) {
+      _wsClampIdle();
+      return;
+    }
+    body.web_session.idle_timeout_minutes = m;
+  }
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      const err = document.getElementById('ws-error');
+      err.textContent = data.error || 'Failed to save.';
+      err.style.display = '';
+      return;
+    }
+    showToast('Web login timeout updated. Existing sessions keep their original setting until next login.', 'success');
+    document.getElementById('ws-error').style.display = 'none';
+  } catch (e) {
+    const err = document.getElementById('ws-error');
+    err.textContent = 'Network error: ' + e.message;
+    err.style.display = '';
   }
 }
 
@@ -13753,7 +13998,7 @@ function _buildEventSubsHTML(p) {
 function _buildVirtEventSubsHTML(p) {
   return `
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-start-fail"><span>VM / Container failed to start</span></label>
-    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-unexpected-stop"><span>VM / Container stopped unexpectedly (crash / OOM)</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-unexpected-stop"><span>VM / Container stopped without a ZNAS UI action (guest poweroff, crash, OOM, external CLI stop)</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-created-deleted"><span>VM / Container created or deleted</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-snapshot-fail"><span>VM / Container snapshot failure</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-backup-fail"><span>VM / Container backup / replication failure</span></label>
@@ -20196,7 +20441,7 @@ function renderDisks(el, disks) {
 
   if (available.length) {
     html += `<h3 style="margin-bottom:12px;color:var(--text-2);">Available for ZFS (${available.length})</h3>`;
-    html += '<div class="table-wrap" style="margin-bottom:28px;"><table>';
+    html += '<div class="table-wrap" style="margin-bottom:28px;"><table class="disks-table">';
     html += diskTableHeader(true);
     html += '<tbody>' + available.map(d => diskRow(d, false, true)).join('') + '</tbody></table></div>';
   } else if (!zfsAssigned.length && !cacheDiskList.length) {
@@ -20206,7 +20451,7 @@ function renderDisks(el, disks) {
   if (zfsAssigned.length || cacheDiskList.length) {
     const total = zfsAssigned.length + cacheDiskList.length;
     html += `<h3 style="margin-bottom:12px;color:var(--accent-2);">ZFS Assigned Disks (${total})</h3>`;
-    html += '<div class="table-wrap" style="margin-bottom:28px;"><table>';
+    html += '<div class="table-wrap" style="margin-bottom:28px;"><table class="disks-table">';
     html += diskTableHeaderWithPool();
     html += '<tbody>';
     html += zfsAssigned.map(d => diskRowWithPool(d, diskOwnerPool(d))).join('');
@@ -20216,7 +20461,7 @@ function renderDisks(el, disks) {
 
   if (inUse.length) {
     html += `<h3 style="margin-bottom:12px;color:var(--text-3);">In Use / System (${inUse.length})</h3>`;
-    html += '<div class="table-wrap"><table>';
+    html += '<div class="table-wrap"><table class="disks-table">';
     html += diskTableHeader(false);
     html += '<tbody>' + inUse.map(d => diskRow(d, true, false)).join('') + '</tbody></table></div>';
   }
@@ -20880,6 +21125,15 @@ function toggleNFSEnabled() {
     });
   });
 })();
+
+// Sweep every <select id="…"> through initCustomSelect once the DOM is
+// ready. Catches static selects in the page header / top bar / Performance
+// tabs / modal forms that don't have an explicit init call. Modals that are
+// hidden at boot are still in the DOM, so their selects are wrapped now and
+// look right the first time they open.
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof initAllCustomSelects === 'function') initAllCustomSelects();
+});
 
 function closeShareModal() {
   document.getElementById('modal-share').classList.add('hidden');
@@ -25384,7 +25638,7 @@ function startIOPoller() {
 
 // ===== CPU Process Gauge =====
 let _cpuProcsData = null;
-const CPU_CAT_COLORS = { smb:'#fb923c', nfs:'#60a5fa', zfs:'#a78bfa', minio:'#f59e0b', iscsi:'#06b6d4', vm:'#f472b6', container:'#34d399', other:'#6b7280' };
+const CPU_CAT_COLORS = { smb:'#fb923c', nfs:'#60a5fa', zfs:'#a78bfa', minio:'#f59e0b', iscsi:'#06b6d4', vm:'#f472b6', container:'#34d399', other:'#6b7280', cache:'#d8c5ff' };
 
 function _updateCpuGauge(data) {
   if (!data) return;
@@ -25563,6 +25817,9 @@ function _updateMemGauge(data) {
   setH('mem-seg-vm',        data.vm_pct);
   setH('mem-seg-container', data.container_pct);
   setH('mem-seg-other',     data.other_pct);
+  // Reclaimable kernel buff/cache stacked on top of the categorised RSS
+  // buckets — see backend MemProcsSnapshot.CachePct for the formula.
+  setH('mem-seg-cache',     data.cache_pct);
 
   // Traffic-light readout under the bar: always physical %used
   // (used_mb / total_mb × 100, capped 0-100). The compression "borrowed
@@ -25783,9 +26040,19 @@ function _buildMemTooltipHTML() {
   let html = `<div style="font-weight:600;margin-bottom:8px;color:var(--text-2);font-size:13px;">${firstRow}</div>`;
   html += `<div style="margin-bottom:4px;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;">`;
   if (data) {
-    [['vm','VMs'],['container','Containers'],['smb','SMB'],['nfs','NFS'],['zfs','ZFS (incl. ARC)'],['minio','MinIO'],['iscsi','iSCSI'],['other','Other']].forEach(([k,label]) => {
+    [['vm','VMs'],['container','Containers'],['smb','SMB'],['nfs','NFS'],['zfs','ZFS (incl. ARC)'],['minio','MinIO'],['iscsi','iSCSI'],['other','Other'],['cache','Buff/Cache']].forEach(([k,label]) => {
       const pct = data[k+'_pct'] || 0;
-      if (pct >= 0.05) html += `<span style="color:${CPU_CAT_COLORS[k]};">■ ${label} ${pct.toFixed(1)}%</span>`;
+      if (pct < 0.05) return;
+      // Each chip carries its own tinted background pill (≈12% alpha of
+      // the chip's swatch colour). Cache is the exception: its lighter
+      // purple swatch (#d8c5ff) had basically no contrast against any
+      // tinted-self background on the dark tooltip surface, so cache uses
+      // a deep-violet filled pill (#4c1d95, Tailwind violet-900) with the
+      // light-purple text on top — high-contrast and visually echoes the
+      // ZFS / cache colour family without competing with it.
+      const c = CPU_CAT_COLORS[k];
+      const bg = k === 'cache' ? '#4c1d95' : (c + '1f');
+      html += `<span style="color:${c};background:${bg};padding:1px 7px;border-radius:4px;line-height:1.7;">■ ${label} ${pct.toFixed(1)}%</span>`;
     });
   }
   html += `</div>`;
@@ -25794,7 +26061,13 @@ function _buildMemTooltipHTML() {
   }
   if (data && data.top_procs && data.top_procs.length > 0) {
     html += `<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px;">`;
-    html += `<div style="color:var(--text-3);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Top 10 Memory Processes</div>`;
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;color:var(--text-3);font-size:10px;text-transform:uppercase;letter-spacing:.05em;">
+      <span style="font-size:10px;flex-shrink:0;width:8px;"></span>
+      <span style="flex:1;">Top 10 Memory Processes</span>
+      <span style="flex-shrink:0;min-width:70px;text-align:right;">Shmem</span>
+      <span style="flex-shrink:0;min-width:115px;text-align:right;">RSS / Swap</span>
+      <span style="flex-shrink:0;min-width:40px;text-align:right;">% RAM</span>
+    </div>`;
     data.top_procs.forEach(p => {
       const color = CPU_CAT_COLORS[p.category] || CPU_CAT_COLORS.other;
       const fullCmd = p.cmd || p.name;
@@ -25822,9 +26095,20 @@ function _buildMemTooltipHTML() {
           `<span style="color:var(--text);">${totalStr}</span>` +
           `<span style="color:var(--text-3);"> MB</span>`
         : `<span style="color:var(--text-3);">${physStr} MB</span>`;
+      // Shmem column — RssShmem (tmpfs / memfd / SysV-shm portion of the
+      // process's RSS). For QEMU this is the guest-RAM memfd backing.
+      // Coloured in the same lighter-purple as the MEM bar's Buff/Cache
+      // band so the eye reads "this MB is the cache-classified portion
+      // of this row's total". Hidden when ≤ 0 so a typical row stays
+      // compact.
+      const shmemMB  = p.shmem_mb != null ? p.shmem_mb : 0;
+      const shmemStr = shmemMB > 0
+        ? `<span style="color:#d8c5ff;">${shmemMB.toFixed(0)} MB</span>`
+        : `<span style="color:var(--text-3);">—</span>`;
       html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
         <span style="color:${color};font-size:10px;flex-shrink:0;">■</span>
         <span style="color:var(--text);font-size:12px;font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(fullCmd)}">${esc(displayCmd)}</span>
+        <span style="font-size:10px;flex-shrink:0;min-width:70px;text-align:right;font-family:monospace;" title="Shmem (tmpfs / memfd) portion of this process's RSS">${shmemStr}</span>
         <span style="font-size:10px;flex-shrink:0;min-width:115px;text-align:right;font-family:monospace;">${memCell}</span>
         <span style="color:var(--text-2);font-size:11px;flex-shrink:0;min-width:40px;text-align:right;">${p.mem_pct.toFixed(1)}%</span>
       </div>`;
@@ -26974,6 +27258,32 @@ async function buildPerfPoolTabs() {
             <div id="perf-zoom-sel-l2-${pool}" style="position:absolute;pointer-events:none;display:none;top:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
           </div>
         </div>
+        <div class="card-sm" style="margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk Power State</div>
+              <i class="info-tip tip-down" data-tip="Per-disk power state over time, sampled every 5 min.&#10;&#10;100 = drive is active / idle (platters spinning)&#10;  0 = drive is in standby (platters parked)&#10;Gap = state unknown (NVMe, virtual disks, or hdparm not installed) — no value is recorded so the line breaks rather than reading as a misleading 0.&#10;&#10;Source: hdparm -C (SMART CHECK POWER MODE) per pool member, including L2ARC cache devices. Read-only — does NOT wake sleeping drives."></i>
+            </div>
+            <span id="perf-max-pwr-${pool}" style="font-size:11px;color:var(--text-3);"></span>
+          </div>
+          <div style="position:relative;height:160px;">
+            <canvas id="perf-chart-pwr-${pool}"></canvas>
+            <div id="perf-zoom-sel-pwr-${pool}" style="position:absolute;pointer-events:none;display:none;top:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
+          </div>
+        </div>
+        <div class="card-sm" style="margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Disk Temperature (°C)</div>
+              <i class="info-tip tip-down" data-tip="Per-disk temperature history, sampled every 5 min.&#10;&#10;Source priority:&#10;  1. sysfs hwmon (real-time): /sys/class/nvme/&lt;dev&gt;/hwmon*/temp1_input for NVMe; /sys/block/&lt;dev&gt;/device/hwmon*/temp1_input for SATA when the &quot;drivetemp&quot; kernel module is loaded.&#10;  2. cached SMART temperature for SATA drives without drivetemp — updates on each SMART refresh (daily by default, or on demand via the Physical Disks page).&#10;&#10;Gap = no temperature available for that interval. A disk that has NEVER reported a value (virtual disk, hdparm-only host) shows no line at all."></i>
+            </div>
+            <span id="perf-max-temp-${pool}" style="font-size:11px;color:var(--text-3);"></span>
+          </div>
+          <div style="position:relative;height:180px;">
+            <canvas id="perf-chart-temp-${pool}"></canvas>
+            <div id="perf-zoom-sel-temp-${pool}" style="position:absolute;pointer-events:none;display:none;top:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);z-index:5;"></div>
+          </div>
+        </div>
       </div>`;
     cont.appendChild(div);
   }
@@ -27419,8 +27729,162 @@ function _renderPerfCharts(pool, devices, series, hasL2arc) {
   }
 
   _renderPerfL2Chart(pool, series, xMin, xMax, tickFmt, !!hasL2arc);
+  _renderPerfPowerChart(pool, devices, series, xMin, xMax, tickFmt);
+  _renderPerfTempChart(pool, devices, series, xMin, xMax, tickFmt);
 
   _initPerfZoom(pool);
+}
+
+// Disk temperature chart: one line per pool member (data + cache) that
+// has ever reported a value. spanGaps=false so missing samples paint as
+// gaps; disks with ZERO samples are omitted entirely from the datasets so
+// no spurious "always 0" lines appear for NVMe-less / virtual hosts.
+function _renderPerfTempChart(pool, devices, series, xMin, xMax, tickFmt) {
+  if (!_perfCharts[pool]) _perfCharts[pool] = {};
+  const canvas = document.getElementById('perf-chart-temp-' + pool);
+  if (!canvas) return;
+  if (_perfCharts[pool].temp) _perfCharts[pool].temp.destroy();
+
+  // Build one dataset PER POOL DEVICE (data + cache members). Devices
+  // with no temperature samples (cache disks on virtio, NVMe-less hosts
+  // without `drivetemp` and no SMART cache yet, etc.) still get an empty
+  // dataset so their colour slot in the shared pool legend stays
+  // reserved — the line just doesn't render. That keeps the cache disk
+  // visible in the chart's accounting instead of vanishing entirely.
+  const datasets = [];
+  let datasetsWithData = 0;
+  devices.forEach((dev, i) => {
+    const samples = series['temp:' + pool + ':' + dev] || [];
+    const pts = samples.map(s => ({ x: s.ts * 1000, y: s[_perfAgg] ?? null }));
+    if (pts.length > 0) datasetsWithData++;
+    const color = IO_COLORS[i % IO_COLORS.length];
+    datasets.push({
+      label: dev,
+      data: pts,
+      borderColor: color,
+      backgroundColor: color + '22',
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.3,
+      // Gap in the chart for any missing sample — better than a misleading
+      // straight-line interpolation across a stretch with no data.
+      spanGaps: false,
+      fill: false,
+    });
+  });
+
+  const labelFn = ctx => {
+    if (ctx.parsed.y == null) return null;
+    return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(0) + ' °C';
+  };
+  // Y axis auto-bounds via Chart.js — keep min low (around 20) so cool
+  // drives don't push the trace against the top edge, and let Chart.js
+  // expand max for hot drives. Don't hard-pin max to 100; some enterprise
+  // SSDs read 65-75 °C normally and we don't want a red-zone illusion.
+  const opts = _perfChartOpts('°C', null, xMin, xMax, tickFmt, false, labelFn);
+  opts.scales.y.suggestedMin = 20;
+  opts.scales.y.suggestedMax = 60;
+  opts.scales.y.ticks.callback = v => v + '°';
+
+  _perfCharts[pool].temp = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: opts,
+    plugins: [_perfTooltipPlugin],
+  });
+
+  // Summary: peak temp seen by any of the visible disks in the window.
+  const summaryEl = document.getElementById('perf-max-temp-' + pool);
+  if (summaryEl) {
+    let peak = 0;
+    for (const ds of datasets) {
+      for (const pt of ds.data) {
+        if (pt.x >= xMin && pt.x <= xMax && pt.y != null && pt.y > peak) peak = pt.y;
+      }
+    }
+    if (datasets.length === 0) {
+      summaryEl.textContent = 'no temperature data';
+    } else if (peak > 0) {
+      summaryEl.textContent = 'peak ' + peak.toFixed(0) + ' °C';
+    } else {
+      summaryEl.textContent = '';
+    }
+  }
+}
+
+// Disk power-state chart: one stepped line per pool member (data members +
+// L2ARC cache devices). 100 = active/idle, 0 = standby. spanGaps=false so
+// disks with "unknown" power state (NVMe, virtual, hdparm-not-installed)
+// render as a broken line — explicitly distinguishable from "in standby".
+function _renderPerfPowerChart(pool, devices, series, xMin, xMax, tickFmt) {
+  if (!_perfCharts[pool]) _perfCharts[pool] = {};
+  const canvas = document.getElementById('perf-chart-pwr-' + pool);
+  if (!canvas) return;
+  if (_perfCharts[pool].pwr) _perfCharts[pool].pwr.destroy();
+
+  const datasets = devices.map((dev, i) => {
+    const color   = IO_COLORS[i % IO_COLORS.length];
+    const samples = series['pwr:' + pool + ':' + dev] || [];
+    const pts = samples.map(s => ({ x: s.ts * 1000, y: s[_perfAgg] ?? null }));
+    return {
+      label: dev,
+      data: pts,
+      // Individual lines, no fill — when several disks share the same
+      // state their lines stack visually at y=0 or y=100 but each disk
+      // keeps its own colour (matches the pool's shared legend).
+      fill: false,
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 1.5,
+      pointRadius: 0,
+      // Stepped: power state is discrete (0 or 100), not a continuous
+      // signal — interpolating between samples would imply intermediate
+      // values that don't exist.
+      stepped: 'after',
+      // Don't bridge gaps: an "unknown" state shows as a missing segment,
+      // not as 0 (standby). Keeps the chart honest for NVMe / virtio.
+      spanGaps: false,
+    };
+  });
+
+  const labelFn = ctx => {
+    if (ctx.parsed.y == null) return null;
+    const state = ctx.parsed.y >= 50 ? 'active/idle' : 'standby';
+    return '  ' + ctx.dataset.label + ': ' + state;
+  };
+  const opts = _perfChartOpts('', 100, xMin, xMax, tickFmt, false, labelFn);
+  // Tweak Y axis: integer 0/100 only (state is binary).
+  opts.scales.y.min = 0;
+  opts.scales.y.max = 100;
+  opts.scales.y.ticks.stepSize = 100;
+  opts.scales.y.ticks.callback = v => v >= 50 ? 'on' : 'off';
+
+  _perfCharts[pool].pwr = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: opts,
+    plugins: [_perfTooltipPlugin],
+  });
+
+  // Summary: how many of the pool's disks are currently spinning
+  // (active/idle) based on the LATEST sample of each.
+  const summaryEl = document.getElementById('perf-max-pwr-' + pool);
+  if (summaryEl) {
+    let active = 0, standby = 0, unknown = 0;
+    devices.forEach(dev => {
+      const s = series['pwr:' + pool + ':' + dev] || [];
+      if (s.length === 0) { unknown++; return; }
+      const last = s[s.length - 1][_perfAgg];
+      if (last == null) unknown++;
+      else if (last >= 50) active++;
+      else standby++;
+    });
+    const parts = [];
+    if (active > 0)  parts.push(active  + ' active');
+    if (standby > 0) parts.push(standby + ' standby');
+    if (unknown > 0) parts.push(unknown + ' unknown');
+    summaryEl.textContent = parts.join(' · ');
+  }
 }
 
 // Render the L2ARC dual-axis chart (capacity left, hit% right) for one pool.
@@ -27598,7 +28062,7 @@ function resetPerfZoom(pool) {
 function _initPerfZoom(pool) {
   if (_perfZoomReady[pool]) return;
   _perfZoomReady[pool] = true;
-  ['read', 'write', 'busy'].forEach(metric => {
+  ['read', 'write', 'busy', 'pwr', 'temp'].forEach(metric => {
     const canvas = document.getElementById('perf-chart-' + metric + '-' + pool);
     const sel    = document.getElementById('perf-zoom-sel-' + metric + '-' + pool);
     if (!canvas || !sel) return;
@@ -32975,19 +33439,16 @@ function _ciCloseTermMenu() { document.getElementById('ci-term-menu').classList.
 
 function ciTerminalNewTab()    { _ciCloseTermMenu(); if (_ciCurrentName) openLXDConsole(_ciCurrentName); }
 function ciTerminalNewWindow() { _ciCloseTermMenu(); if (_ciCurrentName) window.open('/incus-console/' + encodeURIComponent(_ciCurrentName), 'lxdterm_' + _ciCurrentName, 'width=1080,height=680,noopener'); }
-// In relay mode the VGA console URL must target the remote server's origin —
-// /incus-vga-console/{name} runs on the LOCAL server's incus socket, so a
-// relative URL would 502 with "Instance not found" for any VM that lives on
-// the relayed peer.
+// Always open on the LOCAL origin — the SPICE viewer's relative API/WS
+// calls (`/api/incus/instances/<name>/status`, `/ws/lxd-vga?name=<name>`)
+// are forwarded to the relayed peer transparently by RelayMiddleware /
+// relayWebSocket (see handlers/relay.go: relayWSForwardPaths includes
+// "/ws/lxd-vga"). Pointing the popup at the remote origin would force
+// the user to re-authenticate over there — which is what we want to
+// avoid. The local /incus-vga-console/<name> handler just emits a
+// static HTML template; it doesn't touch the local incus socket itself.
 function _vgaConsoleURL(name) {
-  const path = '/incus-vga-console/' + encodeURIComponent(name);
-  if (_relayActive) {
-    try {
-      const relayUrl = localStorage.getItem('znas_relay_url');
-      if (relayUrl) return new URL(path, relayUrl).href;
-    } catch (_) {}
-  }
-  return path;
+  return '/incus-vga-console/' + encodeURIComponent(name);
 }
 // Window dimensions sized so the SPICE canvas area (everything below the
 // toolbar) gets ~800px of usable height — matches the historical "800
@@ -33570,7 +34031,6 @@ function _ciRenderLiveInfo(stats, cfg) {
   // of host-side handshake overhead. 256 MB is a safe threshold.
   if (cfg && cfg.is_vm) {
     const bCur    = stats.balloon_current_bytes || 0;
-    const bTarget = stats.mem_limit_bytes || 0;
     const bUsed   = stats.mem_used_bytes || 0;
     const active  = bUsed > 256 * 1024 * 1024;
     const stateHtml = active
@@ -33579,15 +34039,12 @@ function _ciRenderLiveInfo(stats, cfg) {
     const sepStyle = 'color:var(--text-3);margin:0 6px;';
     const valStyle = 'font-family:monospace;color:var(--text);';
     const lblStyle = 'color:var(--text-3);font-size:11px;margin-right:3px;';
-    const targetHtml = bTarget > 0
-      ? `<span style="${sepStyle}">·</span><span style="${lblStyle}">target</span><span style="${valStyle}">${_fmtBytes(bTarget)}</span>`
-      : '';
     const currentHtml = active
       ? `<span style="${sepStyle}">·</span><span style="${lblStyle}">current</span><span style="${valStyle}">${_fmtBytes(bCur)}</span>`
       : '';
     html += `<div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:baseline;font-size:13px;gap:8px;flex-wrap:nowrap;">
       <span style="color:var(--text-3);white-space:nowrap;">Memory balloon</span>
-      <span style="display:inline-flex;align-items:baseline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${stateHtml}${targetHtml}${currentHtml}</span>
+      <span style="display:inline-flex;align-items:baseline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${stateHtml}${currentHtml}</span>
     </div>`;
   }
 
@@ -34767,6 +35224,8 @@ async function openLXDEditModal(name, type) {
       if (_memUnitSel) _memUnitSel.value = 'GB';
     }
     document.getElementById('lxd-edit-autostart').checked = !!cfg.autostart;
+    const _editForceChk = document.getElementById('lxd-edit-force-running');
+    if (_editForceChk) _editForceChk.checked = !!cfg.force_running;
     document.getElementById('lxd-edit-hugepages').checked = !!cfg.memory_hugepages;
     if (isVM) {
       document.getElementById('lxd-edit-firmware').value  = cfg.firmware || 'uefi';
@@ -34958,6 +35417,7 @@ async function submitLXDEdit() {
     memory_reservation:   _lxdEditIsVM ? _editGetMemReservation() : '',
     nesting:              !_lxdEditIsVM && document.getElementById('lxd-edit-nesting').checked,
     autostart:            document.getElementById('lxd-edit-autostart').checked,
+    force_running:        !!document.getElementById('lxd-edit-force-running')?.checked,
     stateful_snapshots:   _lxdEditIsVM && document.getElementById('lxd-edit-stateful-snap').checked,
     firmware:             _lxdEditIsVM ? (document.getElementById('lxd-edit-firmware')?.value || 'uefi') : '',
     secure_boot:          _lxdEditIsVM && document.getElementById('lxd-edit-firmware')?.value !== 'bios' && !!document.getElementById('lxd-edit-secureboot')?.checked,
@@ -35862,6 +36322,8 @@ async function openNewVMModal() {
   if (vmCoreTypeSel) vmCoreTypeSel.value = 'auto';
   document.getElementById('lxd-vm-cloud-init').value  = '';
   document.getElementById('lxd-vm-autostart').checked = false;
+  const _vmForceChk = document.getElementById('lxd-vm-force-running');
+  if (_vmForceChk) _vmForceChk.checked = false;
   document.getElementById('lxd-vm-hugepages').checked = false;
   document.getElementById('lxd-vm-root-size').value   = '20';
   document.getElementById('lxd-vm-root-size-unit').value = 'GB';
@@ -37536,6 +37998,7 @@ async function submitCreateVM(e) {
     description:      document.getElementById('lxd-vm-description').value.trim(),
     image:            document.getElementById('lxd-vm-image').value || '__empty__',
     auto_start:       document.getElementById('lxd-vm-autostart').checked,
+    force_running:    !!document.getElementById('lxd-vm-force-running')?.checked,
     vcpu:             parseInt(document.getElementById('lxd-vm-vcpu').value) || 2,
     memory_mb:        memMB,
     memory_hugepages:   document.getElementById('lxd-vm-hugepages').checked,
@@ -37610,6 +38073,8 @@ async function openNewContainerModal() {
   if (typeof csRefresh === 'function') csRefresh('lxd-ct-disk-unit');
   _ctRootSizeSync();
   document.getElementById('lxd-ct-autostart').checked     = false;
+  const _ctForceChk = document.getElementById('lxd-ct-force-running');
+  if (_ctForceChk) _ctForceChk.checked = false;
   document.getElementById('lxd-ct-unprivileged').checked  = true;
   document.getElementById('lxd-ct-nesting').checked       = false;
   document.getElementById('lxd-ct-startup-order').value   = '0';
@@ -37950,6 +38415,7 @@ async function submitCreateContainer(e) {
     description:   document.getElementById('lxd-ct-description').value.trim(),
     image:         document.getElementById('lxd-ct-image').value,
     auto_start:      document.getElementById('lxd-ct-autostart').checked,
+    force_running:   !!document.getElementById('lxd-ct-force-running')?.checked,
     unprivileged:    document.getElementById('lxd-ct-unprivileged').checked,
     nesting:         document.getElementById('lxd-ct-nesting').checked,
     feature_keyctl:  document.getElementById('lxd-ct-keyctl').checked,
@@ -40608,6 +41074,33 @@ function closeUserMenu() {
   const dd = document.getElementById('user-menu-dropdown');
   if (dd) dd.style.display = 'none';
 }
+
+// Compact-Header view: hides the capacity bar + live IO charts and shrinks
+// the CPU/MEM/SWAP gauge panels to just their percentage readout, leaving
+// a single-row header. Persisted per browser via localStorage so the same
+// account on another browser/device can keep its own preference.
+const COMPACT_HEADER_LS_KEY = 'znas_compact_header';
+
+function applyCompactHeader(enabled) {
+  document.body.classList.toggle('compact-header', !!enabled);
+  const lbl = document.querySelector('#user-menu-compact .compact-label');
+  if (lbl) lbl.textContent = enabled ? 'Full Header' : 'Compact Header';
+}
+
+function toggleCompactHeader() {
+  const enabled = !document.body.classList.contains('compact-header');
+  applyCompactHeader(enabled);
+  try { localStorage.setItem(COMPACT_HEADER_LS_KEY, enabled ? 'true' : 'false'); } catch (_) {}
+  closeUserMenu();
+}
+
+// Restore on boot — runs after the DOM is parsed so the body class lands
+// before the first paint and the user doesn't see the full header flash.
+document.addEventListener('DOMContentLoaded', () => {
+  let enabled = false;
+  try { enabled = localStorage.getItem(COMPACT_HEADER_LS_KEY) === 'true'; } catch (_) {}
+  applyCompactHeader(enabled);
+});
 
 function openUserSettingsModal() {
   const prefs = (currentUser && currentUser.preferences) || {};

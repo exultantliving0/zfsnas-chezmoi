@@ -1213,6 +1213,99 @@ th.lxd-sortable.sort-desc .sort-arrow { opacity: 1; }
 }
 .bar-pct-readout.pct-ok   { color: #3fb950; }
 .bar-pct-readout.pct-warn { color: #f0b429; }
+
+/* Web Login Timeout dropdowns only have 2-3 options each — the global
+   .cs-list { max-height: 260px; overflow-y: auto } would otherwise paint
+   a scrollbar even though the content is well short of the cap. Force
+   the list to size purely to its options. !important defeats both the
+   inline <style> rule that loads later AND any iOS Safari quirk that
+   re-derives an overflow gutter on touch-scrollable elements. */
+.cs-panel[data-cs-id="ws-mode"]      .cs-list,
+.cs-panel[data-cs-id="ws-idle-unit"] .cs-list {
+  max-height: none !important;
+  overflow: visible !important;
+  -webkit-overflow-scrolling: auto !important;
+}
+
+/* Compact-Header view (per-browser, persisted in localStorage). Hides
+   the multi-row top capacity bar + the three live IO charts and reduces
+   the CPU/MEM/SWAP gauge panels to just their percentage readout, so
+   the entire header collapses to a single row containing the pool
+   selector, pool summary line, and the small CPU/MEM/SWAP numbers. */
+body.compact-header #pool-bar,
+body.compact-header #pool-legend,
+body.compact-header #pool-tip,
+body.compact-header #io-bar,
+body.compact-header #io-chart-tooltip {
+  display: none !important;
+}
+body.compact-header .cpu-gauge-bar,
+body.compact-header .cpu-gauge-title {
+  display: none !important;
+}
+/* Strip all the breathing room intended for the multi-row layout — bottom
+   margin on the inner row, the topbar's vertical padding (8px top+bottom),
+   and the gauge-panel vertical padding (6+8px). The single visible row is
+   then bounded purely by its content height (~22 px text + 6 px padding). */
+body.compact-header .topbar {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+body.compact-header .topbar-inner {
+  /* Drop the multi-row grid (1fr auto 1fr) — it squeezes the centre cell
+     and forces the long pool-summary text to wrap onto 2-3 lines. Flex
+     instead, with the summary growing to fill leftover space and ellipsing
+     if the viewport is narrower than its full content.
+     NOTE: do NOT set overflow:hidden here — that clips the absolutely-
+     positioned theme-picker and user-menu dropdowns (the panel sits below
+     the topbar boundary), which on iPad / small touch screens makes both
+     menus impossible to open. The summary has its own overflow:hidden
+     for ellipsis, so this container can stay overflow-visible. */
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 0;
+  flex-wrap: nowrap;
+}
+body.compact-header .topbar-title {
+  flex-shrink: 0;
+}
+body.compact-header #pool-summary {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+/* Anchor the UPS / theme / activity / user-menu cluster to the right edge
+   even after the title and summary are hidden by the narrow-viewport rule
+   below. In the original grid the cell used `justify-self:end`; in flex
+   that's a no-op, so we use `margin-left:auto` to push the cluster right
+   regardless of which siblings are visible. */
+body.compact-header .topbar-inner > div:last-child {
+  margin-left: auto;
+}
+/* Below ~1100 px viewport, the gauges + pool-title + long summary + theme/
+   activity/user buttons no longer fit on one line. Hide the title and the
+   pool-summary entirely so the remaining items stay on a single row instead
+   of wrapping into a second line. The pool selector dropdown lives in the
+   sidebar (under the hostname label), so functionality isn't lost. */
+@media (max-width: 1100px) {
+  body.compact-header .topbar-title,
+  body.compact-header #pool-summary { display: none !important; }
+}
+body.compact-header #cpu-gauge-panel,
+body.compact-header #mem-gauge-panel,
+body.compact-header #swap-gauge-panel {
+  padding: 2px 4px;
+  justify-content: center;
+}
+body.compact-header .bar-pct-readout {
+  margin-top: 0;
+  font-size: 11px;
+  line-height: 1.1;
+}
 .bar-pct-readout.pct-crit { color: #ff453a; }
 
 /* ===== SysInfo modal — colourful hardware overview ===========================
@@ -1792,6 +1885,18 @@ td {
 }
 
 tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* Physical Disks tables — many narrow columns (Type/Speed/Wearout/Temp/
+   Power/SMART), so the default 16 px side padding wastes horizontal space.
+   Tighten side padding and let the table size to content so columns sit
+   next to each other instead of being stretched to fill the wrapper. */
+.disks-table { width: auto; min-width: 100%; }
+.disks-table th,
+.disks-table td { padding-left: 8px; padding-right: 8px; }
+.disks-table th:first-child,
+.disks-table td:first-child { padding-left: 14px; }
+.disks-table th:last-child,
+.disks-table td:last-child  { padding-right: 14px; }
 
 /* ===== User avatar ===== */
 .avatar {

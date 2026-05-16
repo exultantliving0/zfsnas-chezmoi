@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"strings"
+	"time"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
 	"zfsnas/internal/session"
@@ -44,6 +45,10 @@ func RequireAuth(next http.Handler) http.Handler {
 			jsonErr(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
+		// Bump the last-activity timestamp so the inactivity timer
+		// resets on each authenticated request. In-memory only —
+		// disk flush is debounced (see internal/session/persist.go).
+		session.Default.Touch(sess.Token)
 		ctx := context.WithValue(r.Context(), sessionKey, sess)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -149,7 +154,14 @@ func MustSession(r *http.Request) *session.Session {
 }
 
 // SetSessionCookie writes the session token as a secure HttpOnly cookie.
-func SetSessionCookie(w http.ResponseWriter, token string) {
+// MaxAge mirrors the server-side session lifetime so the browser deletes
+// the cookie at roughly the same moment the server invalidates the
+// session — keeps the SPA from polling with a known-stale cookie.
+func SetSessionCookie(w http.ResponseWriter, token string, lifetime time.Duration) {
+	maxAge := int(lifetime.Seconds())
+	if maxAge <= 0 {
+		maxAge = 86400
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "zfsnas_session",
 		Value:    token,
@@ -157,7 +169,7 @@ func SetSessionCookie(w http.ResponseWriter, token string) {
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400, // 24 hours
+		MaxAge:   maxAge,
 	})
 }
 
