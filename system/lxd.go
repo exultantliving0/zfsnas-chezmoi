@@ -1606,7 +1606,14 @@ type LXDInstanceConfig struct {
 	CPULimitPct            int                    `json:"cpu_limit_pct,omitempty"`  // 0=unset, 1-100 → limits.cpu.allowance
 	CPUShares              int                    `json:"cpu_shares,omitempty"`     // 0=unset, 1-10 → limits.cpu.priority
 	SwapLimit              string                 `json:"swap_limit,omitempty"`     // "" | "false" | "512MB"
-	Unprivileged           bool                   `json:"unprivileged,omitempty"`   // security.privileged = !Unprivileged
+	// Tri-state on the wire would be ideal, but we keep the bool and
+	// drop `omitempty` so the field is ALWAYS present in the GET
+	// response. With omitempty a privileged container (Unprivileged
+	// false = the bool's zero value) silently dropped the field, and
+	// the frontend's `cfg.unprivileged !== false` default flipped the
+	// checkbox back to "Unprivileged" on the next edit, masking the
+	// successful save.
+	Unprivileged           bool                   `json:"unprivileged"`             // security.privileged = !Unprivileged
 	FeatureKeyctl          bool                   `json:"feature_keyctl,omitempty"` // security.syscalls.allow=keyctl
 	FeatureFUSE            bool                   `json:"feature_fuse,omitempty"`   // /dev/fuse device
 	CDROMPath              string                 `json:"cdrom_path"`               // current ISO path (GET) / desired path (PUT)
