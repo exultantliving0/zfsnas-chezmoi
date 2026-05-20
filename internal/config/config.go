@@ -211,10 +211,72 @@ type SystemPowerConfig struct {
 	PCIeASPM string `json:"pcie_aspm,omitempty"`
 }
 
+// LXDSnapshotPolicy is a per-instance scheduled snapshot policy (v6.5.19).
+// One policy per instance; identified by Instance. Stored as a slice on
+// AppConfig so a single JSON write covers all changes.
+type LXDSnapshotPolicy struct {
+	Instance     string `json:"instance"`               // Incus instance name (the only key)
+	Enabled      bool   `json:"enabled"`
+	EveryN       int    `json:"every_n"`                // 1..N
+	Unit         string `json:"unit"`                   // "minute"|"hour"|"day"|"week"|"month"
+	HourOfDay    int    `json:"hour_of_day,omitempty"`  // 0-23, used only when Unit>="day"
+	MinuteOfHour int    `json:"minute_of_hour"`         // 0-59, used at all granularities
+	// Weekday: 0=Sun..6=Sat. Used only when Unit=="week". v6.5.19+.
+	Weekday      int    `json:"weekday,omitempty"`
+	// DayOfMonth: 1..31. Used only when Unit=="month". Clamped to the
+	// month's last calendar day when the chosen day doesn't exist (e.g.
+	// DOM=31 on a 30-day month fires on day 30). v6.5.19+.
+	DayOfMonth   int    `json:"day_of_month,omitempty"`
+	NamePrefix   string `json:"name_prefix"`            // e.g. "auto" → "auto-2026-05-19-1300"
+	KeepLast     int    `json:"keep_last"`              // retention by count
+
+	LastRun     time.Time `json:"last_run,omitempty"`
+	LastStatus  string    `json:"last_status,omitempty"` // "ok" | "error" | ""
+	LastError   string    `json:"last_error,omitempty"`
+	LastSnap    string    `json:"last_snap,omitempty"`
+}
+
+// LXDBackupPolicy is a per-instance scheduled backup (syncoid replication)
+// policy (v6.5.19). One policy per instance; the destination can be a local
+// or a remote (interlink) datastore.
+type LXDBackupPolicy struct {
+	Instance     string `json:"instance"`
+	Enabled      bool   `json:"enabled"`
+
+	DestKind     string `json:"dest_kind"`                // "local" | "remote"
+	DestServerID string `json:"dest_server_id,omitempty"` // populated when DestKind=="remote"
+	DestPool     string `json:"dest_pool"`                // Incus storage-pool name on the destination side
+
+	EveryN       int    `json:"every_n"`
+	Unit         string `json:"unit"`                     // "minute"|"hour"|"day"|"week"|"month"
+	HourOfDay    int    `json:"hour_of_day,omitempty"`
+	MinuteOfHour int    `json:"minute_of_hour"`
+	// v6.5.19+: same semantics as on LXDSnapshotPolicy.
+	Weekday      int    `json:"weekday,omitempty"`
+	DayOfMonth   int    `json:"day_of_month,omitempty"`
+
+	RetentionKind  string `json:"retention_kind"`         // "count" | "age"
+	RetentionCount int    `json:"retention_count,omitempty"`
+	RetentionAgeN  int    `json:"retention_age_n,omitempty"`
+	RetentionAgeU  string `json:"retention_age_unit,omitempty"` // "hours"|"days"|"weeks"|"months"
+
+	// Compression — ZFS compression algorithm applied to the destination
+	// workload parent dataset. Affects only NEW data written into the
+	// backup; existing data on previously-created backup datasets keeps
+	// the property they were created with. Default "zstd-19" (max ratio).
+	// Allowed: "zstd-19", "zstd-9", "zstd-3", "lz4", "off".
+	Compression string `json:"compression,omitempty"`
+
+	LastRun    time.Time `json:"last_run,omitempty"`
+	LastStatus string    `json:"last_status,omitempty"`
+	LastError  string    `json:"last_error,omitempty"`
+	LastBytes  int64     `json:"last_bytes,omitempty"`
+}
+
 // LinkedServer represents a remote ZNAS instance trusted for single-click SSO switching.
 type LinkedServer struct {
 	ID             string    `json:"id"`              // our local UUID for this link
-	URL            string    `json:"url"`             // e.g. "https://192.168.2.5:8443"
+	URL            string    `json:"url"`             // e.g. "https://nas.example.com:8443"
 	Hostname       string    `json:"hostname"`        // remote hostname, fetched at link time
 	SharedSecret   string    `json:"shared_secret"`   // 32-byte hex; HMAC signing key for SSO tokens
 	RemoteID       string    `json:"remote_id"`       // the ID the remote server uses for this link (sent in redirect)
@@ -278,6 +340,8 @@ type AppConfig struct {
 	InterlinkRelayMode   bool              `json:"interlink_relay_mode,omitempty"` // global relay mode: proxy API calls through local server
 	LXDMetricsEnabled    bool              `json:"lxd_metrics_enabled,omitempty"`  // turns on LXD's Prometheus endpoint on 127.0.0.1:9101 + portal scraper for VM/container Monitor tabs (v6.4.28)
 	WebSession           WebSessionPolicy  `json:"web_session,omitempty"`          // browser session lifetime policy (default 24h vs sliding inactivity timeout)
+	LXDSnapshotPolicies  []LXDSnapshotPolicy `json:"lxd_snapshot_policies,omitempty"` // v6.5.19 — per-instance scheduled snapshots
+	LXDBackupPolicies    []LXDBackupPolicy   `json:"lxd_backup_policies,omitempty"`   // v6.5.19 — per-instance scheduled syncoid backups
 }
 
 // WebSessionPolicy controls how long a browser-side login lasts and how it

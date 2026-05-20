@@ -460,6 +460,11 @@
         <span style="color:var(--text-3);font-size:14px;">+</span>
       </div>
       <div id="nav-datastores-list"></div>
+      <!-- v6.5.19: Backups aggregator — placed at end of list, matching font/indent of the datastore entries, using a different icon (💾) than datastores (🗄️). -->
+      <button class="nav-compute-instance" id="nav-backups-all" title="Backups across every local and remote datastore" onclick="showPage('lxd-backups')">
+        <span style="flex-shrink:0;font-size:15px;line-height:1;width:15px;text-align:center;">💾</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">Backups</span>
+      </button>
     </div>
 
     <div class="sidebar-section">System</div>
@@ -1182,6 +1187,16 @@
               <span id="prereq-diskpower-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
               <button id="prereq-diskpower-btn" class="btn btn-ghost btn-sm" onclick="enableDiskPowerFeature()" style="font-size:12px;white-space:nowrap;">Enable Disk Power</button>
               <span id="prereq-diskpower-menu-wrap" class="hidden" onclick="_optFeatMenu(event,'diskpower')" title="Options" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;line-height:1;user-select:none;">⋮</span>
+            </div>
+            <!-- v6.5.19: syncoid (ZFS Replication) -->
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
+              <div style="flex:1;">
+                <span style="color:var(--text-1);font-size:14px;font-weight:500;">ZFS Replication (syncoid)</span>
+                <i class="info-tip" data-tip="Enables the VM/Container Backup feature. Backups use syncoid to send ZFS-aware incremental snapshot streams to another local datastore or a peer ZNAS over SSH. Without this, the &#x22;Backups&#x22; button on every VM/Container is greyed out.&#10;&#10;Best practice: install on every ZNAS in your fleet so backups can flow in either direction."></i>
+                <div style="font-size:12px;color:var(--text-3);margin-top:2px;">Package: sanoid (provides /usr/sbin/syncoid)</div>
+              </div>
+              <span id="prereq-syncoid-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
+              <button id="prereq-syncoid-btn" class="btn btn-ghost btn-sm" onclick="installSyncoid()" style="font-size:12px;white-space:nowrap;">Install syncoid</button>
             </div>
             <div id="optfeat-lxd-enable-row" style="display:none;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
               <div style="flex:1;">
@@ -3714,6 +3729,39 @@
         </table>
       </div>
 
+      <!-- ===== v6.5.19: Backups (Datastores → Backups) page ===== -->
+      <div class="page hidden" id="page-lxd-backups">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+          <h2 style="margin:0;flex:1;display:flex;align-items:center;gap:8px;">
+            🗄 Backups
+            <i class="info-tip tip-down" data-tip="Backups aggregated across this host and every linked InterLink peer.&#10;&#10;Best practices:&#10;• Treat this page as your disaster-recovery dashboard — it shows what you can actually restore if something dies tonight.&#10;• Verify backups exist for every important VM, on a different pool or peer than the source.&#10;• Restore / Clone is non-destructive — safe to try on any backup."></i>
+          </h2>
+          <span onclick="loadAllBackups()" title="Refresh" style="cursor:pointer;color:var(--text-2);padding:4px 6px;line-height:1;user-select:none;display:inline-flex;align-items:center;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--text-2)'">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>
+          </span>
+        </div>
+        <div id="lxd-backups-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+        <div class="card" style="padding:0;overflow:hidden;">
+          <table class="data-table" id="lxd-backups-table">
+            <thead>
+              <tr>
+                <th style="width:34px;"></th>
+                <th style="text-align:left;">VM-ID</th>
+                <th style="width:70px;text-align:left;">Type</th>
+                <th style="width:130px;text-align:left;">Hostname</th>
+                <th style="text-align:left;">Datastore</th>
+                <th style="width:110px;text-align:right;padding-right:14px;" title="Each backup fire writes one ZFS incremental snapshot — this count is how many incrementals exist on the destination dataset.">#Incrementals</th>
+                <th style="width:110px;text-align:right;padding-right:14px;">Size</th>
+                <th style="width:160px;text-align:right;padding-right:14px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="lxd-backups-tbody">
+              <tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Add Datastore modal -->
       <div class="modal-backdrop hidden" id="modal-add-datastore" onclick="if(event.target===this)document.getElementById('modal-add-datastore').classList.add('hidden')">
         <div class="modal" style="max-width:480px;">
@@ -3849,6 +3897,27 @@
               <div id="ci-snap-list" style="max-height:240px;overflow-y:auto;"></div>
               <div style="border-top:1px solid var(--border);">
                 <button onclick="ciOpenManageSnapshots()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-3);">Manage Snapshots…</button>
+                <button id="ci-snap-schedule-btn" onclick="ciOpenSnapSchedule()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-3);border-top:1px solid var(--border);">📅 Schedule…</button>
+              </div>
+            </div>
+          </div>
+          <!-- Backups button + dropdown (v6.5.19) -->
+          <div style="position:relative;" id="ci-bkup-wrap">
+            <button id="ci-bkup-btn" onclick="ciToggleBackupMenu(event)" title="Backups for this VM/Container across every local and remote datastore"
+              style="display:flex;align-items:center;gap:5px;padding:4px 10px;font-size:13px;border-radius:4px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;white-space:nowrap;">
+              <span id="ci-bkup-label">Backups</span>
+            </button>
+            <div id="ci-bkup-menu" class="hidden" style="position:absolute;left:0;top:110%;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.35);min-width:340px;max-width:min(440px, calc(100vw - 40px));z-index:300;overflow:hidden;">
+              <!-- "+ Backup Now" sits at the top, matching the "+ Snapshot Now" in the Snapshots dropdown -->
+              <button id="ci-bkup-now-btn" onclick="ciBackupNow()" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg>
+                Backup Now
+              </button>
+              <div id="ci-bkup-list" style="max-height:340px;overflow-y:auto;">
+                <div style="padding:14px;color:var(--text-3);font-size:12px;text-align:center;">Loading…</div>
+              </div>
+              <div style="border-top:1px solid var(--border);">
+                <button id="ci-bkup-sched-btn" onclick="ciOpenBackupSchedule()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-3);">📅 Backup Schedule…</button>
               </div>
             </div>
           </div>
@@ -4133,6 +4202,300 @@ Select the Console tab to load.</pre>
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
               <button class="btn btn-ghost" onclick="document.getElementById('modal-ci-snapshot').classList.add('hidden')">Cancel</button>
               <button class="btn btn-primary" id="ci-snap-create-btn" onclick="ciSubmitSnapshot()">Create Snapshot</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── v6.5.19: Snapshot Schedule modal ───────────────────────────────── -->
+      <div class="modal-backdrop hidden" id="modal-ci-snap-schedule" onclick="if(event.target===this)document.getElementById('modal-ci-snap-schedule').classList.add('hidden')">
+        <div class="modal" style="max-width:560px;width:96vw;">
+          <div class="modal-header">
+            <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">
+              📅 Snapshot Schedule
+              <i class="info-tip tip-down" data-tip="Schedules a recurring local snapshot of this VM/Container.&#10;&#10;Best practices:&#10;• Hourly is the sweet spot for active workloads — gives you ~24 rollback points without filling the pool.&#10;• Use a short prefix like 'auto' — older auto-* snapshots are pruned past 'Keep last'.&#10;• Snapshots are NOT off-host backups — use the Backups button for that. They protect against guest-side mistakes, not pool loss.&#10;• Stateful VM snapshots (memory) are not taken on the schedule — only crash-consistent disk snapshots. Use them for short rollback windows."></i>
+              — <span id="ci-snap-sched-instance" style="font-family:monospace;font-weight:500;"></span>
+            </h3>
+            <button class="modal-close" onclick="document.getElementById('modal-ci-snap-schedule').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:20px 24px 24px;">
+            <div id="ci-snap-sched-alert" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:18px;font-weight:500;">
+              <input type="checkbox" id="ci-snap-sched-enabled"> Enable scheduled snapshots
+            </label>
+
+            <div class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Interval
+                <i class="info-tip" data-tip="How often to take a snapshot. The minimum is 5 minutes; finer than that creates churn that slows ZFS.&#10;&#10;Pick the granularity that matches the data's change rate — a busy database might want 'every 15 minutes', a static web server is fine with 'every 12 hours'."></i>
+              </label>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span style="color:var(--text-3);">Every</span>
+                <select id="ci-snap-sched-n" class="form-control" style="width:auto;min-width:80px;"></select>
+                <select id="ci-snap-sched-unit" class="form-control" style="width:auto;min-width:120px;" onchange="ciSnapSchedRebuildN()">
+                  <option value="minute">Minute(s)</option>
+                  <option value="hour" selected>Hour(s)</option>
+                  <option value="day">Day(s)</option>
+                  <option value="week">Week(s)</option>
+                  <option value="month">Month(s)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" id="ci-snap-sched-weekday-row" style="display:none;">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Day of week
+                <i class="info-tip" data-tip="Which day of the week the snapshot fires. Local server time. Use the same day each week for predictable retention."></i>
+              </label>
+              <select id="ci-snap-sched-weekday" class="form-control" style="width:auto;min-width:140px;">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="ci-snap-sched-dom-row" style="display:none;">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Day of month
+                <i class="info-tip" data-tip="Which day of the month the snapshot fires. When the chosen day doesn't exist in the current month (e.g. 31 in February), the snapshot fires on that month's last day so a calendar gap never skips a fire."></i>
+              </label>
+              <select id="ci-snap-sched-dom" class="form-control" style="width:auto;min-width:90px;"></select>
+            </div>
+
+            <div class="form-group" id="ci-snap-sched-time-row" style="display:none;">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Time of day
+                <i class="info-tip" data-tip="When the snapshot runs each day. Local server time. Off-hours (02:00 typical) reduce contention with active users."></i>
+              </label>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <select id="ci-snap-sched-hour" class="form-control" style="width:auto;"></select>
+                <span style="color:var(--text-3);">:</span>
+                <select id="ci-snap-sched-min" class="form-control" style="width:auto;"></select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Name prefix
+                <i class="info-tip" data-tip="Prefix for the snapshot name. Each snapshot is named &#x3C;prefix&#x3E;-YYYY-MM-DD-HHMM.&#10;&#10;Best practice: pick something distinct from any manual name you would use (e.g. 'auto' or 'hourly'). The retention rule below only prunes snapshots that match this prefix — manual snapshots are never touched."></i>
+              </label>
+              <input type="text" id="ci-snap-sched-prefix" class="form-control" value="auto" maxlength="32" style="font-family:monospace;width:200px;">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Keep last
+                <i class="info-tip" data-tip="Maximum number of snapshots matching the prefix to keep. After each new snapshot, older ones beyond this count are deleted.&#10;&#10;Rule of thumb: keep enough to cover the time you might realistically want to roll back (24 hourly = 1 day of rollback)."></i>
+              </label>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <input type="number" id="ci-snap-sched-keep" class="form-control" value="24" min="1" max="10000" style="width:120px;">
+                <span style="color:var(--text-3);font-size:13px;">snapshots</span>
+              </div>
+            </div>
+
+            <div id="ci-snap-sched-next" style="font-size:12px;color:var(--text-3);margin-top:8px;"></div>
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+              <button class="btn btn-ghost" id="ci-snap-sched-disable-btn" onclick="ciDeleteSnapSchedule()" style="margin-right:auto;color:var(--accent-danger);">Disable</button>
+              <button class="btn btn-ghost" onclick="document.getElementById('modal-ci-snap-schedule').classList.add('hidden')">Cancel</button>
+              <button class="btn btn-primary" id="ci-snap-sched-save-btn" onclick="ciSubmitSnapSchedule()">Save Schedule</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── v6.5.19: Backup Schedule modal ─────────────────────────────────── -->
+      <div class="modal-backdrop hidden" id="modal-ci-backup-schedule" onclick="if(event.target===this)document.getElementById('modal-ci-backup-schedule').classList.add('hidden')">
+        <div class="modal" style="max-width:620px;width:96vw;">
+          <div class="modal-header">
+            <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">
+              ⚙️ Backup Schedule
+              <i class="info-tip tip-down" data-tip="Scheduled off-host (or cross-pool) replication of this VM/Container, via syncoid.&#10;&#10;Best practices:&#10;• Pick a destination on a different ZFS pool than the source — same-pool gives zero protection against pool loss.&#10;• Remote destinations (a peer ZNAS) protect against host loss.&#10;• Match the cadence to how much data you can afford to lose between backups (RPO). Hourly is typical for VMs; daily for archive workloads.&#10;• Retention by age (e.g. 30 days) is forgiving for irregular VMs; retention by count is predictable for steady ones."></i>
+              — <span id="ci-bkup-sched-instance" style="font-family:monospace;font-weight:500;"></span>
+            </h3>
+            <button class="modal-close" onclick="document.getElementById('modal-ci-backup-schedule').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:20px 24px 24px;">
+            <div id="ci-bkup-sched-alert" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
+            <div id="ci-bkup-sched-warn-same" class="alert alert-warning hidden" style="margin-bottom:14px;">⚠ Selected destination is the same pool as the source — this backup will give no protection against pool loss. Pick a different datastore for real protection.</div>
+            <div id="ci-bkup-sched-syncoid-missing" class="alert alert-warning hidden" style="margin-bottom:14px;">⚠ syncoid is not installed on this host. Install it from the Prerequisites page (ZFS Replication row) to enable backups.</div>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:18px;font-weight:500;">
+              <input type="checkbox" id="ci-bkup-sched-enabled"> Enable scheduled backups
+            </label>
+
+            <div class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Destination
+                <i class="info-tip" data-tip="Where the backup is written. Local datastores live on this host (cross-pool — fast); remote datastores live on a linked ZNAS peer reached over SSH.&#10;&#10;Each row shows the ZFS pool that will hold the backup AND the Incus datastore (if any) that uses that pool. Pools marked &quot;ZFS only&quot; on the peer have no Incus datastore — backups still work fine, but instant-restore on that side would not be supported (Incus would have to be installed and configured first).&#10;&#10;Local-and-remote can both be valuable: hourly to a local bulk pool, daily to a remote peer."></i>
+              </label>
+              <select id="ci-bkup-sched-dest" class="form-control" onchange="ciBackupSchedOnDestChange()" style="width:100%;">
+                <option value="">Loading…</option>
+              </select>
+              <div id="ci-bkup-sched-dest-note" style="font-size:11px;color:var(--text-3);margin-top:6px;display:none;"></div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Run every
+                <i class="info-tip" data-tip="How often the backup fires. Minimum is 20 minutes — anything finer would keep syncoid running constantly. Daily/weekly granularity supports the typical 'nightly backup' workflow."></i>
+              </label>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span style="color:var(--text-3);">Every</span>
+                <select id="ci-bkup-sched-n" class="form-control" style="width:auto;min-width:80px;"></select>
+                <select id="ci-bkup-sched-unit" class="form-control" style="width:auto;min-width:120px;" onchange="ciBackupSchedRebuildN()">
+                  <option value="minute">Minute(s)</option>
+                  <option value="hour" selected>Hour(s)</option>
+                  <option value="day">Day(s)</option>
+                  <option value="week">Week(s)</option>
+                  <option value="month">Month(s)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" id="ci-bkup-sched-weekday-row" style="display:none;">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Day of week
+                <i class="info-tip" data-tip="Which day of the week the backup fires. Local server time. Pair with a quiet evening hour for least impact on the source VM."></i>
+              </label>
+              <select id="ci-bkup-sched-weekday" class="form-control" style="width:auto;min-width:140px;">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="ci-bkup-sched-dom-row" style="display:none;">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Day of month
+                <i class="info-tip" data-tip="Which day of the month the backup fires. When the chosen day doesn't exist in the current month (e.g. 31 in February), the backup fires on that month's last day so a short month never skips a fire."></i>
+              </label>
+              <select id="ci-bkup-sched-dom" class="form-control" style="width:auto;min-width:90px;"></select>
+            </div>
+
+            <div class="form-group" id="ci-bkup-sched-time-row" style="display:none;">
+              <label class="form-label">Time of day</label>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <select id="ci-bkup-sched-hour" class="form-control" style="width:auto;"></select>
+                <span style="color:var(--text-3);">:</span>
+                <select id="ci-bkup-sched-min" class="form-control" style="width:auto;"></select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Retention
+                <i class="info-tip" data-tip="How many backup snapshots are kept on the destination.&#10;&#10;Keep last N — predictable disk usage; older backups expire as new ones arrive.&#10;Keep for N (hours/days/...) — keeps everything younger than the age, deletes the rest. Use this when your fire rate varies or you want a calendar-based retention (e.g. '30 days')."></i>
+              </label>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                  <input type="radio" name="bkup-ret-kind" value="count" checked onchange="ciBackupSchedOnRetKindChange()">
+                  Keep last
+                  <input type="number" id="ci-bkup-sched-ret-count" class="form-control" value="14" min="1" max="10000" style="width:90px;">
+                  <span style="color:var(--text-3);font-size:13px;">backups</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                  <input type="radio" name="bkup-ret-kind" value="age" onchange="ciBackupSchedOnRetKindChange()">
+                  Keep for
+                  <input type="number" id="ci-bkup-sched-ret-age-n" class="form-control" value="30" min="1" max="10000" style="width:90px;" disabled>
+                  <select id="ci-bkup-sched-ret-age-u" class="form-control" style="width:auto;" disabled>
+                    <option value="hours">Hours</option>
+                    <option value="days" selected>Days</option>
+                    <option value="weeks">Weeks</option>
+                    <option value="months">Months</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Compression
+                <i class="info-tip" data-tip="ZFS compression algorithm applied to the backup destination dataset. Determines how much disk the backup costs at rest.&#10;&#10;Best practices:&#10;&#x2022; zstd-19 (default) wins ~3&times; over lz4 on VM disks and is the right choice for archival backups you keep for weeks. CPU cost is on the WRITER, so source-side load only.&#10;&#x2022; zstd-3 is the &#x22;normal&#x22; zstd level &#x2014; ~2&times; over lz4 with much less CPU.&#10;&#x2022; lz4 favours throughput &#x2014; pick this when the backup pool is slow and CPU is constrained.&#10;&#x2022; off only makes sense for already-compressed source data (encrypted VMs, video).&#10;&#10;Changing this property only affects FUTURE writes &#x2014; existing snapshots keep their original compression."></i>
+              </label>
+              <select id="ci-bkup-sched-compression" class="form-control" style="width:100%;max-width:380px;">
+                <option value="zstd-19" data-search="zstd-19 maximum">zstd-19 &mdash; Maximum compression (default, slowest CPU)</option>
+                <option value="zstd-9" data-search="zstd-9 high">zstd-9 &mdash; High compression</option>
+                <option value="zstd-3" data-search="zstd-3 balanced">zstd-3 &mdash; Balanced (zstd default level)</option>
+                <option value="lz4" data-search="lz4 fast">lz4 &mdash; Fastest, low compression</option>
+                <option value="off" data-search="off none">off &mdash; No compression (already-compressed data)</option>
+              </select>
+            </div>
+
+            <div id="ci-bkup-sched-next" style="font-size:12px;color:var(--text-3);margin-top:8px;"></div>
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+              <button class="btn btn-ghost" id="ci-bkup-sched-disable-btn" onclick="ciDeleteBackupSchedule()" style="margin-right:auto;color:var(--accent-danger);">Disable</button>
+              <button class="btn btn-ghost" onclick="document.getElementById('modal-ci-backup-schedule').classList.add('hidden')">Cancel</button>
+              <button class="btn btn-primary" id="ci-bkup-sched-save-btn" onclick="ciSubmitBackupSchedule()">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── v6.5.19: Restore Backup modal (shared by Backups page + per-VM dropdown) -->
+      <div class="modal-backdrop hidden" id="modal-restore-backup" onclick="if(event.target===this)document.getElementById('modal-restore-backup').classList.add('hidden')">
+        <div class="modal" style="max-width:560px;width:96vw;">
+          <div class="modal-header">
+            <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">
+              🛠 Restore Backup
+              <i class="info-tip tip-down" data-tip="Two restore modes:&#10;&#10;Instant restore — renames the bkup--&#x3C;vm&#x3E; instance to a new name in place. No data is copied — the backup IS the new VM. Reversible. Only works for backups stored on THIS host.&#10;&#10;Restore / Clone — copies the backup via syncoid into a chosen local datastore as a new instance. The original backup stays untouched. Use this to inspect a backup without disturbing it, or when restoring from a remote backup."></i>
+              <span id="rb-target-label" style="font-family:monospace;font-weight:500;font-size:13px;color:var(--text-2);"></span>
+            </h3>
+            <button class="modal-close" onclick="document.getElementById('modal-restore-backup').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:20px 24px 24px;">
+            <div id="rb-alert" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;" id="rb-radio-instant-wrap">
+                <input type="radio" name="rb-mode" value="instant" checked onchange="rbOnModeChange()" style="margin-top:3px;">
+                <div>
+                  <div style="font-weight:600;color:var(--text);">Instant restore</div>
+                  <div style="font-size:12px;color:var(--text-3);margin-top:3px;">Rename the backup in place — no data copy. Greyed out for remote backups.</div>
+                </div>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;">
+                <input type="radio" name="rb-mode" value="clone" onchange="rbOnModeChange()" style="margin-top:3px;">
+                <div>
+                  <div style="font-weight:600;color:var(--text);">Restore / Clone from this backup</div>
+                  <div style="font-size:12px;color:var(--text-3);margin-top:3px;">Copy via syncoid into a chosen datastore as a new instance.</div>
+                </div>
+              </label>
+            </div>
+
+            <div id="rb-instant-fields" class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                New name
+                <i class="info-tip" data-tip="What the renamed instance will be called. Incus names allow letters, digits and dashes; must start with a letter; cannot collide with an existing instance."></i>
+              </label>
+              <input type="text" id="rb-new-name" class="form-control" maxlength="63" style="font-family:monospace;width:100%;">
+            </div>
+
+            <div id="rb-clone-fields" class="form-group" style="display:none;">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Clone name
+                <i class="info-tip" data-tip="Name for the new instance created from the backup. Often 'Clone of &#x3C;vm&#x3E;' or '&#x3C;vm&#x3E;-restored'."></i>
+              </label>
+              <input type="text" id="rb-clone-name" class="form-control" maxlength="63" style="font-family:monospace;width:100%;margin-bottom:14px;">
+              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                Destination datastore (local)
+                <i class="info-tip" data-tip="Local Incus storage pool that will host the restored clone. Best practice: pick a different datastore from the source if you're investigating a corruption — that way the clone never touches the live VM's pool."></i>
+              </label>
+              <select id="rb-dst-datastore" class="form-control" style="width:100%;">
+                <option value="">Loading…</option>
+              </select>
+            </div>
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+              <button class="btn btn-ghost" onclick="document.getElementById('modal-restore-backup').classList.add('hidden')">Cancel</button>
+              <button class="btn btn-primary" id="rb-submit-btn" onclick="rbSubmit()">Restore</button>
             </div>
           </div>
         </div>
@@ -9702,7 +10065,7 @@ Select the Console tab to load.</pre>
       <div id="interlink-add-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
       <div class="form-group">
         <label>Server URL</label>
-        <input type="text" id="interlink-add-url" placeholder="https://192.168.2.5:8443" autocomplete="off" spellcheck="false">
+        <input type="text" id="interlink-add-url" placeholder="https://nas.example.com:8443" autocomplete="off" spellcheck="false">
       </div>
       <div class="form-group">
         <label>Admin Username</label>
@@ -9929,6 +10292,99 @@ function _showSessionExpiredPopup() {
     handle.style.cursor = 'grab';
   });
 }
+
+// ===== Server-restarted popup (v6.5.19) =====
+// Same visual style as the session-expired popup, but the action is a
+// page reload rather than going to /login — the user's session is
+// usually still valid after a restart; only the binary changed.
+function _showServerRestartedPopup() {
+  if (document.getElementById('server-restarted-popup')) return;
+  const popup = document.createElement('div');
+  popup.id = 'server-restarted-popup';
+  popup.style.cssText = [
+    'position:fixed','top:50%','left:50%','transform:translate(-50%,-50%)',
+    'z-index:9999','background:var(--surface)','border:1px solid var(--border)',
+    'border-radius:var(--radius-lg)',
+    'box-shadow:var(--shadow-lg),0 0 0 1px rgba(88,166,255,0.18)',
+    'padding:28px 28px 24px','width:360px','user-select:none',
+  ].join(';');
+  popup.innerHTML = `
+    <div id="server-restarted-drag-handle" style="display:flex;align-items:center;gap:12px;margin-bottom:18px;cursor:grab;">
+      <div style="width:38px;height:38px;border-radius:50%;background:rgba(88,166,255,0.12);border:1px solid rgba(88,166,255,0.3);
+                  display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">↻</div>
+      <div>
+        <div style="font-weight:700;font-size:15px;color:var(--text);">Server Restarted</div>
+        <div style="font-size:12px;color:var(--text-3);margin-top:1px;">Drag to move</div>
+      </div>
+      <button onclick="document.getElementById('server-restarted-popup').remove()"
+        style="margin-left:auto;background:none;border:none;color:var(--text-3);font-size:20px;cursor:pointer;padding:2px 4px;line-height:1;"
+        title="Dismiss">×</button>
+    </div>
+    <p style="font-size:13px;color:var(--text-2);line-height:1.6;margin:0 0 20px;">
+      The ZNAS server was restarted or upgraded. Refresh the page to load the latest UI and reconnect.
+    </p>
+    <button onclick="window.location.reload()"
+      style="width:100%;padding:10px;background:#58a6ff;color:#fff;font-weight:700;
+             border:none;border-radius:var(--radius-sm);font-size:14px;cursor:pointer;">
+      Refresh
+    </button>`;
+  document.body.appendChild(popup);
+  // Drag-to-move (same as session-expired).
+  const handle = document.getElementById('server-restarted-drag-handle');
+  let dragging = false, ox = 0, oy = 0;
+  handle.addEventListener('mousedown', e => {
+    dragging = true;
+    const r = popup.getBoundingClientRect();
+    ox = e.clientX - r.left;
+    oy = e.clientY - r.top;
+    handle.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    popup.style.transform = 'none';
+    popup.style.left = (e.clientX - ox) + 'px';
+    popup.style.top  = (e.clientY - oy) + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    dragging = false; handle.style.cursor = 'grab';
+  });
+}
+
+// Server-restart watchdog: poll /api/version every 30 s and compare its
+// startup_time_unix to the first value we saw. A change means the
+// process was restarted (manual systemctl, in-place binary upgrade,
+// crash + service restart, etc.) and the UI may be out of sync with the
+// new backend. We never poll faster than 30 s so this doesn't add real
+// load; the popup is dismissable too.
+(function() {
+  let baseline = null;
+  let stopped = false;
+  async function tick() {
+    if (stopped) return;
+    try {
+      const r = await fetch('/api/version', { credentials: 'same-origin' });
+      if (r.ok) {
+        const d = await r.json();
+        const t = d && d.startup_time_unix;
+        if (typeof t === 'number') {
+          if (baseline === null) {
+            baseline = t;
+          } else if (t > baseline) {
+            // Server bounced — show popup and stop polling (the user
+            // will refresh; no need to keep hammering /api/version).
+            stopped = true;
+            _showServerRestartedPopup();
+            return;
+          }
+        }
+      }
+    } catch (_) { /* network blip — try again next tick */ }
+    setTimeout(tick, 30000);
+  }
+  // Kick off after a short delay so we don't race the initial page load.
+  setTimeout(tick, 5000);
+})();
 
 // ===== Global 401 interceptor — show session-expired popup on expired/invalid session =====
 (function() {
@@ -10822,6 +11278,7 @@ function showPage(name) {
   if (name === 'lxd-networks')    { loadLXDNetworks(); _setNetworkingRootActive(); }
   if (name === 'bridge-detail')   {} // loaded by openBridgeDetail
   if (name === 'lxd-datastores')  { loadLXDDatastores(); _setDatastoresRootActive(); }
+  if (name === 'lxd-backups')     { loadAllBackups(); }
   if (name === 'datastore-detail') {} // loaded by openDatastoreDetail
   // Sweep any <select id="…"> that hasn't been wrapped with the styled
   // custom dropdown yet. Idempotent — selects already initialised (or
@@ -26015,26 +26472,47 @@ function _buildMemTooltipHTML() {
   // user sees both the real RAM picture and the "feels like" picture.
   let firstRow = `Physical ${physPct.toFixed(1)}% &mdash; ${usedGB} / ${totalGB} GB`;
   if (data && data.zram_active && data.zram_pool_mb > 0) {
-    // Effective working set / capacity = physical + swap (kernel-visible).
-    //   used_total  = physical_used + swap_used        (across zram + disk)
-    //   total_total = physical_total + swap_total      (RAM + zram pool size
-    //                                                   + disk swap size)
-    // This matches what /proc/meminfo + /proc/swaps actually expose to
-    // the kernel — no compression-ratio multiplication. Compression is
-    // surfaced as the (Nx) badge for context.
-    const usedLogMB  = (data.used_mb  || 0) + (data.swap_used_mb  || 0);
-    const totalLogMB = (data.total_mb || 0) + (data.swap_total_mb || 0);
+    // Effective working-set / capacity with compression. v6.5.19+ fix:
+    // the zram pool LIVES INSIDE physical RAM — it's not additive
+    // capacity. Previous version added swap_total_mb (which includes
+    // zram's advertised pool size) on top of total_mb, which
+    // double-counted the pool when compression ratio was low and
+    // implied a capacity ceiling that physical hardware can't deliver.
+    //
+    // Correct accounting:
+    //   • The zram pool holds `zram_swap_total_mb` raw bytes of physical
+    //     RAM. At compression ratio R that pool stores R × those bytes
+    //     of working-set data. The net GAIN over not using the pool at
+    //     all is `zram_swap_total_mb × (R − 1)` — that's the only piece
+    //     that's truly extra capacity.
+    //   • Disk swap IS additive — it's bytes on a different device.
+    //
+    // Used side: bytes saved by what's CURRENTLY compressed plus what's
+    // sitting on disk swap:
+    //   working_set = used_mb + (zram_orig_mb − zram_compr_mb) + disk_swap_used
+    // (the "+ orig − compr" term is the kernel-reported compression
+    // savings on whatever pages are currently compressed in zram).
+    const ratioRaw   = data.zram_ratio || 0;
+    const RATIO_CAP  = 3;
+    // When the pool is empty/young, the kernel reports ratio ≈ 0 or 1;
+    // fall back to a conservative 2.0 so the "extra capacity" estimate
+    // isn't zero. Real-world VMs see ratios in the 2.0–3.0 range.
+    const ratioForEst = ratioRaw > 0 ? ratioRaw : 2.0;
+    const ratioLabel  = ratioRaw > RATIO_CAP ? '~' + RATIO_CAP + '&times;' : (ratioRaw > 0 ? ratioRaw.toFixed(2) + '&times;' : 'pool empty');
+
+    const zramSwapTotalMB = data.zram_swap_total_mb || 0;
+    const diskSwapTotalMB = data.disk_swap_total_mb || 0;
+    const diskSwapUsedMB  = data.disk_swap_used_mb  || 0;
+    const zramOrigMB      = data.zram_orig_mb       || 0;
+    const zramComprMB     = data.zram_compr_mb      || 0;
+
+    const compressionBonusMB = zramSwapTotalMB * Math.max(ratioForEst - 1, 0);
+    const totalLogMB = (data.total_mb || 0) + compressionBonusMB + diskSwapTotalMB;
+    const usedLogMB  = (data.used_mb  || 0) + Math.max(zramOrigMB - zramComprMB, 0) + diskSwapUsedMB;
+
     const usedLogGB   = (usedLogMB  / 1024).toFixed(1);
     const totalLogGB  = (totalLogMB / 1024).toFixed(1);
     const logPct      = totalLogMB > 0 ? (usedLogMB / totalLogMB * 100) : 0;
-    // Display: keep raw ratio precision when below 3×, mark "~3×" once
-    // the kernel-reported ratio exceeds it (compressor's headline ratio
-    // tends to spike on tiny, highly-compressible buffers and isn't a
-    // sustainable figure to brandish). The ratio is informational here
-    // — the totals above are the authoritative ceiling.
-    const ratioRaw   = data.zram_ratio || 0;
-    const RATIO_CAP  = 3;
-    const ratioLabel = ratioRaw > RATIO_CAP ? '~' + RATIO_CAP + '&times;' : ratioRaw.toFixed(2) + '&times;';
     firstRow += ` &middot; <span class="mem-tooltip-compressed">Compressed ${logPct.toFixed(1)}% &mdash; ${usedLogGB} / ${totalLogGB} GB (${ratioLabel})</span>`;
   }
   let html = `<div style="font-weight:600;margin-bottom:8px;color:var(--text-2);font-size:13px;">${firstRow}</div>`;
@@ -32048,7 +32526,7 @@ function _lxdRenderSorted() {
 function _pageToSidebarMode(page) {
   if (!page) return 'storage';
   if (page === 'lxd' || page === 'compute' || page.startsWith('compute-instance') || page.startsWith('compute/')) return 'compute';
-  if (page === 'lxd-networks' || page === 'bridge-detail' || page === 'lxd-datastores' || page === 'datastore-detail') return 'networking';
+  if (page === 'lxd-networks' || page === 'bridge-detail' || page === 'lxd-datastores' || page === 'datastore-detail' || page === 'lxd-backups') return 'networking';
   return 'storage';
 }
 
@@ -32100,6 +32578,10 @@ function refreshComputeNav() {
 function renderComputeNav(instances) {
   const el = document.getElementById('nav-compute-instances');
   if (!el) return;
+  // v6.5.19: defensive filter — backups (bkup--*) are hidden everywhere
+  // outside the Backups dropdown / Backups page, even if a future API call
+  // forgets to filter them server-side.
+  instances = (instances || []).filter(i => !((i.name || '').startsWith('bkup--')));
   const vmIcon = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75;"><path d="M0 4s0-2 2-2h12s2 0 2 2v6s0 2-2 2h-4c0 .667.083 1.167.25 1.5H11a.5.5 0 0 1 0 1H5a.5.5 0 0 1 0-1h.75c.167-.333.25-.833.25-1.5H2s-2 0-2-2V4zm1.398-.855a.758.758 0 0 0-.254.302A1.46 1.46 0 0 0 1 4.01V10c0 .325.078.502.145.602.07.105.17.188.302.254a1.464 1.464 0 0 0 .538.143L2.01 11H14c.325 0 .502-.078.602-.145a.758.758 0 0 0 .254-.302 1.464 1.464 0 0 0 .143-.538L15 9.99V4c0-.325-.078-.502-.145-.602a.757.757 0 0 0-.302-.254A1.46 1.46 0 0 0 13.99 3H2c-.325 0-.502.078-.602.145z"/></svg>`;
   const ctIcon = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75;"><path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5l2.404.961L10.404 2l-2.218-.887zm3.564 1.426L5.596 5 8 5.961 14.154 3.5l-2.404-.961zm3.25 1.7-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923l6.5 2.6zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464L7.443.184z"/></svg>`;
   el.innerHTML = instances.map(inst => {
@@ -32230,6 +32712,9 @@ function openComputeInstance(name, type) {
   _ciSwitchTab(desiredTab);
   loadComputeInstanceDetail(name, type);
   loadCISnapshots(name);
+  // v6.5.19: load backup count + refresh "📅" badge on the Snapshots button.
+  loadCIBackups(name);
+  _ciRefreshBackupAndScheduleBadges();
   _startCIStatsPolling();
   history.replaceState(null, '', '#compute/' + encodeURIComponent(name));
 }
@@ -32292,6 +32777,9 @@ function ciToggleSnapMenu(e) {
   const menu = document.getElementById('ci-snap-menu');
   _ciSnapMenuOpen = !menu.classList.contains('hidden');
   if (_ciSnapMenuOpen) { _ciCloseSnapMenu(); return; }
+  // v6.5.19: Snapshot and Backup dropdowns are mutually exclusive — close
+  // the other one before opening this one.
+  if (typeof _ciCloseBackupMenu === 'function') _ciCloseBackupMenu();
   menu.classList.remove('hidden');
   _ciSnapMenuOpen = true;
   const close = (ev) => { if (!document.getElementById('ci-snap-wrap').contains(ev.target)) { _ciCloseSnapMenu(); document.removeEventListener('click', close); } };
@@ -32584,6 +33072,998 @@ function ciManageDeleteSelected() {
       else { showToast(checked.length + ' snapshot(s) deleted', 'success'); }
     }
   });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// v6.5.19 — Snapshot Schedule + Backups dropdown + Backup Schedule + Restore
+// ────────────────────────────────────────────────────────────────────────────
+
+// ---- helper: build N-of-Unit dropdowns from the allowed-period maps -------
+const _v6519_allowedSnapUnits = {
+  minute: [5,10,15,20,30],
+  hour:   [1,2,3,4,6,8,12],
+  day:    [1,2,3,7,14],
+  week:   [1,2,4],
+  month:  [1,2,3,6,12],
+};
+const _v6519_allowedBackupUnits = {
+  minute: [20,30],
+  hour:   [1,2,3,4,6,8,12],
+  day:    [1,2,3,7,14],
+  week:   [1,2,4],
+  month:  [1,2,3,6,12],
+};
+// Sync the styled custom-select trigger label after we mutate <option>s.
+// initCustomSelect wraps every <select id="…"> once and caches the
+// trigger DOM. When we replace innerHTML and set .value programmatically
+// the wrap's cached trigger button still shows the OLD label until we
+// poke it. This helper finds the trigger and writes the current option's
+// text into the label span.
+function _v6519_refreshCS(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  if (!sel._csInit) return; // native <select>, no wrap to refresh
+  const wrap = sel.parentNode;
+  if (!wrap) return;
+  const trigger = wrap.querySelector('.cs-trigger');
+  if (!trigger) return;
+  const label = trigger.querySelector('.cs-label');
+  const cur = sel.options[sel.selectedIndex];
+  if (label && cur) label.textContent = cur.textContent;
+}
+function _v6519_fillN(selectId, unit, allowed, current) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const allowedList = allowed[unit] || [1];
+  sel.innerHTML = allowedList.map(n =>
+    `<option value="${n}"${n===current?' selected':''}>${n}</option>`).join('');
+  _v6519_refreshCS(selectId);
+}
+function _v6519_fillHour(selectId, current) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  let html = '';
+  for (let h=0; h<24; h++) {
+    const s = String(h).padStart(2,'0');
+    html += `<option value="${h}"${h===current?' selected':''}>${s}</option>`;
+  }
+  sel.innerHTML = html;
+  _v6519_refreshCS(selectId);
+}
+function _v6519_fillMin(selectId, current) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  let html = '';
+  for (let m=0; m<60; m+=5) {
+    const s = String(m).padStart(2,'0');
+    html += `<option value="${m}"${m===current?' selected':''}>${s}</option>`;
+  }
+  sel.innerHTML = html;
+  _v6519_refreshCS(selectId);
+}
+function _v6519_fillDom(selectId, current) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  let html = '';
+  for (let d=1; d<=31; d++) {
+    html += `<option value="${d}"${d===current?' selected':''}>${d}</option>`;
+  }
+  sel.innerHTML = html;
+  _v6519_refreshCS(selectId);
+}
+function _v6519_timeAgo(iso) {
+  if (!iso) return '';
+  const dt = new Date(iso);
+  if (isNaN(dt)) return '';
+  const sec = Math.max(0, (Date.now() - dt.getTime())/1000);
+  if (sec < 90)            return Math.floor(sec) + ' s ago';
+  if (sec < 3600)          return Math.floor(sec/60) + ' min ago';
+  if (sec < 86400)         return Math.floor(sec/3600) + ' h ago';
+  if (sec < 30*86400)      return Math.floor(sec/86400) + ' d ago';
+  return dt.toLocaleDateString();
+}
+
+// ====== Snapshot Schedule modal =============================================
+async function ciOpenSnapSchedule() {
+  _ciCloseSnapMenu();
+  if (!_ciCurrentName) return;
+  document.getElementById('ci-snap-sched-instance').textContent = _ciCurrentName;
+  document.getElementById('ci-snap-sched-alert').classList.add('hidden');
+  document.getElementById('modal-ci-snap-schedule').classList.remove('hidden');
+  // Initial defaults
+  _v6519_fillN('ci-snap-sched-n', 'hour', _v6519_allowedSnapUnits, 1);
+  _v6519_fillHour('ci-snap-sched-hour', 2);
+  _v6519_fillMin('ci-snap-sched-min', 0);
+  _v6519_fillDom('ci-snap-sched-dom', 1);
+  document.getElementById('ci-snap-sched-weekday').value = '0'; // Sunday default
+  if (typeof initAllCustomSelects === 'function') initAllCustomSelects(document.getElementById('modal-ci-snap-schedule'));
+  ['ci-snap-sched-n','ci-snap-sched-unit','ci-snap-sched-hour','ci-snap-sched-min','ci-snap-sched-weekday','ci-snap-sched-dom'].forEach(_v6519_refreshCS);
+  // Load existing policy if any.
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/snapshot-schedule');
+    if (!r.ok) return;
+    const d = await r.json();
+    const p = (d && d.policy) || {};
+    document.getElementById('ci-snap-sched-enabled').checked = !!p.enabled;
+    document.getElementById('ci-snap-sched-unit').value = p.unit || 'hour';
+    _v6519_fillN('ci-snap-sched-n', p.unit || 'hour', _v6519_allowedSnapUnits, p.every_n || 1);
+    document.getElementById('ci-snap-sched-prefix').value = p.name_prefix || 'auto';
+    document.getElementById('ci-snap-sched-keep').value = p.keep_last || 24;
+    _v6519_fillHour('ci-snap-sched-hour', p.hour_of_day || 2);
+    _v6519_fillMin('ci-snap-sched-min', p.minute_of_hour || 0);
+    _v6519_fillDom('ci-snap-sched-dom', p.day_of_month || 1);
+    document.getElementById('ci-snap-sched-weekday').value = String(p.weekday || 0);
+    _v6519_refreshCS('ci-snap-sched-weekday');
+    _v6519_refreshCS('ci-snap-sched-dom');
+    ciSnapSchedRebuildN();
+    if (d.next_run && d.exists) {
+      document.getElementById('ci-snap-sched-next').textContent = 'Next run: ' + new Date(d.next_run).toLocaleString();
+    }
+    document.getElementById('ci-snap-sched-disable-btn').style.display = d.exists ? '' : 'none';
+  } catch(_) {}
+}
+function ciSnapSchedRebuildN() {
+  const unit = document.getElementById('ci-snap-sched-unit').value;
+  const nSel = document.getElementById('ci-snap-sched-n');
+  const cur = parseInt(nSel.value || '1', 10);
+  _v6519_fillN('ci-snap-sched-n', unit, _v6519_allowedSnapUnits, cur);
+  // Show row visibility:
+  //   day/week/month → time of day picker
+  //   week           → also weekday picker
+  //   month          → also day-of-month picker (1..31)
+  const showTime = (unit === 'day' || unit === 'week' || unit === 'month');
+  document.getElementById('ci-snap-sched-time-row').style.display = showTime ? '' : 'none';
+  document.getElementById('ci-snap-sched-weekday-row').style.display = (unit === 'week')  ? '' : 'none';
+  document.getElementById('ci-snap-sched-dom-row').style.display     = (unit === 'month') ? '' : 'none';
+}
+async function ciSubmitSnapSchedule() {
+  const alertEl = document.getElementById('ci-snap-sched-alert');
+  alertEl.classList.add('hidden');
+  const body = {
+    enabled: document.getElementById('ci-snap-sched-enabled').checked,
+    every_n: parseInt(document.getElementById('ci-snap-sched-n').value, 10),
+    unit: document.getElementById('ci-snap-sched-unit').value,
+    hour_of_day: parseInt(document.getElementById('ci-snap-sched-hour').value || '0', 10),
+    minute_of_hour: parseInt(document.getElementById('ci-snap-sched-min').value || '0', 10),
+    weekday: parseInt(document.getElementById('ci-snap-sched-weekday').value || '0', 10),
+    day_of_month: parseInt(document.getElementById('ci-snap-sched-dom').value || '1', 10),
+    name_prefix: document.getElementById('ci-snap-sched-prefix').value.trim() || 'auto',
+    keep_last: parseInt(document.getElementById('ci-snap-sched-keep').value || '24', 10),
+  };
+  const btn = document.getElementById('ci-snap-sched-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/snapshot-schedule', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) { alertEl.textContent = d.error || 'Save failed'; alertEl.classList.remove('hidden'); return; }
+    showToast('Snapshot schedule saved', 'success');
+    document.getElementById('modal-ci-snap-schedule').classList.add('hidden');
+    _ciRefreshBackupAndScheduleBadges();
+  } catch(e) {
+    alertEl.textContent = String(e); alertEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Schedule';
+  }
+}
+async function ciDeleteSnapSchedule() {
+  if (!_ciCurrentName) return;
+  try {
+    await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/snapshot-schedule', { method: 'DELETE' });
+    showToast('Snapshot schedule disabled', 'success');
+    document.getElementById('modal-ci-snap-schedule').classList.add('hidden');
+    _ciRefreshBackupAndScheduleBadges();
+  } catch(_) {}
+}
+
+// ====== Backups dropdown ====================================================
+let _ciBackupsCache = { local: [], remote: [] };
+let _ciBkupMenuOpen = false;
+
+function ciToggleBackupMenu(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('ci-bkup-menu');
+  if (!menu.classList.contains('hidden')) { _ciCloseBackupMenu(); return; }
+  // Mutually exclusive with the Snapshot dropdown — at most one open at a time.
+  if (typeof _ciCloseSnapMenu === 'function') _ciCloseSnapMenu();
+  menu.classList.remove('hidden');
+  _ciBkupMenuOpen = true;
+  _ciPositionBackupMenu();
+  loadCIBackups(_ciCurrentName);
+  const close = (ev) => {
+    if (!document.getElementById('ci-bkup-wrap').contains(ev.target)) {
+      _ciCloseBackupMenu();
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+function _ciCloseBackupMenu() {
+  document.getElementById('ci-bkup-menu').classList.add('hidden');
+  _ciBkupMenuOpen = false;
+}
+// Anchor the dropdown so it never falls off the right edge of the viewport.
+// Default anchor is left-aligned (left:0). If the dropdown would overflow
+// right, flip to right:0 (anchors the menu's right edge to the button's
+// right edge — dropdown then opens "to the left").
+function _ciPositionBackupMenu() {
+  const wrap = document.getElementById('ci-bkup-wrap');
+  const menu = document.getElementById('ci-bkup-menu');
+  if (!wrap || !menu) return;
+  // Reset to default first so measurement is clean.
+  menu.style.left = '0';
+  menu.style.right = 'auto';
+  const wrapRect = wrap.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const viewportW = window.innerWidth;
+  const overflowRight = (wrapRect.left + menuRect.width) - (viewportW - 16);
+  if (overflowRight > 0) {
+    // Flip: anchor right edge of dropdown to right edge of button.
+    menu.style.left = 'auto';
+    menu.style.right = '0';
+  }
+}
+
+async function loadCIBackups(name) {
+  if (!name) return;
+  const el = document.getElementById('ci-bkup-list');
+  el.innerHTML = '<div style="padding:14px;color:var(--text-3);font-size:12px;text-align:center;">Loading…</div>';
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/backups-aggregate');
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    _ciBackupsCache = { local: d.local || [], remote: d.remote || [] };
+    _ciRenderBackupList();
+    _ciUpdateBackupCount();
+  } catch(e) {
+    el.innerHTML = '<div style="padding:14px;color:var(--accent-danger);font-size:12px;">' + esc(String(e)) + '</div>';
+  }
+}
+function _ciUpdateBackupCount() {
+  const lbl = document.getElementById('ci-bkup-label');
+  let n = 0;
+  for (const r of (_ciBackupsCache.local||[]))  n += (r.snapshots||[]).length;
+  for (const r of (_ciBackupsCache.remote||[])) n += (r.snapshots||[]).length;
+  if (lbl) lbl.textContent = 'Backups' + (n ? ' (' + n + ')' : '');
+}
+function _ciRenderBackupList() {
+  const el = document.getElementById('ci-bkup-list');
+  const groups = [];
+  for (const r of (_ciBackupsCache.local||[])) {
+    groups.push({ scope:'local', serverId:'', host:'', datastore:r.datastore, instance:r.backup_instance, snaps:r.snapshots||[] });
+  }
+  for (const r of (_ciBackupsCache.remote||[])) {
+    groups.push({ scope:'remote', serverId:r.server_id, host:r.hostname, datastore:r.datastore, instance:r.backup_instance, snaps:r.snapshots||[] });
+  }
+  if (groups.length === 0) {
+    el.innerHTML = '<div style="padding:18px 14px;color:var(--text-3);font-size:12px;text-align:center;">No backups yet. Run <strong style="color:var(--text-2);">Backup Now</strong> below or save a Backup Schedule.</div>';
+    return;
+  }
+  el.innerHTML = groups.map(g => {
+    const head = g.scope === 'local'
+      ? `<span style="color:#3fb950;">🟢 LOCAL</span> · ${esc(g.datastore)}`
+      : `<span style="color:#58a6ff;">🌐 REMOTE</span> · ${esc(g.host)} · ${esc(g.datastore)}`;
+    const args = JSON.stringify({
+      vm_id: _ciCurrentName,
+      scope: g.scope,
+      server_id: g.serverId,
+      hostname: g.host,
+      datastore: g.datastore,
+    });
+    // Each backup leaf shows a friendly date + size on the left and the
+    // relative age on the right. The ZFS snapshot name is technical and
+    // mostly noise here — users care WHEN the backup was taken and HOW
+    // BIG it is, with a glanceable "how recent". Snapshot name is kept
+    // in the row's title attribute for the curious.
+    const snapsHTML = (g.snaps && g.snaps.length)
+      ? g.snaps.map(s => {
+          const ctxSnap = JSON.stringify({
+            vm_id: _ciCurrentName,
+            scope: g.scope,
+            server_id: g.serverId,
+            hostname: g.host,
+            datastore: g.datastore,
+            snapshot: s.name,
+          });
+          // "2026-05-19 09:42" — sortable local time, no seconds.
+          let when = '';
+          if (s.created_at) {
+            const dt = new Date(s.created_at);
+            if (!isNaN(dt)) {
+              const pad = n => String(n).padStart(2, '0');
+              when = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+            }
+          }
+          const size = _v6519_bytes(s.used || 0);
+          return `<button type="button" onclick='openRestoreBackupModal(${ctxSnap})' title="${esc(s.name)} — click to restore" style="display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;padding:6px 14px 6px 32px;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-2);">
+            <span style="display:flex;align-items:baseline;gap:8px;min-width:0;flex:1;">
+              <span style="color:var(--text);">${esc(when || '—')}</span>
+              <span style="color:var(--text-3);font-family:monospace;font-size:11px;">${esc(size)}</span>
+            </span>
+            <span style="color:var(--text-3);font-size:11px;white-space:nowrap;">${esc(_v6519_timeAgo(s.created_at))}</span>
+          </button>`;
+        }).join('')
+      : '<div style="padding:6px 14px 6px 32px;color:var(--text-3);font-size:11px;font-style:italic;">No backups yet on this datastore</div>';
+    return `<div>
+      <div style="padding:8px 14px 4px;font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;">${head}</div>
+      <button type="button" onclick='openRestoreBackupModal(${args})' title="Click to restore this backup" style="display:flex;align-items:center;width:100%;text-align:left;padding:4px 14px 4px 14px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text);">
+        <span style="font-family:monospace;color:var(--text);">▸ ${esc(g.instance)}</span>
+      </button>
+      ${snapsHTML}
+    </div>`;
+  }).join('<div style="border-top:1px solid var(--border);"></div>');
+}
+
+// ====== Backup Schedule modal ===============================================
+let _ciBackupDatastoresCache = [];
+
+async function ciOpenBackupSchedule() {
+  _ciCloseBackupMenu();
+  if (!_ciCurrentName) return;
+  document.getElementById('ci-bkup-sched-instance').textContent = _ciCurrentName;
+  document.getElementById('ci-bkup-sched-alert').classList.add('hidden');
+  document.getElementById('ci-bkup-sched-warn-same').classList.add('hidden');
+  document.getElementById('ci-bkup-sched-syncoid-missing').classList.add('hidden');
+  document.getElementById('modal-ci-backup-schedule').classList.remove('hidden');
+
+  _v6519_fillN('ci-bkup-sched-n', 'hour', _v6519_allowedBackupUnits, 1);
+  _v6519_fillHour('ci-bkup-sched-hour', 2);
+  _v6519_fillMin('ci-bkup-sched-min', 0);
+  _v6519_fillDom('ci-bkup-sched-dom', 1);
+  document.getElementById('ci-bkup-sched-weekday').value = '0';
+  if (typeof initAllCustomSelects === 'function') initAllCustomSelects(document.getElementById('modal-ci-backup-schedule'));
+  ['ci-bkup-sched-n','ci-bkup-sched-unit','ci-bkup-sched-hour','ci-bkup-sched-min','ci-bkup-sched-weekday','ci-bkup-sched-dom','ci-bkup-sched-ret-age-u','ci-bkup-sched-compression'].forEach(_v6519_refreshCS);
+  // Default compression = zstd-19 (max). Overwritten below if the saved
+  // policy specifies otherwise.
+  const cSel = document.getElementById('ci-bkup-sched-compression');
+  if (cSel) { cSel.value = 'zstd-19'; _v6519_refreshCS('ci-bkup-sched-compression'); }
+
+  // Load destinations + existing policy in parallel.
+  let policy = null, datastores = [];
+  try {
+    const [pr, dr] = await Promise.all([
+      fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/backup-schedule'),
+      fetch('/api/incus/backup-datastores'),
+    ]);
+    if (pr.ok) { const d = await pr.json(); policy = d; }
+    if (dr.ok) datastores = await dr.json() || [];
+  } catch(_) {}
+  _ciBackupDatastoresCache = datastores;
+
+  // Resolve the source's pool so we can flag the same-pool case.
+  const srcInst = (_lxdInstancesCache || []).find(i => i.name === _ciCurrentName) || {};
+  const srcPool = srcInst.root_pool || '';
+
+  // Populate destination dropdown. Each datastore row carries both the
+  // ZFS pool name (the dest_pool field that ends up in the policy) and
+  // — when present — the friendly Incus storage-pool name backed by
+  // that ZFS pool, so the dropdown can show both.
+  const sel = document.getElementById('ci-bkup-sched-dest');
+  const locals  = datastores.filter(d => d.kind === 'local');
+  const remotes = datastores.filter(d => d.kind === 'remote');
+  // Format: "<zfs-pool>  (Incus datastore: <name>)"  OR
+  //         "<zfs-pool>  (ZFS only — no Incus datastore)"
+  function _bkupDestLabel(d, kindLabel) {
+    const incus = d.incus_datastore;
+    const extra = incus
+      ? `  (Incus datastore: ${incus})`
+      : '  (ZFS only — no Incus datastore on this pool)';
+    return `${kindLabel} · ${d.datastore}${extra}`;
+  }
+  let html = '<option value="">— Select destination —</option>';
+  if (locals.length) {
+    html += '<optgroup label="Local datastores">';
+    for (const l of locals) {
+      const isSame = (l.datastore === srcPool);
+      const tag = isSame ? '  ⚠ same pool as source' : '';
+      html += `<option value="local::${esc(l.datastore)}" data-incus="${esc(l.incus_datastore||'')}">${esc(_bkupDestLabel(l, 'LOCAL'))}${tag}</option>`;
+    }
+    html += '</optgroup>';
+  }
+  if (remotes.length) {
+    html += '<optgroup label="Remote datastores">';
+    for (const rmt of remotes) {
+      const kindLabel = `REMOTE · ${rmt.hostname}`;
+      html += `<option value="remote::${esc(rmt.server_id)}::${esc(rmt.datastore)}" data-incus="${esc(rmt.incus_datastore||'')}">${esc(_bkupDestLabel(rmt, kindLabel))}</option>`;
+    }
+    html += '</optgroup>';
+  }
+  sel.innerHTML = html;
+  _v6519_refreshCS('ci-bkup-sched-dest');
+
+  // If a policy exists, prefill.
+  if (policy && policy.policy) {
+    const p = policy.policy;
+    document.getElementById('ci-bkup-sched-enabled').checked = !!p.enabled;
+    document.getElementById('ci-bkup-sched-unit').value = p.unit || 'hour';
+    _v6519_fillN('ci-bkup-sched-n', p.unit || 'hour', _v6519_allowedBackupUnits, p.every_n || 1);
+    _v6519_fillHour('ci-bkup-sched-hour', p.hour_of_day || 2);
+    _v6519_fillMin('ci-bkup-sched-min', p.minute_of_hour || 0);
+    _v6519_fillDom('ci-bkup-sched-dom', p.day_of_month || 1);
+    document.getElementById('ci-bkup-sched-weekday').value = String(p.weekday || 0);
+    _v6519_refreshCS('ci-bkup-sched-weekday');
+    _v6519_refreshCS('ci-bkup-sched-dom');
+    ciBackupSchedRebuildN();
+    if (p.dest_kind === 'local' && p.dest_pool)  sel.value = 'local::' + p.dest_pool;
+    if (p.dest_kind === 'remote' && p.dest_pool) sel.value = 'remote::' + (p.dest_server_id||'') + '::' + p.dest_pool;
+    _v6519_refreshCS('ci-bkup-sched-dest');
+    if (p.retention_kind === 'age') {
+      document.querySelector('input[name="bkup-ret-kind"][value="age"]').checked = true;
+      document.getElementById('ci-bkup-sched-ret-age-n').value = p.retention_age_n || 30;
+      document.getElementById('ci-bkup-sched-ret-age-u').value = p.retention_age_unit || 'days';
+    } else {
+      document.querySelector('input[name="bkup-ret-kind"][value="count"]').checked = true;
+      document.getElementById('ci-bkup-sched-ret-count').value = p.retention_count || 14;
+    }
+    if (p.compression) {
+      document.getElementById('ci-bkup-sched-compression').value = p.compression;
+      _v6519_refreshCS('ci-bkup-sched-compression');
+    }
+    ciBackupSchedOnRetKindChange();
+    ciBackupSchedOnDestChange();
+    if (policy.next_run && policy.exists) {
+      document.getElementById('ci-bkup-sched-next').textContent = 'Next run: ' + new Date(policy.next_run).toLocaleString();
+    }
+    document.getElementById('ci-bkup-sched-disable-btn').style.display = policy.exists ? '' : 'none';
+  } else {
+    document.getElementById('ci-bkup-sched-disable-btn').style.display = 'none';
+  }
+  // syncoid availability hint — best-effort, treat 404 as "ok".
+  fetch('/api/sysinfo/binaries').then(r => r.ok ? r.json() : null).then(d => {
+    if (d && d.syncoid === false) {
+      document.getElementById('ci-bkup-sched-syncoid-missing').classList.remove('hidden');
+    }
+  }).catch(()=>{});
+}
+function ciBackupSchedRebuildN() {
+  const unit = document.getElementById('ci-bkup-sched-unit').value;
+  const nSel = document.getElementById('ci-bkup-sched-n');
+  const cur = parseInt(nSel.value || '1', 10);
+  _v6519_fillN('ci-bkup-sched-n', unit, _v6519_allowedBackupUnits, cur);
+  const showTime = (unit === 'day' || unit === 'week' || unit === 'month');
+  document.getElementById('ci-bkup-sched-time-row').style.display     = showTime ? '' : 'none';
+  document.getElementById('ci-bkup-sched-weekday-row').style.display = (unit === 'week')  ? '' : 'none';
+  document.getElementById('ci-bkup-sched-dom-row').style.display      = (unit === 'month') ? '' : 'none';
+}
+function ciBackupSchedOnDestChange() {
+  const sel = document.getElementById('ci-bkup-sched-dest');
+  const v = sel.value;
+  const srcInst = (_lxdInstancesCache || []).find(i => i.name === _ciCurrentName) || {};
+  const srcPool = srcInst.root_pool || '';
+  const warn = document.getElementById('ci-bkup-sched-warn-same');
+  if (v && v.startsWith('local::') && v.slice(7) === srcPool) {
+    warn.classList.remove('hidden');
+  } else {
+    warn.classList.add('hidden');
+  }
+  // Show the "ZFS only — instant restore not available" note when the
+  // selected destination doesn't have an Incus datastore on that pool.
+  const note = document.getElementById('ci-bkup-sched-dest-note');
+  if (note) {
+    const opt = sel.options[sel.selectedIndex];
+    const incus = opt ? (opt.dataset.incus || '') : '';
+    if (v && !incus) {
+      const where = v.startsWith('remote::') ? 'this peer' : 'this host';
+      note.textContent = 'ⓘ The selected ZFS pool has no Incus datastore on ' + where + '. Backups still work as plain ZFS replication; instant-restore on that side would require Incus to be installed and configured there.';
+      note.style.display = '';
+    } else {
+      note.style.display = 'none';
+    }
+  }
+}
+function ciBackupSchedOnRetKindChange() {
+  const kind = document.querySelector('input[name="bkup-ret-kind"]:checked').value;
+  document.getElementById('ci-bkup-sched-ret-count').disabled  = (kind !== 'count');
+  document.getElementById('ci-bkup-sched-ret-age-n').disabled  = (kind !== 'age');
+  document.getElementById('ci-bkup-sched-ret-age-u').disabled  = (kind !== 'age');
+}
+async function ciSubmitBackupSchedule() {
+  const alertEl = document.getElementById('ci-bkup-sched-alert');
+  alertEl.classList.add('hidden');
+  const dest = document.getElementById('ci-bkup-sched-dest').value;
+  if (!dest) { alertEl.textContent = 'Pick a destination datastore first.'; alertEl.classList.remove('hidden'); return; }
+  const parts = dest.split('::');
+  const destKind = parts[0];
+  let destServerID = '', destPool = '';
+  if (destKind === 'local')  destPool = parts[1] || '';
+  if (destKind === 'remote') { destServerID = parts[1] || ''; destPool = parts[2] || ''; }
+  const retKind = document.querySelector('input[name="bkup-ret-kind"]:checked').value;
+  const body = {
+    enabled: document.getElementById('ci-bkup-sched-enabled').checked,
+    dest_kind: destKind,
+    dest_server_id: destServerID,
+    dest_pool: destPool,
+    every_n: parseInt(document.getElementById('ci-bkup-sched-n').value, 10),
+    unit: document.getElementById('ci-bkup-sched-unit').value,
+    hour_of_day: parseInt(document.getElementById('ci-bkup-sched-hour').value || '0', 10),
+    minute_of_hour: parseInt(document.getElementById('ci-bkup-sched-min').value || '0', 10),
+    weekday: parseInt(document.getElementById('ci-bkup-sched-weekday').value || '0', 10),
+    day_of_month: parseInt(document.getElementById('ci-bkup-sched-dom').value || '1', 10),
+    retention_kind: retKind,
+    retention_count: parseInt(document.getElementById('ci-bkup-sched-ret-count').value || '14', 10),
+    retention_age_n: parseInt(document.getElementById('ci-bkup-sched-ret-age-n').value || '30', 10),
+    retention_age_unit: document.getElementById('ci-bkup-sched-ret-age-u').value,
+    compression: document.getElementById('ci-bkup-sched-compression').value || 'zstd-19',
+  };
+  const btn = document.getElementById('ci-bkup-sched-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/backup-schedule', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) { alertEl.textContent = d.error || 'Save failed'; alertEl.classList.remove('hidden'); return; }
+    showToast('Backup schedule saved', 'success');
+    document.getElementById('modal-ci-backup-schedule').classList.add('hidden');
+    _ciRefreshBackupAndScheduleBadges();
+  } catch(e) {
+    alertEl.textContent = String(e); alertEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+async function ciDeleteBackupSchedule() {
+  if (!_ciCurrentName) return;
+  try {
+    await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/backup-schedule', { method:'DELETE' });
+    showToast('Backup schedule disabled', 'success');
+    document.getElementById('modal-ci-backup-schedule').classList.add('hidden');
+    _ciRefreshBackupAndScheduleBadges();
+  } catch(_) {}
+}
+
+// ====== Backup Now ==========================================================
+async function ciBackupNow() {
+  _ciCloseBackupMenu();
+  if (!_ciCurrentName) return;
+  // Determine destination — use saved policy if any.
+  let policy = null;
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/backup-schedule');
+    if (r.ok) policy = await r.json();
+  } catch(_) {}
+  if (!policy || !policy.exists || !policy.policy || !policy.policy.dest_pool) {
+    showToast('No backup destination — open Backup Schedule first and save a destination.', 'error');
+    ciOpenBackupSchedule();
+    return;
+  }
+  const p = policy.policy;
+  const body = {
+    dest_kind: p.dest_kind,
+    dest_server_id: p.dest_server_id || '',
+    dest_pool: p.dest_pool,
+  };
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/backup-now', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.job_id) { showToast(d.error || 'Backup failed to start', 'error'); return; }
+    const dest = p.dest_kind === 'local'
+      ? ('local:' + p.dest_pool)
+      : ((p.dest_pool ? (p.dest_pool) : '') + ' (remote)');
+    _bgPollBackupJob(d.job_id, 'Backup ' + _ciCurrentName + ' → ' + dest, () => loadCIBackups(_ciCurrentName));
+  } catch(e) {
+    showToast('Error: ' + String(e), 'error');
+  }
+}
+
+// Polls a backup job and surfaces it in the activity bar.
+function _bgPollBackupJob(jobId, label, onDone) {
+  const key = 'bkj-' + jobId;
+  addActiveJob(key, label);
+  (async function poll() {
+    try {
+      const r = await fetch('/api/incus/backup-jobs/' + encodeURIComponent(jobId) + '/progress');
+      if (!r.ok) { removeActiveJob(key); showToast(label + ' — polling error', 'error'); return; }
+      const d = await r.json();
+      if (d.status === 'done') {
+        removeActiveJob(key);
+        showToast(label + ' — done', 'success');
+        if (onDone) onDone();
+        return;
+      }
+      if (d.status === 'error' || d.status === 'canceled') {
+        removeActiveJob(key);
+        if (d.status === 'error') showToast((label + ' failed: ') + (d.error || 'unknown'), 'error');
+        if (onDone) onDone();
+        return;
+      }
+      // Update label with last line for progress
+      const lines = d.lines || [];
+      const tail = lines[lines.length-1];
+      if (tail && updateActiveJob) updateActiveJob(key, label + ' — ' + (tail.length > 80 ? tail.slice(0,80)+'…' : tail));
+      setTimeout(poll, 3000);
+    } catch(e) {
+      removeActiveJob(key);
+      showToast(label + ' — ' + String(e), 'error');
+    }
+  })();
+}
+
+// Refresh the snapshot-button "📅" badge and the backup count.
+async function _ciRefreshBackupAndScheduleBadges() {
+  if (!_ciCurrentName) return;
+  // Snapshot schedule badge.
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/snapshot-schedule');
+    if (r.ok) {
+      const d = await r.json();
+      const lbl = document.getElementById('ci-snap-label');
+      if (lbl) {
+        let base = 'Snapshots' + (_ciSnapshots.length ? ' (' + _ciSnapshots.length + ')' : '');
+        if (d.exists && d.policy && d.policy.enabled) base += ' 📅';
+        lbl.textContent = base;
+      }
+    }
+  } catch(_) {}
+  // Reload backups (count + list).
+  loadCIBackups(_ciCurrentName);
+}
+
+// ====== Shared Restore modal (Feature 2 dropdown + Feature 3 page) ===========
+let _rbCtx = null; // { vm_id, scope, server_id, datastore, hostname }
+
+async function openRestoreBackupModal(ctx) {
+  // Accept either object or stringified JSON (the dropdown calls with object,
+  // the Backups page calls with string).
+  if (typeof ctx === 'string') {
+    try { ctx = JSON.parse(ctx); } catch(_) { ctx = {}; }
+  }
+  _rbCtx = ctx || {};
+  document.getElementById('rb-alert').classList.add('hidden');
+  // Label encodes target + which snapshot the user picked (or "(latest)"
+  // when they clicked the collapsed-row Restore button on the Backups page,
+  // or any entry under a backup's header in the per-VM dropdown).
+  const snapLabel = _rbCtx.snapshot ? _rbCtx.snapshot : '(latest snapshot)';
+  document.getElementById('rb-target-label').textContent = '— ' + (_rbCtx.vm_id || '') +
+    ' (' + (_rbCtx.scope === 'remote' ? ('remote · ' + (_rbCtx.hostname || '')) : 'local') +
+    ' · ' + (_rbCtx.datastore || '') + ' · ' + snapLabel + ')';
+  // Default radio: instant if local, clone if remote.
+  if (_rbCtx.scope === 'remote') {
+    document.querySelector('input[name="rb-mode"][value="clone"]').checked = true;
+    document.getElementById('rb-radio-instant-wrap').style.opacity = '0.5';
+    document.getElementById('rb-radio-instant-wrap').title = 'Instant restore is only available for backups on this host.';
+    document.querySelector('input[name="rb-mode"][value="instant"]').disabled = true;
+  } else {
+    document.getElementById('rb-radio-instant-wrap').style.opacity = '1';
+    document.getElementById('rb-radio-instant-wrap').title = '';
+    document.querySelector('input[name="rb-mode"][value="instant"]').disabled = false;
+    document.querySelector('input[name="rb-mode"][value="instant"]').checked = true;
+  }
+  // Defaults
+  document.getElementById('rb-new-name').value = _rbCtx.vm_id || '';
+  document.getElementById('rb-clone-name').value = 'clone-of-' + (_rbCtx.vm_id || '');
+  // Populate datastore picker for clone mode. Restore registers the
+  // resulting instance with Incus, so the destination MUST be a pool
+  // Incus already manages — pools without an Incus datastore are
+  // excluded with a tooltip. The option value carries the Incus
+  // storage-pool name (e.g. "default"), since that's what
+  // `incus admin recover` and `getLXDPoolSource` expect; the ZFS pool
+  // name is rendered alongside for clarity.
+  try {
+    const r = await fetch('/api/incus/backup-datastores');
+    if (r.ok) {
+      const all = await r.json() || [];
+      const locals = all.filter(d => d.kind === 'local');
+      const usable = locals.filter(l => l.incus_datastore);
+      const sel = document.getElementById('rb-dst-datastore');
+      if (usable.length === 0) {
+        sel.innerHTML = '<option value="">No Incus datastores available — restore requires Incus on the destination pool</option>';
+      } else {
+        sel.innerHTML = usable.map(l =>
+          `<option value="${esc(l.incus_datastore)}">${esc(l.incus_datastore)} (ZFS pool: ${esc(l.datastore)})</option>`
+        ).join('');
+      }
+    }
+  } catch(_) {}
+  rbOnModeChange();
+  document.getElementById('modal-restore-backup').classList.remove('hidden');
+  if (typeof initAllCustomSelects === 'function') initAllCustomSelects(document.getElementById('modal-restore-backup'));
+  _v6519_refreshCS('rb-dst-datastore');
+}
+function rbOnModeChange() {
+  const mode = document.querySelector('input[name="rb-mode"]:checked').value;
+  document.getElementById('rb-instant-fields').style.display = (mode === 'instant') ? '' : 'none';
+  document.getElementById('rb-clone-fields').style.display   = (mode === 'clone') ? '' : 'none';
+}
+async function rbSubmit() {
+  const alertEl = document.getElementById('rb-alert');
+  alertEl.classList.add('hidden');
+  const mode = document.querySelector('input[name="rb-mode"]:checked').value;
+  const btn = document.getElementById('rb-submit-btn');
+  btn.disabled = true; btn.textContent = 'Restoring…';
+  try {
+    if (mode === 'instant') {
+      const newName = document.getElementById('rb-new-name').value.trim();
+      const r = await fetch('/api/incus/backups/restore-instant', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          vm_id: _rbCtx.vm_id,
+          new_name: newName,
+          // ZFS pool name hosting the backup. Lets the backend pinpoint
+          // the right workload dataset when the same vm-id is backed up
+          // to multiple pools.
+          datastore: _rbCtx.datastore || '',
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) { alertEl.textContent = d.error || 'Restore failed'; alertEl.classList.remove('hidden'); return; }
+      showToast('Restored ' + _rbCtx.vm_id + ' → ' + newName, 'success');
+      document.getElementById('modal-restore-backup').classList.add('hidden');
+      if (typeof loadLXDInstances === 'function') loadLXDInstances();
+      if (typeof loadAllBackups === 'function') loadAllBackups();
+    } else {
+      const cloneName = document.getElementById('rb-clone-name').value.trim();
+      const dstDatastore = document.getElementById('rb-dst-datastore').value;
+      if (!cloneName || !dstDatastore) { alertEl.textContent = 'Clone name and destination datastore are required'; alertEl.classList.remove('hidden'); return; }
+      const body = {
+        vm_id: _rbCtx.vm_id,
+        scope: _rbCtx.scope,
+        server_id: _rbCtx.server_id || '',
+        src_datastore: _rbCtx.datastore,
+        clone_name: cloneName,
+        dst_datastore: dstDatastore,
+        // Empty snapshot → backend restores from latest. Otherwise the
+        // backend rolls the cloned dataset back to this exact point in
+        // time before running `incus admin recover`.
+        snapshot_name: _rbCtx.snapshot || '',
+      };
+      const r = await fetch('/api/incus/backups/restore-clone', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.job_id) { alertEl.textContent = d.error || 'Restore failed to start'; alertEl.classList.remove('hidden'); return; }
+      document.getElementById('modal-restore-backup').classList.add('hidden');
+      _bgPollRestoreJob(d.job_id, '🛠 Restoring ' + _rbCtx.vm_id + ' → ' + dstDatastore + ' · ' + cloneName, () => {
+        if (typeof loadLXDInstances === 'function') loadLXDInstances();
+        if (typeof loadAllBackups === 'function') loadAllBackups();
+      });
+    }
+  } catch(e) {
+    alertEl.textContent = String(e); alertEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Restore';
+  }
+}
+function _bgPollRestoreJob(jobId, label, onDone) {
+  const key = 'brj-' + jobId;
+  addActiveJob(key, label);
+  (async function poll() {
+    try {
+      const r = await fetch('/api/incus/restore-jobs/' + encodeURIComponent(jobId) + '/progress');
+      if (!r.ok) { removeActiveJob(key); showToast(label + ' — polling error', 'error'); return; }
+      const d = await r.json();
+      if (d.status === 'done') { removeActiveJob(key); showToast(label + ' — done', 'success'); if (onDone) onDone(); return; }
+      if (d.status === 'error' || d.status === 'canceled') {
+        removeActiveJob(key);
+        if (d.status === 'error') showToast(label + ' failed: ' + (d.error || 'unknown'), 'error');
+        if (onDone) onDone();
+        return;
+      }
+      const lines = d.lines || [];
+      const tail = lines[lines.length-1];
+      if (tail && updateActiveJob) updateActiveJob(key, label + ' — ' + (tail.length > 80 ? tail.slice(0,80)+'…' : tail));
+      setTimeout(poll, 3000);
+    } catch(e) {
+      removeActiveJob(key);
+      showToast(label + ' — ' + String(e), 'error');
+    }
+  })();
+}
+
+// ====== Datastores → Backups page ===========================================
+let _allBackupsCache = [];
+let _expandedBackupKeys = new Set();
+
+async function loadAllBackups() {
+  const tbody = document.getElementById('lxd-backups-tbody');
+  const al = document.getElementById('lxd-backups-alert');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
+  al.classList.add('hidden');
+  try {
+    const r = await fetch('/api/incus/backups');
+    if (!r.ok) throw new Error(await r.text());
+    _allBackupsCache = await r.json() || [];
+    _renderAllBackups();
+  } catch(e) {
+    al.textContent = String(e); al.classList.remove('hidden');
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:32px;">' + esc(String(e)) + '</td></tr>';
+  }
+}
+function _backupRowKey(b) { return (b.scope || 'local') + '::' + (b.server_id || '') + '::' + (b.datastore || '') + '::' + (b.vm_id || ''); }
+function _toggleBackupRow(key) {
+  if (_expandedBackupKeys.has(key)) _expandedBackupKeys.delete(key);
+  else _expandedBackupKeys.add(key);
+  _renderAllBackups();
+}
+function _renderAllBackups() {
+  const tbody = document.getElementById('lxd-backups-tbody');
+  if (!_allBackupsCache.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px;">No backups exist yet. Configure a Backup Schedule on a VM or Container, or click Backup Now.</td></tr>';
+    return;
+  }
+  // Sort: VM-ID then scope (local first) then datastore.
+  const sorted = _allBackupsCache.slice().sort((a,b) =>
+    (a.vm_id||'').localeCompare(b.vm_id||'') || (a.scope||'').localeCompare(b.scope||'') || (a.datastore||'').localeCompare(b.datastore||''));
+  const rows = [];
+  for (const b of sorted) {
+    const key = _backupRowKey(b);
+    const expanded = _expandedBackupKeys.has(key);
+    const chev = expanded ? '▼' : '▶';
+    const typeBadge = (b.type === 'virtual-machine')
+      ? '<span style="background:rgba(88,166,255,0.15);color:#58a6ff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">VM</span>'
+      : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">LXC</span>';
+    const host = (b.scope === 'local') ? '<span style="color:#3fb950;">this host</span>' : esc(b.hostname || '?');
+    const ctx = JSON.stringify({
+      vm_id: b.vm_id, scope: b.scope, server_id: b.server_id || '',
+      hostname: b.hostname || '', datastore: b.datastore,
+    });
+    // Total Size = sum of `used` across all snapshots — the on-disk cost
+    // of this backup on its datastore. Better proxy than counting snaps
+    // alone because it captures how much space the user is actually paying.
+    const totalUsed = (b.snapshots||[]).reduce((acc,s) => acc + (s.used || 0), 0);
+    rows.push(`<tr style="cursor:pointer;" onclick='_toggleBackupRow(${JSON.stringify(key)})'>
+      <td style="text-align:center;color:var(--text-3);">${chev}</td>
+      <td style="font-weight:600;font-family:monospace;">${esc(b.vm_id)}</td>
+      <td>${typeBadge}</td>
+      <td>${host}</td>
+      <td style="font-family:monospace;color:var(--text-2);font-size:12px;">${esc(b.datastore || '—')}</td>
+      <td style="text-align:right;padding-right:14px;color:var(--text-2);">${(b.snapshots||[]).length}</td>
+      <td style="text-align:right;padding-right:14px;color:var(--text-2);font-family:monospace;font-size:12px;">${_v6519_bytes(totalUsed)}</td>
+      <td style="text-align:right;padding-right:14px;white-space:nowrap;" onclick="event.stopPropagation()">
+        <button class="btn btn-ghost btn-sm" onclick='openRestoreBackupModal(${ctx})'>Restore</button>
+        <span style="cursor:pointer;padding:4px 6px;color:var(--text-2);font-size:18px;line-height:1;user-select:none;" title="More actions"
+          onclick='_bkupBurger(event, ${ctx})'>&#x22EE;</span>
+      </td>
+    </tr>`);
+    if (expanded) {
+      const snaps = (b.snapshots || []);
+      if (!snaps.length) {
+        rows.push('<tr><td></td><td colspan="7" style="color:var(--text-3);font-style:italic;padding:6px 0 14px;font-size:12px;">No snapshots in this backup yet.</td></tr>');
+      } else {
+        rows.push('<tr><td></td><td colspan="7" style="padding:0 0 12px;">' +
+          '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+          '<thead><tr style="color:var(--text-3);">' +
+            '<th style="text-align:left;padding:4px 8px;">Snapshot</th>' +
+            '<th style="text-align:left;padding:4px 8px;width:160px;">Created</th>' +
+            '<th style="text-align:right;padding:4px 14px;width:90px;">Size</th>' +
+            '<th style="text-align:right;padding-right:14px;width:140px;">Actions</th>' +
+          '</tr></thead>' +
+          '<tbody>' +
+          snaps.map(s => {
+            const snapCtx = JSON.stringify({
+              vm_id: b.vm_id,
+              scope: b.scope,
+              server_id: b.server_id || '',
+              hostname: b.hostname || '',
+              datastore: b.datastore,
+              snapshot: s.name,
+            });
+            return '<tr>' +
+              '<td style="padding:4px 8px;font-family:monospace;">' + esc(s.name) + '</td>' +
+              '<td style="padding:4px 8px;color:var(--text-2);">' + esc(_v6519_timeAgo(s.created_at)) + '</td>' +
+              '<td style="padding:4px 14px;text-align:right;color:var(--text-2);font-family:monospace;">' + _v6519_bytes(s.used || 0) + '</td>' +
+              '<td style="padding:4px 14px;text-align:right;white-space:nowrap;">' +
+                `<button class="btn btn-ghost btn-sm" onclick='openRestoreBackupModal(${snapCtx})' title="Restore from this specific snapshot" style="padding:2px 10px;font-size:11px;">Restore</button>` +
+                `<span style="cursor:pointer;padding:2px 6px;color:var(--text-2);font-size:16px;line-height:1;user-select:none;" title="More actions" onclick='_bkupBurger(event, ${snapCtx})'>&#x22EE;</span>` +
+              '</td>' +
+            '</tr>';
+          }).join('') +
+          '</tbody></table></td></tr>');
+      }
+    }
+  }
+  tbody.innerHTML = rows.join('');
+}
+
+// Human-friendly byte size. Uses 1024-based units (KiB/MiB/GiB) which
+// match what ZFS reports.
+function _v6519_bytes(n) {
+  if (!n || n < 0) return '—';
+  if (n < 1024) return n + ' B';
+  const units = ['KiB','MiB','GiB','TiB','PiB'];
+  let i = -1; let v = n;
+  do { v = v / 1024; i++; } while (v >= 1024 && i < units.length - 1);
+  return (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + ' ' + units[i];
+}
+
+// Backup row burger menu — currently a single action, "Delete Backup". Same
+// context is passed by the outer-row and inner-snapshot-row variants; when
+// ctx.snapshot is set, the delete targets that snapshot only.
+let _bkupBurgerEl = null;
+function _bkupBurger(e, ctx) {
+  e.stopPropagation();
+  if (typeof ctx === 'string') { try { ctx = JSON.parse(ctx); } catch(_) { ctx = {}; } }
+  if (_bkupBurgerEl) { _bkupBurgerEl.remove(); _bkupBurgerEl = null; }
+  const dd = document.createElement('div');
+  dd.className = 'row-menu-dropdown';
+  const isSnap = !!ctx.snapshot;
+  const label = isSnap ? '🗑 Delete Snapshot' : '🗑 Delete Backup';
+  const btn = document.createElement('button');
+  btn.textContent = label;
+  btn.className = 'danger';
+  btn.addEventListener('click', () => {
+    _closeBkupBurger();
+    _bkupConfirmDelete(ctx);
+  });
+  dd.appendChild(btn);
+  const rect = e.currentTarget.getBoundingClientRect();
+  dd.style.cssText = `position:fixed;top:${rect.bottom+2}px;right:${window.innerWidth-rect.right}px;`;
+  document.body.appendChild(dd);
+  _bkupBurgerEl = dd;
+  setTimeout(() => document.addEventListener('click', _closeBkupBurger, {once:true}), 0);
+}
+function _closeBkupBurger() {
+  if (_bkupBurgerEl) { _bkupBurgerEl.remove(); _bkupBurgerEl = null; }
+}
+
+function _bkupConfirmDelete(ctx) {
+  const where = ctx.scope === 'remote'
+    ? ` on <strong>${esc(ctx.hostname || ctx.server_id || 'remote')}</strong>`
+    : ' on this host';
+  const what = ctx.snapshot
+    ? `snapshot <code style="font-family:monospace;">${esc(ctx.snapshot)}</code> of <code style="font-family:monospace;">${esc(ctx.vm_id)}</code> on <strong>${esc(ctx.datastore)}</strong>${where}`
+    : `<strong>every snapshot</strong> of backup <code style="font-family:monospace;">${esc(ctx.vm_id)}</code> on <strong>${esc(ctx.datastore)}</strong>${where}`;
+  _openDangerConfirm(
+    'Delete backup?',
+    `This will permanently destroy ${what}. This action cannot be undone.`,
+    'Delete',
+    () => _bkupDoDelete(ctx),
+  );
+}
+
+// Generic styled "are you sure?" confirm modal — no browser confirm().
+// Used by the Backups page burger menu's Delete action and reusable for
+// other danger flows.
+function _openDangerConfirm(title, htmlBody, okLabel, onConfirm) {
+  const existing = document.getElementById('znas-danger-confirm');
+  if (existing) existing.remove();
+  const wrap = document.createElement('div');
+  wrap.id = 'znas-danger-confirm';
+  wrap.className = 'modal-backdrop';
+  wrap.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div class="modal" style="max-width:480px;width:96vw;">
+      <div class="modal-header"><h3 style="color:var(--accent-danger);">${esc(title)}</h3></div>
+      <div style="padding:16px 24px;font-size:13px;color:var(--text-2);line-height:1.5;">${htmlBody}</div>
+      <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-ghost" data-cancel>Cancel</button>
+        <button class="btn btn-danger" data-ok>${esc(okLabel || 'Confirm')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const cleanup = () => wrap.remove();
+  wrap.querySelector('[data-cancel]').addEventListener('click', cleanup);
+  wrap.querySelector('[data-ok]').addEventListener('click', () => { cleanup(); if (onConfirm) onConfirm(); });
+  wrap.addEventListener('click', (ev) => { if (ev.target === wrap) cleanup(); });
+}
+
+async function _bkupDoDelete(ctx) {
+  try {
+    const r = await fetch('/api/incus/backups/delete', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        vm_id: ctx.vm_id,
+        scope: ctx.scope,
+        server_id: ctx.server_id || '',
+        datastore: ctx.datastore,
+        snapshot_name: ctx.snapshot || '',
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) { showToast(d.error || 'Delete failed', 'error'); return; }
+    showToast(ctx.snapshot ? 'Snapshot deleted' : 'Backup deleted', 'success');
+    loadAllBackups();
+  } catch(e) {
+    showToast('Error: ' + String(e), 'error');
+  }
 }
 
 // ── CI tab switching ──────────────────────────────────────────────────────────
@@ -34312,6 +35792,9 @@ function _dsLabel(poolName) {
 function _lxdRenderRows(instances) {
   const tbody = document.getElementById('lxd-table-body');
   if (!tbody) return;
+  // v6.5.19: defensive filter — backups (bkup--*) never appear in the main
+  // VMs & Containers table.
+  instances = (instances || []).filter(i => !((i.name || '').startsWith('bkup--')));
   const hasImg = (instances || []).some(i => i.image);
   const imgTh = document.getElementById('lxd-main-th-image');
   if (imgTh) imgTh.style.display = hasImg ? '' : 'none';
@@ -39850,6 +41333,15 @@ async function _softRelayRefresh() {
     if (typeof updateDatasetNavDot    === 'function') updateDatasetNavDot();
     if (typeof updateDiskNavDot       === 'function') updateDiskNavDot();
     if (typeof refreshSnapshotNavDot  === 'function') refreshSnapshotNavDot();
+    // v6.5.19 fix: the Requisites nav dot is server-scoped (sudo access,
+    // package install state, sudoers-hardening diff). In relay mode the
+    // browser stays on Server A's page, so without this call the dot
+    // would keep showing Server A's prerequisite state while the user is
+    // "viewing" Server B — e.g. A's pending hardened-sudoers diff looked
+    // like it belonged to B. checkPrereqsBanner re-fetches /api/prereqs
+    // + /api/sudoers/status (relayed to the new server) and recomputes
+    // _prereqDotReasons against the server actually being viewed.
+    if (typeof checkPrereqsBanner     === 'function') checkPrereqsBanner();
     if (typeof _navUpsRefresh         === 'function') _navUpsRefresh();   // safe no-op when undefined
     if (typeof refreshNetworkingNav   === 'function') refreshNetworkingNav();
     if (typeof refreshDatastoresNav   === 'function') refreshDatastoresNav();
@@ -40315,8 +41807,8 @@ function renderDiskPowerBody(d) {
       </div>
     </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px;">
-      <button class="btn btn-primary" onclick="saveDiskPower()">Save &amp; Apply</button>
-      <button class="btn btn-ghost" onclick="closeDiskPowerModal()">Cancel</button>
+      <button class="btn btn-primary" id="dp-save-btn" onclick="saveDiskPower()">Save &amp; Apply</button>
+      <button class="btn btn-ghost" id="dp-cancel-btn" onclick="closeDiskPowerModal()">Cancel</button>
     </div>`;
 }
 
@@ -40328,6 +41820,31 @@ async function installHdparm() {
     showToast('hdparm installed', 'success');
     openDiskPowerModal();
   } catch(e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+// v6.5.19 — install syncoid (sanoid package) from the Prerequisites page.
+async function installSyncoid() {
+  const btn = document.getElementById('prereq-syncoid-btn');
+  const stat = document.getElementById('prereq-syncoid-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+  if (stat) stat.textContent = 'Installing…';
+  try {
+    const r = await fetch('/api/prerequisites/install-syncoid', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) {
+      showToast(d.error || 'Install failed', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Install syncoid'; }
+      if (stat) stat.textContent = 'Not installed';
+      return;
+    }
+    showToast('syncoid installed — Backups are now available.', 'success');
+    if (stat) { stat.textContent = 'Installed'; stat.style.color = 'var(--accent-2)'; }
+    if (btn) btn.style.display = 'none';
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Install syncoid'; }
+    if (stat) stat.textContent = 'Not installed';
+  }
 }
 
 async function saveDiskPower() {
@@ -40345,6 +41862,25 @@ async function saveDiskPower() {
     write_cache:      writeCache,
     acoustic_level:   isNaN(amVal) ? -1 : amVal,
   };
+
+  // ApplyDiskPowerConfig walks every physical disk and issues several
+  // hdparm calls per drive, so on hosts with many disks the PUT can take
+  // tens of seconds. Mirror the dataset-edit pattern: flip the button to
+  // "Saving…", close the modal immediately, and surface progress as an
+  // active job in the activity bar so the user sees the request is in
+  // flight rather than thinking the button didn't fire.
+  const saveBtn = document.getElementById('dp-save-btn');
+  const cancelBtn = document.getElementById('dp-cancel-btn');
+  if (saveBtn) {
+    saveBtn.textContent = 'Saving…';
+    saveBtn.disabled = true;
+  }
+  if (cancelBtn) cancelBtn.disabled = true;
+
+  const jobId = 'disk-power-save-' + Date.now();
+  addActiveJob(jobId, 'Applying disk power settings…');
+  closeDiskPowerModal();
+
   try {
     const r = await fetch('/api/disks/power', {
       method: 'PUT',
@@ -40354,8 +41890,11 @@ async function saveDiskPower() {
     const d = await r.json();
     if (!r.ok) { showToast(d.error || 'Save failed', 'error'); return; }
     showToast('Disk power settings saved', 'success');
-    closeDiskPowerModal();
-  } catch(e) { showToast('Error: ' + e.message, 'error'); }
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  } finally {
+    removeActiveJob(jobId);
+  }
 }
 
 // ── System Power Management ───────────────────────────────────────────────────

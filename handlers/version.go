@@ -36,6 +36,10 @@ func HandleGetVersion(w http.ResponseWriter, r *http.Request) {
 		"experimental_mode":   version.IsExperimental(),
 		"lxd_available":       system.LXDAvailable(),
 		"lxd_metrics_enabled": lxdMetricsEnabled,
+		// v6.5.19: changed across polls means the server restarted or was
+		// upgraded — frontend shows a "Server Restarted" popup with a
+		// Refresh button.
+		"startup_time_unix":   version.StartedAt.Unix(),
 	})
 }
 

@@ -862,6 +862,10 @@ func HandleInterlinkRemotePools(appCfg *config.AppConfig) http.HandlerFunc {
 		jsonOK(w, system.RemotePoolsResponse{
 			Pools:       rPools,
 			ProcessUser: system.GetProcessUser(),
+			// v6.5.19+: advertise our own IPs so a peer's syncoid can
+			// reach us directly even when the InterLink URL points at
+			// a reverse proxy that doesn't forward SSH.
+			SSHHosts:    system.LocalSSHHosts(),
 		})
 	}
 }

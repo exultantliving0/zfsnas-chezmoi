@@ -231,7 +231,7 @@ func ListLXDNetworks() ([]LXDNetwork, error) {
 }
 
 // osBridgeIPv4 returns the first IPv4 CIDR assigned to an OS bridge interface
-// (e.g. "192.168.2.213/24"), or "" if none is found.
+// (e.g. "192.168.1.20/24"), or "" if none is found.
 func osBridgeIPv4(name string) string {
 	out, err := exec.Command("ip", "-4", "-j", "addr", "show", "dev", name).Output()
 	if err != nil {

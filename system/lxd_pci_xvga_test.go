@@ -107,7 +107,7 @@ func TestPciBoolToken(t *testing.T) {
 // "pci0", "pci1", etc.), the emitter MUST produce the
 // `-set device.dev-incus_<DeviceName>.<prop>=<val>` shape, never a fresh
 // `-device vfio-pci,host=<addr>` line. Production regression on
-// 192.168.2.5 (May 2026, mediaserver iGPU passthrough): the legacy
+// a test host (May 2026, iGPU passthrough): the legacy
 // form added a second `-device vfio-pci` for the host BDF and QEMU
 // failed VM start with "vfio 0000:00:02.0: device is already attached"
 // because Incus' own `[device "dev-incus_pci0"]` had already claimed

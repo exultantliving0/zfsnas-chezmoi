@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -136,7 +137,11 @@ func SendPushSSHKey(remoteURL, sharedSecret, publicKey, tlsFP string) error {
 
 // ── ZFS permissions ───────────────────────────────────────────────────────────
 
-const zfsInterlinkPerms = "snapshot,send,receive,create,mount"
+// v6.5.19: added `hold,release` because syncoid (used for VM backup
+// pull/push) takes a ZFS hold on the snapshot for the duration of the
+// transfer. Without hold permission, "zfs send" reports
+// "cannot hold: permission denied" and the transfer fails immediately.
+const zfsInterlinkPerms = "snapshot,send,receive,create,mount,hold,release"
 
 // GrantLocalZFSAccess grants the required interlink ZFS permissions to the current
 // process user on all local pools. Skipped when running as root (already has full access).
@@ -327,6 +332,57 @@ type RemotePool struct {
 type RemotePoolsResponse struct {
 	Pools       []RemotePool `json:"pools"`
 	ProcessUser string       `json:"process_user"`
+	// SSHHosts (v6.5.19+) — the peer's own non-loopback IP addresses,
+	// most-routable first. The InterLink URL is an HTTPS endpoint that
+	// may sit behind a reverse proxy / load balancer (e.g.
+	// "z1.example.com" → proxy), so it's NOT a reliable SSH transport
+	// for syncoid. The peer reports the addresses ON ITSELF; the caller
+	// SSH-probes each and uses the first that authenticates. Empty on
+	// peers running a pre-v6.5.19 binary — callers fall back to the
+	// URL hostname in that case.
+	SSHHosts []string `json:"ssh_hosts,omitempty"`
+}
+
+// LocalSSHHosts returns this host's non-loopback IPv4 addresses, primary
+// (default-route) address first. Used to populate RemotePoolsResponse so a
+// peer initiating a syncoid transfer can reach us directly even when the
+// InterLink URL points at a reverse proxy.
+func LocalSSHHosts() []string {
+	seen := map[string]bool{}
+	var hosts []string
+	// Primary outbound IP first (the interface that reaches the internet
+	// — usually the LAN address peers can also reach).
+	if c, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
+		if ua, ok := c.LocalAddr().(*net.UDPAddr); ok {
+			ip := ua.IP.String()
+			if ip != "" && !seen[ip] {
+				hosts = append(hosts, ip)
+				seen[ip] = true
+			}
+		}
+		c.Close()
+	}
+	// Then every other non-loopback IPv4 on the box.
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() || ip.To4() == nil {
+				continue
+			}
+			s := ip.String()
+			if !seen[s] {
+				hosts = append(hosts, s)
+				seen[s] = true
+			}
+		}
+	}
+	return hosts
 }
 
 // RemotePoolsHMAC computes the HMAC for a remote-pools request.

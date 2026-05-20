@@ -21,6 +21,7 @@ var experimentalSudoersAliases = map[string]bool{
 	"ZFSNAS_INCUSNET": true,
 	"ZFSNAS_INCUS":    true,
 	"ZFSNAS_VMSETUP":  true,
+	"ZFSNAS_SYNCOID":  true, // v6.5.19 — VM/Container Backup
 }
 
 // SudoersDiff is the result of comparing the installed sudoers file against
@@ -67,6 +68,7 @@ var sudoersSectionInfoMap = map[string]sudoersSectionInfo{
 	"ZFSNAS_INCUSNET":  {Label: "Incus Network Bridges (VLAN interfaces)", Optional: true},
 	"ZFSNAS_INCUS":     {Label: "Incus Compute (Proxmox Import + ISO Management)", Optional: true},
 	"ZFSNAS_VMSETUP":   {Label: "VMs & Containers Feature Setup", Optional: true},
+	"ZFSNAS_SYNCOID":   {Label: "ZFS Replication (syncoid)", Optional: true},
 	"ZFSNAS_APT":       {Label: "OS Updates & Installation"},
 	"ZFSNAS_SECURITY":  {Label: "Sudoers Self-Management"},
 }
@@ -1267,6 +1269,22 @@ Cmnd_Alias ZFSNAS_SYSPOWER = \
     /usr/bin/chmod +x /etc/rc.local, \
     /usr/bin/systemctl enable rc-local, \
     /usr/bin/systemctl start rc-local
+
+# ── ZFS Replication (syncoid) ─────────────────────────────────────────────────
+# since v6.5.19 — VM/Container Backup feature uses syncoid to send ZFS-aware
+#   incremental snapshot streams either locally (cross-pool on the same host)
+#   or to a peer ZNAS over SSH. The handler also runs "incus admin recover"
+#   to register newly received backup datasets. Optional feature gated by the
+#   --experimental flag.
+Cmnd_Alias ZFSNAS_SYNCOID = \
+    /usr/sbin/syncoid *, \
+    /usr/bin/incus admin recover, \
+    /usr/bin/mkdir -p /tmp/znas-bkup-mount-*, \
+    /usr/bin/rmdir /tmp/znas-bkup-mount-*, \
+    /usr/bin/mount -t zfs *, \
+    /usr/bin/umount /tmp/znas-bkup-mount-*, \
+    /usr/bin/cat /tmp/znas-bkup-mount-*, \
+    /usr/bin/tee /tmp/znas-bkup-mount-*
 
 # ── Folder usage scanning ─────────────────────────────────────────────────────
 # since v6.0.0 — Folder TreeMap feature; scans dataset mount points for per-folder sizes

@@ -364,7 +364,7 @@ func stripBlockBetweenMarkers(s, start, end string) string {
 //     currently resolves DNS, including minimal Debian/Ubuntu installs
 //     that ship without systemd-resolved at all (where `resolvectl`
 //     itself is "command not found"). Confirmed root cause of a real
-//     production failure on 192.168.2.216 in v6.5.6 — without this
+//     production failure in v6.5.6 — without this
 //     fallback the post-migration `/etc/network/interfaces` had no
 //     `dns-nameservers` line and `/etc/resolv.conf` lost its servers.
 //  3. `/etc/netplan/*.yaml` `nameservers.addresses` — last-resort

@@ -165,6 +165,13 @@ const (
 	ActionISOFetch              = "iso_fetch"                // v6.5.8 — ISO downloaded from URL into <pool>/.isos/ via the server-side fetch job
 	ActionISODelete             = "iso_delete"               // v6.5.8 — ISO removed from <pool>/.isos/
 
+	// v6.5.19 — VM/Container backup feature.
+	ActionLXDScheduledSnapshot  = "lxd_scheduled_snapshot"   // scheduler fired a per-instance snapshot
+	ActionLXDBackup             = "lxd_backup"               // backup run (scheduled or "Backup Now")
+	ActionLXDBackupSchedule     = "lxd_backup_schedule"      // user changed a backup policy
+	ActionLXDBackupRestore      = "lxd_backup_restore"       // instant restore (rename bkup--<vm> in place)
+	ActionLXDBackupCloneRestore = "lxd_backup_clone_restore" // clone-restore via syncoid
+
 	// Back-compat Go aliases. Old callers compile unchanged. ZNAS now writes
 	// the new strings, but these aliases let imports that still say e.g.
 	// `audit.ActionLXDStart` resolve to the new value seamlessly. Removed in

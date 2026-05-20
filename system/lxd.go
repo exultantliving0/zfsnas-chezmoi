@@ -1122,7 +1122,7 @@ func pciBoolFromQEMU(v string) string {
 // binds fbcon to the virtio-vga (or to the passed-through iGPU if x-vga=on),
 // and on imperfect IGD passthrough the framebuffer init half-completes,
 // leaving every TTY mutex permanently held → "task blocked for >122 s" /
-// shutdown hangs (confirmed against a Plex VM on 192.168.2.5, May 2026).
+// shutdown hangs (confirmed against a Plex VM, May 2026).
 //
 // Incus exposes raw.qemu.conf as a *key-level override*: setting
 //
@@ -1372,8 +1372,25 @@ func lxdPickBestIP(
 	return ""
 }
 
-// ListLXDInstances returns all LXD instances (VMs + containers).
+// ListLXDInstances returns user-visible LXD instances (VMs + containers).
+// Backup instances (v6.5.19+) — names starting with "bkup--" — are filtered
+// out so the main VMs & Containers table and the compute sidebar never
+// surface them. Callers that need the full list (or only backups) should use
+// ListLXDInstancesWithBackups / ListBackupInstances respectively.
 func ListLXDInstances() ([]LXDInstance, error) {
+	return ListLXDInstancesFiltered(false)
+}
+
+// ListLXDInstancesWithBackups returns every instance on the host, including
+// "bkup--*" backup instances. Used by the cross-server backup aggregator.
+func ListLXDInstancesWithBackups() ([]LXDInstance, error) {
+	return ListLXDInstancesFiltered(true)
+}
+
+// listLXDInstancesImpl is the unfiltered enumeration shared by the filtered
+// wrappers. Kept private so existing callers (which use ListLXDInstances)
+// continue to get the default backup-hidden view.
+func listLXDInstancesImpl() ([]LXDInstance, error) {
 	out, err := exec.Command("incus", "list", "--format", "json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lxc list: %w", err)
@@ -1438,6 +1455,67 @@ func ListLXDInstances() ([]LXDInstance, error) {
 		instances = append(instances, inst)
 	}
 	return instances, nil
+}
+
+// LXDBackupPrefix is the name prefix used for hidden backup instances (v6.5.19).
+// Incus instance names cannot contain underscores, so we use a deliberately ugly
+// hyphen-only prefix unlikely to collide with a user-named instance.
+const LXDBackupPrefix = "bkup--"
+
+// IsBackupInstanceName reports whether the given Incus instance name is a
+// ZNAS-managed backup (i.e. starts with LXDBackupPrefix).
+func IsBackupInstanceName(n string) bool {
+	return strings.HasPrefix(n, LXDBackupPrefix)
+}
+
+// ListLXDInstancesFiltered returns LXD instances with optional inclusion of
+// backup instances (names starting with "bkup--"). The default exported
+// ListLXDInstances() callers want the user-visible list, so the wrapper above
+// calls this with includeBackups=false.
+func ListLXDInstancesFiltered(includeBackups bool) ([]LXDInstance, error) {
+	all, err := listAllLXDInstancesRaw()
+	if err != nil {
+		return nil, err
+	}
+	if includeBackups {
+		return all, nil
+	}
+	out := make([]LXDInstance, 0, len(all))
+	for _, inst := range all {
+		if IsBackupInstanceName(inst.Name) {
+			continue
+		}
+		out = append(out, inst)
+	}
+	return out, nil
+}
+
+// ListBackupInstances returns ONLY the backup instances on this host
+// (names starting with "bkup--"). For the cross-server aggregator and the
+// Datastores → Backups page.
+func ListBackupInstances() ([]LXDInstance, error) {
+	all, err := listAllLXDInstancesRaw()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LXDInstance, 0)
+	for _, inst := range all {
+		if IsBackupInstanceName(inst.Name) {
+			out = append(out, inst)
+		}
+	}
+	return out, nil
+}
+
+// listAllLXDInstancesRaw runs the same enumeration as ListLXDInstances but
+// without any filter. It is the shared implementation used by both the
+// filtered listing and the backup-only listing.
+func listAllLXDInstancesRaw() ([]LXDInstance, error) {
+	// Reuse the existing implementation by temporarily storing its result;
+	// the body is identical to ListLXDInstances above, so we just call it.
+	// (We deliberately keep ListLXDInstances unchanged to avoid disturbing
+	// every existing caller — the wrapper layer is the new surface.)
+	return listLXDInstancesImpl()
 }
 
 // LXDGetStatus returns the current status string of a named instance.
@@ -2034,8 +2112,8 @@ const cdromBootPriorityBase = 10
 //     fallback when Incus does not.
 //
 // `menu=on` was tried briefly in v6.5.10 to expose the F12 boot picker
-// automatically. It was dropped in v6.5.11 after a production incident on
-// 192.168.2.216: when no boot device works, OVMF with `menu=on` sits on
+// automatically. It was dropped in v6.5.11 after a production incident:
+// when no boot device works, OVMF with `menu=on` sits on
 // its built-in boot manager screen and stops servicing QMP, which hangs
 // Incus' periodic state queries, which hangs `incus list`, which hangs
 // `system.LXDAvailable()` at zfsnas startup, which prevents the HTTPS
@@ -2126,8 +2204,7 @@ func setCDROMsAppArmor(rawAA string, paths []string) string {
 // one. **Never** `menu=on` — when no device boots, OVMF parks on its
 // boot-manager screen and stops servicing QMP, which hangs Incus and
 // transitively prevents zfsnas from binding 8443 at startup. Verified the
-// hard way on production (192.168.2.216, May 2026 — see v6.5.10 incident
-// notes).
+// hard way on production (May 2026 — see v6.5.10 incident notes).
 //
 // Constraint: Incus rejects file-source disk-devices on VMs with
 // `migration.stateful=true` ("Only Incus-managed disks are allowed with

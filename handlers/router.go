@@ -919,6 +919,57 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/lxd/push-interlink/cancel/{id}",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDPushVMCancel)))).Methods("POST")
 
+	// ── v6.5.19 — VM/Container snapshot & backup feature ────────────────────
+	// Per-instance snapshot schedule.
+	r.Handle("/api/lxd/instances/{name}/snapshot-schedule",
+		RequireAuth(http.HandlerFunc(HandleGetLXDSnapPolicy(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/snapshot-schedule",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandlePutLXDSnapPolicy(appCfg))))).Methods("PUT")
+	r.Handle("/api/lxd/instances/{name}/snapshot-schedule",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleDeleteLXDSnapPolicy(appCfg))))).Methods("DELETE")
+	// Per-instance backups: list, schedule, now, progress.
+	r.Handle("/api/lxd/instances/{name}/backups",
+		RequireAuth(http.HandlerFunc(HandleListInstanceBackups))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/backups-aggregate",
+		RequireAuth(http.HandlerFunc(HandleListAggregatedBackupsForVM(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/backup-schedule",
+		RequireAuth(http.HandlerFunc(HandleGetLXDBackupPolicy(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/backup-schedule",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandlePutLXDBackupPolicy(appCfg))))).Methods("PUT")
+	r.Handle("/api/lxd/instances/{name}/backup-schedule",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleDeleteLXDBackupPolicy(appCfg))))).Methods("DELETE")
+	r.Handle("/api/lxd/instances/{name}/backup-now",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleLXDBackupNow(appCfg))))).Methods("POST")
+	r.Handle("/api/lxd/backup-jobs/{job_id}/progress",
+		RequireAuth(http.HandlerFunc(HandleLXDBackupProgress))).Methods("GET")
+	r.Handle("/api/lxd/backup-jobs/{job_id}/cancel",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleLXDBackupCancel)))).Methods("POST")
+	// Cross-server Backups page (Datastores → Backups).
+	r.Handle("/api/lxd/backups",
+		RequireAuth(http.HandlerFunc(HandleListAllBackups(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/backup-datastores",
+		RequireAuth(http.HandlerFunc(HandleListBackupDatastores(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/backups/restore-instant",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleInstantRestoreBackup)))).Methods("POST")
+	r.Handle("/api/lxd/backups/delete",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleDeleteBackup(appCfg))))).Methods("POST")
+	r.Handle("/api/lxd/backups/restore-clone",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleCloneRestoreBackup(appCfg))))).Methods("POST")
+	r.Handle("/api/lxd/restore-jobs/{job_id}/progress",
+		RequireAuth(http.HandlerFunc(HandleRestoreCloneProgress))).Methods("GET")
+	r.Handle("/api/lxd/restore-jobs/{job_id}/cancel",
+		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleRestoreCloneCancel)))).Methods("POST")
+	// HMAC peer endpoints (no session auth — authenticated by request HMAC).
+	r.HandleFunc("/api/lxd/interlink-pool-source", HandleInterlinkPoolSource(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/interlink-backups", HandleInterlinkListLocalBackups(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/interlink-backup-delete", HandleInterlinkBackupDelete(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/interlink-zfs-pools", HandleInterlinkZFSPools(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/interlink-prep-workload", HandleInterlinkPrepWorkload(appCfg)).Methods("POST")
+	r.HandleFunc("/api/lxd/interlink-prep-chain", HandleInterlinkPrepChain(appCfg)).Methods("POST")
+	// Syncoid install entry (admin-only; reused by Prerequisites page).
+	r.Handle("/api/prerequisites/install-syncoid",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallSyncoid)))).Methods("POST")
+
 	// --- Homepage widget API keys (admin only) ---
 	r.Handle("/api/settings/api-keys",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleListAPIKeys)))).Methods("GET")

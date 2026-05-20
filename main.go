@@ -223,6 +223,10 @@ func main() {
 	// ===== Snapshot scheduler =====
 	handlers.StartScheduler(appCfg)
 
+	// ===== LXD snapshot + backup schedulers (v6.5.19+) =====
+	handlers.StartLXDSnapshotScheduler(appCfg)
+	handlers.StartLXDBackupScheduler(appCfg)
+
 	// ===== Scrub scheduler =====
 	handlers.StartScrubScheduler(appCfg)
 

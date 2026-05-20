@@ -35,10 +35,10 @@ import (
 //     **deliberately omitted**: 7.0 has a regression in the per-port
 //     `vlan_filtering` path that drops VID 1 (the default PVID, i.e.
 //     untagged management traffic) the moment any explicit VID is added
-//     to the slaved port — confirmed live on 192.168.2.5
+//     to the slaved port — confirmed live on a test host
 //     (Ubuntu 26.04 + kernel 7.0.0-15-generic, May 2026): the SSH
-//     session dropped instantly when we ran `bridge vlan add dev
-//     enp2s0f0 vid 2-4094` after enabling `vlan_filtering=1`.
+//     session dropped instantly when running `bridge vlan add dev
+//     <nic> vid 2-4094` after enabling `vlan_filtering=1`.
 //
 // VLAN tagging on kernel ≥ 7.0 is still available through ZNAS'
 // "Compute Networking" mode, which uses 8021q sub-interfaces (e.g.
@@ -805,8 +805,8 @@ projects:
 	// Stream stderr line-by-line into the activity log instead of using
 	// CombinedOutput. The buffered form held back any progress incus
 	// emits so the UI couldn't tell apart "still working" from "stuck"
-	// — a real production failure on 192.168.2.5 (Ubuntu 26.04, fresh
-	// install, May 2026) lost SSH while this call was outstanding and
+	// — a real production failure (Ubuntu 26.04, fresh install,
+	// May 2026) lost SSH while this call was outstanding and
 	// the activity panel had no clue why.
 	stderrPipe, perr := cmd.StderrPipe()
 	if perr != nil {

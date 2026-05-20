@@ -176,6 +176,8 @@ var requiredSudoChecks = []sudoCheck{
 	// ── Disk Power Management (hdparm) — only checked when hdparm is installed
 	{Binary: "hdparm", Match: "*", Name: "hdparm *", IfBinary: "hdparm"},
 	{Binary: "tee", Match: "/etc/hdparm.conf", Name: "tee /etc/hdparm.conf", IfBinary: "hdparm"},
+	// ── ZFS Replication (syncoid) — only checked when syncoid is installed (v6.5.19+)
+	{Binary: "syncoid", Match: "*", Name: "syncoid *", IfBinary: "syncoid"},
 	// ── System/Platform Power Management ─────────────────────────────────────
 	{Binary: "tee", Match: "/etc/rc.local", Name: "tee /etc/rc.local"},
 	{Binary: "chmod", Match: "+x /etc/rc.local", Name: "chmod +x /etc/rc.local"},

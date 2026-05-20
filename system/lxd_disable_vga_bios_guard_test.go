@@ -7,7 +7,7 @@ import (
 
 // TestLXDSetConfigRejectsDisableVGAOnBIOS — confirms LXDSetConfig refuses
 // disable_virtual_vga=true when Firmware=="bios". Empirical finding from
-// 192.168.2.5 (Z370 + UHD 630, Incus 6.0.5, QEMU 10.x, May 2026): the
+// a test host (Z370 + UHD 630, Incus 6.0.5, QEMU 10.x, May 2026): the
 // guest hangs forever in SeaBIOS during display init because SeaBIOS
 // writes boot output only to VGA and Intel iGPUs have no standalone VBIOS
 // option ROM. Even the full Q35 IGD recipe (igd-passthru=on, iGPU at

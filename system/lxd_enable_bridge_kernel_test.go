@@ -9,7 +9,7 @@ import (
 // version ZNAS shipped on before May 2026. Must include `hwaddress ether`
 // for MAC pinning and `bridge-vlan-aware yes` + `bridge-vids 2-4094` for
 // per-port VLAN filtering. The combination has worked since the migration
-// landed in v6.5.6 and is verified on 192.168.2.216 (Debian 13 / kernel
+// landed in v6.5.6 and is verified on a Debian 13 test host (kernel
 // 6.12).
 func TestBridgeStanzaTailKernel6(t *testing.T) {
 	c := bridgeCandidate{NIC: "enp2s0f0", MAC: "f4:e9:d4:99:41:a0", Bridge: "vmbr0"}
@@ -33,7 +33,7 @@ func TestBridgeStanzaTailKernel6(t *testing.T) {
 }
 
 // TestBridgeStanzaTailKernel7 — production-incident regression test for
-// 192.168.2.5 (Ubuntu 26.04 / kernel 7.0.0-15-generic, May 2026).
+// an Ubuntu 26.04 test host (kernel 7.0.0-15-generic, May 2026).
 // Three things MUST be true on this kernel:
 //
 //   - No `hwaddress ether` directive (kernel rejects it with EADDRINUSE
