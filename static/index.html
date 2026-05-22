@@ -14074,7 +14074,10 @@ async function loadAudit() {
   // BEFORE this sweep — once _csInit is set, options can't be retrofitted.
   // The skip list below mirrors those exceptions so the sweep doesn't race
   // ahead and lock in default options for them.
-  var _csOptedOut = { 'settings-timezone': true };
+  // Selects whose explicit initCustomSelect(...) sets non-default options
+  // ({searchable:true}). They must be left for that call — if the sweep
+  // wraps them first they get locked into the plain, non-searchable form.
+  var _csOptedOut = { 'settings-timezone': true, 'lxd-vm-image': true, 'lxd-ct-image': true };
   window.initAllCustomSelects = function(root) {
     var scope = root || document;
     var nodes = scope.querySelectorAll('select[id]');
@@ -35585,9 +35588,16 @@ async function loadComputeInstanceDetail(name, type) {
     html += _ciRow(_idLabel, `<span style="font-family:monospace;color:var(--text-2);">${esc(name)}</span>`);
     html += _ciRow('CPU Limit',    cfg.cpu_limit    ? esc(cfg.cpu_limit)    : '<span style="color:var(--text-3);">Unlimited</span>');
     html += _ciRow('Memory Limit', cfg.memory_limit ? esc(fmtIncusMemory(cfg.memory_limit)) : '<span style="color:var(--text-3);">Unlimited</span>');
-    html += _ciRow('Autostart',    cfg.autostart
+    let _autostartVal = cfg.autostart
       ? '<span style="color:#3fb950;font-weight:600;">Enabled</span>'
-      : '<span style="color:var(--text-3);">Disabled</span>');
+      : '<span style="color:var(--text-3);">Disabled</span>';
+    // "AutoRestart" tag when Force running is on — ZNAS brings the instance
+    // back up automatically after an unexpected stop.
+    if (cfg.force_running) {
+      _autostartVal += ' <span title="Force running — ZNAS automatically restarts this instance if it stops unexpectedly."'
+        + ' style="background:#8b5cf6;color:#fff;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;letter-spacing:.03em;margin-left:8px;white-space:nowrap;">↻ AutoRestart</span>';
+    }
+    html += _ciRow('Autostart', _autostartVal);
 
     if (cfg.nics && cfg.nics.length > 0) {
       html += `<div style="margin-top:14px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;">Network</div>`;
@@ -35602,15 +35612,27 @@ async function loadComputeInstanceDetail(name, type) {
       });
     }
 
-    if (cfg.disks && cfg.disks.length > 0) {
+    const _hasDisks  = cfg.disks && cfg.disks.length > 0;
+    const _hasShares = cfg.bind_mounts && cfg.bind_mounts.length > 0;
+    if (_hasDisks || _hasShares) {
       html += `<div style="margin-top:14px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;">Storage</div>`;
-      cfg.disks.forEach((d) => {
+      if (_hasDisks) cfg.disks.forEach((d) => {
         const label = d.is_root ? 'Root Disk' : esc(d.name);
         let val = d.pool ? `<span style="font-family:monospace;">${esc(d.pool)}</span>` : '';
         if (d.size) val += ` <span style="color:var(--text-3);">${esc(d.size)}</span>`;
         if (!val) val = '<span style="color:var(--text-3);">—</span>';
         html += _ciRow(label, val);
       });
+      // VirtIO-FS shares (VM) / bind mounts (container): show the host→guest
+      // directory mapping and the read-only flag.
+      if (_hasShares) {
+        const _shareLabel = type === 'virtual-machine' ? 'VirtIO-FS' : 'Bind Mount';
+        cfg.bind_mounts.forEach((b) => {
+          let val = `<span style="font-family:monospace;font-size:12px;color:var(--text-2);">${esc(b.source || '')} → ${esc(b.path || '')}</span>`;
+          if (b.readonly) val += ` <span style="background:rgba(255,159,10,0.15);color:#ff9f0a;border-radius:3px;padding:1px 5px;font-size:11px;">read-only</span>`;
+          html += _ciRow(_shareLabel, val);
+        });
+      }
     }
     hwEl.innerHTML = html || '<div style="color:var(--text-3);font-size:13px;">No configuration available.</div>';
     // Refresh page title with description from config (authoritative source).
