@@ -85,6 +85,17 @@ func HandleListInstances(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Standard users with an instance-visibility regex see only the
+	// VMs/containers whose ID matches it.
+	if p := standardPermsForSession(r); p != nil {
+		visible := make([]system.LXDInstance, 0, len(instances))
+		for _, inst := range instances {
+			if p.InstanceVisible(inst.Name) {
+				visible = append(visible, inst)
+			}
+		}
+		instances = visible
+	}
 	jsonOK(w, instances)
 }
 

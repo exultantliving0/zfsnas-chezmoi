@@ -1753,8 +1753,9 @@
                 <button type="button" class="btn btn-ghost btn-sm" onclick="_editAddHWToggle(event)">+ Add Hardware ▾</button>
                 <div id="lxd-edit-addhw-menu" class="row-menu-dropdown" style="display:none;position:absolute;right:0;top:calc(100% + 4px);min-width:200px;z-index:300;">
                   <button type="button" onclick="_editAddHWMenu('nic')">🌐 Network Adapter</button>
-                  <button type="button" onclick="_editAddHWMenu('disk')">💾 Hard Disk</button>
+                  <button type="button" id="lxd-edit-addhw-disk" onclick="_editAddHWMenu('disk')">💾 Hard Disk</button>
                   <button type="button" id="lxd-edit-addhw-existingdisk" onclick="_editAddHWMenu('existingdisk')">🗄 Existing Hard Disk</button>
+                  <button type="button" id="lxd-edit-addhw-bindmount" onclick="_editAddHWMenu('bindmount')" style="display:none;">📁 Bind Mount (dangerous)</button>
                   <button type="button" id="lxd-edit-addhw-cdrom" onclick="_editAddHWMenu('cdrom')" style="display:none;">💿 CD/DVD Drive</button>
                   <button type="button" id="lxd-edit-addhw-usb" onclick="_editAddHWMenu('usb')" style="display:none;">🔌 Host USB Device</button>
                   <button type="button" id="lxd-edit-addhw-pci" onclick="_editAddHWMenu('pci')" style="display:none;">🖥 PCI Device</button>
@@ -2161,6 +2162,24 @@
               </div>
             </div>
 
+            <!-- Container: Bind Mounts / VM: VirtIO-FS -->
+            <div id="lxd-edit-bindmount-section" style="display:none;">
+              <div class="vm-hw-row" id="edithw-bindmount">
+                <div class="vm-hw-head" onclick="_vmhwToggle('edithw-bindmount')">
+                  <span class="vm-hw-chevron">▶</span>
+                  <span class="vm-hw-title" id="edithw-bindmount-title">Bind Mounts</span>
+                  <i class="info-tip tip-down" id="edithw-bindmount-tip" onclick="event.stopPropagation()" data-tip="Shares a host directory into this instance."></i>
+                  <span class="vm-hw-summary" id="edithw-bindmount-summary">—</span>
+                </div>
+                <div class="vm-hw-body" style="display:none;">
+                  <div id="edithw-bindmount-hint" style="font-size:11px;color:var(--text-3);margin-bottom:8px;line-height:1.5;">
+                    ⚠ A bind mount exposes a host directory directly to the container. Any host directory can be shared — <code>/mnt</code> is just a suggested default. Changes apply on Save.
+                  </div>
+                  <div id="lxd-edit-bind-mounts"></div>
+                </div>
+              </div>
+            </div>
+
             <!-- Container Features (hidden for VMs) -->
             <div id="lxd-edit-features-section" style="display:none;">
               <details style="margin-top:10px;">
@@ -2291,6 +2310,7 @@
                 <div id="lxd-vm-adddev-menu" class="row-menu-dropdown hidden" style="position:absolute;right:0;top:calc(100% + 4px);min-width:200px;z-index:300;">
                   <button type="button" onclick="_vmAddDevice('disk')">💾 Hard Disk</button>
                   <button type="button" onclick="_vmAddDevice('existingdisk')">🗄 Existing Hard Disk</button>
+                  <button type="button" onclick="_vmAddDevice('virtiofs')">📁 VirtIO-FS</button>
                   <button type="button" onclick="_vmAddDevice('cdrom')">💿 CD/DVD Drive</button>
                   <button type="button" onclick="_vmAddDevice('nic')">🌐 Network Adapter</button>
                   <button type="button" onclick="_vmAddDevice('usb')">🔌 Host USB Device</button>
@@ -2629,6 +2649,7 @@
               <!-- Extra devices rendered here (extra disks, extra NICs, USB, PCI) -->
               <div id="lxd-vm-extra-disks"></div>
               <div id="lxd-vm-existing-disks"></div>
+              <div id="lxd-vm-virtiofs"></div>
               <div id="lxd-vm-nics"></div>
               <div id="lxd-vm-usb-list"></div>
               <div id="lxd-vm-pci-list"></div>
@@ -2707,8 +2728,9 @@
                 <button type="button" class="btn btn-ghost btn-sm" onclick="_ctAddHWToggle(event)">+ Add Hardware ▾</button>
                 <div id="lxd-ct-addhw-menu" class="row-menu-dropdown" style="display:none;position:absolute;right:0;top:calc(100% + 4px);min-width:200px;z-index:300;">
                   <button type="button" onclick="_ctAddHW('nic')">🌐 Network Adapter</button>
-                  <button type="button" onclick="_ctAddHW('disk')">💾 Hard Disk</button>
+                  <button type="button" onclick="_ctAddHW('disk')">💾 Mount Point</button>
                   <button type="button" onclick="_ctAddHW('existingdisk')">🗄 Existing Hard Disk</button>
+                  <button type="button" onclick="_ctAddHW('bindmount')">📁 Bind Mount (dangerous)</button>
                   <button type="button" onclick="_ctAddHW('device')">🔌 Passthrough Device</button>
                 </div>
               </div>
@@ -2871,6 +2893,21 @@
                 <div class="vm-hw-body" style="display:none;">
                   <div id="lxd-ct-extra-disks"></div>
                   <div id="lxd-ct-existing-disks"></div>
+                </div>
+              </div>
+
+              <!-- Bind Mounts -->
+              <div class="vm-hw-row" id="cthw-bind-mounts" style="display:none;">
+                <div class="vm-hw-head" onclick="_vmhwToggle('cthw-bind-mounts')">
+                  <span class="vm-hw-chevron">▶</span>
+                  <span class="vm-hw-title">Bind Mounts</span>
+                  <span class="vm-hw-summary" id="cthw-bind-mounts-summary">0 mounts</span>
+                </div>
+                <div class="vm-hw-body" style="display:none;">
+                  <div style="font-size:11px;color:var(--text-3);margin-bottom:8px;line-height:1.5;">
+                    ⚠ A bind mount exposes a host directory directly to the container. Any host directory can be shared — <code>/mnt</code> is just a suggested default.
+                  </div>
+                  <div id="lxd-ct-bind-mounts"></div>
                 </div>
               </div>
 
@@ -4780,8 +4817,15 @@ Select the Console tab to load.</pre>
           <!-- Port -->
           <div class="form-group">
             <label>Server Port</label>
-            <input type="number" id="settings-port" min="1025" max="65535" value="8443" oninput="checkPortChanged()">
-            <div style="margin-top:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+              <input type="number" id="settings-port" min="1025" max="65535" value="8443" style="width:130px;" oninput="checkPortChanged()">
+              <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px;font-weight:400;margin:0;">
+                <input type="checkbox" id="settings-bind-443" onchange="checkPortChanged()" style="width:15px;height:15px;accent-color:var(--accent-2);">
+                Also bind port 443
+                <i class="info-tip tip-down" data-tip="When enabled, the portal also listens on the standard HTTPS port 443 — so it can be reached at https://your-server/ with no port number, in addition to the port set on the left.&#10;&#10;Port 443 is privileged (below 1024). Rather than running the portal as root, ZNAS grants its service account just the CAP_NET_BIND_SERVICE capability — the single permission needed to bind a low port — via a systemd drop-in. Nothing else gains elevated rights.&#10;&#10;A quick portal restart is required to apply this."></i>
+              </label>
+            </div>
+            <div style="margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
               <span class="text-3 text-sm">A quick Portal restart is required to apply the new port.</span>
               <button id="btn-restart-for-port" class="btn btn-ghost btn-sm hidden" style="padding:2px 10px;font-size:12px;" onclick="saveAndRestartPortal()">Save and Restart Now</button>
             </div>
@@ -7002,8 +7046,14 @@ Select the Console tab to load.</pre>
       </div>
       <!-- Standard user permissions panel — shown only when role = standard -->
       <div id="new-standard-perms" style="display:none;margin-bottom:16px;padding:14px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border);">
-        <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-2);">Capabilities</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+        <!-- Tab bar — shown only when virtualization is enabled -->
+        <div id="np-perm-tabbar" style="display:none;gap:4px;border-bottom:1px solid var(--border);margin-bottom:12px;">
+          <button type="button" id="np-tab-storage" onclick="_npPermTab('storage')" style="background:none;border:none;border-bottom:2px solid var(--accent);cursor:pointer;font-size:13px;font-weight:700;color:var(--text);padding:6px 10px;">Storage/System</button>
+          <button type="button" id="np-tab-virt" onclick="_npPermTab('virt')" style="background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;font-size:13px;font-weight:500;color:var(--text-3);padding:6px 10px;">Virtualization</button>
+        </div>
+        <!-- Plain title — shown only when virtualization is disabled -->
+        <div id="np-perm-title" style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-2);">Capabilities</div>
+        <div id="np-perm-pane-storage" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-terminal"            style="accent-color:var(--accent-2);"> Terminal</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-review-sudoers"      style="accent-color:var(--accent-2);"> Review Sudoers</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-browse-files"         style="accent-color:var(--accent-2);"> Browse Files</label>
@@ -7015,6 +7065,24 @@ Select the Console tab to load.</pre>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-snapshots"     style="accent-color:var(--accent-2);"> Snapshots</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-edit-settings"        style="accent-color:var(--accent-2);"> Edit Settings</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-interlink"     style="accent-color:var(--accent-2);"> Manage Interlink</label>
+        </div>
+        <div id="np-perm-pane-virt" style="display:none;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-view-virtualization"     style="accent-color:var(--accent-2);"> View VMs &amp; Containers</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-view-networking"         style="accent-color:var(--accent-2);"> View Networking</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-create-vm"               style="accent-color:var(--accent-2);"> Create VMs</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-create-container"        style="accent-color:var(--accent-2);"> Create Containers</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-edit-instances"          style="accent-color:var(--accent-2);"> Edit Instances</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-control-instances"       style="accent-color:var(--accent-2);"> Start / Stop / Console</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-delete-instances"        style="accent-color:var(--accent-2);"> Delete Instances</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-instance-backups" style="accent-color:var(--accent-2);"> Backups &amp; Snapshots</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="np-manage-networking"       style="accent-color:var(--accent-2);"> Manage Networking</label>
+          </div>
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+            <label style="font-size:12px;font-weight:600;color:var(--text-2);display:block;margin-bottom:4px;">Visible VMs / Containers <span style="font-weight:400;color:var(--text-3);">(regex on instance ID)</span></label>
+            <input type="text" id="np-instance-visibility-regex" placeholder="blank = all visible — e.g. ^(web|db)-" style="width:100%;font-family:monospace;font-size:12px;">
+            <div style="font-size:11px;color:var(--text-3);margin-top:4px;line-height:1.5;">Only VMs/containers whose ID matches this regular expression are shown to this user. Leave blank to allow all.</div>
+          </div>
         </div>
       </div>
       <div id="new-password-wrap" class="form-group">
@@ -7188,8 +7256,12 @@ Select the Console tab to load.</pre>
       </div>
       <!-- Standard user permissions panel — shown only when role = standard -->
       <div id="eu-standard-perms" style="display:none;margin-bottom:16px;padding:14px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border);">
-        <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-2);">Capabilities</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+        <div id="ep-perm-tabbar" style="display:none;gap:4px;border-bottom:1px solid var(--border);margin-bottom:12px;">
+          <button type="button" id="ep-tab-storage" onclick="_epPermTab('storage')" style="background:none;border:none;border-bottom:2px solid var(--accent);cursor:pointer;font-size:13px;font-weight:700;color:var(--text);padding:6px 10px;">Storage/System</button>
+          <button type="button" id="ep-tab-virt" onclick="_epPermTab('virt')" style="background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;font-size:13px;font-weight:500;color:var(--text-3);padding:6px 10px;">Virtualization</button>
+        </div>
+        <div id="ep-perm-title" style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-2);">Capabilities</div>
+        <div id="ep-perm-pane-storage" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-terminal"            style="accent-color:var(--accent-2);"> Terminal</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-review-sudoers"      style="accent-color:var(--accent-2);"> Review Sudoers</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-browse-files"         style="accent-color:var(--accent-2);"> Browse Files</label>
@@ -7201,6 +7273,24 @@ Select the Console tab to load.</pre>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-snapshots"     style="accent-color:var(--accent-2);"> Snapshots</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-edit-settings"        style="accent-color:var(--accent-2);"> Edit Settings</label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-interlink"     style="accent-color:var(--accent-2);"> Manage Interlink</label>
+        </div>
+        <div id="ep-perm-pane-virt" style="display:none;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-view-virtualization"     style="accent-color:var(--accent-2);"> View VMs &amp; Containers</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-view-networking"         style="accent-color:var(--accent-2);"> View Networking</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-create-vm"               style="accent-color:var(--accent-2);"> Create VMs</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-create-container"        style="accent-color:var(--accent-2);"> Create Containers</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-edit-instances"          style="accent-color:var(--accent-2);"> Edit Instances</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-control-instances"       style="accent-color:var(--accent-2);"> Start / Stop / Console</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-delete-instances"        style="accent-color:var(--accent-2);"> Delete Instances</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-instance-backups" style="accent-color:var(--accent-2);"> Backups &amp; Snapshots</label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;"><input type="checkbox" id="ep-manage-networking"       style="accent-color:var(--accent-2);"> Manage Networking</label>
+          </div>
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+            <label style="font-size:12px;font-weight:600;color:var(--text-2);display:block;margin-bottom:4px;">Visible VMs / Containers <span style="font-weight:400;color:var(--text-3);">(regex on instance ID)</span></label>
+            <input type="text" id="ep-instance-visibility-regex" placeholder="blank = all visible — e.g. ^(web|db)-" style="width:100%;font-family:monospace;font-size:12px;">
+            <div style="font-size:11px;color:var(--text-3);margin-top:4px;line-height:1.5;">Only VMs/containers whose ID matches this regular expression are shown to this user. Leave blank to allow all.</div>
+          </div>
         </div>
       </div>
       <div id="eu-password-wrap" class="form-group" style="margin-bottom:0;">
@@ -10323,7 +10413,7 @@ function _showServerRestartedPopup() {
     <p style="font-size:13px;color:var(--text-2);line-height:1.6;margin:0 0 20px;">
       The ZNAS server was restarted or upgraded. Refresh the page to load the latest UI and reconnect.
     </p>
-    <button onclick="window.location.reload()"
+    <button onclick="_serverRestartRefresh()"
       style="width:100%;padding:10px;background:#58a6ff;color:#fff;font-weight:700;
              border:none;border-radius:var(--radius-sm);font-size:14px;cursor:pointer;">
       Refresh
@@ -10351,15 +10441,40 @@ function _showServerRestartedPopup() {
   });
 }
 
+// Reload helper for the "Server Restarted" popup's Refresh button. It marks
+// (in sessionStorage, which survives the reload) that this reload was caused
+// by a server-restart popup, so the watchdog on the fresh page knows to enter
+// a settling window instead of immediately re-arming.
+function _serverRestartRefresh() {
+  try { sessionStorage.setItem('znas_restart_refresh_at', String(Date.now())); } catch (_) {}
+  window.location.reload();
+}
+
 // Server-restart watchdog: poll /api/version every 30 s and compare its
 // startup_time_unix to the first value we saw. A change means the
 // process was restarted (manual systemctl, in-place binary upgrade,
 // crash + service restart, etc.) and the UI may be out of sync with the
 // new backend. We never poll faster than 30 s so this doesn't add real
 // load; the popup is dismissable too.
+//
+// Settling window: when this page was just reloaded by the Refresh button of
+// a previous "Server Restarted" popup, a follow-up bounce is likely — e.g.
+// the user is updating several InterLink peers in a row and this server
+// restarts again moments later. Without a grace period the fresh page would
+// re-arm and pop the IDENTICAL popup within seconds. So for 90 s after such a
+// reload we silently re-baseline to the latest startup time (polling fast to
+// catch a quick second bounce) instead of alerting again.
 (function() {
   let baseline = null;
   let stopped = false;
+  let settleUntil = 0;
+  try {
+    const ts = parseInt(sessionStorage.getItem('znas_restart_refresh_at') || '0', 10);
+    sessionStorage.removeItem('znas_restart_refresh_at');
+    if (ts && Date.now() - ts < 120000) {
+      settleUntil = Date.now() + 90000;
+    }
+  } catch (_) {}
   async function tick() {
     if (stopped) return;
     try {
@@ -10368,7 +10483,9 @@ function _showServerRestartedPopup() {
         const d = await r.json();
         const t = d && d.startup_time_unix;
         if (typeof t === 'number') {
-          if (baseline === null) {
+          if (baseline === null || (Date.now() < settleUntil && t > baseline)) {
+            // First reading, or still settling after a restart-refresh —
+            // adopt the latest startup time as the baseline silently.
             baseline = t;
           } else if (t > baseline) {
             // Server bounced — show popup and stop polling (the user
@@ -10380,7 +10497,9 @@ function _showServerRestartedPopup() {
         }
       }
     } catch (_) { /* network blip — try again next tick */ }
-    setTimeout(tick, 30000);
+    // Poll fast while settling so a quick second bounce lands inside the
+    // window; back off to 30 s once armed.
+    setTimeout(tick, Date.now() < settleUntil ? 5000 : 30000);
   }
   // Kick off after a short delay so we don't race the initial page load.
   setTimeout(tick, 5000);
@@ -10427,6 +10546,27 @@ function hasPerm(key) {
     return !!(p && p[key]);
   }
   return false;
+}
+
+// canViewVirt / canViewNetworking gate the Compute and Networking sidebar
+// sections. Unlike hasPerm, read-only users keep visibility (browse-only) —
+// only standard users are restricted, matching the backend RequireVirtView /
+// RequireNetView middleware.
+function canViewVirt() {
+  if (!currentUser) return false;
+  if (currentUser.role === 'standard') {
+    const p = currentUser.standard_perms;
+    return !!(p && p.view_virtualization);
+  }
+  return true;
+}
+function canViewNetworking() {
+  if (!currentUser) return false;
+  if (currentUser.role === 'standard') {
+    const p = currentUser.standard_perms;
+    return !!(p && p.view_networking);
+  }
+  return true;
 }
 let abRefreshInt     = null;
 let activeJobs       = {};  // id -> { label, startedAt, pending? }
@@ -10846,6 +10986,12 @@ async function renderMemCompCard(s) {
   } else {
     const preset = _memCompProfilePreset(reco);
     recoEl.innerHTML = `<strong>Recommendation:</strong> running VMs have ${vmGB} GB allocated against ${totalGB} GB physical — pick <strong>${reco.charAt(0).toUpperCase()+reco.slice(1)}</strong> (${preset.pct}% RAM, ${preset.algo}) for best fit.`;
+    // A 50%-RAM zram pool only pays off when the guests' working sets aren't
+    // all hot at once — zram needs cold pages to compress. Make that caveat
+    // explicit so the user doesn't starve simultaneously-busy VMs of RAM.
+    if (preset.pct >= 50) {
+      recoEl.innerHTML += `<div style="margin-top:6px;font-size:12px;color:var(--text-3);line-height:1.5;">⚠ Dedicating 50% of RAM to compression is only recommended when your VMs do <strong>not</strong> all have active memory at the same time. zram only reclaims space from cold (idle) pages — if every VM is busy simultaneously there is little to compress and you'd be starving them of real RAM. In that case pick a lower percentage.</div>`;
+    }
     recoEl.style.borderLeftColor = '#3fb950';
     recoEl.style.background = 'rgba(63,185,80,0.08)';
   }
@@ -11401,8 +11547,13 @@ function _renderSysInfo(data) {
       </dl>
     </div>`;
 
-  // RAM chip with DIMM stick visualisation
-  const totalGB = (mem.total_bytes || 0) / (1024*1024*1024);
+  // RAM chip with DIMM stick visualisation. Headline shows the physically
+  // installed RAM (sum of DIMM sizes from dmidecode) — that's the figure the
+  // user expects (2×16 GB = 32 GB). /proc/meminfo MemTotal is a few hundred
+  // MB smaller (kernel/firmware reserved) and is shown as "usable".
+  const installedGB = (mem.installed_bytes || 0) / (1024*1024*1024);
+  const usableGB    = (mem.total_bytes || 0) / (1024*1024*1024);
+  const totalGB = installedGB > 0 ? installedGB : usableGB;
   const dimms = mem.dimms || [];
   // Speed range (lowest, highest) when there's >1 unique speed.
   const speeds = [...new Set(dimms.map(d => d.speed_mts).filter(s => s > 0))];
@@ -11429,6 +11580,10 @@ function _renderSysInfo(data) {
   if (dimms.length > 0) ramSublineParts.push(dimms.length + ' module' + (dimms.length === 1 ? '' : 's'));
   if (dimmTypes.length > 0) ramSublineParts.push(dimmTypes.join('/'));
   if (speedSummary !== '—') ramSublineParts.push(speedSummary);
+  // When the installed total differs from the kernel-usable total, show both.
+  if (installedGB > 0 && usableGB > 0 && Math.abs(installedGB - usableGB) >= 0.1) {
+    ramSublineParts.push(usableGB.toFixed(1) + ' GB usable');
+  }
   const ramChip = `
     <div class="sysinfo-chip is-ram">
       <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">🧠</span>Memory</div>
@@ -13140,6 +13295,16 @@ function openEditUser(id) {
   document.getElementById('ep-manage-snapshots').checked    = !!sp.manage_snapshots;
   document.getElementById('ep-edit-settings').checked       = !!sp.edit_settings;
   document.getElementById('ep-manage-interlink').checked    = !!sp.manage_interlink;
+  document.getElementById('ep-view-virtualization').checked     = !!sp.view_virtualization;
+  document.getElementById('ep-view-networking').checked         = !!sp.view_networking;
+  document.getElementById('ep-create-vm').checked               = !!sp.create_vm;
+  document.getElementById('ep-create-container').checked        = !!sp.create_container;
+  document.getElementById('ep-edit-instances').checked          = !!sp.edit_instances;
+  document.getElementById('ep-control-instances').checked       = !!sp.control_instances;
+  document.getElementById('ep-delete-instances').checked        = !!sp.delete_instances;
+  document.getElementById('ep-manage-instance-backups').checked = !!sp.manage_instance_backups;
+  document.getElementById('ep-manage-networking').checked       = !!sp.manage_networking;
+  document.getElementById('ep-instance-visibility-regex').value = sp.instance_visibility_regex || '';
 
   // Prevent changing your own role (avoid accidental self-lockout).
   document.getElementById('eu-role').disabled = isSelf;
@@ -13174,7 +13339,51 @@ function onEditRoleChange() {
   document.getElementById('eu-password-wrap').classList.toggle('hidden', isSMB);
   document.getElementById('eu-smb-hint').classList.toggle('hidden', !isSMB);
   document.getElementById('eu-standard-perms').style.display = isStandard ? '' : 'none';
+  if (isStandard) _configurePermPanel('ep');
   if (isSMB) document.getElementById('eu-password').value = '';
+}
+
+// _configurePermPanel shows the Storage/System + Virtualization tabs when
+// virtualization is enabled on this host; otherwise the panel stays a single
+// flat "Capabilities" list. prefix is 'np' (create modal) or 'ep' (edit).
+function _configurePermPanel(prefix) {
+  const virt = !!window._lxdAvailable;
+  document.getElementById(prefix + '-perm-tabbar').style.display = virt ? 'flex' : 'none';
+  document.getElementById(prefix + '-perm-title').style.display  = virt ? 'none' : '';
+  _permTab(prefix, 'storage'); // always reset to the first tab
+}
+
+function _permTab(prefix, which) {
+  const storage = which === 'storage';
+  document.getElementById(prefix + '-perm-pane-storage').style.display = storage ? 'grid' : 'none';
+  document.getElementById(prefix + '-perm-pane-virt').style.display    = storage ? 'none' : '';
+  [['-tab-storage', storage], ['-tab-virt', !storage]].forEach(([sfx, active]) => {
+    const el = document.getElementById(prefix + sfx);
+    if (!el) return;
+    el.style.borderBottomColor = active ? 'var(--accent)' : 'transparent';
+    el.style.color      = active ? 'var(--text)' : 'var(--text-3)';
+    el.style.fontWeight = active ? '700' : '500';
+  });
+}
+function _npPermTab(which) { _permTab('np', which); }
+function _epPermTab(which) { _permTab('ep', which); }
+
+// _collectVirtPerms gathers the Virtualization-tab capability flags + the
+// instance-visibility regex from one user modal (prefix 'np' or 'ep').
+function _collectVirtPerms(prefix) {
+  const g = id => document.getElementById(prefix + '-' + id);
+  return {
+    view_virtualization:       g('view-virtualization').checked,
+    create_vm:                 g('create-vm').checked,
+    create_container:          g('create-container').checked,
+    edit_instances:            g('edit-instances').checked,
+    control_instances:         g('control-instances').checked,
+    delete_instances:          g('delete-instances').checked,
+    manage_instance_backups:   g('manage-instance-backups').checked,
+    view_networking:           g('view-networking').checked,
+    manage_networking:         g('manage-networking').checked,
+    instance_visibility_regex: g('instance-visibility-regex').value.trim(),
+  };
 }
 
 async function submitEditUser() {
@@ -13217,6 +13426,7 @@ async function submitEditUser() {
         manage_snapshots:    document.getElementById('ep-manage-snapshots').checked,
         edit_settings:       document.getElementById('ep-edit-settings').checked,
         manage_interlink:    document.getElementById('ep-manage-interlink').checked,
+        ..._collectVirtPerms('ep'),
       };
     }
   }
@@ -13325,6 +13535,7 @@ function onNewRoleChange() {
   pwInput.placeholder = 'Min 8 characters';
   pwInput.required = true;
   document.getElementById('new-standard-perms').style.display = isStandard ? '' : 'none';
+  if (isStandard) _configurePermPanel('np');
 }
 
 // Holds the most recent create-user payload so the system-user-exists modal can
@@ -13363,6 +13574,7 @@ async function submitCreateUser(e) {
       manage_snapshots:    document.getElementById('np-manage-snapshots').checked,
       edit_settings:       document.getElementById('np-edit-settings').checked,
       manage_interlink:    document.getElementById('np-manage-interlink').checked,
+      ..._collectVirtPerms('np'),
     };
   }
   const uidVal = document.getElementById('new-uid').value.trim();
@@ -13874,6 +14086,7 @@ async function loadAudit() {
 })();
 
 let _savedPort = null;
+let _savedBind443 = null;
 
 async function loadSettings() {
   initCustomSelect('settings-theme');
@@ -13884,6 +14097,8 @@ async function loadSettings() {
     appSettings = { ...appSettings, ...data };
     const portEl = document.getElementById('settings-port');
     if (portEl) { portEl.value = appSettings.port; _savedPort = appSettings.port; }
+    const bind443El = document.getElementById('settings-bind-443');
+    if (bind443El) { bind443El.checked = !!appSettings.bind_port_443; _savedBind443 = !!appSettings.bind_port_443; }
     const themeEl = document.getElementById('settings-theme');
     if (themeEl) { themeEl.value = appSettings.login_theme || 'dark'; csRefresh('settings-theme'); }
     selectStorageUnit(appSettings.storage_unit || 'gb', false);
@@ -13900,8 +14115,10 @@ function checkPortChanged() {
   const portEl = document.getElementById('settings-port');
   const btn = document.getElementById('btn-restart-for-port');
   if (!portEl || !btn) return;
-  const changed = _savedPort !== null && parseInt(portEl.value) !== _savedPort;
-  btn.classList.toggle('hidden', !changed);
+  const bind443El = document.getElementById('settings-bind-443');
+  const portChanged = _savedPort !== null && parseInt(portEl.value) !== _savedPort;
+  const bindChanged = _savedBind443 !== null && bind443El && bind443El.checked !== _savedBind443;
+  btn.classList.toggle('hidden', !(portChanged || bindChanged));
 }
 
 async function saveAndRestartPortal() {
@@ -13909,9 +14126,40 @@ async function saveAndRestartPortal() {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   await saveSettings();
   if (btn) btn.textContent = 'Restarting…';
-  try {
-    await fetch('/api/system/restart-portal', { method: 'POST' });
-  } catch {}
+
+  // Work out which URL to land on once the portal is back. After the restart
+  // the configured port is always served; port 443 only when the checkbox
+  // stays enabled. If the port the browser is currently on survives, we stay
+  // on it; otherwise (e.g. 443 was just disabled while browsing on 443) we
+  // move to the configured port — which always works.
+  const cfgPort  = parseInt(document.getElementById('settings-port').value) || _savedPort || 8443;
+  const bind443  = !!document.getElementById('settings-bind-443')?.checked;
+  const curPort  = location.port || (location.protocol === 'https:' ? '443' : '80');
+  const survives = (curPort === String(cfgPort)) || (curPort === '443' && bind443);
+  const target   = survives
+    ? location.href.split('#')[0]
+    : location.protocol + '//' + location.hostname + ':' + cfgPort + '/';
+
+  try { await fetch('/api/system/restart-portal', { method: 'POST' }); } catch {}
+
+  if (survives) {
+    // Same origin lives on — poll /api/version until the portal answers again,
+    // then reload so the UI reconnects.
+    await new Promise(r => setTimeout(r, 3000)); // let the old process exit first
+    for (let i = 0; i < 40; i++) {
+      try {
+        const r = await fetch('/api/version', { cache: 'no-store' });
+        if (r.ok) break;
+      } catch {}
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    window.location.href = target;
+  } else {
+    // The current port is going away — give the service a few seconds to come
+    // back, then jump to the configured port.
+    if (btn) btn.textContent = 'Reconnecting on :' + cfgPort + '…';
+    setTimeout(() => { window.location.href = target; }, 7000);
+  }
 }
 
 async function loadTreeMapScheduleSettings() {
@@ -14194,11 +14442,13 @@ async function saveSettings() {
 
   const portEl = document.getElementById('settings-port');
   const port   = portEl ? parseInt(portEl.value) : appSettings.port;
+  const bind443El = document.getElementById('settings-bind-443');
+  const bind443 = bind443El ? bind443El.checked : !!appSettings.bind_port_443;
 
   const resp = await fetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ port, storage_unit: appSettings.storage_unit, login_theme: loginTheme }),
+    body: JSON.stringify({ port, bind_port_443: bind443, storage_unit: appSettings.storage_unit, login_theme: loginTheme }),
   });
   const data = await resp.json();
   if (!resp.ok) {
@@ -14206,8 +14456,10 @@ async function saveSettings() {
     alertEl.classList.remove('hidden');
   } else {
     appSettings.login_theme = loginTheme;
+    appSettings.bind_port_443 = bind443;
     renderPoolBar();
     _savedPort = port;
+    _savedBind443 = bind443;
     checkPortChanged();
   }
 }
@@ -26097,6 +26349,25 @@ function startIOPoller() {
 let _cpuProcsData = null;
 const CPU_CAT_COLORS = { smb:'#fb923c', nfs:'#60a5fa', zfs:'#a78bfa', minio:'#f59e0b', iscsi:'#06b6d4', vm:'#f472b6', container:'#34d399', other:'#6b7280', cache:'#d8c5ff' };
 
+// Live pointer tracker. The gauge tooltips rely on mouseenter/leave on the
+// panel, but a data refresh (every 3-5 s) mutates the DOM under the cursor,
+// which can fire a spurious mouseleave and drop the popup until the user
+// moves the mouse. Tracking the real cursor position lets us (a) ignore a
+// mouseleave that didn't actually leave the panel, and (b) re-assert the
+// tooltip on every refresh — so it stays open and its content stays live.
+let _globalMouseX = -1, _globalMouseY = -1;
+document.addEventListener('mousemove', (e) => {
+  _globalMouseX = e.clientX; _globalMouseY = e.clientY;
+}, { passive: true });
+
+function _pointerOverGauge(panelId) {
+  const p = document.getElementById(panelId);
+  if (!p || p.offsetParent === null) return false; // missing or display:none
+  const r = p.getBoundingClientRect();
+  return _globalMouseX >= r.left && _globalMouseX <= r.right &&
+         _globalMouseY >= r.top  && _globalMouseY <= r.bottom;
+}
+
 function _updateCpuGauge(data) {
   if (!data) return;
   _cpuProcsData = data;
@@ -26117,8 +26388,14 @@ function _updateCpuGauge(data) {
   const cpuTotal = ['smb','nfs','zfs','minio','iscsi','vm','container','other']
     .reduce((s, k) => s + (data[k+'_pct'] || 0), 0);
   _setBarPctReadout('cpu-pct-readout', cpuTotal, 60, 80);
-  // Refresh tooltip content in-place if the user is currently hovering.
-  if (_cpuGaugeHovered) _renderCpuTooltip();
+  // Refresh tooltip content in-place. Re-assert from the live cursor
+  // position (not just the hover flag) so a refresh keeps the popup open.
+  if (_pointerOverGauge('cpu-gauge-panel')) {
+    _cpuGaugeHovered = true;
+    if (_cpuLeaveTimer) { clearTimeout(_cpuLeaveTimer); _cpuLeaveTimer = null; }
+    _cpuLastMouseX = _globalMouseX; _cpuLastMouseY = _globalMouseY;
+    _renderCpuTooltip();
+  }
 }
 
 // v6.5.3+: shared helper for the small percentage readout under each
@@ -26235,9 +26512,12 @@ function _renderCpuTooltip() {
 
     panel.addEventListener('mouseleave', () => {
       _cpuLeaveTimer = setTimeout(() => {
+        _cpuLeaveTimer = null;
+        // Ignore a spurious mouseleave fired by a DOM refresh under the
+        // cursor — only hide if the pointer really left the panel.
+        if (_pointerOverGauge('cpu-gauge-panel')) return;
         _cpuGaugeHovered = false;
         tt.style.display = 'none';
-        _cpuLeaveTimer = null;
       }, 80);
     });
   }
@@ -26295,7 +26575,13 @@ function _updateMemGauge(data) {
   // category, and the readout uses the CPU-style 60/80 thresholds.
   _updateSwapGauge(data);
 
-  if (_memGaugeHovered) _renderMemTooltip();
+  // Re-assert from the live cursor position so a refresh keeps the popup open.
+  if (_pointerOverGauge('mem-gauge-panel')) {
+    _memGaugeHovered = true;
+    if (_memLeaveTimer) { clearTimeout(_memLeaveTimer); _memLeaveTimer = null; }
+    _memLastMouseX = _globalMouseX; _memLastMouseY = _globalMouseY;
+    _renderMemTooltip();
+  }
 }
 
 // Latest snapshot used by the SWAP tooltip. Updated each time
@@ -26332,8 +26618,13 @@ function _updateSwapGauge(data) {
   // Readout: % of disk swap capacity in use. CPU-style 60/80 thresholds.
   const usedPct = (data.disk_swap_used_mb || 0) / diskTotal * 100;
   _setBarPctReadout('swap-pct-readout', usedPct, 60, 80);
-  // Refresh tooltip in-place if the user is hovering.
-  if (_swapGaugeHovered) _renderSwapTooltip();
+  // Re-assert from the live cursor position so a refresh keeps the popup open.
+  if (_pointerOverGauge('swap-gauge-panel')) {
+    _swapGaugeHovered = true;
+    if (_swapLeaveTimer) { clearTimeout(_swapLeaveTimer); _swapLeaveTimer = null; }
+    _swapLastMouseX = _globalMouseX; _swapLastMouseY = _globalMouseY;
+    _renderSwapTooltip();
+  }
 }
 
 // SWAP gauge hover tooltip — mirrors the MEM tooltip. State variables
@@ -26431,10 +26722,13 @@ function _renderSwapTooltip() {
     });
     panel.addEventListener('mouseleave', () => {
       _swapLeaveTimer = setTimeout(() => {
+        _swapLeaveTimer = null;
+        // Ignore a spurious mouseleave fired by a DOM refresh under the
+        // cursor — only hide if the pointer really left the panel.
+        if (_pointerOverGauge('swap-gauge-panel')) return;
         _swapGaugeHovered = false;
         const tt2 = document.getElementById('swap-gauge-tooltip');
         if (tt2) tt2.style.display = 'none';
-        _swapLeaveTimer = null;
       }, 80);
     });
   }
@@ -26472,43 +26766,40 @@ function _buildMemTooltipHTML() {
   // user sees both the real RAM picture and the "feels like" picture.
   let firstRow = `Physical ${physPct.toFixed(1)}% &mdash; ${usedGB} / ${totalGB} GB`;
   if (data && data.zram_active && data.zram_pool_mb > 0) {
-    // Effective working-set / capacity with compression. v6.5.19+ fix:
-    // the zram pool LIVES INSIDE physical RAM — it's not additive
-    // capacity. Previous version added swap_total_mb (which includes
-    // zram's advertised pool size) on top of total_mb, which
-    // double-counted the pool when compression ratio was low and
-    // implied a capacity ceiling that physical hardware can't deliver.
+    // Effective working-set capacity with memory compression:
     //
-    // Correct accounting:
-    //   • The zram pool holds `zram_swap_total_mb` raw bytes of physical
-    //     RAM. At compression ratio R that pool stores R × those bytes
-    //     of working-set data. The net GAIN over not using the pool at
-    //     all is `zram_swap_total_mb × (R − 1)` — that's the only piece
-    //     that's truly extra capacity.
-    //   • Disk swap IS additive — it's bytes on a different device.
+    //   green total = usable physical RAM  +  (zram size × compression ratio)
     //
-    // Used side: bytes saved by what's CURRENTLY compressed plus what's
-    // sitting on disk swap:
-    //   working_set = used_mb + (zram_orig_mb − zram_compr_mb) + disk_swap_used
-    // (the "+ orig − compr" term is the kernel-reported compression
-    // savings on whatever pages are currently compressed in zram).
+    // zram_swap_total_mb is the zram device's size (its disksize). At
+    // compression ratio R that device can hold R × that many bytes of
+    // swapped-out working-set data. Disk swap is deliberately NOT counted
+    // here — this metric is about RAM-resident capacity, not pages parked
+    // on a slow device.
+    //
+    // The ratio is capped at RATIO_CAP for the math, not just the label:
+    // a transient sky-high zstd ratio on very compressible pages would
+    // otherwise balloon the figure, and the capped value keeps the number
+    // consistent with the `~3×` ratio label shown on the same line.
+    //
+    // Used side: used_mb already counts the compressed bytes zram physically
+    // holds; the working set those represent is `orig`, so:
+    //   working_set = used_mb + (zram_orig_mb − zram_compr_mb)
     const ratioRaw   = data.zram_ratio || 0;
     const RATIO_CAP  = 3;
-    // When the pool is empty/young, the kernel reports ratio ≈ 0 or 1;
-    // fall back to a conservative 2.0 so the "extra capacity" estimate
-    // isn't zero. Real-world VMs see ratios in the 2.0–3.0 range.
-    const ratioForEst = ratioRaw > 0 ? ratioRaw : 2.0;
+    // When the pool is empty/young the kernel reports ratio ≈ 0; fall back to
+    // a conservative 2.0 so the projected capacity isn't just physical RAM.
+    // Capped at RATIO_CAP so the math matches the displayed ratio label.
+    const ratioForEst = Math.min(ratioRaw > 0 ? ratioRaw : 2.0, RATIO_CAP);
     const ratioLabel  = ratioRaw > RATIO_CAP ? '~' + RATIO_CAP + '&times;' : (ratioRaw > 0 ? ratioRaw.toFixed(2) + '&times;' : 'pool empty');
 
     const zramSwapTotalMB = data.zram_swap_total_mb || 0;
-    const diskSwapTotalMB = data.disk_swap_total_mb || 0;
-    const diskSwapUsedMB  = data.disk_swap_used_mb  || 0;
     const zramOrigMB      = data.zram_orig_mb       || 0;
     const zramComprMB     = data.zram_compr_mb      || 0;
 
-    const compressionBonusMB = zramSwapTotalMB * Math.max(ratioForEst - 1, 0);
-    const totalLogMB = (data.total_mb || 0) + compressionBonusMB + diskSwapTotalMB;
-    const usedLogMB  = (data.used_mb  || 0) + Math.max(zramOrigMB - zramComprMB, 0) + diskSwapUsedMB;
+    // Capacity the zram device contributes = zram size × compression ratio.
+    const compressionCapacityMB = zramSwapTotalMB * ratioForEst;
+    const totalLogMB = (data.total_mb || 0) + compressionCapacityMB;
+    const usedLogMB  = (data.used_mb  || 0) + Math.max(zramOrigMB - zramComprMB, 0);
 
     const usedLogGB   = (usedLogMB  / 1024).toFixed(1);
     const totalLogGB  = (totalLogMB / 1024).toFixed(1);
@@ -26633,10 +26924,13 @@ function _renderMemTooltip() {
 
     panel.addEventListener('mouseleave', () => {
       _memLeaveTimer = setTimeout(() => {
+        _memLeaveTimer = null;
+        // Ignore a spurious mouseleave fired by a DOM refresh under the
+        // cursor — only hide if the pointer really left the panel.
+        if (_pointerOverGauge('mem-gauge-panel')) return;
         _memGaugeHovered = false;
         const tt2 = document.getElementById('mem-gauge-tooltip');
         if (tt2) tt2.style.display = 'none';
-        _memLeaveTimer = null;
       }, 80);
     });
   }
@@ -32460,7 +32754,9 @@ let _lxdSortCol = null;
 let _lxdSortDir = 1; // 1 = asc, -1 = desc
 
 function _lxdPowerBadgeHTML(name, status, color, busy) {
-  const clickAttr = busy ? '' : `onclick='toggleLXDPowerMenu(event,${JSON.stringify(name)},${JSON.stringify(status)})'`;
+  // No power menu for users without the control_instances capability —
+  // the badge becomes a plain status indicator.
+  const clickAttr = (busy || !hasPerm('control_instances')) ? '' : `onclick='toggleLXDPowerMenu(event,${JSON.stringify(name)},${JSON.stringify(status)})'`;
   return `<button class="lxd-power-badge${busy?' lxd-tbl-icon-busy':''}" ${clickAttr}
     style="color:${color};background:${color}22;border-color:${color}55;">
     <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 1v7h1V1h-1z"/><path d="M3 8.812a4.999 4.999 0 0 1 2.578-4.375l-.485-.874A6 6 0 1 0 11 3.616l-.501.865A5 5 0 1 1 3 8.812z"/></svg>
@@ -33376,7 +33672,7 @@ function _ciRenderBackupList() {
               when = `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
             }
           }
-          const size = _v6519_bytes(s.used || 0);
+          const size = _v6519_bytes(s.written || s.used || 0);
           return `<button type="button" onclick='openRestoreBackupModal(${ctxSnap})' title="${esc(s.name)} — click to restore" style="display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;padding:6px 14px 6px 32px;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-2);">
             <span style="display:flex;align-items:baseline;gap:8px;min-width:0;flex:1;">
               <span style="color:var(--text);">${esc(when || '—')}</span>
@@ -33905,10 +34201,15 @@ function _renderAllBackups() {
       vm_id: b.vm_id, scope: b.scope, server_id: b.server_id || '',
       hostname: b.hostname || '', datastore: b.datastore,
     });
-    // Total Size = sum of `used` across all snapshots — the on-disk cost
-    // of this backup on its datastore. Better proxy than counting snaps
-    // alone because it captures how much space the user is actually paying.
-    const totalUsed = (b.snapshots||[]).reduce((acc,s) => acc + (s.used || 0), 0);
+    // Total Size = the backup dataset's ZFS `used` (root + .block sibling,
+    // snapshots included) reported by the backend. Summing per-snapshot
+    // `used` undercounts badly — a received-only backup's data is referenced
+    // by the live filesystem, not attributed to any one snapshot — so it
+    // would show "—" for fresh remote backups. Fall back to the snapshot
+    // sum only for legacy records that predate the used_bytes field.
+    const totalUsed = (b.used_bytes && b.used_bytes > 0)
+      ? b.used_bytes
+      : (b.snapshots||[]).reduce((acc,s) => acc + (s.used || 0), 0);
     rows.push(`<tr style="cursor:pointer;" onclick='_toggleBackupRow(${JSON.stringify(key)})'>
       <td style="text-align:center;color:var(--text-3);">${chev}</td>
       <td style="font-weight:600;font-family:monospace;">${esc(b.vm_id)}</td>
@@ -33949,7 +34250,7 @@ function _renderAllBackups() {
             return '<tr>' +
               '<td style="padding:4px 8px;font-family:monospace;">' + esc(s.name) + '</td>' +
               '<td style="padding:4px 8px;color:var(--text-2);">' + esc(_v6519_timeAgo(s.created_at)) + '</td>' +
-              '<td style="padding:4px 14px;text-align:right;color:var(--text-2);font-family:monospace;">' + _v6519_bytes(s.used || 0) + '</td>' +
+              '<td style="padding:4px 14px;text-align:right;color:var(--text-2);font-family:monospace;">' + _v6519_bytes(s.written || s.used || 0) + '</td>' +
               '<td style="padding:4px 14px;text-align:right;white-space:nowrap;">' +
                 `<button class="btn btn-ghost btn-sm" onclick='openRestoreBackupModal(${snapCtx})' title="Restore from this specific snapshot" style="padding:2px 10px;font-size:11px;">Restore</button>` +
                 `<span style="cursor:pointer;padding:2px 6px;color:var(--text-2);font-size:16px;line-height:1;user-select:none;" title="More actions" onclick='_bkupBurger(event, ${snapCtx})'>&#x22EE;</span>` +
@@ -35637,6 +35938,7 @@ let _lxdPools     = [];
 let _lxdMachineVersions = null; // cached {i440fx: [...], q35: [...]}
 let _lxdVMDisks   = [];     // extra disk rows
 let _lxdVMExistingDisks = []; // existing zvol attachment rows
+let _lxdVMVirtioFS = [];    // VirtIO-FS host /mnt directory shares
 let _lxdFreeZVols = [];     // available zvols cache
 let _lxdVMNICs    = [];     // vm NIC rows
 let _lxdVMUSBs    = [];     // usb passthrough list
@@ -35645,6 +35947,7 @@ let _lxdCTNICs          = [];  // container NIC rows
 let _lxdCTDevices       = [];  // container device rows
 let _lxdCTDisks         = [];  // extra disk rows (new ZVols)
 let _lxdCTExistingDisks = [];  // existing ZVol attachment rows
+let _lxdCTBindMounts    = [];  // host /mnt bind-mount rows
 let _lxdDeleteName = '';
 let _lxdRefreshTimer = null;
 
@@ -35699,9 +36002,17 @@ async function initLXD() {
       dot.style.background = '#3fb950';
       dot.title = 'LXD ' + (data.version || '');
       document.getElementById('sidebar-mode-selector').style.display = '';
+      // Standard users see only the modes their permissions allow. Admin and
+      // read-only users keep all three.
+      const _showCompute = canViewVirt(), _showNet = canViewNetworking();
+      document.getElementById('mode-btn-compute').style.display    = _showCompute ? '' : 'none';
+      document.getElementById('mode-btn-networking').style.display = _showNet ? '' : 'none';
+      if (!_showCompute && !_showNet) {
+        document.getElementById('sidebar-mode-selector').style.display = 'none';
+      }
       // Show the glowing "+" badge on the logo to signal Compute is available.
       const badge = document.getElementById('logo-lxd-badge');
-      if (badge) badge.style.display = 'inline';
+      if (badge) badge.style.display = _showCompute ? 'inline' : 'none';
       localStorage.setItem('zfsnas_lxd_available', '1');
 
       // Restore compute mode from hash / bookmark
@@ -35738,6 +36049,11 @@ async function initLXD() {
 async function loadLXDInstances() {
   const tbody = document.getElementById('lxd-table-body');
   if (!tbody) return;
+  // Gate the create buttons by the standard-user capability flags.
+  const _nv = document.getElementById('lxd-btn-new-vm');
+  const _nc = document.getElementById('lxd-btn-new-container');
+  if (_nv) _nv.style.display = hasPerm('create_vm') ? '' : 'none';
+  if (_nc) _nc.style.display = hasPerm('create_container') ? '' : 'none';
   tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:24px;">Loading…</td></tr>';
   // Refresh interlink server cache for the VM Push burger menu item.
   // Phase 1: fast endpoint returns last-cached online+lxd_enabled status instantly.
@@ -35929,24 +36245,28 @@ function toggleLXDBurger(e, name, type) {
     b.addEventListener('click', () => { _closeLXDMenus(); fn(); });
     dd.appendChild(b);
   };
-  mkItem('✏️ Edit', () => openLXDEditModal(name, type));
-  const sep1 = document.createElement('hr'); sep1.className = 'menu-sep'; dd.appendChild(sep1);
-  mkItem('📸 Snapshot Now', () => openLXDQuickSnapshot(name, type));
-  mkItem('⧉ Clone', () => openLXDCloneModal(name));
+  if (hasPerm('edit_instances')) mkItem('✏️ Edit', () => openLXDEditModal(name, type));
+  if (hasPerm('manage_instance_backups')) {
+    const sep1 = document.createElement('hr'); sep1.className = 'menu-sep'; dd.appendChild(sep1);
+    mkItem('📸 Snapshot Now', () => openLXDQuickSnapshot(name, type));
+    mkItem('⧉ Clone', () => openLXDCloneModal(name));
+  }
   const inst = (_lxdInstancesCache || []).find(i => i.name === name);
   const isStopped = inst && inst.status && inst.status.toLowerCase() === 'stopped';
-  // Move Storage: disabled for non-stopped instances.
-  const moveBtn = document.createElement('button');
-  moveBtn.textContent = '📦 Move Storage';
-  if (!isStopped) {
-    moveBtn.disabled = true;
-    moveBtn.style.opacity = '0.4';
-    moveBtn.style.cursor = 'default';
-    moveBtn.title = 'Instance must be stopped before moving storage';
-  } else {
-    moveBtn.addEventListener('click', () => { _closeLXDMenus(); openLXDMoveStorageModal(name); });
+  // Move Storage: disabled for non-stopped instances. Edit-class capability.
+  if (hasPerm('edit_instances')) {
+    const moveBtn = document.createElement('button');
+    moveBtn.textContent = '📦 Move Storage';
+    if (!isStopped) {
+      moveBtn.disabled = true;
+      moveBtn.style.opacity = '0.4';
+      moveBtn.style.cursor = 'default';
+      moveBtn.title = 'Instance must be stopped before moving storage';
+    } else {
+      moveBtn.addEventListener('click', () => { _closeLXDMenus(); openLXDMoveStorageModal(name); });
+    }
+    dd.appendChild(moveBtn);
   }
-  dd.appendChild(moveBtn);
   // Push InterLink + Reset NVRAM: only relevant for VMs (type === 'virtual-machine').
   if (type === 'virtual-machine') {
     // Push InterLink: show when at least one linked server has LXD.
@@ -35983,8 +36303,10 @@ function toggleLXDBurger(e, name, type) {
     }
     dd.appendChild(nvramBtn);
   }
-  const sep2 = document.createElement('hr'); sep2.className = 'menu-sep'; dd.appendChild(sep2);
-  mkItem('🗑 Delete', () => confirmLXDDelete(name), true);
+  if (hasPerm('delete_instances')) {
+    const sep2 = document.createElement('hr'); sep2.className = 'menu-sep'; dd.appendChild(sep2);
+    mkItem('🗑 Delete', () => confirmLXDDelete(name), true);
+  }
   document.body.appendChild(dd);
   const rect = span.getBoundingClientRect();
   dd.style.position = 'fixed';
@@ -36002,6 +36324,7 @@ let _lxdEditName = '';
 let _lxdEditNICs  = [];  // {name, bridge, nictype, mac, from_profile, _origBridge, _new, _deleted}
 let _lxdEditDisks = [];  // {name, pool, size, is_root, from_profile, _new, _deleted}
 let _lxdEditExistingDisks = []; // {device_name, dev_path} — ZVols to attach
+let _lxdEditBindMounts = []; // {device_name, source, path, readonly} — new host /mnt bind mounts
 let _lxdEditFreeZVols = [];     // [{name, dev_path, size_gb}] cached per modal open
 let _lxdEditUSBs  = [];  // {device_name, vendor_id, product_id, desc}
 let _lxdEditPCIs  = [];  // {device_name, address, desc}
@@ -36216,9 +36539,15 @@ function lxdEditRenderDisks() {
     const isReadOnly = !!(disk.from_profile && disk.is_root) || isAgent;
     const canDelete = !disk.from_profile && !disk.is_root && !isAgent;
 
-    const nameCell = disk._new
-      ? `<input type="text" class="input" data-di="${i}" data-df="name" value="${esc(disk.name)}" style="width:78px;font-family:monospace;">`
-      : `<span style="font-family:monospace;">${esc(disk.name)}</span>`;
+    // Container non-root disks show their in-container mount path (editable,
+    // new and existing alike). VMs / root / agent keep the device-name cell:
+    // a name input for a new VM disk, a plain label otherwise.
+    const ctMountEditable = !_lxdEditIsVM && !disk.is_root && !isAgent;
+    const nameCell = ctMountEditable
+      ? `<input type="text" class="input" data-di="${i}" data-df="mountpath" value="${esc(disk.path || ('/' + disk.name))}" title="Mount point inside the container" style="width:120px;font-family:monospace;">`
+      : (disk._new
+          ? `<input type="text" class="input" data-di="${i}" data-df="name" value="${esc(disk.name)}" style="width:78px;font-family:monospace;">`
+          : `<span style="font-family:monospace;">${esc(disk.name)}</span>`);
 
     const poolCell = disk._new
       ? `<select class="input" data-di="${i}" data-df="pool" style="width:80px;">${
@@ -36328,7 +36657,7 @@ function lxdEditRenderDisks() {
   c.innerHTML = `<div class="vm-edit-disks-wrap"><table class="vm-edit-disks-table" style="width:100%;margin-bottom:4px;">
     <thead><tr>
       <th style="width:42px;">SCSI</th>
-      <th>Name</th>
+      <th>${_lxdEditIsVM ? 'Name' : 'Mount Point'}</th>
       <th style="width:80px;">Pool</th>
       <th style="width:120px;">ZFS Path</th>
       <th style="width:120px;">Size</th>
@@ -36347,6 +36676,7 @@ function lxdEditRenderDisks() {
     const i = +el.dataset.di;
     const f = el.dataset.df;
     if (f === 'name')   el.addEventListener('input',  e => { _lxdEditDisks[i].name = e.target.value.trim(); });
+    if (f === 'mountpath') el.addEventListener('input', e => { _lxdEditDisks[i].path = e.target.value.trim(); });
     if (f === 'pool')   el.addEventListener('change', e => { _lxdEditDisks[i].pool = e.target.value; });
     if (f === 'boot')    el.addEventListener('change', e => { _lxdEditDisks[i].boot_priority = e.target.value; });
     if (f === 'reserve') el.addEventListener('change', e => { _lxdEditDisks[i].reserve_pct = +e.target.value; });
@@ -36394,9 +36724,54 @@ function lxdEditAddDisk() {
   const usedNames = new Set(_lxdEditDisks.filter(d => !d._deleted).map(d => d.name));
   let n = 1;
   while (usedNames.has('data' + n)) n++;
-  _lxdEditDisks.push({name: 'data' + n, pool: defaultPool, size: '20GB',
+  // path = in-container mount point (containers only; ignored for VMs).
+  _lxdEditDisks.push({name: 'data' + n, path: '/data' + n, pool: defaultPool, size: '20GB',
     is_root: false, from_profile: false, _new: true, _deleted: false});
   lxdEditRenderDisks();
+}
+
+// Add a new host /mnt bind mount row to the edit modal.
+function lxdEditAddBindMount() {
+  const used = new Set(_lxdEditBindMounts.map(b => b.device_name));
+  let n = 1;
+  while (used.has('bind' + n)) n++;
+  _lxdEditBindMounts.push({ device_name: 'bind' + n, source: '/mnt/', path: '/data' + n, readonly: false });
+  lxdEditRenderBindMounts();
+}
+
+// Render the edit-modal bind-mount rows — existing bind mounts (loaded from
+// the instance config) plus any newly-added ones. The whole list is sent on
+// Save and the backend reconciles adds / edits / removals.
+function lxdEditRenderBindMounts() {
+  const c = document.getElementById('lxd-edit-bind-mounts');
+  if (!c) return;
+  _editSyncSectionVisibility();
+  const sum = document.getElementById('edithw-bindmount-summary');
+  if (sum) sum.textContent = _lxdEditBindMounts.length
+    ? _lxdEditBindMounts.length + ' mount' + (_lxdEditBindMounts.length === 1 ? '' : 's')
+    : 'none';
+  if (!_lxdEditBindMounts.length) {
+    c.innerHTML = '<div style="color:var(--text-3);font-size:12px;font-style:italic;">No host-directory shares yet. Use Add Hardware.</div>';
+    return;
+  }
+  c.innerHTML = _lxdEditBindMounts.map((b, i) => `
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;">
+      <input type="text" class="input" placeholder="/mnt/host/path" value="${esc(b.source)}"
+        onchange="_lxdEditBindMounts[${i}].source=this.value"
+        title="Host directory to expose"
+        style="flex:1;min-width:160px;font-family:monospace;font-size:12px;">
+      <span style="color:var(--text-3);flex-shrink:0;">→</span>
+      <input type="text" class="input" placeholder="/data in container" value="${esc(b.path)}"
+        onchange="_lxdEditBindMounts[${i}].path=this.value"
+        title="Mount point inside the container"
+        style="flex:1;min-width:140px;font-family:monospace;font-size:12px;">
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-2);flex-shrink:0;cursor:pointer;" title="Mount the directory read-only inside the container">
+        <input type="checkbox" ${b.readonly?'checked':''} onchange="_lxdEditBindMounts[${i}].readonly=this.checked">
+        Read-only
+      </label>
+      <button type="button" class="btn btn-ghost btn-sm" style="padding:4px 8px;flex-shrink:0;color:var(--danger);"
+        onclick="_lxdEditBindMounts.splice(${i},1);lxdEditRenderBindMounts()">✕</button>
+    </div>`).join('');
 }
 
 async function lxdEditAddExistingDisk() {
@@ -36444,6 +36819,7 @@ function _renderEditExistingDiskRows() {
 function _lxdEditRenderUSBList() {
   const c = document.getElementById('lxd-edit-usb-list');
   if (!c) return;
+  _editSyncSectionVisibility();
   if (!_lxdEditUSBs.length) { c.innerHTML = '<div style="color:var(--text-3);font-size:12px;padding:4px 0;">No USB devices assigned.</div>'; return; }
   c.innerHTML = _lxdEditUSBs.map((u, i) => `
     <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;background:var(--bg-2,rgba(255,255,255,0.04));border-radius:var(--radius-sm);margin-bottom:6px;">
@@ -36540,6 +36916,7 @@ function _pciDevCard(p, i, arr, arrName, removeFn) {
 function _lxdEditRenderPCIList() {
   const c = document.getElementById('lxd-edit-pci-list');
   if (!c) return;
+  _editSyncSectionVisibility();
   if (!_lxdEditPCIs.length) { c.innerHTML = '<div style="color:var(--text-3);font-size:12px;padding:4px 0;">No PCI devices assigned.</div>'; return; }
   c.innerHTML = _lxdEditPCIs.map((p, i) =>
     _pciDevCard(p, i, _lxdEditPCIs, '_lxdEditPCIs', `_lxdEditPCIs.splice(${i},1);_lxdEditRenderPCIList()`)).join('');
@@ -36548,6 +36925,7 @@ function _lxdEditRenderPCIList() {
 function _lxdEditRenderCTDevList() {
   const c = document.getElementById('lxd-edit-ctdev-list');
   if (!c) return;
+  _editSyncSectionVisibility();
   if (!_lxdEditCTDevs.length) { c.innerHTML = '<div style="color:var(--text-3);font-size:12px;padding:4px 0;">No passthrough devices assigned.</div>'; return; }
   c.innerHTML = _lxdEditCTDevs.map((d, i) => `
     <div style="background:var(--bg-2,rgba(255,255,255,0.04));border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;">
@@ -36583,6 +36961,7 @@ async function openLXDEditModal(name, type) {
   _lxdEditName = name;
   _lxdEditNICs = []; _lxdEditDisks = [];
   _lxdEditExistingDisks = []; _lxdEditFreeZVols = [];
+  _lxdEditBindMounts = [];
   _lxdEditUSBs = []; _lxdEditPCIs = []; _lxdEditCTDevs = [];
   _lxdEditIsVM = (type === 'virtual-machine');
   document.getElementById('lxd-edit-title').textContent = name;
@@ -36654,7 +37033,7 @@ async function openLXDEditModal(name, type) {
   const addHWMenu = document.getElementById('lxd-edit-addhw-menu');
   if (addHWMenu) addHWMenu.style.display = 'none';
   // Collapse all sections so they start closed on every open
-  ['edithw-resources','edithw-memory','edithw-firmware','edithw-nics','edithw-disks','edithw-cdrom','edithw-usb','edithw-pci','edithw-ctdev'].forEach(id => {
+  ['edithw-resources','edithw-memory','edithw-firmware','edithw-nics','edithw-disks','edithw-cdrom','edithw-usb','edithw-pci','edithw-ctdev','edithw-bindmount'].forEach(id => {
     const row = document.getElementById(id);
     if (!row) return;
     const body = row.querySelector('.vm-hw-body');
@@ -36799,12 +37178,14 @@ async function openLXDEditModal(name, type) {
       if (fuse) fuse.checked = !!cfg.feature_fuse;
     }
     _lxdEditNICs  = (cfg.nics  || []).map(n => ({...n, _origBridge: n.bridge, _origConnected: n.connected, _new: false, _deleted: false, ipv4_mode: n.ipv4_mode||'', ipv4_addr: n.ipv4_addr||'', ipv4_gw: n.ipv4_gw||'', dns1: n.dns1||'', dns2: n.dns2||''}));
-    _lxdEditDisks = (cfg.disks || []).map(d => ({...d, _new: false, _deleted: false}));
+    _lxdEditDisks = (cfg.disks || []).map(d => ({...d, path: d.mount_path || '', _new: false, _deleted: false}));
+    _lxdEditBindMounts = (cfg.bind_mounts || []).map(b => ({...b}));
     _lxdEditUSBs  = (cfg.usb_devices  || []).map(u => ({...u}));
     _lxdEditPCIs  = (cfg.pci_devices  || []).map(p => ({...p}));
     _lxdEditCTDevs = (cfg.passthrough_devices || []).map(d => ({...d, extra: {...(d.extra||{})}}));
     lxdEditRenderNICs();
     lxdEditRenderDisks();
+    lxdEditRenderBindMounts();
     // Update hardware panel summaries
     const cpuVal = document.getElementById('lxd-edit-cpu')?.value || '—';
     const memVal = fmtIncusMemory(cfg.memory_limit);
@@ -36815,15 +37196,28 @@ async function openLXDEditModal(name, type) {
     const diskCount = _lxdEditDisks.filter(d => !d._deleted).length;
     document.getElementById('edithw-disks-summary').textContent = diskCount + ' disk' + (diskCount===1?'':'s');
     // Show/hide VM-only and container-only sections and dropdown items
-    document.getElementById('lxd-edit-usb-section').style.display   = cfg.is_vm ? '' : 'none';
-    document.getElementById('lxd-edit-pci-section').style.display   = cfg.is_vm ? '' : 'none';
-    document.getElementById('lxd-edit-cdrom-section').style.display = cfg.is_vm ? '' : 'none';
-    document.getElementById('lxd-edit-ctdev-section').style.display = cfg.is_vm ? 'none' : '';
+    // Add Hardware menu items still show by instance type even when the
+    // matching section is hidden (empty) — that's how the user adds the first
+    // entry. The sections themselves are shown/hidden by content via
+    // _editSyncSectionVisibility() (called from each render function).
     document.getElementById('lxd-edit-addhw-existingdisk').style.display = '';
     document.getElementById('lxd-edit-addhw-cdrom').style.display  = cfg.is_vm ? '' : 'none';
     document.getElementById('lxd-edit-addhw-usb').style.display   = cfg.is_vm ? '' : 'none';
     document.getElementById('lxd-edit-addhw-pci').style.display   = cfg.is_vm ? '' : 'none';
     document.getElementById('lxd-edit-addhw-ctdev').style.display = cfg.is_vm ? 'none' : '';
+    // Container disks are filesystem mount points, not block "Hard Disks".
+    document.getElementById('lxd-edit-addhw-disk').textContent = cfg.is_vm ? '💾 Hard Disk' : '💾 Mount Point';
+    // Host-directory sharing: containers call it a Bind Mount, VMs VirtIO-FS —
+    // same backend mechanism. The menu item is available for both.
+    document.getElementById('lxd-edit-addhw-bindmount').style.display = '';
+    document.getElementById('lxd-edit-addhw-bindmount').textContent = cfg.is_vm ? '📁 VirtIO-FS' : '📁 Bind Mount (dangerous)';
+    document.getElementById('edithw-bindmount-title').textContent = cfg.is_vm ? 'VirtIO-FS' : 'Bind Mounts';
+    document.getElementById('edithw-bindmount-hint').innerHTML = cfg.is_vm
+      ? '📁 A VirtIO-FS share exposes a host directory to the VM over virtiofs. Any host directory can be shared — <code>/mnt</code> is just a suggested default. Changes apply on Save.'
+      : '⚠ A bind mount exposes a host directory directly to the container. Any host directory can be shared — <code>/mnt</code> is just a suggested default. Changes apply on Save.';
+    document.getElementById('edithw-bindmount-tip').setAttribute('data-tip', cfg.is_vm
+      ? 'VirtIO-FS shares a host directory into this VM over the virtio-fs protocol.\n\nThe host directory must sit on a filesystem that supports POSIX ACLs — ext4, xfs, or a ZFS dataset with acltype=posixacl. On a ZFS dataset with acltype=nfsv4 the guest can mount the share but directory reads fail ("Operation not supported").\n\nFiles appear on the host owned by the guest process’s UID/GID (mapped 1:1).'
+      : 'A bind mount exposes a host directory directly into this container.\n\nIt is a native kernel bind mount, so any host path and filesystem works. Marked "dangerous" because the container gets direct access to that host directory.');
     // Update summaries
     const usbCount = _lxdEditUSBs.length;
     document.getElementById('edithw-usb-summary').textContent = usbCount ? usbCount+' device'+(usbCount===1?'':'s') : 'none';
@@ -36848,6 +37242,19 @@ async function submitLXDEdit() {
   const alertEl = document.getElementById('lxd-edit-alert');
   alertEl.classList.add('hidden');
   const btn = document.getElementById('lxd-edit-submit');
+
+  // Validate host-directory shares client-side (the backend re-checks too).
+  {
+    const label = _lxdEditIsVM ? 'VirtIO-FS' : 'Bind mount';
+    for (const b of _lxdEditBindMounts) {
+      const src = (b.source || '').trim(), ctp = (b.path || '').trim();
+      if (!src && !ctp) continue;
+      const err = _bindMountSourceError(src);
+      if (err) { alertEl.textContent = label + ': ' + err; alertEl.classList.remove('hidden'); return; }
+      if (!ctp) { alertEl.textContent = label + ': mount path is required.'; alertEl.classList.remove('hidden'); return; }
+    }
+  }
+
   btn.disabled = true; btn.textContent = 'Saving…';
 
   // Collect NICs: include instance-level ones + profile NICs whose bridge or connection changed
@@ -36877,6 +37284,7 @@ async function submitLXDEdit() {
       name: d.name, pool: d.pool, size: d.size, is_root: d.is_root,
       boot_priority: d.boot_priority || '', reserve_pct: d.reserve_pct || 0,
       io_cache: d.io_cache || '', io_bus: d.io_bus || '', readonly: !!d.readonly,
+      mount_path: (d.path || '').trim(),
     }));
 
   // Container-specific: build swap_limit string. LXD's limits.memory.swap is
@@ -36939,6 +37347,11 @@ async function submitLXDEdit() {
       dev_path:    d.dev_path,
     }));
   }
+  // Host-directory shares (container Bind Mounts / VM VirtIO-FS) — same
+  // backend field; sent for both instance types.
+  body.bind_mounts = _lxdEditBindMounts
+    .filter(b => (b.source || '').trim() && (b.path || '').trim())
+    .map(b => ({ device_name: b.device_name, source: (b.source || '').trim(), path: (b.path || '').trim(), readonly: !!b.readonly }));
   try {
     const res = await fetch('/api/incus/instances/' + encodeURIComponent(_lxdEditName) + '/config', {
       method: 'PUT',
@@ -37813,8 +38226,10 @@ async function openNewVMModal() {
   if (typeof csRefresh === 'function') csRefresh('lxd-vm-root-size-unit');
   _vmRootSizeSync();
   _lxdVMExistingDisks = []; _lxdFreeZVols = [];
+  _lxdVMVirtioFS = [];
   document.getElementById('lxd-vm-extra-disks').innerHTML    = '';
   document.getElementById('lxd-vm-existing-disks').innerHTML = '';
+  document.getElementById('lxd-vm-virtiofs').innerHTML       = '';
   document.getElementById('lxd-vm-nics').innerHTML           = '';
   document.getElementById('lxd-vm-usb-list').innerHTML       = '';
   document.getElementById('lxd-vm-pci-list').innerHTML       = '';
@@ -37921,6 +38336,20 @@ function _vmhwForceOpen(id) {
   if (!body || !chevron) return;
   body.style.display  = '';
   chevron.textContent = '▼';
+}
+
+// _editSyncSectionVisibility hides the edit modal's optional device sections
+// while they have nothing in them — so the user isn't shown a stack of empty
+// sections. The Add Hardware menu still lists every applicable type and
+// un-hides the section when the first entry is added.
+function _editSyncSectionVisibility() {
+  const vm = _lxdEditIsVM;
+  const set = (id, show) => { const e = document.getElementById(id); if (e) e.style.display = show ? '' : 'none'; };
+  set('lxd-edit-usb-section',       vm  && (_lxdEditUSBs || []).length > 0);
+  set('lxd-edit-pci-section',       vm  && (_lxdEditPCIs || []).length > 0);
+  set('lxd-edit-cdrom-section',     vm  && (_lxdEditCDROMs || []).length > 0);
+  set('lxd-edit-ctdev-section',     !vm && (_lxdEditCTDevs || []).length > 0);
+  set('lxd-edit-bindmount-section', (_lxdEditBindMounts || []).length > 0);
 }
 
 function _lxdToolsToggle(evt) {
@@ -38518,7 +38947,8 @@ function _editAddHWMenu(type) {
   if (type === 'nic')   { lxdEditAddNIC(); _vmhwForceOpen('edithw-nics'); }
   else if (type === 'disk')  { lxdEditAddDisk(); _vmhwForceOpen('edithw-disks'); }
   else if (type === 'existingdisk') { lxdEditAddExistingDisk(); _vmhwForceOpen('edithw-disks'); }
-  else if (type === 'cdrom') { _vmhwForceOpen('edithw-cdrom'); document.getElementById('lxd-edit-cdrom-section').scrollIntoView({behavior:'smooth',block:'nearest'}); }
+  else if (type === 'bindmount') { lxdEditAddBindMount(); _vmhwForceOpen('edithw-bindmount'); }
+  else if (type === 'cdrom') { _editAddCDROM(); _vmhwForceOpen('edithw-cdrom'); document.getElementById('lxd-edit-cdrom-section').scrollIntoView({behavior:'smooth',block:'nearest'}); }
   else if (type === 'usb')   { _lxdUSBPickerTarget = 'edit'; openUSBPicker(); }
   else if (type === 'pci')   { _lxdPCIPickerTarget = 'edit'; openPCIPicker(); }
   else if (type === 'ctdev') { lxdEditAddCTDevice(); _vmhwForceOpen('edithw-ctdev'); }
@@ -38602,6 +39032,7 @@ async function _renderCDROMRow(container, entry, idx, pools, onRemove, onchange)
 async function _renderEditCDROMList() {
   const container = document.getElementById('lxd-edit-cdrom-list');
   if (!container) return;
+  _editSyncSectionVisibility();
   container.innerHTML = '';
   const pools = _lxdAvailPoolsForCDROM;
   for (let i = 0; i < _lxdEditCDROMs.length; i++) {
@@ -38993,6 +39424,8 @@ function _vmAddDevice(type) {
     addVMDiskRow();
   } else if (type === 'existingdisk') {
     addVMExistingDiskRow();
+  } else if (type === 'virtiofs') {
+    addVMVirtioFSRow();
   } else if (type === 'cdrom') {
     _vmAddCDROM().then(() => {
       _vmhwForceOpen('vmhw-cdrom');
@@ -39327,6 +39760,43 @@ function _removeVMExistingDisk(i) {
   _renderVMExistingDiskRows();
 }
 
+// VirtIO-FS — share a host directory (confined to /mnt) into the VM.
+function addVMVirtioFSRow() {
+  const used = new Set(_lxdVMVirtioFS.map(b => b.device_name));
+  let n = 1;
+  while (used.has('virtiofs' + n)) n++;
+  _lxdVMVirtioFS.push({ device_name: 'virtiofs' + n, source: '/mnt/', path: '/mnt/share' + n, readonly: false });
+  _renderVMVirtioFS();
+}
+
+function _renderVMVirtioFS() {
+  const c = document.getElementById('lxd-vm-virtiofs');
+  if (!c) return;
+  if (!_lxdVMVirtioFS.length) { c.innerHTML = ''; return; }
+  c.innerHTML = '<div style="font-size:11px;color:var(--text-3);margin:4px 0 6px;line-height:1.5;">📁 VirtIO-FS — share a host directory into the VM. <code>/mnt</code> is just a suggested default.</div>' +
+    _lxdVMVirtioFS.map((b, i) => `
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;">
+      <span style="font-family:monospace;font-size:11px;color:var(--text-3);min-width:44px;flex-shrink:0;background:var(--surface-2,rgba(255,255,255,0.05));border-radius:3px;padding:2px 5px;text-align:center;">fs${i+1}</span>
+      <input type="text" class="input" placeholder="/mnt/host/path" value="${esc(b.source)}"
+        onchange="_lxdVMVirtioFS[${i}].source=this.value" title="Host directory to share"
+        style="flex:1;min-width:160px;font-family:monospace;font-size:12px;">
+      <span style="color:var(--text-3);flex-shrink:0;">→</span>
+      <input type="text" class="input" placeholder="/mnt/share in VM" value="${esc(b.path)}"
+        onchange="_lxdVMVirtioFS[${i}].path=this.value" title="Mount point inside the VM"
+        style="flex:1;min-width:140px;font-family:monospace;font-size:12px;">
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-2);flex-shrink:0;cursor:pointer;" title="Share the directory read-only inside the VM">
+        <input type="checkbox" ${b.readonly?'checked':''} onchange="_lxdVMVirtioFS[${i}].readonly=this.checked">
+        Read-only
+      </label>
+      <button type="button" class="btn btn-ghost btn-sm" style="padding:4px 8px;flex-shrink:0;" onclick="_removeVMVirtioFS(${i})">✕</button>
+    </div>`).join('');
+}
+
+function _removeVMVirtioFS(i) {
+  _lxdVMVirtioFS.splice(i, 1);
+  _renderVMVirtioFS();
+}
+
 function addVMNICRow() {
   const idx = _lxdVMNICs.length;
   _lxdVMNICs.push({ device_name: 'eth'+idx, network: _lxdNetworks[0]||'lxdbr0', mac: '', vlan_id: 0, connected: true });
@@ -39467,6 +39937,15 @@ async function submitCreateVM(e) {
     if (sel) n.network = sel.value;
   });
 
+  // Validate VirtIO-FS shares client-side (the backend re-checks too).
+  for (const b of _lxdVMVirtioFS) {
+    const src = (b.source || '').trim(), gp = (b.path || '').trim();
+    if (!src && !gp) continue;
+    const err = _bindMountSourceError(src);
+    if (err) { alertEl.textContent = 'VirtIO-FS: ' + err; alertEl.classList.remove('hidden'); btn.disabled = false; return; }
+    if (!gp) { alertEl.textContent = 'VirtIO-FS: guest mount path is required.'; alertEl.classList.remove('hidden'); btn.disabled = false; return; }
+  }
+
   // Build NIC list: NIC0 (built-in) + extra NICs
   const nic0Bridge = document.getElementById('lxd-vm-nic0-bridge').value;
   const nic0Connected = document.getElementById('lxd-vm-nic0-connected').checked;
@@ -39498,6 +39977,9 @@ async function submitCreateVM(e) {
       include_in_snapshots: d.snap !== false, // default ON
     })),
     existing_disks_raw: _lxdVMExistingDisks,
+    bind_mounts: _lxdVMVirtioFS
+      .filter(b => (b.source || '').trim() && (b.path || '').trim())
+      .map(b => ({ device_name: b.device_name, source: (b.source || '').trim(), path: (b.path || '').trim(), readonly: !!b.readonly })),
     nics:             allNICs,
     usb_devices:      _lxdVMUSBs,
     pci_devices:      _lxdVMPCIs,
@@ -39544,6 +40026,7 @@ async function openNewContainerModal() {
   _lxdCTDevices       = [];
   _lxdCTDisks         = [];
   _lxdCTExistingDisks = [];
+  _lxdCTBindMounts    = [];
   _lxdCTFreeZVols     = null;
   const _ctLabel = _nextInstanceLabel('ct');
   document.getElementById('lxd-ct-name').value        = _ctLabel;
@@ -39657,9 +40140,17 @@ function _ctAddHW(type) {
     const usedNames = new Set(_lxdCTDisks.map(d => d.name));
     let n = 1;
     while (usedNames.has('data' + n)) n++;
-    _lxdCTDisks.push({ name: 'data' + n, pool: defaultPool, size_value: 20, size_unit: 'GB', snap: true });
+    // name = internal Incus device name (auto); path = in-container mount point.
+    _lxdCTDisks.push({ name: 'data' + n, path: '/data' + n, pool: defaultPool, size_value: 20, size_unit: 'GB', snap: true, readonly: false });
     _renderCTExtraDisks();
     _ctShowDiskSection();
+  } else if (type === 'bindmount') {
+    const usedNames = new Set(_lxdCTBindMounts.map(b => b.device_name));
+    let n = 1;
+    while (usedNames.has('bind' + n)) n++;
+    _lxdCTBindMounts.push({ device_name: 'bind' + n, source: '/mnt/', path: '/data' + n, readonly: false });
+    _renderCTBindMounts();
+    _ctShowBindMountSection();
   } else if (type === 'existingdisk') {
     if (_lxdCTFreeZVols == null) {
       fetch('/api/incus/free-zvols').then(r => r.ok ? r.json() : []).then(d => {
@@ -39712,6 +40203,58 @@ function _updateCTDiskSummary() {
   }
 }
 
+function _ctShowBindMountSection() {
+  _ctShowHWSection('cthw-bind-mounts');
+  _updateCTBindMountSummary();
+}
+
+function _updateCTBindMountSummary() {
+  const n = _lxdCTBindMounts.length;
+  const el = document.getElementById('cthw-bind-mounts-summary');
+  if (el) el.textContent = n + ' mount' + (n === 1 ? '' : 's');
+  if (n === 0) {
+    const wrap = document.getElementById('cthw-bind-mounts');
+    if (wrap) wrap.style.display = 'none';
+  }
+}
+
+// Validate a host-directory share path — mirrors the backend
+// validateBindMountSource. The path must be non-empty and absolute; /mnt is
+// only a suggested default, not enforced. Returns '' when valid.
+function _bindMountSourceError(src) {
+  src = (src || '').trim();
+  if (!src) return 'host path is required';
+  if (src[0] !== '/') return 'host path must be absolute';
+  return '';
+}
+
+// Render the create-container bind-mount rows. Each row: host source path
+// (must be under /mnt), in-container target path, and a read-only toggle.
+function _renderCTBindMounts() {
+  const c = document.getElementById('lxd-ct-bind-mounts');
+  if (!c) return;
+  if (!_lxdCTBindMounts.length) { c.innerHTML = ''; _updateCTBindMountSummary(); return; }
+  c.innerHTML = _lxdCTBindMounts.map((b, i) => `
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;">
+      <input type="text" class="input" placeholder="/mnt/host/path" value="${esc(b.source)}"
+        onchange="_lxdCTBindMounts[${i}].source=this.value"
+        title="Host directory to expose"
+        style="flex:1;min-width:160px;font-family:monospace;font-size:12px;">
+      <span style="color:var(--text-3);flex-shrink:0;">→</span>
+      <input type="text" class="input" placeholder="/data in container" value="${esc(b.path)}"
+        onchange="_lxdCTBindMounts[${i}].path=this.value"
+        title="Mount point inside the container"
+        style="flex:1;min-width:140px;font-family:monospace;font-size:12px;">
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-2);flex-shrink:0;cursor:pointer;" title="Mount the directory read-only inside the container">
+        <input type="checkbox" ${b.readonly?'checked':''} onchange="_lxdCTBindMounts[${i}].readonly=this.checked">
+        Read-only
+      </label>
+      <button type="button" class="btn btn-ghost btn-sm" style="padding:4px 8px;flex-shrink:0;color:var(--danger);"
+        onclick="_lxdCTBindMounts.splice(${i},1);_renderCTBindMounts();_updateCTBindMountSummary()">✕</button>
+    </div>`).join('');
+  _updateCTBindMountSummary();
+}
+
 function _renderCTExtraDisks() {
   const c = document.getElementById('lxd-ct-extra-disks');
   if (!c) return;
@@ -39724,10 +40267,12 @@ function _renderCTExtraDisks() {
     if (!d.size_unit) d.size_unit = 'GB';
     if (d.size_value === undefined) d.size_value = d.size_gb || 20;
     if (d.snap === undefined) d.snap = true;
+    if (!d.path) d.path = '/' + (d.name || ('data' + (i + 1)));
     return `
     <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;">
-      <input type="text" class="input" placeholder="device name" value="${esc(d.name)}"
-        onchange="_lxdCTDisks[${i}].name=this.value"
+      <input type="text" class="input" placeholder="/data mount point" value="${esc(d.path)}"
+        onchange="_lxdCTDisks[${i}].path=this.value"
+        title="Mount point inside the container"
         style="flex:1;min-width:140px;font-family:monospace;font-size:12px;">
       <select class="input" style="width:120px;flex-shrink:0;" onchange="_lxdCTDisks[${i}].pool=this.value">
         <option value="">default</option>${poolOpts}
@@ -39744,12 +40289,17 @@ function _renderCTExtraDisks() {
         Snap
         <i class="info-tip tip-down" data-tip="Snap (default ON): the disk's data is captured by &quot;incus snapshot&quot; alongside the container and rolls back when you restore. Snap OFF: the disk lives independently — snapshots/restore of the container leave its content untouched. Choice is fixed at create time."></i>
       </label>
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-2);flex-shrink:0;cursor:pointer;" title="Mount this volume read-only inside the container">
+        <input type="checkbox" ${d.readonly?'checked':''} onchange="_lxdCTDisks[${i}].readonly=this.checked">
+        Read-only
+      </label>
       <button type="button" class="btn btn-ghost btn-sm" style="padding:4px 8px;flex-shrink:0;color:var(--danger);"
         onclick="_lxdCTDisks.splice(${i},1);_renderCTExtraDisks();_updateCTDiskSummary()">✕</button>
     </div>`;
   }).join('');
+  // Each row renders two <select>s (pool, then unit) — pre-select the pool.
   _lxdCTDisks.forEach((d, i) => {
-    const sel = c.querySelectorAll('select')[i];
+    const sel = c.querySelectorAll('select')[i * 2];
     if (sel && d.pool) sel.value = d.pool;
   });
   _updateCTDiskSummary();
@@ -39893,6 +40443,21 @@ async function submitCreateContainer(e) {
 
   const cpuLimit = document.getElementById('lxd-ct-cpu-limit').value.trim();
 
+  // Validate bind mounts client-side (the backend re-checks too).
+  for (const b of _lxdCTBindMounts) {
+    const src = (b.source || '').trim(), ctp = (b.path || '').trim();
+    if (!src && !ctp) continue; // blank row — dropped from payload anyway
+    const err = _bindMountSourceError(src);
+    if (err) {
+      alertEl.textContent = 'Bind mount: ' + err;
+      alertEl.classList.remove('hidden'); btn.disabled = false; return;
+    }
+    if (!ctp) {
+      alertEl.textContent = 'Bind mount: container path is required.';
+      alertEl.classList.remove('hidden'); btn.disabled = false; return;
+    }
+  }
+
   const body = {
     name:          document.getElementById('lxd-ct-name').value.trim(),
     description:   document.getElementById('lxd-ct-description').value.trim(),
@@ -39920,8 +40485,13 @@ async function submitCreateContainer(e) {
       pool: d.pool,
       size_gb: _diskGB(d.size_value !== undefined ? d.size_value : d.size_gb, d.size_unit || 'GB'),
       include_in_snapshots: d.snap !== false, // default ON
+      mount_path: (d.path || '').trim(),
+      readonly: !!d.readonly,
     })),
     existing_disks: _lxdCTExistingDisks.filter(d => d.dev_path).map(d => ({ device_name: d.device_name, dev_path: d.dev_path })),
+    bind_mounts: _lxdCTBindMounts
+      .filter(b => (b.source || '').trim() && (b.path || '').trim())
+      .map(b => ({ device_name: b.device_name, source: (b.source || '').trim(), path: (b.path || '').trim(), readonly: !!b.readonly })),
   };
   if (cpuLimit) body.cpu_limit_pct = parseInt(cpuLimit) || 0;
 

@@ -116,6 +116,52 @@ type LXDDisk struct {
 	SizeGB             float64 `json:"size_gb"`
 	ReservePct         int     `json:"reserve_pct"` // 0=thin, 25/50/75/100
 	IncludeInSnapshots bool    `json:"include_in_snapshots"`
+	// MountPath is the in-container mount point for this volume (e.g.
+	// "/data1"). Container-only — VMs attach disks as raw block devices and
+	// ignore it. Empty falls back to "/" + device name.
+	MountPath string `json:"mount_path"`
+	// ReadOnly attaches the disk read-only. Ignored for root disks.
+	ReadOnly bool `json:"readonly"`
+}
+
+// LXDBindMount is a host-directory bind mount into a container. The host
+// Source is confined to /mnt for safety; Path is the in-container mount
+// point. ReadOnly attaches the directory read-only.
+type LXDBindMount struct {
+	DeviceName string `json:"device_name"`
+	Source     string `json:"source"`
+	Path       string `json:"path"`
+	ReadOnly   bool   `json:"readonly"`
+}
+
+// isHostDirShareSource reports whether a "disk"-type device with the given
+// pool and source is a host-directory share — a container bind mount or a VM
+// VirtIO-FS share — rather than a pool-backed volume, a raw block device, or
+// a CDROM. Such a device has no pool and a source that is an absolute path
+// not under /dev. When the source can be stat'd it must be a directory (so a
+// raw image file isn't misclassified); when it can't be reached it's still
+// treated as a share, since ZNAS only ever creates no-pool, non-/dev disk
+// devices as bind mounts / VirtIO-FS.
+func isHostDirShareSource(pool, source string) bool {
+	if pool != "" || !strings.HasPrefix(source, "/") || strings.HasPrefix(source, "/dev/") {
+		return false
+	}
+	if fi, err := os.Stat(source); err == nil {
+		return fi.IsDir()
+	}
+	return true
+}
+
+// validateBindMountSource normalises a host-directory share path (container
+// bind mount / VM VirtIO-FS). It must be a non-empty absolute path; ".."
+// segments are collapsed by filepath.Clean. /mnt is only a suggested default
+// pre-filled in the UI — any host directory may be shared.
+func validateBindMountSource(src string) (string, error) {
+	clean := filepath.Clean(strings.TrimSpace(src))
+	if clean == "." || !strings.HasPrefix(clean, "/") {
+		return "", fmt.Errorf("share source %q must be an absolute host path", src)
+	}
+	return clean, nil
 }
 
 // LXDSnapWithInstanceProperty is the user property ZNAS sets on a custom
@@ -398,26 +444,27 @@ type LXDCreateVMRequest struct {
 	RootSizeGB        float64           `json:"root_size_gb"`
 	ExtraDisks        []LXDDisk         `json:"extra_disks"`
 	ExistingDisks     []LXDExistingDisk `json:"existing_disks_raw"`
+	BindMounts        []LXDBindMount    `json:"bind_mounts"` // VirtIO-FS host /mnt directory shares
 	NICs              []LXDNIC          `json:"nics"`
 	USBDevices        []LXDUSBDevice    `json:"usb_devices"`
 	PCIDevices        []LXDPCIDevice    `json:"pci_devices"`
 	CloudInit         string            `json:"cloud_init"`
-	CDROMPath         string            `json:"cdrom_path"`         // absolute path to ISO, "" = no disc
-	CDROMPool         string            `json:"cdrom_pool"`         // pool name — handler resolves to CDROMPath
-	CDROMIso          string            `json:"cdrom_iso"`          // ISO filename within pool's .isos dir
-	CDROMs            []string          `json:"cdroms"`             // handler-resolved absolute ISO paths (multi-drive)
-	CPUSockets        int               `json:"cpu_sockets"`        // QEMU socket topology (0 = auto)
-	CPUPin            string            `json:"cpu_pin"`            // LXD limits.cpu range string for pinning
-	StatefulSnapshots bool              `json:"stateful_snapshots"` // sets migration.stateful before first start
-	Firmware          string            `json:"firmware"`           // "uefi" (default) | "bios"
-	SecureBoot        bool              `json:"secure_boot"`        // only meaningful when Firmware == "uefi"
-	TPM               bool              `json:"tpm"`                // enable emulated TPM 2.0 (security.tpm)
-	MachineType       string            `json:"machine_type"`       // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", "q35", "pc", etc.
-	DiskBus           string            `json:"disk_bus"`           // "" = virtio-blk (default), "scsi", "nvme"
-	SMBIOS            *LXDSMBIOSType1   `json:"smbios,omitempty"`   // SMBIOS type 1 (System Information); applied via raw.qemu
+	CDROMPath         string            `json:"cdrom_path"`             // absolute path to ISO, "" = no disc
+	CDROMPool         string            `json:"cdrom_pool"`             // pool name — handler resolves to CDROMPath
+	CDROMIso          string            `json:"cdrom_iso"`              // ISO filename within pool's .isos dir
+	CDROMs            []string          `json:"cdroms"`                 // handler-resolved absolute ISO paths (multi-drive)
+	CPUSockets        int               `json:"cpu_sockets"`            // QEMU socket topology (0 = auto)
+	CPUPin            string            `json:"cpu_pin"`                // LXD limits.cpu range string for pinning
+	StatefulSnapshots bool              `json:"stateful_snapshots"`     // sets migration.stateful before first start
+	Firmware          string            `json:"firmware"`               // "uefi" (default) | "bios"
+	SecureBoot        bool              `json:"secure_boot"`            // only meaningful when Firmware == "uefi"
+	TPM               bool              `json:"tpm"`                    // enable emulated TPM 2.0 (security.tpm)
+	MachineType       string            `json:"machine_type"`           // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", "q35", "pc", etc.
+	DiskBus           string            `json:"disk_bus"`               // "" = virtio-blk (default), "scsi", "nvme"
+	SMBIOS            *LXDSMBIOSType1   `json:"smbios,omitempty"`       // SMBIOS type 1 (System Information); applied via raw.qemu
 	SMBIOSType2       *LXDSMBIOSType2   `json:"smbios_type2,omitempty"` // SMBIOS type 2 (Baseboard / Motherboard); applied via raw.qemu
 	SMBIOSType4       *LXDSMBIOSType4   `json:"smbios_type4,omitempty"` // SMBIOS type 4 (Processor); applied via raw.qemu
-	DisableVirtualVGA bool              `json:"disable_virtual_vga"` // replace Incus' default virtio-vga with a passive bridge; used for full GPU passthrough so the guest doesn't bind a framebuffer console
+	DisableVirtualVGA bool              `json:"disable_virtual_vga"`    // replace Incus' default virtio-vga with a passive bridge; used for full GPU passthrough so the guest doesn't bind a framebuffer console
 }
 
 // LXDSMBIOSType1 holds the seven fields exposed by Proxmox under "SMBIOS
@@ -490,6 +537,7 @@ type LXDCreateContainerRequest struct {
 	// MB unit.
 	ExtraDisks    []LXDDisk         `json:"extra_disks"`
 	ExistingDisks []LXDExistingDisk `json:"existing_disks"`
+	BindMounts    []LXDBindMount    `json:"bind_mounts"`
 }
 
 // LXDInstanceStats holds live resource usage for a running instance.
@@ -986,7 +1034,7 @@ func parsePCIQEMUArgs(rawQEMU string) map[string]map[string]string {
 // `[device "dev-incus_<DeviceName>"]`), and adding a SECOND `-device`
 // targeting the same host BDF makes QEMU fail VM start with
 //
-//   vfio <addr>: device is already attached
+//	vfio <addr>: device is already attached
 //
 // The `-set` form modifies the already-defined device in place, so the
 // host's vfio-pci binding is claimed exactly once. The Incus device ID
@@ -1126,8 +1174,8 @@ func pciBoolFromQEMU(v string) string {
 //
 // Incus exposes raw.qemu.conf as a *key-level override*: setting
 //
-//   [device "qemu_gpu"]
-//   driver = "pcie-pci-bridge"
+//	[device "qemu_gpu"]
+//	driver = "pcie-pci-bridge"
 //
 // replaces just the `driver` key on the existing qemu_gpu device, leaving
 // the bus/addr untouched. pcie-pci-bridge is a passive PCIe-to-PCI bridge
@@ -1640,7 +1688,7 @@ type LXDDiskConfig struct {
 	Size         string `json:"size,omitempty"`
 	ReservePct   int    `json:"reserve_pct,omitempty"` // 0=thin, 25/50/75/100
 	IsRoot       bool   `json:"is_root,omitempty"`
-	IsAgent      bool   `json:"is_agent,omitempty"`    // true when source=="agent:config" — synthetic Incus agent share
+	IsAgent      bool   `json:"is_agent,omitempty"` // true when source=="agent:config" — synthetic Incus agent share
 	FromProfile  bool   `json:"from_profile,omitempty"`
 	ZFSPath      string `json:"zfs_path,omitempty"`      // backing ZFS path
 	ZFSType      string `json:"zfs_type,omitempty"`      // "zvol" | "dataset"
@@ -1650,6 +1698,9 @@ type LXDDiskConfig struct {
 	IOCache  string `json:"io_cache,omitempty"` // "" | "none" | "writeback" | "writethrough" | "unsafe" | "directsync"
 	IOBus    string `json:"io_bus,omitempty"`   // "" | "virtio-blk" | "virtio-scsi" | "nvme" — overrides the VM-wide DiskBus when non-empty
 	ReadOnly bool   `json:"readonly,omitempty"` // attach disk read-only
+	// MountPath is the in-container mount point for a newly-added container
+	// disk (e.g. "/data1"). Container-only; empty falls back to "/" + Name.
+	MountPath string `json:"mount_path,omitempty"`
 }
 
 // LXDCapabilities flags optional disk knobs by LXD's API extension list, so
@@ -1676,14 +1727,14 @@ type LXDInstanceConfig struct {
 	// unexpected stop (guest poweroff, QEMU crash, OOM, external CLI stop).
 	// Stored as the Incus user.* key `user.zfsnas.force_running`, separate
 	// from Autostart so the two flags can be toggled independently.
-	ForceRunning      bool   `json:"force_running"`
-	StatefulSnapshots bool   `json:"stateful_snapshots"` // migration.stateful — VM-only
-	IsVM              bool   `json:"is_vm"`
+	ForceRunning      bool `json:"force_running"`
+	StatefulSnapshots bool `json:"stateful_snapshots"` // migration.stateful — VM-only
+	IsVM              bool `json:"is_vm"`
 	// Container-specific features (only applied when ApplyContainerFeatures is true)
-	ApplyContainerFeatures bool                   `json:"apply_container_features,omitempty"`
-	CPULimitPct            int                    `json:"cpu_limit_pct,omitempty"`  // 0=unset, 1-100 → limits.cpu.allowance
-	CPUShares              int                    `json:"cpu_shares,omitempty"`     // 0=unset, 1-10 → limits.cpu.priority
-	SwapLimit              string                 `json:"swap_limit,omitempty"`     // "" | "false" | "512MB"
+	ApplyContainerFeatures bool   `json:"apply_container_features,omitempty"`
+	CPULimitPct            int    `json:"cpu_limit_pct,omitempty"` // 0=unset, 1-100 → limits.cpu.allowance
+	CPUShares              int    `json:"cpu_shares,omitempty"`    // 0=unset, 1-10 → limits.cpu.priority
+	SwapLimit              string `json:"swap_limit,omitempty"`    // "" | "false" | "512MB"
 	// Tri-state on the wire would be ideal, but we keep the bool and
 	// drop `omitempty` so the field is ALWAYS present in the GET
 	// response. With omitempty a privileged container (Unprivileged
@@ -1691,29 +1742,30 @@ type LXDInstanceConfig struct {
 	// the frontend's `cfg.unprivileged !== false` default flipped the
 	// checkbox back to "Unprivileged" on the next edit, masking the
 	// successful save.
-	Unprivileged           bool                   `json:"unprivileged"`             // security.privileged = !Unprivileged
-	FeatureKeyctl          bool                   `json:"feature_keyctl,omitempty"` // security.syscalls.allow=keyctl
-	FeatureFUSE            bool                   `json:"feature_fuse,omitempty"`   // /dev/fuse device
-	CDROMPath              string                 `json:"cdrom_path"`               // current ISO path (GET) / desired path (PUT)
-	ApplyCDROM             bool                   `json:"apply_cdrom"`              // if true, apply CDROMPath change on PUT (legacy single-drive)
-	CDROMs                 []string               `json:"cdroms"`                   // handler-resolved absolute ISO paths (multi-drive)
-	ApplyCDROMs            bool                   `json:"apply_cdroms"`             // if true, replace all CDROMs with CDROMs list
-	Firmware               string                 `json:"firmware"`                 // "uefi" (default) | "bios"
-	SecureBoot             bool                   `json:"secure_boot"`              // only meaningful when Firmware == "uefi"
-	TPM                    bool                   `json:"tpm"`                      // enable emulated TPM 2.0 (security.tpm)
-	MachineType            string                 `json:"machine_type"`             // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", etc.
-	DiskBus                string                 `json:"disk_bus"`                 // "" = virtio-blk (default), "scsi", "nvme"
-	SMBIOS                 *LXDSMBIOSType1        `json:"smbios,omitempty"`         // SMBIOS type 1 (System Information); applied via raw.qemu
-	SMBIOSType2            *LXDSMBIOSType2        `json:"smbios_type2,omitempty"`   // SMBIOS type 2 (Baseboard / Motherboard); applied via raw.qemu
-	SMBIOSType4            *LXDSMBIOSType4        `json:"smbios_type4,omitempty"`   // SMBIOS type 4 (Processor); applied via raw.qemu
-	DisableVirtualVGA      bool                   `json:"disable_virtual_vga"`      // replace Incus' default virtio-vga with a passive bridge; used for full GPU passthrough so the guest doesn't bind a framebuffer console
-	NICs                   []LXDNICConfig         `json:"nics"`
-	Disks                  []LXDDiskConfig        `json:"disks"`
-	DetachDisks            []string               `json:"detach_disks,omitempty"` // device names to detach only (keep backing volume)
-	ExistingDisks          []LXDExistingDisk      `json:"existing_disks_raw"`     // ZVols to attach as new raw block devices
-	USBDevices             []LXDUSBDevice         `json:"usb_devices"`
-	PCIDevices             []LXDPCIDevice         `json:"pci_devices"`
-	PassthroughDevices     []LXDPassthroughDevice `json:"passthrough_devices"`
+	Unprivileged       bool                   `json:"unprivileged"`             // security.privileged = !Unprivileged
+	FeatureKeyctl      bool                   `json:"feature_keyctl,omitempty"` // security.syscalls.allow=keyctl
+	FeatureFUSE        bool                   `json:"feature_fuse,omitempty"`   // /dev/fuse device
+	CDROMPath          string                 `json:"cdrom_path"`               // current ISO path (GET) / desired path (PUT)
+	ApplyCDROM         bool                   `json:"apply_cdrom"`              // if true, apply CDROMPath change on PUT (legacy single-drive)
+	CDROMs             []string               `json:"cdroms"`                   // handler-resolved absolute ISO paths (multi-drive)
+	ApplyCDROMs        bool                   `json:"apply_cdroms"`             // if true, replace all CDROMs with CDROMs list
+	Firmware           string                 `json:"firmware"`                 // "uefi" (default) | "bios"
+	SecureBoot         bool                   `json:"secure_boot"`              // only meaningful when Firmware == "uefi"
+	TPM                bool                   `json:"tpm"`                      // enable emulated TPM 2.0 (security.tpm)
+	MachineType        string                 `json:"machine_type"`             // "" = auto, "pc-q35-9.1", "pc-i440fx-9.1", etc.
+	DiskBus            string                 `json:"disk_bus"`                 // "" = virtio-blk (default), "scsi", "nvme"
+	SMBIOS             *LXDSMBIOSType1        `json:"smbios,omitempty"`         // SMBIOS type 1 (System Information); applied via raw.qemu
+	SMBIOSType2        *LXDSMBIOSType2        `json:"smbios_type2,omitempty"`   // SMBIOS type 2 (Baseboard / Motherboard); applied via raw.qemu
+	SMBIOSType4        *LXDSMBIOSType4        `json:"smbios_type4,omitempty"`   // SMBIOS type 4 (Processor); applied via raw.qemu
+	DisableVirtualVGA  bool                   `json:"disable_virtual_vga"`      // replace Incus' default virtio-vga with a passive bridge; used for full GPU passthrough so the guest doesn't bind a framebuffer console
+	NICs               []LXDNICConfig         `json:"nics"`
+	Disks              []LXDDiskConfig        `json:"disks"`
+	DetachDisks        []string               `json:"detach_disks,omitempty"` // device names to detach only (keep backing volume)
+	ExistingDisks      []LXDExistingDisk      `json:"existing_disks_raw"`     // ZVols to attach as new raw block devices
+	BindMounts         []LXDBindMount         `json:"bind_mounts"`            // host /mnt directories bind-mounted into a container
+	USBDevices         []LXDUSBDevice         `json:"usb_devices"`
+	PCIDevices         []LXDPCIDevice         `json:"pci_devices"`
+	PassthroughDevices []LXDPassthroughDevice `json:"passthrough_devices"`
 	// Daemon-side capability flags (read-only on GET; ignored on PUT). Lets
 	// the editor disable inputs that the running LXD will silently reject.
 	Capabilities LXDCapabilities `json:"capabilities,omitempty"`
@@ -2428,6 +2480,25 @@ func lxdFindZFSVol(suffix string) string {
 	return ""
 }
 
+// lxdFindZFSDataset is the filesystem-dataset counterpart of lxdFindZFSVol.
+// Container custom disks ("Mount Points") are Incus filesystem volumes — they
+// live as ZFS datasets (e.g. <pool>/<incus-pool>/custom/<project>_<vol>), not
+// zvols, so `zfs list -t volume` never matches them. Incus prefixes the
+// volume name with the project ("default_"), hence the "_"+suffix match.
+func lxdFindZFSDataset(suffix string) string {
+	out, err := exec.Command("zfs", "list", "-H", "-t", "filesystem", "-o", "name").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, "/"+suffix) || strings.HasSuffix(line, "_"+suffix) {
+			return line
+		}
+	}
+	return ""
+}
+
 // lxdSetZvolReservation sets refreservation on a ZFS zvol to pct% of its actual volsize.
 // pct==0 clears the reservation (thin provisioning).
 // Always queries ZFS for the real volsize to avoid string-parsing precision loss.
@@ -2679,6 +2750,19 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 				}
 				continue
 			}
+			// Bind mounts (container) / VirtIO-FS shares (VM) are disk devices
+			// whose source is a host directory — not a pool volume or block
+			// device. Surface them in their own list so they don't appear in
+			// the disk table.
+			if isHostDirShareSource(devCfg["pool"], devCfg["source"]) {
+				cfg.BindMounts = append(cfg.BindMounts, LXDBindMount{
+					DeviceName: devName,
+					Source:     devCfg["source"],
+					Path:       devCfg["path"],
+					ReadOnly:   devCfg["readonly"] == "true",
+				})
+				continue
+			}
 			lxdPool := devCfg["pool"]
 			isRoot := devCfg["path"] == "/"
 			// "agent" is the synthetic Incus agent disk that lives in
@@ -2699,6 +2783,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 				IOCache:      devCfg["io.cache"],
 				IOBus:        devCfg["io.bus"],
 				ReadOnly:     devCfg["readonly"] == "true",
+				MountPath:    devCfg["path"], // in-container mount point (containers)
 			}
 			// Capture the disk bus from the root disk to represent the VM-wide setting.
 			if isRoot && cfg.DiskBus == "" && devCfg["io.bus"] != "" {
@@ -2726,12 +2811,14 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 							zfsPath = zfsPool + "/containers/" + name
 							zfsType = "dataset"
 						} else {
+							// Container custom disks ("Mount Points") are Incus
+							// filesystem volumes — ZFS datasets, not zvols.
 							volName := devCfg["source"]
 							if volName == "" {
 								volName = name + "-" + devName
 							}
-							zfsPath = lxdFindZFSVol(volName)
-							zfsType = "zvol"
+							zfsPath = lxdFindZFSDataset(volName)
+							zfsType = "dataset"
 						}
 					}
 					disk.ZFSPath = zfsPath
@@ -2773,6 +2860,18 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 						case pct >= 13:
 							disk.ReservePct = 25
 						}
+					}
+				}
+			}
+			// Container custom disks ("Mount Points") are filesystem datasets —
+			// their size is the dataset quota, not a device config key, so
+			// devCfg["size"] above came back empty.
+			if disk.Size == "" && !isRoot && disk.ZFSPath != "" && disk.ZFSType == "dataset" {
+				if out, err := exec.Command("zfs", "get", "-Hp", "-o", "value", "quota", disk.ZFSPath).Output(); err == nil {
+					var quota int64
+					fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &quota)
+					if quota > 0 {
+						disk.Size = fmt.Sprintf("%dGB", (quota+500000000)/1000000000)
 					}
 				}
 			}
@@ -3640,9 +3739,14 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		wantDisks[disk.Name] = struct{}{}
 		cur, exists := curDisks[disk.Name]
 		if !exists {
-			// LXD 5.x requires a named block volume; create it first then attach.
+			// LXD 5.x requires a named volume; create it first then attach.
+			// VMs take a "block"-type volume attached as a raw device;
+			// containers take a filesystem volume mounted at an in-guest path.
 			volName := name + "-" + disk.Name
-			volArgs := []string{"storage", "volume", "create", disk.Pool, volName, "--type", "block"}
+			volArgs := []string{"storage", "volume", "create", disk.Pool, volName}
+			if isVM {
+				volArgs = append(volArgs, "--type", "block")
+			}
 			if disk.Size != "" {
 				volArgs = append(volArgs, "size="+disk.Size)
 			}
@@ -3651,11 +3755,20 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			}
 			devArgs := []string{"config", "device", "add", name, disk.Name, "disk",
 				"pool=" + disk.Pool, "source=" + volName}
+			if !isVM {
+				// Container disk → mount point inside the guest.
+				mountPath := strings.TrimSpace(disk.MountPath)
+				if mountPath == "" {
+					mountPath = "/" + disk.Name
+				}
+				devArgs = append(devArgs, "path="+mountPath)
+			}
 			if out, err := exec.Command("incus", devArgs...).CombinedOutput(); err != nil {
 				exec.Command("incus", "storage", "volume", "delete", disk.Pool, volName).Run()
 				return fmt.Errorf("add disk %s: %s", disk.Name, strings.TrimSpace(string(out)))
 			}
-			// Apply ZFS reservation for the newly created volume.
+			// Apply ZFS reservation for the newly created volume (zvol-backed
+			// only; lxdFindZFSVol returns "" for container filesystem volumes).
 			if zfsPath := lxdFindZFSVol(volName); zfsPath != "" {
 				lxdSetZvolReservation(zfsPath, disk.ReservePct)
 			}
@@ -3774,6 +3887,11 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 					}
 				}
 			}
+			// Container mount point: apply a changed in-guest path on an
+			// existing non-root container disk.
+			if !isVM && !disk.IsRoot && disk.MountPath != "" && cur["path"] != disk.MountPath {
+				exec.Command("incus", "config", "device", "set", name, disk.Name, "path", disk.MountPath).Run() //nolint:errcheck
+			}
 		}
 		// For newly added disks, apply per-disk knobs immediately after device add (VM-only).
 		if !exists && isVM {
@@ -3793,6 +3911,11 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
 			}
 		}
+		// New container disk: apply the read-only flag (containers skip the
+		// VM-only io.bus / io.cache knobs above).
+		if !exists && !isVM && !disk.IsRoot && disk.ReadOnly {
+			exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
+		}
 	}
 	detachOnly := map[string]bool{}
 	for _, n := range cfg.DetachDisks {
@@ -3804,6 +3927,9 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		}
 		if d["readonly"] == "true" && strings.HasSuffix(strings.ToLower(d["source"]), ".iso") {
 			continue // cdrom handled separately below
+		}
+		if isHostDirShareSource(d["pool"], d["source"]) {
+			continue // bind mount / VirtIO-FS — managed via cfg.BindMounts, not the disk table
 		}
 		if _, ok := wantDisks[n]; !ok {
 			volPool := d["pool"]
@@ -3927,6 +4053,69 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		}
 		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
 			return fmt.Errorf("attach existing disk %s: %s", devName, strings.TrimSpace(string(out)))
+		}
+	}
+
+	// ── Bind mounts (host /mnt directories) — full reconcile ─────────────────
+	// cfg.BindMounts is the complete desired set: add new ones, update
+	// changed ones, and remove any /mnt-sourced device no longer listed.
+	wantBind := map[string]bool{}
+	for i, bm := range cfg.BindMounts {
+		devName := bm.DeviceName
+		if devName == "" {
+			devName = fmt.Sprintf("bind%d", i+1)
+		}
+		if !lxdDevNameRe.MatchString(devName) {
+			return fmt.Errorf("invalid bind mount device name: %s", devName)
+		}
+		src, err := validateBindMountSource(bm.Source)
+		if err != nil {
+			return err
+		}
+		ctPath := strings.TrimSpace(bm.Path)
+		if ctPath == "" {
+			return fmt.Errorf("bind mount %s: container path is required", devName)
+		}
+		wantBind[devName] = true
+		cur, exists := rawDev.Devices[devName]
+		if !exists {
+			bmArgs := []string{"config", "device", "add", name, devName, "disk",
+				"source=" + src, "path=" + ctPath}
+			if bm.ReadOnly {
+				bmArgs = append(bmArgs, "readonly=true")
+			}
+			if out, err := exec.Command("incus", bmArgs...).CombinedOutput(); err != nil {
+				return fmt.Errorf("add bind mount %s: %s", devName, strings.TrimSpace(string(out)))
+			}
+			continue
+		}
+		// Existing — push any changed property.
+		if cur["source"] != src {
+			exec.Command("incus", "config", "device", "set", name, devName, "source", src).Run() //nolint:errcheck
+		}
+		if cur["path"] != ctPath {
+			exec.Command("incus", "config", "device", "set", name, devName, "path", ctPath).Run() //nolint:errcheck
+		}
+		if (cur["readonly"] == "true") != bm.ReadOnly {
+			if bm.ReadOnly {
+				exec.Command("incus", "config", "device", "set", name, devName, "readonly", "true").Run() //nolint:errcheck
+			} else {
+				exec.Command("incus", "config", "device", "unset", name, devName, "readonly").Run() //nolint:errcheck
+			}
+		}
+	}
+	// Remove bind-mount / VirtIO-FS devices the user dropped from the list.
+	for devName, d := range rawDev.Devices {
+		if d["type"] != "disk" {
+			continue
+		}
+		if !isHostDirShareSource(d["pool"], d["source"]) {
+			continue
+		}
+		if !wantBind[devName] {
+			if out, err := exec.Command("incus", "config", "device", "remove", name, devName).CombinedOutput(); err != nil {
+				return fmt.Errorf("remove bind mount %s: %s", devName, strings.TrimSpace(string(out)))
+			}
 		}
 	}
 
@@ -4563,6 +4752,36 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		}
 	}
 
+	// VirtIO-FS shares: host directories under /mnt shared into the VM. Incus
+	// serves a directory-source disk device to a VM over virtiofs (9p
+	// fallback). Source is confined to /mnt — validateBindMountSource also
+	// collapses any ".." traversal before the prefix check.
+	for i, bm := range req.BindMounts {
+		devName := bm.DeviceName
+		if devName == "" {
+			devName = fmt.Sprintf("virtiofs%d", i+1)
+		}
+		src, err := validateBindMountSource(bm.Source)
+		if err != nil {
+			log("WARNING: skipping VirtIO-FS share " + devName + ": " + err.Error())
+			continue
+		}
+		guestPath := strings.TrimSpace(bm.Path)
+		if guestPath == "" {
+			log("WARNING: skipping VirtIO-FS share " + devName + ": no guest path given")
+			continue
+		}
+		log("Adding VirtIO-FS share " + src + " → " + guestPath + " as " + devName + "…")
+		bmArgs := []string{"config", "device", "add", req.Name,
+			devName, "disk", "source=" + src, "path=" + guestPath}
+		if bm.ReadOnly {
+			bmArgs = append(bmArgs, "readonly=true")
+		}
+		if out, err := exec.Command("incus", bmArgs...).CombinedOutput(); err != nil {
+			log("WARNING: add VirtIO-FS share " + devName + ": " + strings.TrimSpace(string(out)))
+		}
+	}
+
 	// Set migration.stateful now that all disks are attached. Setting it during
 	// lxc init causes LXD to reject any subsequent disk-add for non-shared pools.
 	//
@@ -4949,9 +5168,17 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 			log("WARNING: create volume " + volName + ": " + strings.TrimSpace(string(out)))
 			continue
 		}
-		log("Attaching " + devName + " → /" + devName + "…")
-		if out, err := exec.Command("incus", "config", "device", "add", req.Name,
-			devName, "disk", "pool="+pool, "source="+volName, "path=/"+devName).CombinedOutput(); err != nil {
+		mountPath := strings.TrimSpace(disk.MountPath)
+		if mountPath == "" {
+			mountPath = "/" + devName
+		}
+		log("Attaching " + devName + " → " + mountPath + "…")
+		devArgs := []string{"config", "device", "add", req.Name,
+			devName, "disk", "pool=" + pool, "source=" + volName, "path=" + mountPath}
+		if disk.ReadOnly {
+			devArgs = append(devArgs, "readonly=true")
+		}
+		if out, err := exec.Command("incus", devArgs...).CombinedOutput(); err != nil {
 			log("WARNING: attach volume " + volName + ": " + strings.TrimSpace(string(out)))
 			continue
 		}
@@ -4977,6 +5204,35 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		if out, err := exec.Command("incus", "config", "device", "add", req.Name,
 			devName, "disk", "source="+ed.DevPath, "path=/"+devName).CombinedOutput(); err != nil {
 			log("WARNING: attach existing disk " + devName + ": " + strings.TrimSpace(string(out)))
+		}
+	}
+
+	// Bind mounts: host directories under /mnt bind-mounted into the
+	// container. Source is confined to /mnt (validateBindMountSource also
+	// collapses any ".." traversal before checking).
+	for i, bm := range req.BindMounts {
+		devName := bm.DeviceName
+		if devName == "" {
+			devName = fmt.Sprintf("bind%d", i+1)
+		}
+		src, err := validateBindMountSource(bm.Source)
+		if err != nil {
+			log("WARNING: skipping bind mount " + devName + ": " + err.Error())
+			continue
+		}
+		ctPath := strings.TrimSpace(bm.Path)
+		if ctPath == "" {
+			log("WARNING: skipping bind mount " + devName + ": no container path given")
+			continue
+		}
+		log("Bind-mounting " + src + " → " + ctPath + " as " + devName + "…")
+		bmArgs := []string{"config", "device", "add", req.Name,
+			devName, "disk", "source=" + src, "path=" + ctPath}
+		if bm.ReadOnly {
+			bmArgs = append(bmArgs, "readonly=true")
+		}
+		if out, err := exec.Command("incus", bmArgs...).CombinedOutput(); err != nil {
+			log("WARNING: add bind mount " + devName + ": " + strings.TrimSpace(string(out)))
 		}
 	}
 

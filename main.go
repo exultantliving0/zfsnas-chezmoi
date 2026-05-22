@@ -360,6 +360,28 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// Optional second listener on the standard HTTPS port 443 — Settings →
+	// Server Port → "Also bind port 443". Binding a privileged port from the
+	// non-root service account requires CAP_NET_BIND_SERVICE (granted to the
+	// systemd unit via AmbientCapabilities). If that capability is missing the
+	// bind fails; we log a clear warning and leave the primary listener up.
+	var srv443 *http.Server
+	if appCfg.BindPort443 && appCfg.Port != 443 {
+		srv443 = &http.Server{
+			Addr:              ":443",
+			Handler:           router,
+			ReadHeaderTimeout: 15 * time.Second,
+			WriteTimeout:      300 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		}
+		go func() {
+			log.Printf("HTTPS server also listening on :443")
+			if err := srv443.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+				log.Printf("WARNING: could not bind port 443 (%v) — the zfsnas.service unit may be missing AmbientCapabilities=CAP_NET_BIND_SERVICE; the portal stays reachable on :%d", err, appCfg.Port)
+			}
+		}()
+	}
+
 	// Graceful shutdown on SIGINT / SIGTERM.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -380,6 +402,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
+	if srv443 != nil {
+		srv443.Shutdown(ctx)
+	}
 	log.Println("Server stopped.")
 }
 

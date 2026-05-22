@@ -264,6 +264,33 @@ func datasetExists(ds string) bool {
 	return exec.Command("zfs", "list", "-H", "-o", "name", ds).Run() == nil
 }
 
+// datasetUsedBytes returns the ZFS `used` property of one dataset in bytes.
+// `used` already accounts for that dataset's own snapshots, so this is the
+// real on-disk footprint. Unreadable / missing dataset → 0.
+func datasetUsedBytes(ds string) int64 {
+	out, err := exec.Command("zfs", "get", "-Hp", "-o", "value", "used", ds).Output()
+	if err != nil {
+		return 0
+	}
+	var n int64
+	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &n)
+	return n
+}
+
+// backupInstanceUsedBytes is the total on-disk size of a workload backup
+// instance: the root dataset's `used` (including its snapshots) plus the
+// `.block` sibling that VM backups keep beside the root-fs dataset. Summing
+// per-snapshot `used` undercounts badly — the bulk of a received-only backup
+// is referenced by the live filesystem, not attributed to any one snapshot —
+// so this is what the Backups page shows as "Total Size".
+func backupInstanceUsedBytes(dataset string) int64 {
+	total := datasetUsedBytes(dataset)
+	if block := dataset + ".block"; datasetExists(block) {
+		total += datasetUsedBytes(block)
+	}
+	return total
+}
+
 // LXDBackupDestDataset composes the ZFS dataset path on the destination side
 // for the backup of <vm>. `kind` is "virtual-machines" or "containers",
 // `poolSource` is the ZFS source path of the destination Incus storage pool.
@@ -646,13 +673,14 @@ func rewriteBackupYAMLContent(content, srcPool, dstPool, dstZFSSource, srcInstan
 type LXDSnapshotEntry struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
-	Used      int64     `json:"used"`
+	Used      int64     `json:"used"`    // space held exclusively by this snapshot
+	Written   int64     `json:"written"` // space written since the previous snapshot
 }
 
 // LXDListDatasetSnapshots returns every snapshot of `dataset` whose name
 // starts with `prefix-`. Results are sorted newest-first.
 func LXDListDatasetSnapshots(dataset, prefix string) ([]LXDSnapshotEntry, error) {
-	out, err := exec.Command("zfs", "list", "-Hpt", "snapshot", "-o", "name,creation,used", "-r", dataset).Output()
+	out, err := exec.Command("zfs", "list", "-Hpt", "snapshot", "-o", "name,creation,used,written", "-r", dataset).Output()
 	if err != nil {
 		// Non-existent dataset is not an error — empty list is the right answer.
 		return nil, nil
@@ -664,7 +692,7 @@ func LXDListDatasetSnapshots(dataset, prefix string) ([]LXDSnapshotEntry, error)
 			continue
 		}
 		f := strings.Fields(line)
-		if len(f) < 3 {
+		if len(f) < 4 {
 			continue
 		}
 		full := f[0]
@@ -682,12 +710,14 @@ func LXDListDatasetSnapshots(dataset, prefix string) ([]LXDSnapshotEntry, error)
 		}
 		var sec int64
 		fmt.Sscanf(f[1], "%d", &sec)
-		var used int64
+		var used, written int64
 		fmt.Sscanf(f[2], "%d", &used)
+		fmt.Sscanf(f[3], "%d", &written)
 		entries = append(entries, LXDSnapshotEntry{
 			Name:      snap,
 			CreatedAt: time.Unix(sec, 0),
 			Used:      used,
+			Written:   written,
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].CreatedAt.After(entries[j].CreatedAt) })
@@ -861,6 +891,7 @@ type LXDWorkloadBackupInstance struct {
 	Type      string // "virtual-machine" | "container"
 	ZFSPool   string // pool name on the host (e.g. "nvmepool")
 	Dataset   string // full ZFS path: <pool>/ZNAS-Backups-Workload/<kind>/bkup--<vm-id>
+	UsedBytes int64  // total on-disk size (root dataset + .block sibling, incl. snapshots)
 }
 
 // ListWorkloadBackupInstances scans every imported ZFS pool for backup
@@ -911,10 +942,11 @@ func ListWorkloadBackupInstances() ([]LXDWorkloadBackupInstance, error) {
 					t = "virtual-machine"
 				}
 				results = append(results, LXDWorkloadBackupInstance{
-					Name:    LXDBackupPrefix + rest,
-					Type:    t,
-					ZFSPool: pool,
-					Dataset: name,
+					Name:      LXDBackupPrefix + rest,
+					Type:      t,
+					ZFSPool:   pool,
+					Dataset:   name,
+					UsedBytes: backupInstanceUsedBytes(name),
 				})
 			}
 		}
@@ -924,8 +956,29 @@ func ListWorkloadBackupInstances() ([]LXDWorkloadBackupInstance, error) {
 
 // ListWorkloadBackupSnapshots returns the snapshots of one workload backup
 // (peer-side enumeration). prefix="" includes every snapshot.
+//
+// For a VM backup the root-fs dataset only holds tiny config; the disk image
+// lives in the `.block` zvol sibling. We merge the same-named snapshot from
+// both datasets so each entry's Used/Written reflects the whole backup's
+// per-snapshot footprint, not just the config portion.
 func ListWorkloadBackupSnapshots(dataset string) []LXDSnapshotEntry {
 	entries, _ := LXDListDatasetSnapshots(dataset, "")
+	block := dataset + ".block"
+	if datasetExists(block) {
+		idxByName := map[string]int{}
+		for i, e := range entries {
+			idxByName[e.Name] = i
+		}
+		blockSnaps, _ := LXDListDatasetSnapshots(block, "")
+		for _, bs := range blockSnaps {
+			if i, ok := idxByName[bs.Name]; ok {
+				entries[i].Used += bs.Used
+				entries[i].Written += bs.Written
+			} else {
+				entries = append(entries, bs)
+			}
+		}
+	}
 	return entries
 }
 

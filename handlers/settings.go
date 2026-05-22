@@ -24,6 +24,7 @@ func HandleGetSettings(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		jsonOK(w, map[string]interface{}{
 			"port":                 appCfg.Port,
+			"bind_port_443":        appCfg.BindPort443,
 			"storage_unit":         appCfg.StorageUnit,
 			"login_theme":          theme,
 			"live_update_enabled":  appCfg.LiveUpdateEnabled,
@@ -38,6 +39,7 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Port              *int    `json:"port"`
+			BindPort443       *bool   `json:"bind_port_443"`
 			StorageUnit       *string `json:"storage_unit"`
 			LoginTheme        *string `json:"login_theme"`
 			LiveUpdateEnabled *bool   `json:"live_update_enabled"`
@@ -56,6 +58,10 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 				return
 			}
 			appCfg.Port = *req.Port
+			changed = true
+		}
+		if req.BindPort443 != nil {
+			appCfg.BindPort443 = *req.BindPort443
 			changed = true
 		}
 		if req.StorageUnit != nil {

@@ -370,6 +370,11 @@ TimeoutStartSec=30
 # Harden the service a little (compatible with sudo usage)
 NoNewPrivileges=no
 
+# Allow the non-root service account to bind privileged ports (e.g. 443)
+# when the "Also bind port 443" option is enabled in Settings. This is the
+# single capability needed to bind low ports — nothing else is elevated.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
 [Install]
 WantedBy=multi-user.target
 UNIT

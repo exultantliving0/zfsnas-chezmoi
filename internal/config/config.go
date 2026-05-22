@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 	"zfsnas/internal/secret"
@@ -48,7 +50,37 @@ type StandardPermissions struct {
 	ManageSnapshots   bool `json:"manage_snapshots,omitempty"`
 	EditSettings      bool `json:"edit_settings,omitempty"`
 	ManageInterlink   bool `json:"manage_interlink,omitempty"`
-	ManageNetworking  bool `json:"manage_networking,omitempty"`
+	// Virtualization tab capabilities. All default false — pre-existing
+	// standard users get no VM/container/networking access until an admin
+	// explicitly grants it.
+	ViewVirtualization    bool `json:"view_virtualization,omitempty"`     // see the Compute (VMs & Containers) section at all
+	CreateVM              bool `json:"create_vm,omitempty"`               // create new VMs
+	CreateContainer       bool `json:"create_container,omitempty"`        // create new containers
+	EditInstances         bool `json:"edit_instances,omitempty"`          // edit config of existing VMs/containers
+	ControlInstances      bool `json:"control_instances,omitempty"`       // start/stop/restart/console
+	DeleteInstances       bool `json:"delete_instances,omitempty"`        // delete VMs/containers
+	ManageInstanceBackups bool `json:"manage_instance_backups,omitempty"` // VM/container backups & snapshots
+	ViewNetworking        bool `json:"view_networking,omitempty"`         // see the Networking section at all
+	ManageNetworking      bool `json:"manage_networking,omitempty"`       // create/edit/delete bridges & networks
+	// InstanceVisibilityRegex, when non-empty, restricts which instances a
+	// standard user can see/act on: only VMs/containers whose ID matches this
+	// regular expression are visible. Empty = no restriction (all visible).
+	InstanceVisibilityRegex string `json:"instance_visibility_regex,omitempty"`
+}
+
+// InstanceVisible reports whether an instance with the given ID/name is
+// visible to a user holding these permissions. An empty or invalid regex
+// means "no restriction". Used to filter VM/container lists for standard
+// users so they only see the workloads an admin whitelisted for them.
+func (p *StandardPermissions) InstanceVisible(instanceID string) bool {
+	if p == nil || strings.TrimSpace(p.InstanceVisibilityRegex) == "" {
+		return true
+	}
+	re, err := regexp.Compile(p.InstanceVisibilityRegex)
+	if err != nil {
+		return true // a broken regex must not lock the user out of everything
+	}
+	return re.MatchString(instanceID)
 }
 
 // S3Bucket is a MinIO bucket managed by ZFSNAS and tracked in portal config.
@@ -302,6 +334,10 @@ type VersionCacheEntry struct {
 type AppConfig struct {
 	ConfigDir         string    `json:"-"` // runtime-only, not persisted
 	Port              int       `json:"port"`
+	// BindPort443, when true, also listens on the standard HTTPS port 443 in
+	// addition to Port. Binding the privileged port from the non-root service
+	// account is granted via a systemd CAP_NET_BIND_SERVICE drop-in.
+	BindPort443       bool      `json:"bind_port_443,omitempty"`
 	StorageUnit       string    `json:"storage_unit,omitempty"`        // "gb" (1000-based) or "gib" (1024-based)
 	LoginTheme        string    `json:"login_theme,omitempty"`         // "dark" | "light" | "auto"
 	SMARTLastRefresh  time.Time `json:"smart_last_refresh,omitempty"`

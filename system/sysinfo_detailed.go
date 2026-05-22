@@ -47,8 +47,13 @@ type DetailedCPUInfo struct {
 }
 
 type DetailedMemoryInfo struct {
-	TotalBytes uint64               `json:"total_bytes"` // /proc/meminfo MemTotal
-	DIMMs      []DetailedDIMM       `json:"dimms"`        // populated by dmidecode -t memory
+	TotalBytes uint64               `json:"total_bytes"` // /proc/meminfo MemTotal — kernel-usable RAM
+	// InstalledBytes is the sum of the populated DIMM sizes reported by
+	// dmidecode — the physically installed RAM. It is slightly larger than
+	// TotalBytes, which the kernel/firmware trims by a few hundred MB of
+	// reserved regions. 0 when dmidecode is unavailable.
+	InstalledBytes uint64        `json:"installed_bytes"`
+	DIMMs          []DetailedDIMM `json:"dimms"` // populated by dmidecode -t memory
 }
 
 // DetailedDIMM represents one populated DIMM slot. Empty slots are skipped.
@@ -272,6 +277,9 @@ func collectMemoryInfo() DetailedMemoryInfo {
 		return mem
 	}
 	mem.DIMMs = parseDMIDecodeMemory(out)
+	for _, d := range mem.DIMMs {
+		mem.InstalledBytes += d.SizeBytes
+	}
 	return mem
 }
 

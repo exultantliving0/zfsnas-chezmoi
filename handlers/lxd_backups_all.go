@@ -46,6 +46,7 @@ func HandleListAllBackups(appCfg *config.AppConfig) http.HandlerFunc {
 						"name":       s.Name,
 						"created_at": s.CreatedAt,
 						"used":       s.Used,
+						"written":    s.Written,
 					})
 				}
 				out = append(out, map[string]interface{}{
@@ -56,6 +57,7 @@ func HandleListAllBackups(appCfg *config.AppConfig) http.HandlerFunc {
 					"server_id":       "",
 					"datastore":       w.ZFSPool,
 					"backup_instance": w.Name,
+					"used_bytes":      w.UsedBytes,
 					"snapshots":       snapList,
 				})
 			}
@@ -71,6 +73,7 @@ func HandleListAllBackups(appCfg *config.AppConfig) http.HandlerFunc {
 					"name":       s.Name,
 					"created_at": s.CreatedAt,
 					"used":       s.Used,
+					"written":    s.Written,
 				})
 			}
 			out = append(out, map[string]interface{}{
@@ -109,6 +112,7 @@ func HandleListAllBackups(appCfg *config.AppConfig) http.HandlerFunc {
 						"server_id":       ls.ID,
 						"datastore":       rec.Datastore,
 						"backup_instance": rec.BackupInstance,
+						"used_bytes":      rec.UsedBytes,
 						"snapshots":       rec.Snapshots,
 					})
 					mu.Unlock()
@@ -160,6 +164,7 @@ func HandleListAggregatedBackupsForVM(appCfg *config.AppConfig) http.HandlerFunc
 						"hostname":        ls.Hostname,
 						"datastore":       rec.Datastore,
 						"backup_instance": rec.BackupInstance,
+						"used_bytes":      rec.UsedBytes,
 						"snapshots":       rec.Snapshots,
 					})
 					mu.Unlock()
@@ -290,9 +295,9 @@ func HandleDeleteBackup(appCfg *config.AppConfig) http.HandlerFunc {
 			if err := system.InterlinkRemoteDeleteBackup(ls.URL, ls.SharedSecret, ls.TLSFingerprint, req.VMID, req.Datastore, req.SnapshotName); err != nil {
 				audit.Log(audit.Entry{
 					User: sess.Username, Role: sess.Role,
-					Action: "lxd_backup_delete",
-					Target: target,
-					Result: audit.ResultError,
+					Action:  "lxd_backup_delete",
+					Target:  target,
+					Result:  audit.ResultError,
 					Details: err.Error(),
 				})
 				jsonErr(w, http.StatusBadGateway, err.Error())
@@ -326,9 +331,9 @@ func HandleDeleteBackup(appCfg *config.AppConfig) http.HandlerFunc {
 		if err := dErr; err != nil {
 			audit.Log(audit.Entry{
 				User: sess.Username, Role: sess.Role,
-				Action: "lxd_backup_delete",
-				Target: target,
-				Result: audit.ResultError,
+				Action:  "lxd_backup_delete",
+				Target:  target,
+				Result:  audit.ResultError,
 				Details: err.Error(),
 			})
 			jsonErr(w, http.StatusBadRequest, err.Error())
@@ -363,9 +368,9 @@ func HandleInstantRestoreBackup(w http.ResponseWriter, r *http.Request) {
 	if err := system.LXDInstantRestoreBackup(req.VMID, req.NewName, req.Datastore); err != nil {
 		audit.Log(audit.Entry{
 			User: sess.Username, Role: sess.Role,
-			Action: audit.ActionLXDBackupRestore,
-			Target: req.VMID + " → " + req.NewName,
-			Result: audit.ResultError,
+			Action:  audit.ActionLXDBackupRestore,
+			Target:  req.VMID + " → " + req.NewName,
+			Result:  audit.ResultError,
 			Details: err.Error(),
 		})
 		jsonErr(w, http.StatusBadRequest, err.Error())
@@ -384,11 +389,11 @@ func HandleInstantRestoreBackup(w http.ResponseWriter, r *http.Request) {
 
 type lxdRestoreJob struct {
 	mu        sync.Mutex
-	Status    string   `json:"status"`
-	Error     string   `json:"error,omitempty"`
-	Lines     []string `json:"lines"`
-	VMID      string   `json:"vm_id"`
-	CloneName string   `json:"clone_name"`
+	Status    string    `json:"status"`
+	Error     string    `json:"error,omitempty"`
+	Lines     []string  `json:"lines"`
+	VMID      string    `json:"vm_id"`
+	CloneName string    `json:"clone_name"`
 	StartedAt time.Time `json:"started_at"`
 	cancelFn  context.CancelFunc
 }
@@ -534,9 +539,9 @@ func HandleCloneRestoreBackup(appCfg *config.AppConfig) http.HandlerFunc {
 			}
 			audit.Log(audit.Entry{
 				User: sess.Username, Role: sess.Role,
-				Action: audit.ActionLXDBackupCloneRestore,
-				Target: req.VMID + " → " + req.CloneName + " (" + req.DstDatastore + ")",
-				Result: result,
+				Action:  audit.ActionLXDBackupCloneRestore,
+				Target:  req.VMID + " → " + req.CloneName + " (" + req.DstDatastore + ")",
+				Result:  result,
 				Details: details,
 			})
 		}()
@@ -671,19 +676,19 @@ func HandleInterlinkBackupDelete(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		if err := dErr; err != nil {
 			audit.Log(audit.Entry{
-				User: "interlink:" + ls.Hostname,
-				Role: "interlink",
-				Action: "lxd_backup_delete",
-				Target: target,
-				Result: audit.ResultError,
+				User:    "interlink:" + ls.Hostname,
+				Role:    "interlink",
+				Action:  "lxd_backup_delete",
+				Target:  target,
+				Result:  audit.ResultError,
 				Details: err.Error(),
 			})
 			jsonErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		audit.Log(audit.Entry{
-			User: "interlink:" + ls.Hostname,
-			Role: "interlink",
+			User:   "interlink:" + ls.Hostname,
+			Role:   "interlink",
 			Action: "lxd_backup_delete",
 			Target: target,
 			Result: audit.ResultOK,
@@ -736,6 +741,7 @@ func HandleInterlinkListLocalBackups(appCfg *config.AppConfig) http.HandlerFunc 
 					"name":       s.Name,
 					"created_at": s.CreatedAt,
 					"used":       s.Used,
+					"written":    s.Written,
 				})
 			}
 			records = append(records, system.RemoteBackupRecord{
@@ -743,6 +749,7 @@ func HandleInterlinkListLocalBackups(appCfg *config.AppConfig) http.HandlerFunc 
 				BackupInstance: w.Name,
 				Type:           w.Type,
 				Datastore:      w.ZFSPool, // expose the ZFS pool name as the "datastore"
+				UsedBytes:      w.UsedBytes,
 				Snapshots:      snapList,
 			})
 		}
@@ -762,6 +769,7 @@ func HandleInterlinkListLocalBackups(appCfg *config.AppConfig) http.HandlerFunc 
 					"name":       s.Name,
 					"created_at": s.CreatedAt,
 					"used":       s.Used,
+					"written":    s.Written,
 				})
 			}
 			records = append(records, system.RemoteBackupRecord{

@@ -1,5 +1,22 @@
 # Security
 
+> **Scope:** This document covers a **storage-only ZNAS deployment** — the
+> optional **VMs & Containers** (Incus virtualization) feature is *not*
+> enabled. If you run virtualization, see **[`SECURITY+.md`](SECURITY+.md)**,
+> which documents the additional sudo entries that feature requires
+> (`ZFSNAS_INCUSNET`, `ZFSNAS_INCUS`, `ZFSNAS_VMSETUP`, `ZFSNAS_SYNCOID`,
+> and Incus InterLink trust).
+
+## Service capabilities
+
+The `zfsnas.service` systemd unit grants the non-root service account one Linux
+capability: **`CAP_NET_BIND_SERVICE`** (`AmbientCapabilities=`). This is the
+single capability needed to bind privileged ports (below 1024) and is used only
+when the optional **Settings → Server Port → "Also bind port 443"** option is
+enabled, so the portal can listen on the standard HTTPS port without running as
+root. It grants no other elevated rights; leaving it set when the option is off
+is harmless.
+
 ## Sudo access model
 
 ZFS NAS Portal requires `sudo` privileges because most ZFS, Samba, NFS, SMART, and system operations must run as root. Three configurations are supported — the portal's **Prerequisites** tab reports which one is active.
@@ -258,7 +275,6 @@ Cmnd_Alias ZFSNAS_APT = \
     /usr/bin/tee /etc/systemd/system/zfsnas.service, \
     /usr/bin/systemctl daemon-reload, \
     /usr/bin/systemctl enable zfsnas
-
 
 # ── Disk Power Management (hdparm) ────────────────────────────────────────────
 # since v6.4.6 — APM level, spindown timeout, write cache, acoustic management

@@ -34,13 +34,13 @@ var backupSchedMu sync.Mutex
 
 type lxdBackupJob struct {
 	mu        sync.Mutex
-	Status    string   `json:"status"` // "queued"|"running"|"done"|"error"|"canceled"
-	Error     string   `json:"error,omitempty"`
-	Lines     []string `json:"lines"`
-	Instance  string   `json:"instance"`
-	DestKind  string   `json:"dest_kind"`
-	DestHost  string   `json:"dest_host,omitempty"`
-	DestPool  string   `json:"dest_pool"`
+	Status    string    `json:"status"` // "queued"|"running"|"done"|"error"|"canceled"
+	Error     string    `json:"error,omitempty"`
+	Lines     []string  `json:"lines"`
+	Instance  string    `json:"instance"`
+	DestKind  string    `json:"dest_kind"`
+	DestHost  string    `json:"dest_host,omitempty"`
+	DestPool  string    `json:"dest_pool"`
 	StartedAt time.Time `json:"started_at"`
 	cancelFn  context.CancelFunc
 }
@@ -112,11 +112,13 @@ func listLocalBackupsForVM(name string) []map[string]interface{} {
 					"name":       s.Name,
 					"created_at": s.CreatedAt,
 					"used":       s.Used,
+					"written":    s.Written,
 				})
 			}
 			out = append(out, map[string]interface{}{
 				"datastore":       w.ZFSPool,
 				"backup_instance": bkup,
+				"used_bytes":      w.UsedBytes,
 				"snapshots":       snapList,
 			})
 		}
@@ -135,6 +137,7 @@ func listLocalBackupsForVM(name string) []map[string]interface{} {
 				"name":       s.Name,
 				"created_at": s.CreatedAt,
 				"used":       s.Used,
+				"written":    s.Written,
 			})
 		}
 		out = append(out, map[string]interface{}{
@@ -308,9 +311,9 @@ func HandleDeleteLXDBackupPolicy(appCfg *config.AppConfig) http.HandlerFunc {
 		if removed {
 			audit.Log(audit.Entry{
 				User: sess.Username, Role: sess.Role,
-				Action: audit.ActionLXDBackupSchedule,
-				Target: name,
-				Result: audit.ResultOK,
+				Action:  audit.ActionLXDBackupSchedule,
+				Target:  name,
+				Result:  audit.ResultOK,
 				Details: "policy removed",
 			})
 		}
@@ -398,13 +401,13 @@ func HandleLXDBackupProgress(w http.ResponseWriter, r *http.Request) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	jsonOK(w, map[string]interface{}{
-		"status":    j.Status,
-		"error":     j.Error,
-		"lines":     j.Lines,
-		"instance":  j.Instance,
-		"dest_kind": j.DestKind,
-		"dest_host": j.DestHost,
-		"dest_pool": j.DestPool,
+		"status":     j.Status,
+		"error":      j.Error,
+		"lines":      j.Lines,
+		"instance":   j.Instance,
+		"dest_kind":  j.DestKind,
+		"dest_host":  j.DestHost,
+		"dest_pool":  j.DestPool,
 		"started_at": j.StartedAt,
 	})
 }
@@ -555,11 +558,11 @@ func startBackupJob(appCfg *config.AppConfig, p config.LXDBackupPolicy, user, ro
 			details = err.Error()
 		}
 		audit.Log(audit.Entry{
-			User:   user,
-			Role:   role,
-			Action: audit.ActionLXDBackup,
-			Target: fmt.Sprintf("%s → %s:%s", p.Instance, p.DestKind, p.DestPool),
-			Result: result,
+			User:    user,
+			Role:    role,
+			Action:  audit.ActionLXDBackup,
+			Target:  fmt.Sprintf("%s → %s:%s", p.Instance, p.DestKind, p.DestPool),
+			Result:  result,
 			Details: details,
 		})
 	}()

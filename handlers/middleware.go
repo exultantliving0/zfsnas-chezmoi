@@ -9,6 +9,8 @@ import (
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
 	"zfsnas/internal/session"
+
+	"github.com/gorilla/mux"
 )
 
 type contextKey string
@@ -123,8 +125,75 @@ func permEnabled(p *config.StandardPermissions, perm string) bool {
 	case "edit_settings":       return p.EditSettings
 	case "manage_interlink":    return p.ManageInterlink
 	case "manage_networking":   return p.ManageNetworking
+	case "view_virtualization":     return p.ViewVirtualization
+	case "create_vm":               return p.CreateVM
+	case "create_container":        return p.CreateContainer
+	case "edit_instances":          return p.EditInstances
+	case "control_instances":       return p.ControlInstances
+	case "delete_instances":        return p.DeleteInstances
+	case "manage_instance_backups": return p.ManageInstanceBackups
+	case "view_networking":         return p.ViewNetworking
 	}
 	return false
+}
+
+// standardPermsForSession returns the StandardPermissions of the request's
+// session user when that user has the "standard" role, or nil otherwise
+// (admin / read-only / smb-only — none are subject to granular gating).
+func standardPermsForSession(r *http.Request) *config.StandardPermissions {
+	sess, ok := r.Context().Value(sessionKey).(*session.Session)
+	if !ok || sess == nil || sess.Role != config.RoleStandard {
+		return nil
+	}
+	users, _ := config.LoadUsers()
+	u := config.FindUserByID(users, sess.UserID)
+	if u == nil {
+		return nil
+	}
+	return u.StandardPerms
+}
+
+// RequireVirtView gates the read-only virtualization endpoints. Admin and
+// read-only users keep their existing access; a standard user is allowed
+// only when granted the view_virtualization capability.
+func RequireVirtView(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p := standardPermsForSession(r); p != nil && !p.ViewVirtualization {
+			jsonErr(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireNetView is the networking counterpart of RequireVirtView.
+func RequireNetView(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p := standardPermsForSession(r); p != nil && !p.ViewNetworking {
+			jsonErr(w, http.StatusForbidden, "permission denied")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireInstancePerm wraps RequirePermission and additionally enforces the
+// standard user's InstanceVisibilityRegex against the {name} path variable —
+// so a whitelisted-by-regex user can neither see nor act on an instance
+// outside their allowed set, even by guessing its name.
+func RequireInstancePerm(perm string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		guard := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if p := standardPermsForSession(r); p != nil {
+				if name := mux.Vars(r)["name"]; name != "" && !p.InstanceVisible(name) {
+					jsonErr(w, http.StatusForbidden, "permission denied")
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+		return RequirePermission(perm)(guard)
+	}
 }
 
 // RequireWriteAccess rejects read-only and smb-only users.

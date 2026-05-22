@@ -321,6 +321,7 @@ type RemoteBackupRecord struct {
 	BackupInstance string                   `json:"backup_instance"`
 	Type           string                   `json:"type"` // "virtual-machine" | "container"
 	Datastore      string                   `json:"datastore"`
+	UsedBytes      int64                    `json:"used_bytes"` // total on-disk size of the backup on the peer
 	Snapshots      []map[string]interface{} `json:"snapshots"`
 }
 

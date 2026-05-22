@@ -68,6 +68,9 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// RelayAuthMiddleware runs early (Server B): validates relay headers and injects
 	// a synthetic session so RequireAuth works without a browser cookie.
 	r.Use(func(next http.Handler) http.Handler { return RelayAuthMiddleware(appCfg, next) })
+	// Gzip text responses (the ~1.5 MB SPA, CSS, API JSON) for clients that
+	// accept it — the main win for the portal over a slow remote VPN.
+	r.Use(GzipResponses)
 
 	// --- Static assets ---
 	r.PathPrefix("/static/").Handler(
@@ -742,7 +745,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/lxd/instance-realtime",
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceRealtime))).Methods("GET")
 	r.Handle("/api/lxd/instances",
-		RequireAuth(http.HandlerFunc(HandleListInstances))).Methods("GET")
+		RequireAuth(RequireVirtView(http.HandlerFunc(HandleListInstances)))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/stats",
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceStats))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/status",
@@ -754,15 +757,15 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/lxd/instances/{name}/snapshots",
 		RequireAuth(http.HandlerFunc(HandleLXDListSnapshots))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/snapshots",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDCreateSnapshot)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("manage_instance_backups")(http.HandlerFunc(HandleLXDCreateSnapshot)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/snapshots/{snap}/restore",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDRestoreSnapshot)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("manage_instance_backups")(http.HandlerFunc(HandleLXDRestoreSnapshot)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/snapshots/{snap}/clone",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDCloneFromSnapshot)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("manage_instance_backups")(http.HandlerFunc(HandleLXDCloneFromSnapshot)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/clone",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDCloneInstance)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("manage_instance_backups")(http.HandlerFunc(HandleLXDCloneInstance)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/move-storage",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDMoveStorage)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleLXDMoveStorage)))).Methods("POST")
 	// Per-disk move (v6.5.37) — Related Objects burger menu. Independent
 	// of /move-storage (which moves the whole instance) because the user
 	// picks one disk row. Backend dispatches root vs custom-volume on the
@@ -777,31 +780,31 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// this route was registered under /api/incus/* and quietly returned
 	// 405 because nothing matched the rewritten path.
 	r.Handle("/api/lxd/instances/{name}/disk-move/start",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskMoveStart)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleDiskMoveStart)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/disk-move/progress",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskMoveProgress)))).Methods("GET")
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleDiskMoveProgress)))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/disk-move/cancel",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDiskMoveCancel)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleDiskMoveCancel)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/snapshots/{snap}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDDeleteSnapshot)))).Methods("DELETE")
+		RequireAuth(RequireInstancePerm("manage_instance_backups")(http.HandlerFunc(HandleLXDDeleteSnapshot)))).Methods("DELETE")
 	r.Handle("/api/lxd/instances/{name}/start",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDStart)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("control_instances")(http.HandlerFunc(HandleLXDStart)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/stop",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDStop)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("control_instances")(http.HandlerFunc(HandleLXDStop)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/restart",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDRestart)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("control_instances")(http.HandlerFunc(HandleLXDRestart)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/reset",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDReset)))).Methods("POST")
+		RequireAuth(RequireInstancePerm("control_instances")(http.HandlerFunc(HandleLXDReset)))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/config",
 		RequireAuth(http.HandlerFunc(HandleLXDGetConfig))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/config",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDSetConfig)))).Methods("PUT")
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleLXDSetConfig)))).Methods("PUT")
 	r.Handle("/api/lxd/instances/{name}",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDDelete)))).Methods("DELETE")
+		RequireAuth(RequireInstancePerm("delete_instances")(http.HandlerFunc(HandleLXDDelete)))).Methods("DELETE")
 	r.Handle("/api/lxd/vms",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateVM)))).Methods("POST")
+		RequireAuth(RequirePermission("create_vm")(http.HandlerFunc(HandleCreateVM)))).Methods("POST")
 	r.Handle("/api/lxd/containers",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleCreateContainer)))).Methods("POST")
+		RequireAuth(RequirePermission("create_container")(http.HandlerFunc(HandleCreateContainer)))).Methods("POST")
 	r.Handle("/api/lxd/create-progress",
 		RequireAuth(http.HandlerFunc(HandleLXDCreateProgress))).Methods("GET")
 	r.Handle("/api/lxd/remotes",
@@ -831,7 +834,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/lxd/bridges",
 		RequireAuth(http.HandlerFunc(HandleListBridges))).Methods("GET")
 	r.Handle("/api/lxd/network-bridges",
-		RequireAuth(http.HandlerFunc(HandleListLXDNetworks))).Methods("GET")
+		RequireAuth(RequireNetView(http.HandlerFunc(HandleListLXDNetworks)))).Methods("GET")
 	r.Handle("/api/lxd/network-bridges",
 		RequireAuth(RequirePermission("manage_networking")(http.HandlerFunc(HandleCreateLXDNetwork)))).Methods("POST")
 	r.Handle("/api/lxd/network-bridges/{name}",

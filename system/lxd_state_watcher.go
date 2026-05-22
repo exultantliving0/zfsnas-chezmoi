@@ -93,7 +93,12 @@ const forceRestartCooldown = 90 * time.Second
 // Runs in a goroutine so a slow start doesn't stall the state-watcher tick.
 // Always emits an audit entry (success or error) so the Activity & Events
 // view distinguishes a force-running auto-restart from a normal user start.
-func maybeForceRestart(name, cause string) {
+//
+// state is the canonical status that triggered the restart. When it is a
+// terminal-error state (Error/Crashed/Aborted) a plain `incus start` is
+// rejected ("cannot be started as in Error status"), so we force-stop the
+// instance and wait 5 s for Incus to settle it back to Stopped first.
+func maybeForceRestart(name, cause, state string) {
 	lastForceRestartMu.Lock()
 	last, seen := lastForceRestart[name]
 	if seen && time.Since(last) < forceRestartCooldown {
@@ -107,19 +112,37 @@ func maybeForceRestart(name, cause string) {
 	// Tiny delay lets QEMU finish exiting and Incus release the
 	// instance state file before we ask it to start again.
 	time.Sleep(2 * time.Second)
-	// Don't let the upcoming start be misread by the state watcher as a
+	// Don't let the upcoming stop/start be misread by the state watcher as a
 	// user-initiated event triggering further alert noise downstream.
 	MarkUserInitiatedStop(name)
+	// An instance wedged in Error/Crashed/Aborted refuses `incus start`.
+	// Force-stop it first so Incus moves it back to Stopped, then give it
+	// 5 s to settle before we attempt the start.
+	if state == "Error" || state == "Crashed" || state == "Aborted" {
+		log.Printf("[force-running] %s: in %s state — force-stopping before restart", name, state)
+		if sout, serr := exec.Command("incus", "stop", "--force", name).CombinedOutput(); serr != nil {
+			log.Printf("[force-running] %s: force-stop failed: %v — %s", name, serr, strings.TrimSpace(string(sout)))
+		}
+		time.Sleep(5 * time.Second)
+		MarkUserInitiatedStop(name)
+	}
 	out, err := exec.Command("incus", "start", name).CombinedOutput()
 	if err != nil {
 		log.Printf("[force-running] %s: incus start failed: %v — %s", name, err, strings.TrimSpace(string(out)))
+		details := "force-running auto-restart failed: " + strings.TrimSpace(string(out))
+		// A terminal-error state also schedules maybeForceRebootIfStillError,
+		// which issues a hard reset 120 s later — tell the operator so the
+		// failure doesn't read as a dead end.
+		if state == "Error" || state == "Crashed" || state == "Aborted" {
+			details += " — will force-restart the VM in 120s"
+		}
 		audit.Log(audit.Entry{
 			User:    "system",
 			Role:    "system",
 			Action:  audit.ActionIncusStart,
 			Target:  name,
 			Result:  audit.ResultError,
-			Details: "force-running auto-restart failed: " + strings.TrimSpace(string(out)),
+			Details: details,
 		})
 		return
 	}
@@ -311,7 +334,7 @@ func lxdStateWatcherTick() {
 			// the last forceRestartCooldown window, skip and just log so a
 			// VM that keeps dying doesn't get a restart storm.
 			if instanceForceRunningEnabled(name) {
-				go maybeForceRestart(name, cause)
+				go maybeForceRestart(name, cause, newSt)
 				// Error / Crashed / Aborted is a different failure mode than
 				// a clean stop — `incus start` often doesn't fix it. Schedule
 				// a 120 s re-check; if the instance is still wedged in one
