@@ -4157,20 +4157,6 @@
         <div id="ci-tab-content-summary" style="padding:20px 0;">
           <div class="ci-cards-grid">
 
-            <!-- Compose Stack containers card (Compose stacks only — first card) -->
-            <div class="card" id="ci-compose-card" style="margin-bottom:0;display:none;grid-column:1/-1;">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
-                <span style="font-size:18px;">🐳</span>
-                <span style="font-weight:700;font-size:14px;color:var(--text);">Stack Containers</span>
-                <span id="ci-compose-count" style="font-size:12px;color:var(--text-3);"></span>
-                <span style="flex:1;"></span>
-                <span id="ci-compose-refresh" onclick="ciLoadComposeContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;">↻ Refresh</span>
-              </div>
-              <div id="ci-compose-body">
-                <div style="text-align:center;color:var(--text-3);padding:20px 0;">Loading…</div>
-              </div>
-            </div>
-
             <!-- VM Hardware card -->
             <div class="card" style="margin-bottom:0;">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
@@ -4200,6 +4186,22 @@
                 <span style="font-weight:700;font-size:14px;color:var(--text);">Related Objects</span>
               </div>
               <div id="ci-related-body">
+                <div style="text-align:center;color:var(--text-3);padding:20px 0;">Loading…</div>
+              </div>
+            </div>
+
+            <!-- Compose Stack containers card (Compose stacks only — full-width row
+                 placed AFTER the three standard cards so the layout reads:
+                 Hardware / Live Info / Related Objects on top, container list below). -->
+            <div class="card" id="ci-compose-card" style="margin-bottom:0;display:none;grid-column:1/-1;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                <span style="font-size:18px;">🐳</span>
+                <span style="font-weight:700;font-size:14px;color:var(--text);">Stack Containers</span>
+                <span id="ci-compose-count" style="font-size:12px;color:var(--text-3);"></span>
+                <span style="flex:1;"></span>
+                <span id="ci-compose-refresh" onclick="ciLoadComposeContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;">↻ Refresh</span>
+              </div>
+              <div id="ci-compose-body">
                 <div style="text-align:center;color:var(--text-3);padding:20px 0;">Loading…</div>
               </div>
             </div>
@@ -4312,7 +4314,8 @@
               <select onchange="_ciMonSetAgg(this.value)" id="ci-mon-agg-sel"
                       style="padding:3px 20px 3px 4px;font-size:12px;font-weight:600;width:62px;
                              border-radius:6px;border:1px solid rgba(191,90,242,0.4);
-                             background:rgba(191,90,242,0.12);color:var(--accent-1);cursor:pointer;">
+                             background:rgba(191,90,242,0.12) url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23bf5af2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;) no-repeat right 4px center;
+                             color:var(--accent-1);cursor:pointer;appearance:none;-webkit-appearance:none;">
                 <option value="avg">Avg</option>
                 <option value="min">Min</option>
                 <option value="max">Max</option>
@@ -14463,6 +14466,20 @@ async function loadAudit() {
     // there at first wrap. Keep them as native <select> so they reflect
     // their underlying value live.
     'ci-logs-level-filter': true, 'ci-logs-file': true,
+    // The top-bar pool selector is rendered with inline blue styling
+    // (chevron, border, color) and rebuilt by loadOverviewBar() on
+    // pool/data changes. Every nav-triggered initAllCustomSelects()
+    // pass was re-wrapping it and replacing our compact blue control
+    // with the default custom-select chrome — fat, wrong color, wrong
+    // height. Keep it native so the inline styling holds.
+    'topbar-pool-selector': true,
+    // Aggregation selectors on the perf tabs + VM/container Monitor
+    // tab + UPS perf tab use the same compact purple inline styling
+    // (Avg/Min/Max). Custom-select wrapping replaces it with the
+    // generic large chrome — opt them out so the purple look stays.
+    'perf-agg-sel': true,
+    'ups-perf-agg-sel': true,
+    'ci-mon-agg-sel': true,
   };
   window.initAllCustomSelects = function(root) {
     var scope = root || document;
@@ -34036,6 +34053,18 @@ function _ciRenderComposeContainers(list, stackStatus) {
     body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:18px 0;font-size:13px;">The stack is running, but Podman has no containers — the compose file may not define any services, or they failed to start. Check the Output tab for logs.</div>';
     return;
   }
+  // Resolve the host LXC's primary IP — used to turn 0.0.0.0:TCP port
+  // entries into clickable https://<ip>:<port> links. We read it off
+  // the cached instance list rather than refetching; ip may be empty
+  // for a stopped stack, in which case ports just render as text.
+  const _stackInst = (_lxdInstancesCache || []).find(i => i.name === _ciCurrentName);
+  const _stackIP = _stackInst && _stackInst.ipv4 ? String(_stackInst.ipv4).split('/')[0] : '';
+
+  // Tight cell template: 2px vertical / 8px horizontal padding, smaller
+  // monospace, no border on every row (data-table provides a subtle
+  // bottom rule). Less than half the vertical footprint of the previous
+  // 5px / 12-12.5px layout.
+  const cellTd = 'padding:2px 8px;font-size:11px;line-height:1.35;';
   let rows = '';
   list.forEach((c, i) => {
     const running = (c.state || '').toLowerCase() === 'running';
@@ -34052,24 +34081,62 @@ function _ciRenderComposeContainers(list, stackStatus) {
         `<button onclick="_ciComposeTermNewWindow('${esc(c.name)}')">LXD Window Terminal</button>`
       : `<div style="padding:10px 14px;font-size:12px;color:var(--text-3);">Container must be running</div>`;
     rows += `<tr>
-      <td style="font-family:monospace;font-size:12px;">${esc(c.name)}</td>
-      <td style="color:var(--text-2);">${esc(c.service || '—')}</td>
-      <td style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(c.image)}</td>
-      <td><span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:${color};">
-        <span style="width:7px;height:7px;border-radius:50%;background:${color};"></span>${esc(c.status || c.state)}</span></td>
-      <td style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(c.ports || '—')}</td>
-      <td style="position:relative;text-align:right;width:62px;white-space:nowrap;">
-        <span onclick="_ciComposeTermMenu(event,${i})" title="Terminal" style="cursor:${running?'pointer':'not-allowed'};opacity:${running?'1':'.4'};color:var(--text-2);font-size:15px;padding:2px 4px;user-select:none;line-height:1;">🖥️</span>
-        <span onclick="_ciComposeRowMenu(event,${i})" style="cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;user-select:none;line-height:1;">⋮</span>
-        <div id="ci-compose-termmenu-${i}" class="row-menu-dropdown" style="display:none;position:absolute;right:32px;top:100%;min-width:200px;z-index:60;">${termMenu}</div>
+      <td style="${cellTd}font-family:monospace;">${esc(c.name)}</td>
+      <td style="${cellTd}color:var(--text-2);">${esc(c.service || '—')}</td>
+      <td style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
+      <td style="${cellTd}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${color};">
+        <span style="width:6px;height:6px;border-radius:50%;background:${color};"></span>${esc(c.status || c.state)}</span></td>
+      <td style="${cellTd}font-family:monospace;color:var(--text-3);">${_renderComposePortsLinks(c.ports, _stackIP)}</td>
+      <td style="${cellTd}position:relative;text-align:right;width:58px;white-space:nowrap;">
+        <span onclick="_ciComposeTermMenu(event,${i})" title="Terminal" style="cursor:${running?'pointer':'not-allowed'};opacity:${running?'1':'.4'};color:var(--text-2);font-size:13px;padding:0 3px;user-select:none;line-height:1;">🖥️</span>
+        <span onclick="_ciComposeRowMenu(event,${i})" style="cursor:pointer;color:var(--text-2);font-size:16px;padding:0 4px;user-select:none;line-height:1;">⋮</span>
+        <div id="ci-compose-termmenu-${i}" class="row-menu-dropdown" style="display:none;position:absolute;right:28px;top:100%;min-width:200px;z-index:60;">${termMenu}</div>
         <div id="ci-compose-menu-${i}" class="row-menu-dropdown" style="display:none;position:absolute;right:6px;top:100%;min-width:150px;z-index:60;">${menu}</div>
       </td></tr>`;
   });
-  body.innerHTML = `<table class="data-table" style="width:100%;">
+  body.innerHTML = `<table class="data-table" style="width:100%;font-size:11px;">
     <thead><tr>
-      <th>Container</th><th>Service</th><th>Image</th><th>State</th><th>Ports</th><th></th>
+      <th style="padding:3px 8px;font-size:10px;">Container</th>
+      <th style="padding:3px 8px;font-size:10px;">Service</th>
+      <th style="padding:3px 8px;font-size:10px;">Image</th>
+      <th style="padding:3px 8px;font-size:10px;">State</th>
+      <th style="padding:3px 8px;font-size:10px;">Ports</th>
+      <th style="padding:3px 8px;"></th>
     </tr></thead>
     <tbody>${rows}</tbody></table>`;
+}
+
+// _composeShortImage trims the "docker.io/" prefix (and the redundant
+// "/library/" segment Docker Hub uses for official images) so the
+// Image column stays narrow. The original string is still surfaced
+// via the cell's title attribute for hover. Non-docker.io registries
+// keep their full path.
+function _composeShortImage(img) {
+  if (!img) return '';
+  let s = String(img);
+  if (s.startsWith('docker.io/')) s = s.slice('docker.io/'.length);
+  if (s.startsWith('library/'))   s = s.slice('library/'.length);
+  return s;
+}
+
+// _renderComposePortsLinks renders a podman ports string (comma-joined
+// items like "0.0.0.0:8091->80/tcp, [::]:8091->80/tcp") into HTML.
+// TCP entries published on 0.0.0.0 become clickable https://<lxcIP>:<src>
+// links when lxcIP is known; everything else renders as text. Hostnames
+// like [::] (IPv6 wildcard) and non-tcp protocols are intentionally not
+// linkified.
+function _renderComposePortsLinks(portsStr, lxcIP) {
+  if (!portsStr || portsStr === '—') return '—';
+  return portsStr.split(',').map(seg => {
+    const s = seg.trim();
+    const m = s.match(/^([^:]+):(\d+)->\d+\/(tcp|udp)$/);
+    if (m && m[1] === '0.0.0.0' && m[3] === 'tcp' && lxcIP) {
+      const port = m[2];
+      const url  = 'https://' + lxcIP + ':' + port;
+      return `<a href="${esc(url)}" target="_blank" rel="noopener" title="Open ${esc(url)}" style="color:var(--accent);text-decoration:none;">${esc(s)}</a>`;
+    }
+    return esc(s);
+  }).join(', ');
 }
 
 function _ciComposeRowMenu(ev, idx) {

@@ -287,7 +287,22 @@ type realtimeSnapshot struct {
 	netTXBytes    float64
 	diskReadBytes float64
 	diskWriteBytes float64
+	// lastResult is the LXDInstanceRealtime returned by the most recent
+	// non-throttled call. Returned again for any call that arrives
+	// within realtimeReuseWindow of `ts` so two concurrent pollers
+	// (Live Info card + Monitor tab) for the same instance don't
+	// alternate between "real rate" and "≈0" by clobbering each
+	// other's baseline 100 ms apart.
+	lastResult *LXDInstanceRealtime
 }
+
+// realtimeReuseWindow throttles repeated GetLXDInstanceRealtime calls
+// for the same instance: if a second caller arrives within this window,
+// it gets the previous call's result verbatim and the cumulative
+// baseline is NOT updated, so the next non-throttled caller still has
+// a meaningful dt to diff against. 1 s is well below the 3-s polling
+// cadence the frontend uses on either tab.
+const realtimeReuseWindow = 1 * time.Second
 
 var (
 	lxdRealtimeMu    sync.Mutex
@@ -307,6 +322,21 @@ func GetLXDInstanceRealtime(instance string) (*LXDInstanceRealtime, error) {
 	if instance == "" {
 		return nil, fmt.Errorf("instance name required")
 	}
+
+	// Throttle: if another caller computed a result for this instance
+	// in the last realtimeReuseWindow, hand the same value back without
+	// touching the cumulative baseline. This is what keeps the Monitor
+	// tab graphs steady when the Live Info card poller and the Monitor
+	// poller fire close together — without it, whichever ran second
+	// saw a tiny dt and emitted a near-zero rate.
+	lxdRealtimeMu.Lock()
+	if prev, ok := lxdRealtimeCache[instance]; ok && prev.lastResult != nil &&
+		time.Since(prev.ts) < realtimeReuseWindow {
+		cached := prev.lastResult
+		lxdRealtimeMu.Unlock()
+		return cached, nil
+	}
+	lxdRealtimeMu.Unlock()
 
 	body, err := fetchLXDMetricsBody()
 	if err != nil {
@@ -408,14 +438,20 @@ func GetLXDInstanceRealtime(instance string) (*LXDInstanceRealtime, error) {
 	if hadPrev && now.Sub(prev.ts) > 30*time.Second {
 		hadPrev = false
 	}
-	lxdRealtimeCache[instance] = realtimeSnapshot{
+	// Stash the rt pointer alongside the cumulative baseline so a
+	// throttled second caller within realtimeReuseWindow returns the
+	// same result instead of computing a near-zero rate against this
+	// just-written baseline.
+	snap := realtimeSnapshot{
 		ts:             now,
 		cpuSeconds:     cpuTotal,
 		netRXBytes:     netRX,
 		netTXBytes:     netTX,
 		diskReadBytes:  diskR,
 		diskWriteBytes: diskW,
+		lastResult:     rt,
 	}
+	lxdRealtimeCache[instance] = snap
 	lxdRealtimeMu.Unlock()
 
 	if hadPrev {
