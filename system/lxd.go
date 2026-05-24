@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -86,6 +87,7 @@ type LXDInstance struct {
 	MemoryLimit string `json:"memory_limit"`
 	RootPool    string `json:"root_pool"` // LXD storage pool name for the root disk
 	Autostart   bool   `json:"autostart"` // boot.autostart=true on the instance or its profile
+	IsCompose   bool   `json:"is_compose"` // user.zfsnas.compose=true — a Podman Compose stack
 }
 
 // LXDImage is an image available for instance creation.
@@ -399,6 +401,21 @@ type LXDNIC struct {
 	IPv4GW     string `json:"ipv4_gw,omitempty"`   // gateway IP
 	DNS1       string `json:"dns1,omitempty"`      // primary DNS (static mode only)
 	DNS2       string `json:"dns2,omitempty"`      // secondary DNS (static mode only)
+	// PortForwards exposes ports on the host that proxy into this NIC's
+	// instance. Used primarily when Network is host-nat (so external clients
+	// can reach a service on a NAT'd instance), but accepted on any NIC.
+	PortForwards []NICPortForward `json:"port_forwards,omitempty"`
+}
+
+// NICPortForward represents one host→instance port mapping. Implemented as
+// an Incus `proxy` device attached to the instance: traffic that hits the
+// host on SourcePort/Protocol is forwarded to the instance's loopback at
+// TargetPort. Lives with the instance; cleaned up automatically when the
+// instance is deleted.
+type NICPortForward struct {
+	SourcePort int    `json:"source_port"` // port on the host (listen side)
+	TargetPort int    `json:"target_port"` // port inside the instance (connect side)
+	Protocol   string `json:"protocol"`    // "tcp" | "udp"
 }
 
 // LXDUSBDevice is a USB device to pass through to a VM.
@@ -538,6 +555,12 @@ type LXDCreateContainerRequest struct {
 	ExtraDisks    []LXDDisk         `json:"extra_disks"`
 	ExistingDisks []LXDExistingDisk `json:"existing_disks"`
 	BindMounts    []LXDBindMount    `json:"bind_mounts"`
+	// ComposeYAML, when set, marks this as a Compose stack: the container is
+	// provisioned with Podman and this docker-compose file is deployed.
+	ComposeYAML string `json:"compose_yaml,omitempty"`
+	// ComposeEnv is an optional .env file deployed alongside the compose file
+	// (variable substitution for the compose YAML).
+	ComposeEnv string `json:"compose_env,omitempty"`
 }
 
 // LXDInstanceStats holds live resource usage for a running instance.
@@ -1474,6 +1497,7 @@ func listLXDInstancesImpl() ([]LXDInstance, error) {
 			CPULimit:    r.Config["limits.cpu"],
 			MemoryLimit: r.Config["limits.memory"],
 			Autostart:   autostartTrue(r.ExpandedConfig["boot.autostart"]),
+			IsCompose:   r.Config["user.zfsnas.compose"] == "true",
 		}
 
 		// Derive image description from config.
@@ -1679,6 +1703,11 @@ type LXDNICConfig struct {
 	IPv4GW      string `json:"ipv4_gw,omitempty"`    // gateway IP
 	DNS1        string `json:"dns1,omitempty"`       // primary DNS (static only)
 	DNS2        string `json:"dns2,omitempty"`       // secondary DNS (static only)
+	// PortForwards is the live list of host→instance forwards attached to
+	// this NIC. Built by scanning the instance's `proxy` devices that ZNAS
+	// installs at create time and matching their listen/connect specs to
+	// this NIC's device name.
+	PortForwards []NICPortForward `json:"port_forwards,omitempty"`
 }
 
 // LXDDiskConfig describes a disk device on an instance.
@@ -1714,7 +1743,10 @@ type LXDCapabilities struct {
 
 // LXDInstanceConfig holds the editable configuration of an LXD instance.
 type LXDInstanceConfig struct {
-	Description       string `json:"description"`
+	Description       string    `json:"description"`
+	// CreatedAt is the timestamp Incus recorded when the instance was
+	// created. Surfaced verbatim from the /1.0/instances/<n> API.
+	CreatedAt         time.Time `json:"created_at,omitempty"`
 	CPULimit          string `json:"cpu_limit"`
 	CPUPin            string `json:"cpu_pin"`     // LXD range string for pinning; overrides CPULimit when non-empty
 	CPUSockets        int    `json:"cpu_sockets"` // QEMU socket topology (0=auto)
@@ -2603,6 +2635,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 		ExpandedConfig  map[string]string            `json:"expanded_config"`
 		Devices         map[string]map[string]string `json:"devices"`
 		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+		CreatedAt       time.Time                    `json:"created_at"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return LXDInstanceConfig{}, err
@@ -2663,6 +2696,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 	}
 	cfg := LXDInstanceConfig{
 		Description:       raw.Description,
+		CreatedAt:         raw.CreatedAt,
 		CPULimit:          raw.Config["limits.cpu"],
 		CPUSockets:        rawQemuSockets,
 		MemoryLimit:       raw.Config["limits.memory"],
@@ -2694,6 +2728,10 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 			strings.Contains(raw.Config["security.syscalls.allow"], "keyctl"),
 		Capabilities: LXDGetCapabilities(),
 	}
+	// Accumulator for port-forward proxy devices, keyed by their owning
+	// NIC's device name; flushed onto cfg.NICs after the loop completes.
+	var nicForwards map[string][]NICPortForward
+
 	for devName, devCfg := range raw.ExpandedDevices {
 		_, isInstanceLevel := raw.Devices[devName]
 		switch devCfg["type"] {
@@ -2876,6 +2914,22 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 				}
 			}
 			cfg.Disks = append(cfg.Disks, disk)
+		case "proxy":
+			// ZNAS port-forward devices are named `fwd-<nic>-<proto>-<src>`.
+			// Map by NIC name; attach to the matching NIC after this loop.
+			parts := strings.SplitN(devName, "-", 4)
+			if len(parts) == 4 && parts[0] == "fwd" {
+				nicForName := parts[1]
+				src, dst, proto := parseProxyListenConnect(devCfg["listen"], devCfg["connect"])
+				if src > 0 && dst > 0 {
+					if nicForwards == nil {
+						nicForwards = map[string][]NICPortForward{}
+					}
+					nicForwards[nicForName] = append(nicForwards[nicForName], NICPortForward{
+						SourcePort: src, TargetPort: dst, Protocol: proto,
+					})
+				}
+			}
 		default:
 			// For containers: capture any other device type as generic passthrough.
 			// The special "fuse" device is tracked via FeatureFUSE instead.
@@ -2896,6 +2950,15 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 					HostPath:   devCfg["path"],
 					Extra:      extra,
 				})
+			}
+		}
+	}
+
+	// Attach the proxy-device-derived port forwards to their NICs.
+	if len(nicForwards) > 0 {
+		for i := range cfg.NICs {
+			if fwds, ok := nicForwards[cfg.NICs[i].Name]; ok {
+				cfg.NICs[i].PortForwards = fwds
 			}
 		}
 	}
@@ -3727,6 +3790,17 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				cmd.Stdin = strings.NewReader(resolvConf)
 				cmd.Run()
 			}
+		}
+
+		// ── Port-forwards sync ───────────────────────────────────────────────
+		// For each NIC in the request, replace its full set of port-forward
+		// proxy devices with the desired list. Devices are named with the
+		// "fwd-<nic>-<proto>-<src>" prefix so we can target them precisely
+		// without touching unrelated proxy devices the user may have added
+		// manually. Sent ALWAYS by the frontend (even when empty) so a
+		// drop-to-zero deletes the leftover forwards.
+		for _, nic := range cfg.NICs {
+			syncNICPortForwards(name, nic.Name, nic.PortForwards, rawDev.ExpandedDevices)
 		}
 	}
 
@@ -4844,6 +4918,17 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		if out, err := exec.Command("incus", nArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add NIC " + devName + ": " + strings.TrimSpace(string(out)))
 		}
+
+		// Host→VM port-forward proxy devices. For VMs the connect side
+		// runs through the Incus agent, which means the guest OS must
+		// have lxd-agent up. Built-in for Incus VM images, so this just
+		// works once the VM has booted.
+		if len(nic.PortForwards) > 0 {
+			log(fmt.Sprintf("Adding %d port forward(s) on %s…", len(nic.PortForwards), devName))
+			if err := applyNICPortForwards(req.Name, devName, nic.PortForwards); err != nil {
+				log("WARNING: " + err.Error())
+			}
+		}
 	}
 
 	// Add USB devices.
@@ -5029,6 +5114,31 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	if req.Nesting {
 		args = append(args, "-c", "security.nesting=true")
 	}
+
+	// ZNAS defaults every container to IPv4-only. AAAA records returned to
+	// containers that have no IPv6 route make tools (apt, curl, podman)
+	// hang for the full TCP connect timeout per attempt — we'd rather avoid
+	// the foot-gun entirely. The in-container /etc/gai.conf write below is
+	// the load-bearing fix (it stops glibc from returning IPv6 addresses
+	// for resolution); the sysctls are belt-and-suspenders.
+	args = append(args,
+		"-c", "linux.sysctl.net.ipv6.conf.all.disable_ipv6=1",
+		"-c", "linux.sysctl.net.ipv6.conf.default.disable_ipv6=1",
+		"-c", "linux.sysctl.net.ipv6.conf.lo.disable_ipv6=1",
+	)
+
+	// Raise the LXC's kernel rlimits so nested workloads (podman in a
+	// compose stack, databases, vault, dnsdist) can set their own soft
+	// limits without needing CAP_SYS_RESOURCE on the host — without this,
+	// crun fails at start with "setrlimit RLIMIT_MEMLOCK: Operation not
+	// permitted". A soft-bump up to the hard limit needs no capability;
+	// pre-raising the hard limit here is the standard fix. nofile=1M
+	// covers everything from Postgres to Elastic; memlock=unlimited
+	// covers anything that pins pages.
+	args = append(args,
+		"-c", "limits.kernel.memlock=unlimited",
+		"-c", "limits.kernel.nofile=1048576",
+	)
 	if req.FeatureKeyctl {
 		// security.syscalls.allow is a whitelist; setting it to "keyctl"
 		// denies every other syscall and the container can't even boot
@@ -5040,10 +5150,30 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		}
 	}
 
+	// Ensure outbound NAT is configured on every bridge this container is
+	// about to attach to. Without it, containers on managed bridges that
+	// have the host's IP but no NAT can't reach the internet — packets
+	// leave the WAN with private source addresses and never come back.
+	for _, nic := range req.NICs {
+		if nic.Network != "" {
+			EnsureBridgeNAT(nic.Network)
+		}
+	}
+
 	log("Initialising container " + req.Name + "…")
 	if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("lxc init: %s: %w", strings.TrimSpace(string(out)), err)
 	}
+
+	// Plant the netplan fallback into Ubuntu containers BEFORE first boot.
+	// Some create paths (no auto-start, no static IP, no root password) skip
+	// the post-start provisioning block further down, so the in-container
+	// version of this fix (ensureUbuntuDHCP) wouldn't run for those.
+	// Writing the file via `incus file push` works on a stopped container —
+	// it edits the rootfs directly — so the first boot finds the config.
+	// Distro detection reads image.os off the just-created instance, which
+	// is reliable even when the request used a fingerprint.
+	pushUbuntuNetplanIfNeeded(req.Name)
 
 	// Set description (display name).
 	if req.Description != "" {
@@ -5096,6 +5226,16 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		if nic.IPv4Mode == "static" && nic.IPv4Addr != "" {
 			log("Pre-configuring static IP for " + devName + "…")
 			_pushStaticNetworkConfig(req.Name, devName, nic)
+		}
+
+		// Attach host→instance port-forward proxy devices. Idempotent at
+		// the Incus level — duplicate source ports are rejected, surfaced
+		// to the user as a warning instead of failing the whole create.
+		if len(nic.PortForwards) > 0 {
+			log(fmt.Sprintf("Adding %d port forward(s) on %s…", len(nic.PortForwards), devName))
+			if err := applyNICPortForwards(req.Name, devName, nic.PortForwards); err != nil {
+				log("WARNING: " + err.Error())
+			}
 		}
 	}
 
@@ -5247,6 +5387,14 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		if err := _waitContainerReady(req.Name, 60); err != nil {
 			log("WARNING: container readiness: " + err.Error())
 		}
+		// Disable IPv6 in the running container — see comment on the
+		// linux.sysctl.* args above.
+		if err := disableIPv6InContainer(req.Name); err != nil {
+			log("WARNING: disable IPv6: " + err.Error())
+		}
+		// Ubuntu LXC images don't auto-DHCP — plant a netplan config so the
+		// interface actually comes up. No-op for Debian/Alpine.
+		ensureUbuntuDHCP(req.Name)
 	}
 
 	// Apply static IPs via ip commands for immediate effect in the current
@@ -5295,6 +5443,941 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 
 	log("Done.")
 	return nil
+}
+
+// ComposeBaseImageAlias maps a ComposeBaseImage setting value to the Incus
+// remote image alias used to launch a Compose stack container, plus the
+// distro family ("alpine" | "debian" | "ubuntu") that drives provisioning.
+func ComposeBaseImageAlias(name string) (alias, distro string) {
+	switch name {
+	case "alpine":
+		return "images:alpine/3.21", "alpine"
+	case "ubuntu":
+		return "images:ubuntu/24.04", "ubuntu"
+	default: // debian is the default
+		return "images:debian/12", "debian"
+	}
+}
+
+// lxdWriteFileInside writes content to a path inside an instance via
+// `incus file push --create-dirs - <instance>/<path>`. Works whether the
+// container is running or stopped (push goes through the daemon and
+// writes to the rootfs on disk for stopped instances), so it's safe to
+// call from edit paths the user might hit on a halted stack.
+func lxdWriteFileInside(instance, path, content string) error {
+	cmd := exec.Command("incus", "file", "push", "--create-dirs", "-", instance+path)
+	cmd.Stdin = strings.NewReader(content)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("write %s: %s", path, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// LXDCreateComposeStack creates a Compose stack — an Incus LXC system
+// container running Podman, with the user's docker-compose file deployed and
+// brought up. distro ("alpine"|"debian"|"ubuntu") selects the package
+// manager; composeYAML is the raw compose file. The container is created by
+// LXDCreateContainer first, then provisioned.
+func LXDCreateComposeStack(req LXDCreateContainerRequest, distro, composeYAML, composeEnv string, logCh chan<- string) error {
+	log := func(s string) {
+		if logCh != nil {
+			logCh <- s
+		}
+	}
+
+	// Podman needs nesting; the stack must auto-start so we can provision it.
+	req.Nesting = true
+	req.AutoStart = true
+	if err := LXDCreateContainer(req, logCh); err != nil {
+		return err
+	}
+	// Tag it so ZNAS recognises this container as a Compose stack.
+	exec.Command("incus", "config", "set", req.Name, "user.zfsnas.compose", "true").Run() //nolint:errcheck
+
+	// Wait for container networking — the package install needs it.
+	log("Waiting for container network…")
+	for i := 0; i < 30; i++ {
+		if exec.Command("incus", "exec", req.Name, "--", "sh", "-c",
+			"ip route 2>/dev/null | grep -q default").Run() == nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// Install Podman + fuse-overlayfs. Compose itself is the upstream
+	// docker-compose v2 binary (downloaded below) talking to Podman over
+	// its Docker-compat socket — full Compose Spec coverage, well past
+	// what podman-compose can do.
+	log("Installing Podman and fuse-overlayfs…")
+	installCmd := "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && " +
+		"apt-get install -y -qq podman fuse-overlayfs ca-certificates wget"
+	if distro == "alpine" {
+		installCmd = "apk add --no-cache podman fuse-overlayfs ca-certificates wget"
+	}
+	if out, err := exec.Command("incus", "exec", req.Name, "--", "sh", "-c", installCmd).CombinedOutput(); err != nil {
+		return fmt.Errorf("install podman in %s: %s", req.Name, strings.TrimSpace(string(out)))
+	}
+
+	// Podman's overlay driver isn't supported directly on ZFS (the container
+	// rootfs is a ZFS dataset) — point it at fuse-overlayfs.
+	log("Configuring Podman storage…")
+	storageConf := "[storage]\n" +
+		"driver = \"overlay\"\n" +
+		"runroot = \"/run/containers/storage\"\n" +
+		"graphroot = \"/var/lib/containers/storage\"\n" +
+		"[storage.options.overlay]\n" +
+		"mount_program = \"/usr/bin/fuse-overlayfs\"\n"
+	if err := lxdWriteFileInside(req.Name, "/etc/containers/storage.conf", storageConf); err != nil {
+		return err
+	}
+
+	// Make `image: nginx:alpine` (no registry prefix) resolve to
+	// docker.io/library/nginx:alpine — matches Docker / docker-compose
+	// behavior so compose files copied from the internet work as-is.
+	// Drop-in file under registries.conf.d/ avoids overriding the distro's
+	// shipped registries.conf base.
+	log("Configuring Podman registries…")
+	registriesConf := "# Written by ZNAS — Docker-Hub-default search, like docker-compose.\n" +
+		"unqualified-search-registries = [\"docker.io\"]\n" +
+		"short-name-mode = \"permissive\"\n"
+	exec.Command("incus", "exec", req.Name, "--", "mkdir", "-p", "/etc/containers/registries.conf.d").Run() //nolint:errcheck
+	if err := lxdWriteFileInside(req.Name, "/etc/containers/registries.conf.d/00-znas-docker-io.conf", registriesConf); err != nil {
+		return err
+	}
+
+	// Deploy the compose file (and the optional .env). Scrub both for
+	// invisible bytes that pasted content commonly carries; PyYAML in
+	// podman-compose rejects NUL / BOM / control bytes outright.
+	composeYAML = sanitizeComposeContent(composeYAML)
+	composeEnv = sanitizeComposeContent(composeEnv)
+	log("Writing docker-compose.yml…")
+	exec.Command("incus", "exec", req.Name, "--", "mkdir", "-p", "/opt/stack").Run() //nolint:errcheck
+	if err := lxdWriteFileInside(req.Name, "/opt/stack/docker-compose.yml", composeYAML); err != nil {
+		return err
+	}
+	if strings.TrimSpace(composeEnv) != "" {
+		log("Writing .env…")
+		if err := lxdWriteFileInside(req.Name, "/opt/stack/.env", composeEnv); err != nil {
+			return err
+		}
+	}
+
+	// Trim services the compose-stack LXC doesn't need (free port 53 from
+	// systemd-resolved's stub so DNS containers can bind it; mask snapd on
+	// Ubuntu to drop ~50-100 MB of idle resident memory).
+	log("Trimming unused services…")
+	trimStackServices(req.Name)
+
+	// Install docker-compose v2 + bring up the Podman Docker-API socket
+	// that compose talks to.
+	if err := ensureDockerComposeInStack(req.Name, logCh); err != nil {
+		return fmt.Errorf("install docker-compose: %w", err)
+	}
+
+	// Bring the stack up.
+	log("Starting the compose stack (docker-compose up)…")
+	if err := runIncusComposeStreamed(req.Name, []string{"up", "-d"}, logCh); err != nil {
+		// The container itself is fine — surface the compose error without
+		// failing the whole job so the user can fix the YAML and redeploy.
+		log("WARNING: 'docker-compose up' failed — fix the compose file and redeploy:")
+		log(err.Error())
+		return nil
+	}
+	log("Compose stack is up.")
+	return nil
+}
+
+// parseProxyListenConnect extracts the source/target ports and protocol
+// from an Incus proxy device's `listen=` and `connect=` config values
+// (format: "<proto>:<host>:<port>"). Both values must parse successfully
+// and the protocols must agree; otherwise the call returns 0/0/"" so the
+// caller can skip a malformed proxy device cleanly.
+func parseProxyListenConnect(listen, connect string) (src, dst int, proto string) {
+	lp, ls := splitProxySpec(listen)
+	cp, cs := splitProxySpec(connect)
+	if lp == "" || cp == "" || lp != cp {
+		return 0, 0, ""
+	}
+	return ls, cs, lp
+}
+
+// splitProxySpec parses "<proto>:<host>:<port>" → (proto, port). Returns
+// ("", 0) when the input doesn't match.
+func splitProxySpec(spec string) (string, int) {
+	parts := strings.Split(spec, ":")
+	if len(parts) < 3 {
+		return "", 0
+	}
+	port := 0
+	fmt.Sscanf(parts[len(parts)-1], "%d", &port)
+	return strings.ToLower(parts[0]), port
+}
+
+// syncNICPortForwards reconciles the port-forward proxy devices attached
+// to a NIC against the desired set: removes every existing device named
+// "fwd-<nic>-*-*" (our convention), then re-adds the requested ones.
+// Restricting the cleanup to that prefix means user-added proxy devices
+// are left alone. expandedDevices is the snapshot taken at the top of
+// LXDSetConfig — used to find which devices to remove without an extra
+// `incus query`.
+func syncNICPortForwards(instance, nicName string, desired []NICPortForward, expandedDevices map[string]map[string]string) {
+	prefix := "fwd-" + nicName + "-"
+	for devName, devCfg := range expandedDevices {
+		if devCfg["type"] != "proxy" || !strings.HasPrefix(devName, prefix) {
+			continue
+		}
+		exec.Command("incus", "config", "device", "remove", instance, devName).Run() //nolint:errcheck
+	}
+	if len(desired) > 0 {
+		_ = applyNICPortForwards(instance, nicName, desired)
+	}
+}
+
+// applyNICPortForwards attaches one Incus `proxy` device per port-forward
+// entry to the instance. Devices listen on the host's network namespace
+// (default bind=host) and connect to 127.0.0.1:<port> inside the
+// instance's namespace — so the same wiring works for a bare LXC service
+// listening on its own loopback, a VM exposing a port, and a podman
+// container in a compose stack (podman publishes to the LXC's loopback
+// for compose-stack containers).
+//
+// Devices are named "fwd-<nic>-<proto>-<src>" so a future edit / re-apply
+// can find them deterministically. Idempotent per source port: a second
+// add with the same port is rejected by Incus and surfaces as an error
+// the caller can choose to suppress or report.
+func applyNICPortForwards(instance, nicDevice string, forwards []NICPortForward) error {
+	if nicDevice == "" {
+		nicDevice = "eth0"
+	}
+	for _, f := range forwards {
+		if f.SourcePort <= 0 || f.SourcePort > 65535 ||
+			f.TargetPort <= 0 || f.TargetPort > 65535 {
+			continue
+		}
+		proto := strings.ToLower(strings.TrimSpace(f.Protocol))
+		if proto != "tcp" && proto != "udp" {
+			proto = "tcp"
+		}
+		devName := fmt.Sprintf("fwd-%s-%s-%d", nicDevice, proto, f.SourcePort)
+		listen := fmt.Sprintf("%s:0.0.0.0:%d", proto, f.SourcePort)
+		connect := fmt.Sprintf("%s:127.0.0.1:%d", proto, f.TargetPort)
+		if out, err := exec.Command("incus", "config", "device", "add", instance, devName,
+			"proxy", "listen="+listen, "connect="+connect).CombinedOutput(); err != nil {
+			return fmt.Errorf("port-forward %d/%s: %s", f.SourcePort, proto, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+// EnsureBridgeNAT enables outbound NAT (ipv4.nat=true) on an Incus-managed
+// bridge so containers attached to it can reach the internet through the
+// host's default route. No-ops when:
+//   - the bridge name is empty or doesn't resolve in Incus
+//   - the bridge is unmanaged (Incus has no control over the firewall)
+//   - ipv4.nat is already set to anything (user already decided)
+//
+// Why this exists: when a user picks a managed bridge that has the host's
+// IP but no NAT, outbound packets leave the WAN with private source IPs
+// and the upstream router has nowhere to send the replies. VMs that
+// happen to be dual-homed via a second NIC mask the issue; containers
+// created via ZNAS would silently lose internet. Auto-enabling NAT on
+// the first container attachment gets new containers working without
+// requiring the user to run `incus network set ...` themselves. Users
+// who explicitly want no NAT (e.g. routed bridge with upstream return
+// route) can `incus network set <bridge> ipv4.nat false`; we honor that
+// because the check below only flips an *unset* value.
+func EnsureBridgeNAT(bridge string) {
+	if bridge == "" {
+		return
+	}
+	out, err := exec.Command("incus", "query", "/1.0/networks/"+bridge).Output()
+	if err != nil {
+		return
+	}
+	var data struct {
+		Managed bool              `json:"managed"`
+		Config  map[string]string `json:"config"`
+	}
+	if json.Unmarshal(out, &data) != nil {
+		return
+	}
+	if !data.Managed {
+		return
+	}
+	if _, set := data.Config["ipv4.nat"]; set {
+		return // user already decided; don't override
+	}
+	// Bridges that join an external interface (vmbr0-* style) are almost
+	// always on a network that already runs its own DHCP server. When we
+	// turn on ipv4.nat Incus auto-populates ipv4.address from the bridge
+	// IP and then helpfully launches its own dnsmasq — which then races
+	// the upstream DHCP and hands out IPs from its `--dhcp-range`. That
+	// gave one user a 10.128.8.2 lease that wasn't in their real DHCP
+	// pool. To avoid the conflict, suppress Incus's DHCP and DNS on any
+	// bridge that brings in an external interface (the user's existing
+	// infrastructure is the source of truth there).
+	exec.Command("incus", "network", "set", bridge, "ipv4.nat", "true").Run() //nolint:errcheck
+	if data.Config["bridge.external_interfaces"] != "" {
+		if _, set := data.Config["ipv4.dhcp"]; !set {
+			exec.Command("incus", "network", "set", bridge, "ipv4.dhcp", "false").Run() //nolint:errcheck
+		}
+		if _, set := data.Config["dns.mode"]; !set {
+			exec.Command("incus", "network", "set", bridge, "dns.mode", "none").Run() //nolint:errcheck
+		}
+	}
+}
+
+// znasNetplanCfg is the netplan drop-in ZNAS uses to give Ubuntu LXC
+// containers a working DHCP setup on eth0. The `99-` prefix puts it last
+// in netplan's file ordering so anything an image template/cloud-init
+// already installed wins for keys it sets, and ours fills the gap for the
+// usual "no config at all" case. Mode 0600 — netplan ≥ 24.04 refuses
+// world-readable configs.
+const znasNetplanCfg = "# Written by ZNAS — Ubuntu LXC images don't always ship a working\n" +
+	"# default netplan; this guarantees eth0 gets DHCP.\n" +
+	"network:\n" +
+	"  version: 2\n" +
+	"  renderer: networkd\n" +
+	"  ethernets:\n" +
+	"    eth0:\n" +
+	"      dhcp4: true\n" +
+	"      dhcp6: false\n"
+
+// pushUbuntuNetplanIfNeeded plants the DHCP netplan config inside an
+// Ubuntu-based container BEFORE the container has booted for the first
+// time. Works on a stopped container via `incus file push`, which writes
+// directly to the rootfs on disk. Harmless on non-Ubuntu containers
+// because /etc/netplan is only read by netplan/systemd-networkd — Debian
+// and Alpine images neither read nor ship it.
+//
+// Distro detection reads the image.os config key that Incus populates on
+// the instance from the image's own metadata at `incus init` time. We do
+// NOT match on the request's image identifier, which is a fingerprint
+// for most create paths and contains no distro hint.
+func pushUbuntuNetplanIfNeeded(name string) {
+	if !instanceImageIsUbuntu(name) {
+		return
+	}
+	cmd := exec.Command("incus", "file", "push", "--mode=0600", "--create-dirs", "-",
+		name+"/etc/netplan/99-znas-eth0.yaml")
+	cmd.Stdin = strings.NewReader(znasNetplanCfg)
+	cmd.Run() //nolint:errcheck
+}
+
+// instanceImageIsUbuntu reads `incus config get <name> image.os`. Incus
+// stamps this key from the image's metadata.yaml at init time, so it's
+// reliable across local, remote, and fingerprint-only image selections.
+// Returns false on any error (unmanaged image, command failure) so the
+// netplan push stays opt-in by detection rather than always-on.
+func instanceImageIsUbuntu(name string) bool {
+	out, err := exec.Command("incus", "config", "get", name, "image.os").Output()
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(string(out)), "ubuntu")
+}
+
+// ensureUbuntuDHCP plants a netplan config + starts systemd-networkd for
+// Ubuntu containers whose image template didn't (often because cloud-init
+// either isn't installed or didn't finish in the LXC namespace). Without
+// this, Ubuntu 24.04+ containers boot with the link up but no DHCP client
+// ever runs, so eth0 has no IPv4 address.
+//
+// No-op for non-Ubuntu containers: Debian/Alpine images ship a working
+// ifupdown/network-scripts/openrc setup out of the box.
+func ensureUbuntuDHCP(name string) {
+	out, err := exec.Command("incus", "exec", name, "--", "cat", "/etc/os-release").Output()
+	if err != nil || !strings.Contains(string(out), "ID=ubuntu") {
+		return
+	}
+	// Skip if a non-ZNAS netplan config already brought eth0 up.
+	if probe, err := exec.Command("incus", "exec", name, "--",
+		"sh", "-c", "ip -4 -br addr show eth0 2>/dev/null").Output(); err == nil && strings.Contains(string(probe), "UP ") && strings.Contains(string(probe), ".") {
+		return
+	}
+	exec.Command("incus", "exec", name, "--", "mkdir", "-p", "/etc/netplan").Run() //nolint:errcheck
+	if err := lxdWriteFileInside(name, "/etc/netplan/99-znas-eth0.yaml", znasNetplanCfg); err != nil {
+		return
+	}
+	// netplan refuses to apply a world-readable file (security warning that
+	// became a hard error in 24.04).
+	exec.Command("incus", "exec", name, "--", "chmod", "600", "/etc/netplan/99-znas-eth0.yaml").Run() //nolint:errcheck
+	exec.Command("incus", "exec", name, "--", "systemctl", "enable", "--now", "systemd-networkd").Run() //nolint:errcheck
+	exec.Command("incus", "exec", name, "--", "netplan", "apply").Run() //nolint:errcheck
+}
+
+// disableIPv6InContainer applies the ZNAS-default IPv4-only policy inside a
+// running container. Two files are written:
+//
+//   - /etc/sysctl.d/99-znas-disable-ipv6.conf — kernel-level disable, picked
+//     up at every boot via the distro's sysctl service.
+//   - /etc/gai.conf precedence entry — load-bearing for glibc systems: this
+//     tells getaddrinfo() to outrank IPv6 with IPv4 mapped addresses, so
+//     DNS lookups never hand back AAAA records that the container can't
+//     reach. Without this, tools wait ~60 s per IPv6 connect attempt.
+//
+// Idempotent: appends to gai.conf only if the precedence line isn't already
+// present. The container must be running.
+func disableIPv6InContainer(name string) error {
+	const sysctlConf = "# Written by ZNAS — containers are IPv4-only by default.\n" +
+		"net.ipv6.conf.all.disable_ipv6 = 1\n" +
+		"net.ipv6.conf.default.disable_ipv6 = 1\n" +
+		"net.ipv6.conf.lo.disable_ipv6 = 1\n"
+	if err := lxdWriteFileInside(name, "/etc/sysctl.d/99-znas-disable-ipv6.conf", sysctlConf); err != nil {
+		return fmt.Errorf("write sysctl.d: %w", err)
+	}
+	// Append precedence rule to /etc/gai.conf if missing. The file may not
+	// exist on minimal images — create it. musl-based images (Alpine) lack
+	// gai.conf semantics so this is a no-op there, but the file write
+	// itself is harmless.
+	const gaiPrecedence = "precedence ::ffff:0:0/96 100"
+	gaiCmd := `[ -e /etc/gai.conf ] || : > /etc/gai.conf;
+	grep -qE "^precedence ::ffff:0:0/96" /etc/gai.conf 2>/dev/null ||
+	  printf '\n# Added by ZNAS — prefer IPv4 in getaddrinfo()\n%s\n' "` + gaiPrecedence + `" >> /etc/gai.conf`
+	exec.Command("incus", "exec", name, "--", "sh", "-c", gaiCmd).Run() //nolint:errcheck
+	// Apply the sysctls now so the running session sees the change without
+	// waiting for a reboot. Best-effort: some non-namespaced sysctls may
+	// fail; the namespaced IPv6 ones we care about apply.
+	exec.Command("incus", "exec", name, "--",
+		"sysctl", "-p", "/etc/sysctl.d/99-znas-disable-ipv6.conf").Run() //nolint:errcheck
+	// Flush any link-local v6 addresses that auto-attached before the
+	// sysctl took effect. Without this, getaddrinfo on some glibc versions
+	// still sees a usable source address and returns AAAA records.
+	exec.Command("incus", "exec", name, "--",
+		"sh", "-c", "for i in $(ls /sys/class/net 2>/dev/null); do ip -6 addr flush dev $i 2>/dev/null; done").Run() //nolint:errcheck
+	return nil
+}
+
+// lxdReadFileInside reads a file from inside an instance. Uses
+// `incus file pull <name>/<path> -` which works whether the container
+// is running OR stopped — `pull` operates against the rootfs on disk,
+// not via the agent — so this is safe to call from anywhere in the
+// edit / detail-view paths that the user might hit on a stopped stack.
+// Returns empty string with nil error on any failure (missing file,
+// permission, instance gone): callers always get a deterministic
+// (string, nil) and decide what to do with the empty value.
+func lxdReadFileInside(instance, path string) (string, error) {
+	out, err := exec.Command("incus", "file", "pull", instance+path, "-").Output()
+	if err != nil {
+		return "", nil
+	}
+	return string(out), nil
+}
+
+// sanitizeComposeContent strips characters that pasted compose YAML / .env
+// content commonly carries but YAML parsers (PyYAML in podman-compose)
+// refuse: NUL and other C0 controls except tab+LF, UTF-8 BOM, zero-width
+// joiners/spaces. NBSP variants are folded to a regular space so what
+// looks like indentation actually is indentation. \r is converted to \n.
+// Frontend does this same scrub on paste; doing it again on the backend
+// covers content arriving by any other path (typed input, future API
+// callers, content edited inside the container) — the file we write to
+// disk is always clean.
+func sanitizeComposeContent(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\t' || r == '\n':
+			b.WriteRune(r)
+		case r == '\r':
+			b.WriteByte('\n')
+		case r < 0x20, r == 0x7F:
+			// drop NUL + the rest of the C0 controls (and DEL)
+		case r == 0xFEFF:
+			// drop UTF-8 BOM wherever it appears
+		case r == 0x200B || r == 0x200C || r == 0x200D || r == 0x2060:
+			// drop zero-width space / non-joiner / joiner / word joiner
+		case r == 0x00A0 || r == 0x202F || r == 0x2007:
+			b.WriteByte(' ') // NBSP family → normal space
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// ComposeContainer is one Podman container belonging to a Compose stack.
+type ComposeContainer struct {
+	Name    string `json:"name"`    // podman container name (e.g. "stack_web_1")
+	Service string `json:"service"` // compose service name (e.g. "web")
+	Image   string `json:"image"`
+	State   string `json:"state"`  // "running" | "exited" | "created" | ...
+	Status  string `json:"status"` // human text, e.g. "Up 2 minutes"
+	Ports   string `json:"ports"`  // formatted "0.0.0.0:8091->80/tcp, …"
+}
+
+// ComposeStackContainers lists the Podman containers running inside a
+// Compose stack. Parses `podman ps -a --format json`.
+func ComposeStackContainers(stack string) ([]ComposeContainer, error) {
+	out, err := exec.Command("incus", "exec", stack, "--",
+		"podman", "ps", "-a", "--format", "json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("podman ps: %w", err)
+	}
+	var raw []struct {
+		Names  []string          `json:"Names"`
+		Image  string            `json:"Image"`
+		State  string            `json:"State"`
+		Status string            `json:"Status"`
+		Labels map[string]string `json:"Labels"`
+		Ports  []struct {
+			HostIP        string `json:"host_ip"`
+			ContainerPort int    `json:"container_port"`
+			HostPort      int    `json:"host_port"`
+			Protocol      string `json:"protocol"`
+		} `json:"Ports"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("podman ps parse: %w", err)
+	}
+	containers := make([]ComposeContainer, 0, len(raw))
+	for _, r := range raw {
+		c := ComposeContainer{Image: r.Image, State: r.State, Status: r.Status}
+		if len(r.Names) > 0 {
+			c.Name = r.Names[0]
+		}
+		if r.Labels != nil {
+			c.Service = r.Labels["com.docker.compose.service"]
+		}
+		var ports []string
+		for _, p := range r.Ports {
+			if p.HostPort == 0 {
+				continue
+			}
+			hip := p.HostIP
+			if hip == "" {
+				hip = "0.0.0.0"
+			}
+			ports = append(ports, fmt.Sprintf("%s:%d->%d/%s", hip, p.HostPort, p.ContainerPort, p.Protocol))
+		}
+		c.Ports = strings.Join(ports, ", ")
+		containers = append(containers, c)
+	}
+	return containers, nil
+}
+
+// ComposeStackFiles reads the deployed docker-compose.yml and .env back from
+// a stack. A missing .env yields an empty string (not an error).
+func ComposeStackFiles(stack string) (composeYAML, composeEnv string, err error) {
+	composeYAML, err = lxdReadFileInside(stack, "/opt/stack/docker-compose.yml")
+	if err != nil {
+		return "", "", err
+	}
+	composeEnv, err = lxdReadFileInside(stack, "/opt/stack/.env")
+	if err != nil {
+		return "", "", err
+	}
+	return composeYAML, composeEnv, nil
+}
+
+// ComposeRedeploy rewrites the compose file and .env inside a stack and runs
+// `podman-compose up -d` to apply the change. An empty composeEnv removes the
+// .env file. logCh is optional.
+func ComposeRedeploy(stack, composeYAML, composeEnv string, logCh chan<- string) error {
+	log := func(s string) {
+		if logCh != nil {
+			logCh <- s
+		}
+	}
+	// Scrub before writing — paste-from-styled-source leaves NUL bytes and
+	// other invisible characters that PyYAML refuses. See sanitizeComposeContent.
+	composeYAML = sanitizeComposeContent(composeYAML)
+	composeEnv = sanitizeComposeContent(composeEnv)
+	log("Writing docker-compose.yml…")
+	if err := lxdWriteFileInside(stack, "/opt/stack/docker-compose.yml", composeYAML); err != nil {
+		return err
+	}
+	if strings.TrimSpace(composeEnv) != "" {
+		log("Writing .env…")
+		if err := lxdWriteFileInside(stack, "/opt/stack/.env", composeEnv); err != nil {
+			return err
+		}
+	} else {
+		exec.Command("incus", "exec", stack, "--", "rm", "-f", "/opt/stack/.env").Run() //nolint:errcheck
+	}
+	// If the host LXC is stopped we can still update the files on disk
+	// (lxdWriteFileInside uses incus file push, which works on stopped
+	// instances) — but we can't run docker-compose against a podman that
+	// isn't there. Save-only is the right behaviour: the user can start
+	// the stack whenever they're ready and the new compose / .env are
+	// what comes up.
+	statusOut, _ := exec.Command("incus", "list", stack, "-c", "s", "--format", "csv").Output()
+	if strings.ToLower(strings.TrimSpace(string(statusOut))) != "running" {
+		log("Stack is stopped — files saved on disk. Start the stack to apply.")
+		return nil
+	}
+
+	// `up -d --force-recreate` looks more efficient, but in projects with
+	// inter-service `depends_on` chains it fails partway through with
+	// "dependent containers must be removed first" — podman's hash-
+	// prefixed container naming during recreation creates a window where
+	// the old and new instance both exist, and `rm` of the old then
+	// refuses. The safe pattern across any topology is to tear the whole
+	// project down first (stop + rm everything, including orphans) and
+	// then bring it back up fresh. Named volumes survive `down`, so data
+	// is preserved.
+	log("Stopping existing containers (docker-compose down)…")
+	if err := runIncusComposeStreamed(stack, []string{"down", "-t", "10", "--remove-orphans"}, logCh); err != nil {
+		// `down` failing usually means the stack was already gone; not
+		// fatal, but worth flagging so the user sees it in the log.
+		log("WARNING: 'docker-compose down' returned: " + err.Error())
+	}
+	log("Bringing the stack back up (docker-compose up -d)…")
+	if err := runIncusComposeStreamed(stack, []string{"up", "-d"}, logCh); err != nil {
+		return err
+	}
+	log("Stack redeployed.")
+	return nil
+}
+
+// composeAnsiRE strips standard CSI colour sequences (`\x1b[…m`) and other
+// short escape codes from compose output so the progress modal renders
+// plain text.
+var composeAnsiRE = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+// dockerComposeBinURL is the GitHub "latest stable" URL for docker-compose
+// v2. We use the redirect so users always get the freshest stable when a
+// new stack is created, without us tracking versions. The aarch64 file is
+// served under the same release path.
+const dockerComposeBinURL = "https://github.com/docker/compose/releases/latest/download/"
+
+// trimStackServices disables systemd services that are dead weight inside
+// a compose-stack LXC (its job is to host containers, not to be a desktop
+// or a DNS resolver).
+//
+//   - DNSStubListener=no on systemd-resolved: frees port 53 so any DNS
+//     server container (pihole, adguard, unbound, dnscrypt-proxy, …) can
+//     bind it without manual setup. systemd-resolved itself keeps
+//     running so glibc still resolves names via nss-resolve.
+//   - Mask snapd on Ubuntu: removes the largest idle-RSS service in the
+//     Ubuntu LXC image (~50-100 MB resident, periodic refresh cron).
+//     Snap packages aren't useful here — workloads run as podman
+//     containers, not snaps.
+//
+// Idempotent and distro-tolerant: each step is gated on the right thing
+// being present (systemd, snapd).
+func trimStackServices(name string) {
+	hasSystemd := exec.Command("incus", "exec", name, "--", "test", "-d", "/run/systemd/system").Run() == nil
+	if !hasSystemd {
+		return // Alpine / openrc — neither systemd-resolved nor snapd applies
+	}
+	exec.Command("incus", "exec", name, "--", "mkdir", "-p", "/etc/systemd/resolved.conf.d").Run() //nolint:errcheck
+	const dropIn = "# Written by ZNAS — free port 53 for DNS-server containers.\n" +
+		"# systemd-resolved keeps running for nss-resolve; only the\n" +
+		"# 127.0.0.53:53 listener is suppressed.\n" +
+		"[Resolve]\n" +
+		"DNSStubListener=no\n"
+	if err := lxdWriteFileInside(name, "/etc/systemd/resolved.conf.d/znas-no-stub.conf", dropIn); err == nil {
+		// Re-link /etc/resolv.conf away from the now-dead stub so glibc
+		// falls back to the upstream DNS configured by netplan/DHCP.
+		exec.Command("incus", "exec", name, "--", "ln", "-sf",
+			"/run/systemd/resolve/resolv.conf", "/etc/resolv.conf").Run() //nolint:errcheck
+		exec.Command("incus", "exec", name, "--",
+			"systemctl", "restart", "systemd-resolved").Run() //nolint:errcheck
+	}
+	// Snapd is only on Ubuntu LXC images.
+	if instanceImageIsUbuntu(name) {
+		exec.Command("incus", "exec", name, "--", "systemctl",
+			"mask", "--now", "snapd.service", "snapd.socket", "snapd.seeded.service").Run() //nolint:errcheck
+	}
+}
+
+// _waitPodmanSocketReady polls inside the stack for /run/podman/podman.sock
+// to become a real listening socket, up to ~steps × 200 ms. Returns true
+// once it can `_ping` the API (which also force-activates podman.service
+// via the socket), false if it hits the timeout. Use this after any
+// socket-enable to ensure the next docker-compose call doesn't race.
+func _waitPodmanSocketReady(stack string, steps int) bool {
+	for i := 0; i < steps; i++ {
+		if exec.Command("incus", "exec", stack, "--",
+			"sh", "-c",
+			"test -S /run/podman/podman.sock && "+
+				"curl -fsS --max-time 1 --unix-socket /run/podman/podman.sock http://d/_ping >/dev/null 2>&1").Run() == nil {
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
+}
+
+// EnsureDockerComposeInStack is the package-public wrapper used by HTTP
+// handlers that don't have a log channel to thread (e.g. the WebSocket
+// log streamer). The error is swallowed: a download failure shouldn't
+// crash the caller, the subsequent docker-compose invocation will
+// surface the real problem.
+func EnsureDockerComposeInStack(stack string) {
+	ensureDockerComposeInStack(stack, nil) //nolint:errcheck
+}
+
+// ensureDockerComposeInStack makes sure the upstream docker-compose v2
+// binary AND a Podman Docker-API socket are available inside the LXC.
+// Idempotent: if both are already in place it returns immediately, so
+// it's safe to call from every entry point that runs a compose command
+// (lazy migration for existing stacks that were built against the older
+// podman-compose runtime).
+func ensureDockerComposeInStack(stack string, logCh chan<- string) error {
+	log := func(s string) {
+		if logCh != nil {
+			logCh <- s
+		}
+	}
+
+	// 1) The binary — skip the wget when it's already there.
+	if exec.Command("incus", "exec", stack, "--", "test", "-x", "/usr/local/bin/docker-compose").Run() != nil {
+		archOut, _ := exec.Command("incus", "exec", stack, "--", "uname", "-m").Output()
+		arch := strings.TrimSpace(string(archOut))
+		assetName := "docker-compose-linux-x86_64"
+		switch arch {
+		case "aarch64", "arm64":
+			assetName = "docker-compose-linux-aarch64"
+		case "armv7l", "armhf":
+			assetName = "docker-compose-linux-armv7"
+		case "ppc64le":
+			assetName = "docker-compose-linux-ppc64le"
+		case "s390x":
+			assetName = "docker-compose-linux-s390x"
+		}
+		log("Downloading docker-compose v2 (" + arch + ")…")
+		dl := "wget -q -O /usr/local/bin/docker-compose '" + dockerComposeBinURL + assetName + "' && " +
+			"chmod +x /usr/local/bin/docker-compose"
+		if out, err := exec.Command("incus", "exec", stack, "--", "sh", "-c", dl).CombinedOutput(); err != nil {
+			return fmt.Errorf("download docker-compose: %s", strings.TrimSpace(string(out)))
+		}
+	}
+
+	// 2) Podman's Docker-compat socket — docker-compose has no socket-less
+	// mode, so we expose the API at /run/podman/podman.sock and point the
+	// client at it via DOCKER_HOST below. Two init systems to cover:
+	//   • systemd (Debian / Ubuntu): podman ships `podman.socket`.
+	//   • openrc (Alpine): no shipped unit; we plant a tiny init script
+	//     that runs `podman system service` in the background.
+	if exec.Command("incus", "exec", stack, "--", "test", "-d", "/run/systemd/system").Run() == nil {
+		if exec.Command("incus", "exec", stack, "--",
+			"systemctl", "is-active", "--quiet", "podman.socket").Run() != nil {
+			log("Enabling podman.socket (Docker-API on /run/podman/podman.sock)…")
+			exec.Command("incus", "exec", stack, "--",
+				"systemctl", "enable", "--now", "podman.socket").Run() //nolint:errcheck
+		}
+		// Wait for the socket to actually be listening. `systemctl enable
+		// --now` returns when the unit file is loaded, but the listener
+		// can race the next docker-compose call (Cannot connect to the
+		// Docker daemon at unix:///run/podman/podman.sock). Poll for up
+		// to ~6 s. If the systemd path didn't bring the socket up at
+		// all (old podman builds without podman.socket), drop into the
+		// manual `podman system service` fallback below.
+		if !_waitPodmanSocketReady(stack, 30) {
+			log("podman.socket didn't come up via systemd — starting podman service manually…")
+			exec.Command("incus", "exec", stack, "--", "sh", "-c",
+				"mkdir -p /run/podman && nohup podman system service --time=0 unix:///run/podman/podman.sock "+
+					">/var/log/podman-socket.log 2>&1 &").Run() //nolint:errcheck
+			if !_waitPodmanSocketReady(stack, 30) {
+				log("WARNING: podman socket still not responding — subsequent docker-compose calls will likely fail.")
+			}
+		}
+	} else {
+		if exec.Command("incus", "exec", stack, "--", "test", "-x", "/etc/init.d/podman-socket").Run() != nil {
+			log("Installing podman-socket openrc service…")
+			const initScript = `#!/sbin/openrc-run
+name="podman-socket"
+description="Podman Docker-API socket for docker-compose"
+command="/usr/bin/podman"
+command_args="system service --time=0 unix:///run/podman/podman.sock"
+command_background="yes"
+pidfile="/run/podman-socket.pid"
+output_log="/var/log/podman-socket.log"
+error_log="/var/log/podman-socket.log"
+depend() { need localmount; }
+start_post() {
+    # Wait briefly for the socket to be listening, then plant the
+    # Docker-API compatibility symlink — survives reboot because
+    # this script runs on every boot at the default runlevel.
+    for i in 1 2 3 4 5; do
+        [ -S /run/podman/podman.sock ] && {
+            ln -sf /run/podman/podman.sock /run/docker.sock
+            return 0
+        }
+        sleep 1
+    done
+}
+`
+			if err := lxdWriteFileInside(stack, "/etc/init.d/podman-socket", initScript); err != nil {
+				return fmt.Errorf("write podman-socket init script: %w", err)
+			}
+			exec.Command("incus", "exec", stack, "--", "chmod", "+x", "/etc/init.d/podman-socket").Run() //nolint:errcheck
+			exec.Command("incus", "exec", stack, "--", "rc-update", "add", "podman-socket", "default").Run() //nolint:errcheck
+			exec.Command("incus", "exec", stack, "--", "rc-service", "podman-socket", "start").Run() //nolint:errcheck
+		}
+		if !_waitPodmanSocketReady(stack, 30) {
+			log("WARNING: podman socket didn't come up on Alpine — check /var/log/podman-socket.log inside the stack.")
+		}
+	}
+
+	// docker-compose's default socket is /var/run/docker.sock — anything
+	// run from an interactive shell (without our DOCKER_HOST --env) hits
+	// that path and fails. We need this symlink to survive a reboot,
+	// otherwise podman containers that bind-mount /var/run/docker.sock
+	// (portainer, watchtower, dind-style sidecars) fail to start on the
+	// first boot after a stop with "crun: error stat'ing file
+	// /var/run/docker.sock". Two mechanisms — pick the one that fits the
+	// distro's init system, ship both because they're tiny and idempotent.
+	const tmpfilesConf = "# Written by ZNAS — recreate the Docker-API compatibility symlink\n" +
+		"# at every boot so podman containers that bind-mount\n" +
+		"# /var/run/docker.sock don't fail at start.\n" +
+		"L  /run/docker.sock  -  -  -  -  /run/podman/podman.sock\n"
+	if err := lxdWriteFileInside(stack, "/etc/tmpfiles.d/znas-docker-sock.conf", tmpfilesConf); err == nil {
+		// Apply now (systemd-tmpfiles will pick it up at next boot too).
+		exec.Command("incus", "exec", stack, "--",
+			"systemd-tmpfiles", "--create", "/etc/tmpfiles.d/znas-docker-sock.conf").Run() //nolint:errcheck
+	}
+	// Hard symlink right now in case tmpfiles isn't available (Alpine,
+	// minimal images) — the openrc init script we install for Alpine
+	// also recreates this in start_post, see below.
+	exec.Command("incus", "exec", stack, "--", "sh", "-c",
+		"ln -sf /run/podman/podman.sock /run/docker.sock").Run() //nolint:errcheck
+	// Also make DOCKER_HOST persistent for login shells (covers `incus exec
+	// stack -- bash` and similar non-PAM exec paths via /etc/profile.d).
+	const profileScript = "export DOCKER_HOST=unix:///run/podman/podman.sock\n"
+	if err := lxdWriteFileInside(stack, "/etc/profile.d/znas-docker-host.sh", profileScript); err == nil {
+		exec.Command("incus", "exec", stack, "--",
+			"chmod", "0644", "/etc/profile.d/znas-docker-host.sh").Run() //nolint:errcheck
+	}
+	return nil
+}
+
+// runIncusComposeStreamed runs `incus exec <stack> --cwd /opt/stack --
+// docker-compose <args...>` and forwards each output line to logCh after
+// stripping ANSI escapes. On failure the error includes the last ~30
+// output lines for context. Lazily installs docker-compose + the podman
+// socket on first call (no-op when already present), so stacks created
+// under the old podman-compose runtime self-migrate.
+func runIncusComposeStreamed(stack string, args []string, logCh chan<- string) error {
+	if err := ensureDockerComposeInStack(stack, logCh); err != nil {
+		return err
+	}
+	cmdArgs := append([]string{"exec", stack,
+		"--env", "DOCKER_HOST=unix:///run/podman/podman.sock",
+		"--cwd", "/opt/stack", "--", "docker-compose"}, args...)
+	cmd := exec.Command("incus", cmdArgs...)
+	cmd.Env = append(os.Environ(), "NO_COLOR=1")
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("docker-compose %s: %w", strings.Join(args, " "), err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		pw.Close()
+		errCh <- err
+	}()
+	scanner := bufio.NewScanner(pr)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	var tail []string
+	for scanner.Scan() {
+		line := strings.TrimRight(composeAnsiRE.ReplaceAllString(scanner.Text(), ""), " \t\r")
+		if line == "" {
+			continue
+		}
+		if logCh != nil {
+			logCh <- line
+		}
+		tail = append(tail, line)
+		if len(tail) > 30 {
+			tail = tail[1:]
+		}
+	}
+	if err := <-errCh; err != nil {
+		return fmt.Errorf("docker-compose %s: %s", strings.Join(args, " "), strings.Join(tail, " | "))
+	}
+	return nil
+}
+
+// ComposeStackUpdate pulls the newest images for every service and re-applies
+// the stack — the equivalent of `docker-compose pull && docker-compose up -d`.
+// Output streams to logCh line-by-line so the user sees progress instead of a
+// silent multi-minute pause.
+func ComposeStackUpdate(stack string, logCh chan<- string) error {
+	log := func(s string) {
+		if logCh != nil {
+			logCh <- s
+		}
+	}
+	log("Pulling latest images (docker-compose pull)…")
+	if err := runIncusComposeStreamed(stack, []string{"pull"}, logCh); err != nil {
+		return err
+	}
+	log("Re-applying the stack (docker-compose up -d)…")
+	if err := runIncusComposeStreamed(stack, []string{"up", "-d"}, logCh); err != nil {
+		return err
+	}
+	log("Stack updated.")
+	return nil
+}
+
+// ComposeContainerLogs returns the last `tail` lines of the podman log
+// for one container in a stack. `tail` is clamped to [1, 10000] so a
+// stray "all" or huge value can't pull megabytes through `incus exec`.
+// Returns the log text exactly as podman emitted it (so callers can
+// stream it into a <pre> as-is); ANSI sequences are stripped because
+// modern app images leak colour codes onto stderr.
+func ComposeContainerLogs(stack, container string, tail int) (string, error) {
+	if tail < 1 {
+		tail = 100
+	}
+	if tail > 10000 {
+		tail = 10000
+	}
+	out, err := exec.Command("incus", "exec", stack, "--",
+		"podman", "logs", "--tail", fmt.Sprintf("%d", tail), container).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("podman logs: %s", strings.TrimSpace(string(out)))
+	}
+	return composeAnsiRE.ReplaceAllString(string(out), ""), nil
+}
+
+// ComposeContainerAction runs a lifecycle action on a single container in a
+// stack. action ∈ {start, stop, restart, update}. For "update" the service
+// name is required: the image is pulled and the service recreated.
+func ComposeContainerAction(stack, container, service, action string) error {
+	switch action {
+	case "start", "stop", "restart":
+		if out, err := exec.Command("incus", "exec", stack, "--",
+			"podman", action, container).CombinedOutput(); err != nil {
+			return fmt.Errorf("podman %s: %s", action, strings.TrimSpace(string(out)))
+		}
+		return nil
+	case "update":
+		if service == "" {
+			return fmt.Errorf("update needs the compose service name")
+		}
+		// `up --pull always --force-recreate <service>` pulls the freshest
+		// image for that one service and recreates it. Runs through the
+		// shared streamed helper so lazy install + the DOCKER_HOST env
+		// var land for free.
+		return runIncusComposeStreamed(stack,
+			[]string{"up", "-d", "--pull", "always", "--force-recreate", service}, nil)
+	}
+	return fmt.Errorf("unknown action %q", action)
+}
+
+// ComposeGetConfigKey reads a single Incus config key off a stack instance,
+// returning "" when unset.
+func ComposeGetConfigKey(stack, key string) string {
+	out, err := exec.Command("incus", "config", "get", stack, key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// ComposeSetConfigKey writes a single Incus config key on a stack instance.
+func ComposeSetConfigKey(stack, key, value string) error {
+	return exec.Command("incus", "config", "set", stack, key, value).Run()
 }
 
 func _hasStaticIPConfig(nics []LXDNIC) bool {
@@ -5886,23 +6969,173 @@ type LXDLogEntry struct {
 	Message string `json:"message"`
 }
 
-// GetLXDInstanceLogs returns recent log entries for the named instance.
-// It reads the lxc.log file via the LXD API (lxc query) and falls back
-// to lxc info --show-log when no structured log is available.
-func GetLXDInstanceLogs(name string) ([]LXDLogEntry, error) {
-	// Try fetching the lxc.log file directly via the API.
-	raw, err := exec.Command("incus", "query",
-		"/1.0/instances/"+name+"/logs/lxc.log").Output()
+// LXDLogFileInfo describes one log file exposed by Incus for an
+// instance, with its current line count so the UI's file-picker can
+// surface "qemu.log (12,453 lines)" labels without a separate count
+// request per file.
+type LXDLogFileInfo struct {
+	Name  string `json:"name"`
+	Lines int    `json:"lines"`
+}
+
+// ListLXDInstanceLogFiles enumerates the log files Incus exposes for
+// the instance and counts lines in each. Used to populate the file-
+// picker dropdown on the Logs tab. Line counts come from a quick
+// `wc -l` against the host-side log path under /var/log/incus/ — far
+// cheaper than fetching each file through the API just to count its
+// lines.
+func ListLXDInstanceLogFiles(name string) ([]LXDLogFileInfo, error) {
+	if !lxdNameRe.MatchString(name) {
+		return nil, fmt.Errorf("invalid instance name")
+	}
+	listOut, err := exec.Command("incus", "query", "/1.0/instances/"+name+"/logs").Output()
 	if err != nil {
-		// Fall back to lxc info --show-log
-		raw, err = exec.Command("incus", "info", "--show-log", name).CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("lxc logs: %w", err)
+		return nil, fmt.Errorf("logs list: %w", err)
+	}
+	var paths []string
+	if err := json.Unmarshal(listOut, &paths); err != nil {
+		return nil, fmt.Errorf("logs list parse: %w", err)
+	}
+	out := make([]LXDLogFileInfo, 0, len(paths))
+	for _, p := range paths {
+		fileName := p
+		if idx := strings.LastIndex(p, "/"); idx >= 0 {
+			fileName = p[idx+1:]
 		}
-		// lxc info --show-log: skip header, start parsing after "Log:"
+		// Count lines via `sudo wc -l` on the host log file (cheap,
+		// streams the file). Falls back to 0 silently if the file
+		// is unreadable so the dropdown still renders something.
+		hostPath := "/var/log/incus/" + name + "/" + fileName
+		lines := 0
+		if wc, err := exec.Command("sudo", "/usr/bin/wc", "-l", hostPath).Output(); err == nil {
+			parts := strings.Fields(string(wc))
+			if len(parts) > 0 {
+				fmt.Sscanf(parts[0], "%d", &lines)
+			}
+		}
+		out = append(out, LXDLogFileInfo{Name: fileName, Lines: lines})
+	}
+	return out, nil
+}
+
+// DefaultLXDLogFileName returns the "primary" log file for the named
+// instance — lxc.log for containers, qemu.log for VMs, or the first
+// file Incus exposes when neither matches.
+func DefaultLXDLogFileName(name string) string {
+	files, err := ListLXDInstanceLogFiles(name)
+	if err != nil || len(files) == 0 {
+		return ""
+	}
+	prefer := []string{"qemu.log", "lxc.log"}
+	for _, want := range prefer {
+		for _, f := range files {
+			if f.Name == want {
+				return f.Name
+			}
+		}
+	}
+	return files[0].Name
+}
+
+// GetLXDInstanceLogs returns recent log entries for the named instance.
+// When fileFilter is empty, fetches every log file Incus exposes and
+// merges them; when set, fetches just that one file. The frontend
+// drives the per-file view via the file-picker dropdown; the merged
+// view is kept as a fallback path.
+func GetLXDInstanceLogs(name, fileFilter string) ([]LXDLogEntry, error) {
+	// Step 1: enumerate the available log files for this instance.
+	listOut, listErr := exec.Command("incus", "query", "/1.0/instances/"+name+"/logs").Output()
+	if listErr != nil {
+		// Fall back to `incus info --show-log` (containers only — VMs
+		// have no parseable log here either, but at least we won't
+		// surface "exit status 1" to the user when the discovery API
+		// itself is unreachable).
+		raw, err := exec.Command("incus", "info", "--show-log", name).CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("instance logs unavailable: %s", strings.TrimSpace(string(raw)))
+		}
 		return parseLXDLogAfterMarker(string(raw), "Log:"), nil
 	}
-	return parseLXDLogLines(string(raw)), nil
+	var paths []string
+	if err := json.Unmarshal(listOut, &paths); err != nil {
+		return nil, fmt.Errorf("logs list parse: %w", err)
+	}
+	if len(paths) == 0 {
+		return []LXDLogEntry{{Message: "(no log files exposed by Incus for this instance)"}}, nil
+	}
+	// Step 2: fetch each log file (or just the requested one) and
+	// concatenate. Section headers separate files in the merged view
+	// but are also emitted on single-file fetches for consistency.
+	var out []LXDLogEntry
+	for _, p := range paths {
+		fileName := p
+		if idx := strings.LastIndex(p, "/"); idx >= 0 {
+			fileName = p[idx+1:]
+		}
+		if fileFilter != "" && fileName != fileFilter {
+			continue
+		}
+		raw, err := exec.Command("incus", "query", p).Output()
+		if err != nil {
+			out = append(out, LXDLogEntry{Message: "── " + fileName + " — read failed: " +
+				strings.TrimSpace(err.Error()) + " ──"})
+			continue
+		}
+		body := strings.TrimRight(string(raw), "\n")
+		if body == "" {
+			out = append(out, LXDLogEntry{Message: "── " + fileName + " (empty) ──"})
+			continue
+		}
+		// Cap each file at its last N lines — qemu.log in particular
+		// can grow into megabytes on a long-running VM, and shipping
+		// the whole thing through JSON + rendering it in the browser
+		// was making the Logs tab freeze the UI for many seconds.
+		const perFileLineCap = 500
+		lines := strings.Split(body, "\n")
+		header := "── " + fileName + " ──"
+		if len(lines) > perFileLineCap {
+			header = fmt.Sprintf("── %s (showing last %d of %d lines) ──",
+				fileName, perFileLineCap, len(lines))
+			lines = lines[len(lines)-perFileLineCap:]
+		}
+		out = append(out, LXDLogEntry{Message: header})
+		// lxc.log has structured "level - message" lines we already
+		// parse; qemu.log + qmp.log are free-form text but QEMU
+		// prefixes most lines with "[<ISO-8601 timestamp>] …" — pull
+		// that prefix into the Time column so the UI's dedicated
+		// time column has data and the Message column doesn't
+		// duplicate it.
+		if fileName == "lxc.log" {
+			out = append(out, parseLXDLogLines(strings.Join(lines, "\n"))...)
+		} else {
+			for _, line := range lines {
+				out = append(out, splitTimestampedLogLine(line))
+			}
+		}
+	}
+	return out, nil
+}
+
+// qemuLogTimestampRE captures a leading "[<timestamp>]" prefix at the
+// start of a log line. Accepts the ISO-8601 form QEMU emits
+// ("2026-05-24T08:29:21-04:00") as well as plain "YYYY-MM-DD HH:MM:SS"
+// — any printable timestamp inside the brackets works.
+var qemuLogTimestampRE = regexp.MustCompile(`^\[([^\]]+)\]\s*(.*)$`)
+
+// splitTimestampedLogLine pulls a leading "[timestamp]" prefix off a
+// raw log line and returns an entry where Time = timestamp,
+// Message = remainder. Lines without the bracketed prefix are returned
+// with Time = "" and Message = full line. Level is set to INFO by
+// default so the UI's level filter behaves sensibly on VM-only logs
+// (which have no structured levels of their own); the filter does an
+// exact match on Level, so empty-level entries would be invisible the
+// moment the user picks any specific level.
+func splitTimestampedLogLine(line string) LXDLogEntry {
+	m := qemuLogTimestampRE.FindStringSubmatch(line)
+	if m == nil {
+		return LXDLogEntry{Level: "INFO", Message: line}
+	}
+	return LXDLogEntry{Time: m[1], Level: "INFO", Message: m[2]}
 }
 
 // GetLXDInstanceConsoleLog returns the contents of

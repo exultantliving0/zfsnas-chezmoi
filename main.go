@@ -227,6 +227,9 @@ func main() {
 	handlers.StartLXDSnapshotScheduler(appCfg)
 	handlers.StartLXDBackupScheduler(appCfg)
 
+	// ===== Compose stack auto-update scheduler =====
+	handlers.StartComposeAutoUpdater(appCfg)
+
 	// ===== Scrub scheduler =====
 	handlers.StartScrubScheduler(appCfg)
 

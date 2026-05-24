@@ -305,6 +305,25 @@ type LXDBackupPolicy struct {
 	LastBytes  int64     `json:"last_bytes,omitempty"`
 }
 
+// ComposeUpdatePolicy is a per-stack scheduled auto-update policy. One policy
+// per Compose stack, identified by Instance (the Incus container name). An
+// update runs `podman-compose pull` + `podman-compose up -d` inside the stack.
+// Stored as a slice on AppConfig so a single JSON write covers all changes.
+type ComposeUpdatePolicy struct {
+	Instance     string `json:"instance"`
+	Enabled      bool   `json:"enabled"`
+	EveryN       int    `json:"every_n"`               // 1..N
+	Unit         string `json:"unit"`                  // "minute"|"hour"|"day"|"week"|"month"
+	HourOfDay    int    `json:"hour_of_day,omitempty"` // 0-23, used when Unit>="day"
+	MinuteOfHour int    `json:"minute_of_hour"`        // 0-59
+	Weekday      int    `json:"weekday,omitempty"`     // 0=Sun..6=Sat, Unit=="week"
+	DayOfMonth   int    `json:"day_of_month,omitempty"`// 1..31, Unit=="month"
+
+	LastRun    time.Time `json:"last_run,omitempty"`
+	LastStatus string    `json:"last_status,omitempty"` // "ok" | "error" | ""
+	LastError  string    `json:"last_error,omitempty"`
+}
+
 // LinkedServer represents a remote ZNAS instance trusted for single-click SSO switching.
 type LinkedServer struct {
 	ID             string    `json:"id"`              // our local UUID for this link
@@ -338,6 +357,9 @@ type AppConfig struct {
 	// addition to Port. Binding the privileged port from the non-root service
 	// account is granted via a systemd CAP_NET_BIND_SERVICE drop-in.
 	BindPort443       bool      `json:"bind_port_443,omitempty"`
+	// ComposeBaseImage is the LXC base image used for Compose stacks
+	// ("alpine" | "debian" | "ubuntu"). Empty defaults to "debian".
+	ComposeBaseImage  string    `json:"compose_base_image,omitempty"`
 	StorageUnit       string    `json:"storage_unit,omitempty"`        // "gb" (1000-based) or "gib" (1024-based)
 	LoginTheme        string    `json:"login_theme,omitempty"`         // "dark" | "light" | "auto"
 	SMARTLastRefresh  time.Time `json:"smart_last_refresh,omitempty"`
@@ -377,6 +399,7 @@ type AppConfig struct {
 	LXDMetricsEnabled    bool              `json:"lxd_metrics_enabled,omitempty"`  // turns on LXD's Prometheus endpoint on 127.0.0.1:9101 + portal scraper for VM/container Monitor tabs (v6.4.28)
 	WebSession           WebSessionPolicy  `json:"web_session,omitempty"`          // browser session lifetime policy (default 24h vs sliding inactivity timeout)
 	LXDSnapshotPolicies  []LXDSnapshotPolicy `json:"lxd_snapshot_policies,omitempty"` // v6.5.19 — per-instance scheduled snapshots
+	ComposeUpdatePolicies []ComposeUpdatePolicy `json:"compose_update_policies,omitempty"` // per-stack scheduled auto-updates
 	LXDBackupPolicies    []LXDBackupPolicy   `json:"lxd_backup_policies,omitempty"`   // v6.5.19 — per-instance scheduled syncoid backups
 }
 

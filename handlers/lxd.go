@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 	"zfsnas/internal/audit"
+	"zfsnas/internal/config"
 	"zfsnas/system"
 
 	"github.com/creack/pty"
@@ -249,15 +250,36 @@ func HandleLXDDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleLXDInstanceLogs returns recent log entries for the named instance.
-// GET /api/lxd/instances/{name}/logs
+// Optional ?file=<basename> narrows the response to a single log file (the
+// dropdown the frontend renders); when omitted the response merges every
+// log file Incus exposes.
+// GET /api/lxd/instances/{name}/logs[?file=qemu.log]
 func HandleLXDInstanceLogs(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["name"]
-	entries, err := system.GetLXDInstanceLogs(name)
+	fileFilter := r.URL.Query().Get("file")
+	entries, err := system.GetLXDInstanceLogs(name, fileFilter)
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	jsonOK(w, entries)
+}
+
+// HandleLXDInstanceLogFiles returns the list of log files Incus exposes
+// for the instance, each annotated with a current line count so the
+// frontend's picker can show "qemu.log (12,453 lines)" labels.
+// GET /api/lxd/instances/{name}/log-files
+func HandleLXDInstanceLogFiles(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	files, err := system.ListLXDInstanceLogFiles(name)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]interface{}{
+		"files":   files,
+		"default": system.DefaultLXDLogFileName(name),
+	})
 }
 
 // HandleLXDInstanceConsoleLog returns the boot/console.log contents for a
@@ -798,6 +820,66 @@ func HandleCreateContainer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+}
+
+// HandleCreateComposeStack creates a Compose stack — an LXC container running
+// Podman with the supplied docker-compose file deployed. Reuses the container
+// create request shape; the base image comes from the ComposeBaseImage
+// setting. Runs as a progress job, same as VM/container creation.
+// POST /api/lxd/compose-stacks
+func HandleCreateComposeStack(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req system.LXDCreateContainerRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.Name == "" {
+			jsonErr(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if strings.TrimSpace(req.ComposeYAML) == "" {
+			jsonErr(w, http.StatusBadRequest, "docker-compose content is required")
+			return
+		}
+		alias, distro := system.ComposeBaseImageAlias(appCfg.ComposeBaseImage)
+		req.Image = alias
+
+		sess := MustSession(r)
+		jobID := fmt.Sprintf("%d", time.Now().UnixNano())
+		job := &lxdJob{Status: "running"}
+		lxdJobs.Store(jobID, job)
+
+		go func() {
+			logCh := make(chan string, 64)
+			go func() {
+				for line := range logCh {
+					job.mu.Lock()
+					job.Lines = append(job.Lines, line)
+					job.mu.Unlock()
+				}
+			}()
+			err := system.LXDCreateComposeStack(req, distro, req.ComposeYAML, req.ComposeEnv, logCh)
+			close(logCh)
+			job.mu.Lock()
+			if err != nil {
+				job.Status = "error"
+				job.Error = err.Error()
+			} else {
+				job.Status = "done"
+			}
+			job.mu.Unlock()
+			result, details := audit.ResultOK, ""
+			if err != nil {
+				result, details = audit.ResultError, err.Error()
+			}
+			audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDCreateContainer, Target: "compose:" + req.Name, Result: result, Details: details})
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{"job_id": jobID})
+	}
 }
 
 // HandleLXDCreateProgress returns job status + accumulated log lines.

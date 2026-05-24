@@ -752,6 +752,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceStatus))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/logs",
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceLogs))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/log-files",
+		RequireAuth(http.HandlerFunc(HandleLXDInstanceLogFiles))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/console-log",
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceConsoleLog))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/snapshots",
@@ -805,6 +807,26 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("create_vm")(http.HandlerFunc(HandleCreateVM)))).Methods("POST")
 	r.Handle("/api/lxd/containers",
 		RequireAuth(RequirePermission("create_container")(http.HandlerFunc(HandleCreateContainer)))).Methods("POST")
+	r.Handle("/api/lxd/compose-stacks",
+		RequireAuth(RequirePermission("create_container")(http.HandlerFunc(HandleCreateComposeStack(appCfg))))).Methods("POST")
+	r.Handle("/api/lxd/compose-stacks/{name}",
+		RequireAuth(http.HandlerFunc(HandleComposeStackGet(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/compose-stacks/{name}",
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleComposeRedeploy)))).Methods("PUT")
+	r.Handle("/api/lxd/compose-stacks/{name}/containers",
+		RequireAuth(http.HandlerFunc(HandleComposeStackContainers))).Methods("GET")
+	r.Handle("/api/lxd/compose-stacks/{name}/containers/{container}/logs",
+		RequireAuth(http.HandlerFunc(HandleComposeContainerLogs))).Methods("GET")
+	r.Handle("/api/lxd/compose-stacks/{name}/container-action",
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleComposeContainerAction)))).Methods("POST")
+	r.Handle("/api/lxd/compose-stacks/{name}/update",
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleComposeStackUpdate)))).Methods("POST")
+	r.Handle("/api/lxd/compose-stacks/{name}/schedule",
+		RequireAuth(http.HandlerFunc(HandleComposeGetSchedule(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/compose-stacks/{name}/schedule",
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleComposePutSchedule(appCfg))))).Methods("PUT")
+	r.Handle("/api/lxd/compose-stacks/{name}/schedule",
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleComposeDeleteSchedule(appCfg))))).Methods("DELETE")
 	r.Handle("/api/lxd/create-progress",
 		RequireAuth(http.HandlerFunc(HandleLXDCreateProgress))).Methods("GET")
 	r.Handle("/api/lxd/remotes",
@@ -865,6 +887,12 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleLXDConsole)))).Methods("GET")
 	r.Handle("/lxd-console/{name}",
 		RequireAuth(http.HandlerFunc(ServeLXDConsolePage))).Methods("GET")
+	r.Handle("/ws/compose-logs",
+		RequireAuth(http.HandlerFunc(HandleComposeLogsWS))).Methods("GET")
+	r.Handle("/ws/compose-console",
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleComposeConsoleWS)))).Methods("GET")
+	r.Handle("/compose-console/{stack}/{container}",
+		RequireAuth(http.HandlerFunc(ServeComposeConsolePage))).Methods("GET")
 	r.Handle("/ws/lxd-vga",
 		RequireAuth(http.HandlerFunc(HandleLXDVGAConsole))).Methods("GET")
 	r.Handle("/lxd-vga-console/{name}",

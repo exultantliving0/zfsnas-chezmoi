@@ -12,10 +12,20 @@
   <meta name="apple-mobile-web-app-title" content="ZFS NAS">
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/vendor/xterm.min.css">
+  <link rel="stylesheet" href="/static/vendor/codemirror.min.css">
+  <link rel="stylesheet" href="/static/vendor/codemirror-dracula.min.css">
+  <link rel="stylesheet" href="/static/vendor/codemirror-dialog.min.css">
   <script src="/static/vendor/xterm.min.js"></script>
   <script src="/static/vendor/xterm-addon-fit.min.js"></script>
   <script src="/static/vendor/chart.umd.min.js"></script>
   <script src="/static/vendor/qrcode.min.js"></script>
+  <script src="/static/vendor/codemirror.min.js"></script>
+  <script src="/static/vendor/codemirror-yaml.min.js"></script>
+  <script src="/static/vendor/codemirror-dialog.min.js"></script>
+  <script src="/static/vendor/codemirror-searchcursor.min.js"></script>
+  <script src="/static/vendor/codemirror-search.min.js"></script>
+  <script src="/static/vendor/codemirror-jump-to-line.min.js"></script>
+  <script src="/static/vendor/js-yaml.min.js"></script>
   <style>
     /* Pool bar tooltip */
     /* Global floating tooltip for pool bar segments */
@@ -355,6 +365,55 @@
       border-color: var(--border-focus);
       box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.15);
     }
+    /* ── CodeMirror sizing for compose YAML / .env editors ── */
+    .znas-cm { border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+    /* CodeMirror's getWrapperElement() returns the .CodeMirror element
+       itself; in _mountCMEditor we add znas-cm-yaml / znas-cm-env to
+       that same element, so the size rules go on the combined class —
+       a descendant selector like .znas-cm-yaml .CodeMirror would
+       match nothing (the wrapper has no .CodeMirror child). */
+    .znas-cm-yaml.CodeMirror { height: 280px !important; font-size:9px !important; line-height:1.3 !important; }
+    .znas-cm-env.CodeMirror  { height: 130px !important; font-size:9px !important; line-height:1.3 !important; }
+    .CodeMirror { font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', Menlo, monospace; }
+    /* Lines flagged by our validator get a soft red wash + a danger-coloured gutter bar. */
+    .CodeMirror-line.znas-line-error  { background: rgba(255, 69, 58, 0.14); }
+    .CodeMirror-line.znas-line-warn   { background: rgba(255, 159, 10, 0.12); }
+    .znas-gutter-error { color: var(--accent-danger); padding-left:4px; font-weight:700; }
+    .znas-gutter-warn  { color: #ff9f0a;             padding-left:4px; font-weight:700; }
+    /* Native <select> styled to match ZNAS chrome: custom chevron via
+       background-image, no OS appearance, slim 22px height, semi-bold
+       label so it reads as a real control instead of a default form
+       element. Used by the Logs tab toolbar (and any future toolbar
+       that wants the same look). */
+    select.znas-select, input.znas-input {
+      appearance: none; -webkit-appearance: none; -moz-appearance: none;
+      height: 22px; line-height: 20px; font-size: 11px;
+      padding: 0 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 5px;
+      color: var(--text);
+      box-sizing: border-box;
+      cursor: pointer;
+      transition: border-color .12s, background .12s;
+    }
+    select.znas-select { padding-right: 26px;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%238e8e93' d='M5 6 0 0h10z'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      background-size: 9px 5px;
+    }
+    input.znas-input  { cursor: text; }
+    select.znas-select:hover, input.znas-input:hover  { border-color: rgba(10,132,255,0.5); }
+    select.znas-select:focus, input.znas-input:focus  { outline: none; border-color: var(--accent); background: var(--surface); }
+    select.znas-select option { background: var(--surface); color: var(--text); }
+    /* Validation modal styling */
+    #modal-compose-validate .err-row { padding:8px 10px; border-bottom:1px solid var(--border); display:flex; gap:10px; }
+    #modal-compose-validate .err-row:last-child { border-bottom:0; }
+    #modal-compose-validate .err-row .lbl { font-family:monospace; font-size:11px; color:var(--text-3); flex-shrink:0; min-width:60px; }
+    #modal-compose-validate .err-row .msg { font-size:13px; color:var(--text); flex:1; min-width:0; }
+    #modal-compose-validate .err-row .fix { font-size:12px; color:var(--text-3); margin-top:3px; }
+    #modal-compose-validate .err-row.level-error  .lbl { color:var(--accent-danger); }
+    #modal-compose-validate .err-row.level-warn   .lbl { color:#ff9f0a; }
   </style>
 </head>
 <body>
@@ -1686,6 +1745,7 @@
           <span style="flex:1;"></span>
           <button class="btn btn-primary btn-sm" id="lxd-btn-new-vm" onclick="openNewVMModal()">+ New VM</button>
           <button class="btn btn-secondary btn-sm" id="lxd-btn-new-container" onclick="openNewContainerModal()">+ New Container</button>
+          <button class="btn btn-secondary btn-sm" id="lxd-btn-new-compose" onclick="openComposeModal()">+ Compose</button>
           <div style="position:relative;" id="lxd-tools-wrap">
             <span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="More options"
               onclick="_lxdToolsToggle(event)">&#x22EE;</span>
@@ -1745,6 +1805,37 @@
               </label>
             </div>
             <p id="lxd-edit-note" style="font-size:12px;color:var(--text-3);margin:0 0 8px;"></p>
+
+            <!-- Compose Stack — docker-compose.yml + .env (compose stacks only) -->
+            <div id="lxd-edit-compose-section" style="display:none;">
+              <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin:16px 0 10px;">Compose Stack</div>
+              <div class="vm-hw-row" id="edithw-compose-yaml">
+                <div class="vm-hw-head" onclick="_vmhwToggle('edithw-compose-yaml')">
+                  <span class="vm-hw-chevron">▶</span>
+                  <span class="vm-hw-title">docker-compose.yml</span>
+                  <span class="vm-hw-summary">edit &amp; redeploy</span>
+                </div>
+                <div class="vm-hw-body" style="display:none;">
+                  <textarea id="lxd-edit-compose-yaml" class="input" rows="14" spellcheck="false" wrap="off"
+                    autocapitalize="off" autocomplete="off" autocorrect="off" onpaste="_ctPasteCleanText(event)"
+                    style="width:100%;font-family:'SF Mono',monospace;font-size:12px;line-height:1.5;resize:vertical;"></textarea>
+                </div>
+              </div>
+              <div class="vm-hw-row" id="edithw-compose-env">
+                <div class="vm-hw-head" onclick="_vmhwToggle('edithw-compose-env')">
+                  <span class="vm-hw-chevron">▶</span>
+                  <span class="vm-hw-title">Environment file (.env)</span>
+                  <span class="vm-hw-summary">optional</span>
+                </div>
+                <div class="vm-hw-body" style="display:none;">
+                  <textarea id="lxd-edit-compose-env" class="input" rows="6" spellcheck="false" wrap="off"
+                    autocapitalize="off" autocomplete="off" autocorrect="off" onpaste="_ctPasteCleanText(event)"
+                    placeholder="# KEY=value pairs used by the compose file"
+                    style="width:100%;font-family:'SF Mono',monospace;font-size:12px;line-height:1.5;resize:vertical;"></textarea>
+                </div>
+              </div>
+              <p style="font-size:12px;color:var(--text-3);margin:6px 0 0;">Saving re-applies the stack (<code>podman-compose up -d</code>).</p>
+            </div>
 
             <!-- Hardware panel -->
             <div style="display:flex;align-items:center;justify-content:space-between;margin:16px 0 10px;">
@@ -2634,14 +2725,24 @@
                   <div style="display:flex;gap:12px;align-items:flex-end;">
                     <div class="form-group" style="margin:0;flex:1;">
                       <label>Bridge / Network</label>
-                      <select id="lxd-vm-nic0-bridge" class="input"
-                        onchange="document.getElementById('vmhw-nic0-summary').textContent=this.value||'—'"></select>
+                      <select id="lxd-vm-nic0-bridge" class="input" onchange="_vmNic0BridgeChange()"></select>
                     </div>
                     <div style="margin-bottom:2px;">
                       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;white-space:nowrap;">
                         <input type="checkbox" id="lxd-vm-nic0-connected" checked> Connected
                       </label>
                     </div>
+                  </div>
+                  <!-- Port forwards (visible only when the bridge is host-nat) -->
+                  <div id="lxd-vm-nic0-pfwd" style="display:none;margin-top:12px;">
+                    <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                      Port Forwards
+                      <span style="color:var(--text-3);font-size:11px;font-weight:400;">(host port → VM port)</span>
+                      <i class="info-tip" data-tip="Each forward is an Incus proxy device: traffic arriving on the host at the source port is forwarded to the same protocol/target-port inside the VM. The Incus agent must be running in the VM (built into the Incus VM image) for the connect side to work."></i>
+                    </label>
+                    <div id="lxd-vm-nic0-pfwd-list"></div>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="_vmNic0AddPFwd()"
+                      style="font-size:12px;padding:2px 10px;margin-top:6px;">+ Add Port Forward</button>
                   </div>
                 </div>
               </div>
@@ -2677,7 +2778,7 @@
       <div class="modal-backdrop hidden" id="modal-lxd-container">
         <div class="modal" style="max-width:1100px;width:96vw;max-height:96vh;display:flex;flex-direction:column;">
           <div class="modal-header">
-            <h3>New LXC Container</h3>
+            <h3 id="lxd-ct-modal-title">New LXC Container</h3>
             <button class="modal-close" onclick="document.getElementById('modal-lxd-container').classList.add('hidden')">✕</button>
           </div>
           <div id="lxd-ct-alert" class="alert alert-error hidden" style="margin:0 24px 8px;"></div>
@@ -2687,11 +2788,11 @@
             <div style="background:var(--bg-2,rgba(255,255,255,0.04));border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;margin-top:16px;margin-bottom:14px;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px;">
                 <div class="form-group" style="margin:0;">
-                  <label>Container Name <span style="color:var(--accent-danger);">*</span></label>
+                  <label id="lxd-ct-desc-label">Container Name <span style="color:var(--accent-danger);">*</span></label>
                   <input type="text" class="input" id="lxd-ct-description" placeholder="ct-1" required oninput="_ctCheckSubmitReady()">
                 </div>
                 <div class="form-group" style="margin:0;">
-                  <label>Short Name Identifier <span style="color:var(--accent-danger);">*</span> <span style="font-size:11px;color:var(--text-3);font-weight:400;">(letters, digits, hyphens)</span></label>
+                  <label id="lxd-ct-name-label">Short Name Identifier <span style="color:var(--accent-danger);">*</span> <span style="font-size:11px;color:var(--text-3);font-weight:400;">(letters, digits, hyphens)</span></label>
                   <input type="text" class="input" id="lxd-ct-name" placeholder="my-container" pattern="[a-zA-Z0-9][a-zA-Z0-9\-]*" required oninput="_ctCheckSubmitReady()">
                 </div>
               </div>
@@ -2706,8 +2807,9 @@
               </div>
             </div>
 
-            <!-- Image selector -->
-            <div class="form-group" style="margin-bottom:14px;">
+            <!-- Image selector (hidden in Compose mode — the base image comes
+                 from Settings → Virtualization → Compose Stacks) -->
+            <div class="form-group" style="margin-bottom:14px;" id="lxd-ct-image-section">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                 <label style="margin:0;white-space:nowrap;">OS Image <span style="color:var(--accent-danger);">*</span></label>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -2720,6 +2822,32 @@
               </div>
               <select id="lxd-ct-image" class="input" style="width:100%;" required onchange="_ctCheckSubmitReady()"><option value="">— select image —</option></select>
             </div>
+
+            <!-- Compose YAML (shown only in Compose mode) -->
+            <div class="form-group" style="margin-bottom:14px;display:none;" id="lxd-ct-compose-section">
+              <label>docker-compose.yml <span style="color:var(--accent-danger);">*</span>
+                <i class="info-tip tip-down" data-tip="Paste a docker-compose file. ZNAS creates an LXC container running Podman, writes this to /opt/stack/docker-compose.yml inside it, and runs `podman compose up -d`. The whole stack — images, volumes, the compose file — lives on this container's own ZFS dataset."></i>
+              </label>
+              <textarea id="lxd-ct-compose-yaml" class="input" rows="12" spellcheck="false" wrap="off"
+                autocapitalize="off" autocomplete="off" autocorrect="off"
+                placeholder="services:&#10;  web:&#10;    image: docker.io/library/nginx:alpine&#10;    ports:&#10;      - 8080:80"
+                oninput="_ctCheckSubmitReady()" onpaste="_ctPasteCleanText(event)"
+                style="width:100%;font-family:'SF Mono',monospace;font-size:12px;line-height:1.5;resize:vertical;"></textarea>
+            </div>
+
+            <!-- .env file (Compose mode only) — collapsed by default -->
+            <details id="lxd-ct-env-section" style="display:none;margin-bottom:14px;">
+              <summary style="cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text);padding:8px 0;">
+                Environment file (.env)
+                <span style="color:var(--text-3);font-size:11px;font-weight:400;">optional</span>
+                <i class="info-tip" onclick="event.stopPropagation();event.preventDefault();" data-tip="Optional .env file deployed alongside the compose file at /opt/stack/.env. docker-compose substitutes ${VARIABLE} references in the compose YAML from these key=value pairs."></i>
+              </summary>
+              <textarea id="lxd-ct-compose-env" class="input" rows="5" spellcheck="false" wrap="off"
+                autocapitalize="off" autocomplete="off" autocorrect="off"
+                placeholder="# KEY=value pairs used by the compose file&#10;POSTGRES_PASSWORD=changeme&#10;TZ=America/Toronto"
+                oninput="_ctEnvAutoGrow(this)" onpaste="_ctPasteCleanText(event)"
+                style="width:100%;margin-top:6px;font-family:'SF Mono',monospace;font-size:12px;line-height:1.5;resize:vertical;overflow:hidden;"></textarea>
+            </details>
 
             <!-- Hardware panel -->
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -2836,8 +2964,7 @@
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px;">
                     <div class="form-group" style="margin:0;">
                       <label>Bridge / Network</label>
-                      <select id="lxd-ct-nic0-bridge" class="input"
-                        onchange="document.getElementById('cthw-nic0-summary').textContent=this.value||'—'"></select>
+                      <select id="lxd-ct-nic0-bridge" class="input" onchange="_ctNic0BridgeChange()"></select>
                     </div>
                     <div class="form-group" style="margin:0;">
                       <label>MAC Address <span style="color:var(--text-3);font-size:11px;">(blank = auto)</span></label>
@@ -2876,6 +3003,17 @@
                         <input type="text" class="input" id="lxd-ct-nic0-dns2" placeholder="e.g. 8.8.8.8">
                       </div>
                     </div>
+                  </div>
+                  <!-- Port forwards (visible only when the bridge is host-nat) -->
+                  <div id="lxd-ct-nic0-pfwd" style="display:none;margin-top:12px;">
+                    <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                      Port Forwards
+                      <span style="color:var(--text-3);font-size:11px;font-weight:400;">(host port → instance port)</span>
+                      <i class="info-tip" data-tip="Each forward is an Incus proxy device: traffic arriving on the host at the source port is forwarded to the same protocol/target-port inside the instance. Useful on host-NAT bridges where the instance has a private IP not reachable from outside the host."></i>
+                    </label>
+                    <div id="lxd-ct-nic0-pfwd-list"></div>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="_ctNic0AddPFwd()"
+                      style="font-size:12px;padding:2px 10px;margin-top:6px;">+ Add Port Forward</button>
                   </div>
                 </div>
               </div>
@@ -3191,15 +3329,18 @@
 
       <!-- LXD create progress modal -->
       <div class="modal-backdrop hidden" id="modal-lxd-progress">
-        <div class="modal" style="max-width:560px;">
+        <div class="modal" style="max-width:680px;">
           <div class="modal-header">
             <h3 id="lxd-progress-title">Creating…</h3>
+            <button class="modal-close" onclick="_lxdProgressHideToBackground()" title="Hide — keeps running in background (Activity panel)">✕</button>
           </div>
           <div style="padding:16px 24px 20px;">
-            <div id="lxd-progress-log" style="background:var(--bg-dark,#0d1117);border-radius:var(--radius-sm);padding:12px;font-family:monospace;font-size:13px;color:var(--accent-3,#58a6ff);min-height:80px;max-height:280px;overflow-y:auto;white-space:pre-wrap;"></div>
+            <pre id="lxd-progress-log" style="background:var(--bg-dark,#0d1117);border-radius:var(--radius-sm);padding:12px;margin:0;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.45;color:#cdd9e5;min-height:80px;max-height:calc(100vh - 280px);overflow:auto;white-space:pre-wrap;word-break:break-word;"></pre>
+            <div id="lxd-progress-bg-hint" style="font-size:11px;color:var(--text-3);margin-top:8px;">Closing this window leaves the task running in the background — track it in the Activity panel (bell icon).</div>
           </div>
           <div class="modal-footer" id="lxd-progress-footer" style="display:none;">
-            <button class="btn btn-primary" onclick="document.getElementById('modal-lxd-progress').classList.add('hidden');loadLXDInstances();">Done</button>
+            <button class="btn btn-ghost" onclick="_lxdProgressHideToBackground()">Run in background</button>
+            <button class="btn btn-primary" onclick="document.getElementById('modal-lxd-progress').classList.add('hidden');loadLXDInstances();">Close</button>
           </div>
         </div>
       </div>
@@ -3919,6 +4060,25 @@
           </button>
           <!-- Edit button -->
           <button class="btn btn-ghost btn-sm" id="ci-edit-btn" onclick="ciOpenEdit()" style="padding:4px 10px;font-size:13px;border-radius:4px;">Edit</button>
+          <!-- Update button + dropdown (Compose stacks only) -->
+          <div style="position:relative;display:none;" id="ci-update-wrap">
+            <button id="ci-update-btn" onclick="ciToggleUpdateMenu(event)"
+              style="display:flex;align-items:center;gap:5px;padding:4px 10px;font-size:13px;border-radius:4px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;white-space:nowrap;">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
+              <span>Update</span>
+            </button>
+            <div id="ci-update-menu" class="hidden" style="position:absolute;right:0;top:110%;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.35);min-width:260px;z-index:300;overflow:hidden;">
+              <div style="padding:10px 14px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border);">
+                Last updated: <span id="ci-update-last" style="color:var(--text-2);">—</span>
+              </div>
+              <button onclick="ciComposeUpdateNow()" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);">
+                ↻ Update now
+              </button>
+              <div style="border-top:1px solid var(--border);">
+                <button id="ci-update-sched-btn" onclick="ciOpenComposeSchedule()" style="display:block;width:100%;text-align:left;padding:9px 14px;background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-3);">📅 Schedule…</button>
+              </div>
+            </div>
+          </div>
           <!-- Snapshot button + dropdown -->
           <div style="position:relative;" id="ci-snap-wrap">
             <button id="ci-snap-btn" onclick="ciToggleSnapMenu(event)"
@@ -3997,6 +4157,20 @@
         <div id="ci-tab-content-summary" style="padding:20px 0;">
           <div class="ci-cards-grid">
 
+            <!-- Compose Stack containers card (Compose stacks only — first card) -->
+            <div class="card" id="ci-compose-card" style="margin-bottom:0;display:none;grid-column:1/-1;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                <span style="font-size:18px;">🐳</span>
+                <span style="font-weight:700;font-size:14px;color:var(--text);">Stack Containers</span>
+                <span id="ci-compose-count" style="font-size:12px;color:var(--text-3);"></span>
+                <span style="flex:1;"></span>
+                <span id="ci-compose-refresh" onclick="ciLoadComposeContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;">↻ Refresh</span>
+              </div>
+              <div id="ci-compose-body">
+                <div style="text-align:center;color:var(--text-3);padding:20px 0;">Loading…</div>
+              </div>
+            </div>
+
             <!-- VM Hardware card -->
             <div class="card" style="margin-bottom:0;">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
@@ -4051,20 +4225,24 @@
             <div style="text-align:center;color:var(--text-3);padding:24px 0;font-size:12px;">Loading…</div>
           </div>
 
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span style="font-weight:700;font-size:14px;color:var(--text);">Instance Logs</span>
-              <select id="ci-logs-level-filter" style="font-size:12px;padding:3px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);" onchange="_ciFilterLogs()">
-                <option value="">All levels</option>
-                <option value="DEBUG">DEBUG</option>
-                <option value="INFO">INFO</option>
-                <option value="WARN">WARN</option>
-                <option value="ERROR">ERROR</option>
-                <option value="CRITICAL">CRITICAL</option>
-              </select>
-              <input type="text" id="ci-logs-search" placeholder="Filter messages…" style="font-size:12px;padding:3px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);width:220px;" oninput="_ciFilterLogs()">
-            </div>
-            <button class="btn btn-sm" onclick="loadCILogs(_ciCurrentName)" style="font-size:12px;padding:4px 12px;">Refresh</button>
+          <!-- Single-row toolbar: title hugs the left, level stays
+               compact, file picker + search take the remaining width
+               so long log filenames / search terms have room. -->
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+            <span style="font-weight:700;font-size:14px;color:var(--text);white-space:nowrap;flex-shrink:0;">Instance Logs</span>
+            <select id="ci-logs-level-filter" class="znas-select" style="width:110px;flex-shrink:0;" onchange="_ciFilterLogs()">
+              <option value="">All levels</option>
+              <option value="DEBUG">DEBUG</option>
+              <option value="INFO">INFO</option>
+              <option value="WARN">WARN</option>
+              <option value="ERROR">ERROR</option>
+              <option value="CRITICAL">CRITICAL</option>
+            </select>
+            <select id="ci-logs-file" class="znas-select" style="flex:1;min-width:180px;" onchange="loadCILogs(_ciCurrentName)" title="Pick which log file to view">
+              <option value="">Loading…</option>
+            </select>
+            <input type="text" id="ci-logs-search" class="znas-input" placeholder="Filter messages…" style="flex:1;min-width:200px;" oninput="_ciFilterLogs()">
+            <button class="btn btn-sm" onclick="loadCILogs(_ciCurrentName)" style="font-size:12px;padding:4px 12px;flex-shrink:0;">Refresh</button>
           </div>
           <div id="ci-logs-body" style="overflow-x:auto;">
             <div style="text-align:center;color:var(--text-3);padding:40px 0;">Select the Logs tab to load logs.</div>
@@ -4205,7 +4383,7 @@
                       padding:14px 16px;margin:0;
                       font-family:'SF Mono','Fira Code','JetBrains Mono',Menlo,monospace;
                       font-size:12px;line-height:1.5;
-                      max-height:70vh;overflow:auto;
+                      height:calc(100vh - 260px);min-height:240px;overflow:auto;
                       white-space:pre-wrap;word-break:break-word;
                       tab-size:4;-moz-tab-size:4;">
 Select the Console tab to load.</pre>
@@ -4342,6 +4520,125 @@ Select the Console tab to load.</pre>
               <button class="btn btn-primary" id="ci-snap-sched-save-btn" onclick="ciSubmitSnapSchedule()">Save Schedule</button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- ── Compose stack auto-update Schedule modal ──────────────────────── -->
+      <div class="modal-backdrop hidden" id="modal-ci-compose-schedule" onclick="if(event.target===this)document.getElementById('modal-ci-compose-schedule').classList.add('hidden')">
+        <div class="modal" style="max-width:560px;width:96vw;">
+          <div class="modal-header">
+            <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">
+              📅 Auto-Update Schedule
+              <i class="info-tip tip-down" data-tip="Schedules a recurring update of this Compose stack — the equivalent of `docker-compose pull` followed by `docker-compose up -d`. Newer images are pulled and the stack is re-applied. Results are written to the audit log; a failure also fires a notification if the 'Compose stack scheduled auto-update failure' alert event is subscribed."></i>
+              — <span id="ci-cu-sched-instance" style="font-family:monospace;font-weight:500;"></span>
+            </h3>
+            <button class="modal-close" onclick="document.getElementById('modal-ci-compose-schedule').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:20px 24px 24px;">
+            <div id="ci-cu-sched-alert" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:18px;font-weight:500;">
+              <input type="checkbox" id="ci-cu-sched-enabled"> Enable scheduled auto-updates
+            </label>
+
+            <div class="form-group">
+              <label class="form-label">Interval</label>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span style="color:var(--text-3);">Every</span>
+                <select id="ci-cu-sched-n" class="form-control" style="width:auto;min-width:80px;"></select>
+                <select id="ci-cu-sched-unit" class="form-control" style="width:auto;min-width:120px;" onchange="ciComposeSchedRebuildN()">
+                  <option value="hour">Hour(s)</option>
+                  <option value="day" selected>Day(s)</option>
+                  <option value="week">Week(s)</option>
+                  <option value="month">Month(s)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" id="ci-cu-sched-weekday-row" style="display:none;">
+              <label class="form-label">Day of week</label>
+              <select id="ci-cu-sched-weekday" class="form-control" style="width:auto;min-width:140px;">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="ci-cu-sched-dom-row" style="display:none;">
+              <label class="form-label">Day of month</label>
+              <select id="ci-cu-sched-dom" class="form-control" style="width:auto;min-width:90px;"></select>
+            </div>
+
+            <div class="form-group" id="ci-cu-sched-time-row" style="display:none;">
+              <label class="form-label">Time of day</label>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <select id="ci-cu-sched-hour" class="form-control" style="width:auto;"></select>
+                <span style="color:var(--text-3);">:</span>
+                <select id="ci-cu-sched-min" class="form-control" style="width:auto;"></select>
+              </div>
+            </div>
+
+            <div id="ci-cu-sched-next" style="font-size:12px;color:var(--text-3);margin-top:8px;"></div>
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+              <button class="btn btn-ghost" id="ci-cu-sched-disable-btn" onclick="ciDeleteComposeSchedule()" style="margin-right:auto;color:var(--accent-danger);display:none;">Disable</button>
+              <button class="btn btn-ghost" onclick="document.getElementById('modal-ci-compose-schedule').classList.add('hidden')">Cancel</button>
+              <button class="btn btn-primary" id="ci-cu-sched-save-btn" onclick="ciSubmitComposeSchedule()">Save Schedule</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Compose / .env validation errors popup ─────────────────────────── -->
+      <div class="modal-backdrop hidden" id="modal-compose-validate" onclick="if(event.target===this)document.getElementById('modal-compose-validate').classList.add('hidden')">
+        <div class="modal" style="max-width:780px;width:96vw;max-height:88vh;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">
+              <span id="compose-validate-icon" style="font-size:18px;">⚠</span>
+              <span id="compose-validate-title">Compose validation failed</span>
+            </h3>
+            <button class="modal-close" onclick="document.getElementById('modal-compose-validate').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:14px 18px 6px;color:var(--text-2);font-size:13px;">
+            <span id="compose-validate-blurb"></span>
+          </div>
+          <div id="compose-validate-list" style="overflow:auto;flex:1;margin:6px 12px;border:1px solid var(--border);border-radius:6px;"></div>
+          <div class="modal-footer" style="border-top:1px solid var(--border);padding:10px 16px;">
+            <button class="btn btn-primary" onclick="document.getElementById('modal-compose-validate').classList.add('hidden')">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Compose container "Last Outputs" modal ─────────────────────────── -->
+      <div class="modal-backdrop hidden" id="modal-ci-compose-logs" onclick="if(event.target===this)document.getElementById('modal-ci-compose-logs').classList.add('hidden')">
+        <div class="modal" style="max-width:1100px;width:96vw;max-height:92vh;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">
+              📜 Last Outputs
+              <span id="ci-compose-logs-name" style="font-family:monospace;font-weight:500;color:var(--accent);"></span>
+              <span id="ci-compose-logs-meta" style="font-size:11px;font-weight:400;color:var(--text-3);"></span>
+            </h3>
+            <button class="modal-close" onclick="document.getElementById('modal-ci-compose-logs').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);flex-shrink:0;">
+            <span style="font-size:12px;color:var(--text-3);">Lines:</span>
+            <select id="ci-compose-logs-tail" class="input" style="width:auto;padding:2px 8px;font-size:12px;" onchange="_ciComposeReloadLogs()">
+              <option value="50">Last 50</option>
+              <option value="100" selected>Last 100</option>
+              <option value="500">Last 500</option>
+              <option value="2000">Last 2000</option>
+            </select>
+            <span style="flex:1;"></span>
+            <button class="btn btn-ghost btn-sm" onclick="_ciComposeReloadLogs()" style="font-size:12px;">↻ Refresh</button>
+            <button class="btn btn-ghost btn-sm" onclick="_ciComposeLogsScrollEnd()" style="font-size:12px;">↓ Scroll to end</button>
+          </div>
+          <pre id="ci-compose-logs-body"
+            style="background:#0d0d0f;color:#e6e6e6;margin:0;padding:14px 16px;flex:1;overflow:auto;
+                   font-family:'SF Mono','Fira Code','JetBrains Mono',Menlo,monospace;font-size:12px;line-height:1.5;
+                   white-space:pre-wrap;word-break:break-word;tab-size:4;-moz-tab-size:4;border-radius:0 0 var(--radius) var(--radius);"></pre>
         </div>
       </div>
 
@@ -5412,6 +5709,25 @@ Select the Console tab to load.</pre>
             <div class="virt-card-footer">
               <span id="virt-backup-msg" class="virt-card-msg"></span>
               <button class="btn btn-primary btn-sm" onclick="applyVirtCard('backup')">Apply</button>
+            </div>
+          </div>
+
+          <!-- Card — Compose stacks base image -->
+          <div class="card">
+            <h3 style="margin-bottom:14px;">Compose Stacks</h3>
+            <div class="form-group">
+              <label>Base image for Compose stacks
+                <i class="info-tip" data-tip="The LXC base image used when you create a Compose stack — a container running Podman + your docker-compose file.&#10;&#10;Debian (recommended): glibc and standard apt mean the fewest surprises when ZNAS installs Podman and the compose tooling.&#10;Ubuntu: Debian-family, similar.&#10;Alpine: lightest base image, but musl/busybox can occasionally trip tooling."></i>
+              </label>
+              <select id="virt-compose-image" style="max-width:220px;">
+                <option value="debian">Debian (recommended)</option>
+                <option value="ubuntu">Ubuntu</option>
+                <option value="alpine">Alpine</option>
+              </select>
+            </div>
+            <div class="virt-card-footer">
+              <span id="virt-compose-msg" class="virt-card-msg"></span>
+              <button class="btn btn-primary btn-sm" onclick="applyComposeImageCard()">Apply</button>
             </div>
           </div>
 
@@ -10315,6 +10631,37 @@ Select the Console tab to load.</pre>
 </div>
 
 <script>
+// ===== Chart.js global defaults =====
+// Place every chart's tooltip ~22 px BELOW the mouse pointer instead
+// of the default behaviour that drops it on top of the data line you
+// were hovering, and let it stay semi-transparent so the curve under
+// the tooltip is still visible. One-shot global registration — every
+// chart in the app benefits without any per-chart wiring.
+(function _znasChartTooltipDefaults() {
+  if (typeof Chart === 'undefined' || !Chart.Tooltip || Chart._znasInit) return;
+  Chart._znasInit = true;
+  Chart.Tooltip.positioners.znasBelowCursor = function (_items, ev) {
+    if (!ev) return false;
+    const ca = (this && this.chart && this.chart.chartArea) || null;
+    let x = ev.x;
+    let y = ev.y + 22; // below the pointer
+    // Keep the tooltip inside the chart area horizontally so it doesn't
+    // get clipped at the edges; vertical clamp lets Chart.js flip it
+    // above the cursor near the bottom edge automatically.
+    if (ca) {
+      const margin = 4;
+      x = Math.max(ca.left + margin, Math.min(ca.right - margin, x));
+    }
+    return { x: x, y: y };
+  };
+  Chart.defaults.plugins.tooltip.position = 'znasBelowCursor';
+  // Translucent surfaces so the data points and gridlines stay visible
+  // through the tooltip card. Theme-aware default colour; per-chart
+  // configs that set their own backgroundColor get patched in step 2.
+  const isLight = document.body.classList.contains('light') || document.body.classList.contains('dawn');
+  Chart.defaults.plugins.tooltip.backgroundColor = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
+})();
+
 // ===== Session-expired popup =====
 function _showSessionExpiredPopup() {
   if (document.getElementById('session-expired-popup')) return; // already shown
@@ -10858,6 +11205,35 @@ async function loadVirtSettings() {
   // Memory Compression card refresh runs on its own cadence; trigger an
   // immediate load when the tab opens so we don't wait the full 10 s.
   loadMemCompCard();
+  loadComposeImageCard();
+}
+
+// Compose Stacks card — the LXC base image new Compose stacks are built from.
+// Stored in AppConfig (compose_base_image) via /api/settings, not the Incus
+// global-config the other virt cards use.
+async function loadComposeImageCard() {
+  try {
+    const r = await fetch('/api/settings');
+    if (!r.ok) return;
+    const d = await r.json();
+    const sel = document.getElementById('virt-compose-image');
+    if (sel) { sel.value = d.compose_base_image || 'debian'; if (typeof csRefresh === 'function') csRefresh('virt-compose-image'); }
+  } catch (_) {}
+}
+
+async function applyComposeImageCard() {
+  const sel = document.getElementById('virt-compose-image');
+  const msg = document.getElementById('virt-compose-msg');
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ compose_base_image: sel.value }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--accent-2)'; setTimeout(() => { msg.textContent = ''; }, 3000); }
+  } catch (e) {
+    if (msg) { msg.textContent = String(e.message || e); msg.style.color = 'var(--danger)'; }
+  }
 }
 
 // ── Memory Compression card (zram-tools) ──────────────────────────────────
@@ -11802,7 +12178,9 @@ function renderActivityBar(entries) {
       const progressBar = pct != null
         ? `<div style="width:100%;height:3px;background:var(--border);border-radius:2px;margin-top:4px;"><div style="height:100%;border-radius:2px;background:var(--accent-2);transition:width .5s ease;width:${pct.toFixed(1)}%"></div></div>`
         : '';
-      const rowClick  = j.clickFnName ? `onclick="${j.clickFnName}()" style="cursor:pointer;"` : '';
+      const callArgs = (j.clickArgs || []).map(a =>
+        `&apos;${String(a).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}&apos;`).join(',');
+      const rowClick  = j.clickFnName ? `onclick="${j.clickFnName}(${callArgs})" style="cursor:pointer;"` : '';
       return `<div class="ab-job-row" ${rowClick}>
         <div style="display:flex;align-items:center;gap:8px;width:100%;">
           ${j.pending
@@ -14077,7 +14455,15 @@ async function loadAudit() {
   // Selects whose explicit initCustomSelect(...) sets non-default options
   // ({searchable:true}). They must be left for that call — if the sweep
   // wraps them first they get locked into the plain, non-searchable form.
-  var _csOptedOut = { 'settings-timezone': true, 'lxd-vm-image': true, 'lxd-ct-image': true };
+  var _csOptedOut = {
+    'settings-timezone': true, 'lxd-vm-image': true, 'lxd-ct-image': true,
+    // The Logs tab toolbar controls are rebuilt dynamically (file list
+    // populated after a fetch, value set programmatically) — the
+    // custom-select wrapper's cached label gets stuck on whatever was
+    // there at first wrap. Keep them as native <select> so they reflect
+    // their underlying value live.
+    'ci-logs-level-filter': true, 'ci-logs-file': true,
+  };
   window.initAllCustomSelects = function(root) {
     var scope = root || document;
     var nodes = scope.querySelectorAll('select[id]');
@@ -14715,7 +15101,8 @@ function _buildVirtEventSubsHTML(p) {
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-snapshot-fail"><span>VM / Container snapshot failure</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-backup-fail"><span>VM / Container backup / replication failure</span></label>
     <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-disk-full"><span>VM / Container disk usage exceeds <input type="number" id="al-${p}-vm-disk-pct" value="90" min="1" max="100" onclick="event.stopPropagation()">%</span></label>
-    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-host-saturation"><span>Host resource saturation from running VMs / Containers (CPU or RAM)</span></label>`;
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-vm-host-saturation"><span>Host resource saturation from running VMs / Containers (CPU or RAM)</span></label>
+    <label class="al-event-row"><input type="checkbox" id="al-${p}-ev-compose-update-fail"><span>Compose stack scheduled auto-update failure</span></label>`;
 }
 
 function _loadEventSubs(p, ev) {
@@ -14747,6 +15134,7 @@ function _loadEventSubs(p, ev) {
   setChk(`al-${p}-ev-vm-disk-full`,         ev.vm_disk_full);
   setNum(`al-${p}-vm-disk-pct`,             ev.vm_disk_full_threshold_pct, 90);
   setChk(`al-${p}-ev-vm-host-saturation`,   ev.vm_host_saturation);
+  setChk(`al-${p}-ev-compose-update-fail`,  ev.compose_update_failure);
 }
 
 function _collectEventSubs(p) {
@@ -14774,6 +15162,7 @@ function _collectEventSubs(p) {
     vm_disk_full:                 chk(`al-${p}-ev-vm-disk-full`),
     vm_disk_full_threshold_pct:   num(`al-${p}-vm-disk-pct`, 90),
     vm_host_saturation:           chk(`al-${p}-ev-vm-host-saturation`),
+    compose_update_failure:       chk(`al-${p}-ev-compose-update-fail`),
   };
 }
 
@@ -27120,7 +27509,7 @@ function _workloadMakeChart(canvasId, datasets, unit, mirrored) {
   const style     = getComputedStyle(document.body);
   const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
-  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
   const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
   const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
   const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
@@ -27610,7 +27999,7 @@ function _dashChartOpts(yLabel, yMax, stacked = false, mirrored = false) {
   const style     = getComputedStyle(document.body);
   const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
-  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
   const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
   const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
   const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
@@ -28177,7 +28566,7 @@ function _renderUPSPerfChart(series) {
   const style     = getComputedStyle(document.body);
   const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
-  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
   const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
   const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
   const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
@@ -28552,13 +28941,30 @@ function _renderPerfTempChart(pool, devices, series, xMin, xMax, tickFmt) {
     if (ctx.parsed.y == null) return null;
     return '  ' + ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(0) + ' °C';
   };
-  // Y axis auto-bounds via Chart.js — keep min low (around 20) so cool
-  // drives don't push the trace against the top edge, and let Chart.js
-  // expand max for hot drives. Don't hard-pin max to 100; some enterprise
-  // SSDs read 65-75 °C normally and we don't want a red-zone illusion.
+  // Y axis fully dynamic from the visible data. Chart.js's suggestedMax
+  // only grows the axis upward — it never compresses below the
+  // suggestion, so cool drives (all under 45 °C) were padding empty
+  // space up to 60. Compute real min/max across every point inside the
+  // current window, pad ~15 % (min 5 °C) so the trace doesn't kiss the
+  // edges, floor at 0 °C, ceil at the actual max.
   const opts = _perfChartOpts('°C', null, xMin, xMax, tickFmt, false, labelFn);
-  opts.scales.y.suggestedMin = 20;
-  opts.scales.y.suggestedMax = 60;
+  let dMin = Infinity, dMax = -Infinity;
+  datasets.forEach(ds => ds.data.forEach(pt => {
+    if (pt == null || pt.y == null) return;
+    if (pt.x < xMin || pt.x > xMax) return;
+    if (pt.y < dMin) dMin = pt.y;
+    if (pt.y > dMax) dMax = pt.y;
+  }));
+  if (dMin === Infinity) {
+    // No data in window — keep something readable so the empty chart
+    // still has gridlines instead of collapsing to a sliver.
+    opts.scales.y.min = 20;
+    opts.scales.y.max = 60;
+  } else {
+    const pad = Math.max(5, (dMax - dMin) * 0.15);
+    opts.scales.y.min = Math.max(0, Math.floor(dMin - pad));
+    opts.scales.y.max = Math.ceil(dMax + pad);
+  }
   opts.scales.y.ticks.callback = v => v + '°';
 
   _perfCharts[pool].temp = new Chart(canvas, {
@@ -28701,7 +29107,7 @@ function _renderPerfL2Chart(pool, series, xMin, xMax, tickFmt, hasL2arc) {
   const style     = getComputedStyle(document.body);
   const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
-  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
   const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
   const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
   const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
@@ -28976,7 +29382,7 @@ function _netExternalTooltip(context) {
   // Build HTML
   const isLight = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const _cssStyle  = getComputedStyle(document.body);
-  const tipBg     = _cssStyle.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
   const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
   tip.style.background  = tipBg;
   tip.style.borderColor = tipBorder;
@@ -29046,7 +29452,7 @@ function _perfChartOpts(yLabel, yMax, xMin, xMax, tickFmt, stacked = true, label
   const style     = getComputedStyle(document.body);
   const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
-  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
   const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
   const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
   const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
@@ -32952,6 +33358,9 @@ function _stopCIStatsPolling() {
 }
 
 function openComputeInstance(name, type) {
+  // Tear down any live podman-compose log stream from the previous instance
+  // so we don't leak the WS or paint stale lines into the new pane.
+  if (typeof _ciStopComposeLogStream === 'function') _ciStopComposeLogStream();
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.nav-item,.nav-compute-instance').forEach(n => n.classList.remove('active'));
   _clearComputeRootHighlight();
@@ -33009,6 +33418,10 @@ function openComputeInstance(name, type) {
     if (!monBtn || monBtn.style.display === 'none') desiredTab = 'summary';
   }
   _ciSwitchTab(desiredTab);
+  // Compose stack: show the Stack Containers card + Update button.
+  _ciIsCompose = !!(_ciInst && _ciInst.is_compose);
+  _ciApplyComposeView();
+  if (_ciIsCompose) ciLoadComposeContainers();
   loadComputeInstanceDetail(name, type);
   loadCISnapshots(name);
   // v6.5.19: load backup count + refresh "📅" badge on the Snapshots button.
@@ -33554,6 +33967,391 @@ async function ciDeleteSnapSchedule() {
     showToast('Snapshot schedule disabled', 'success');
     document.getElementById('modal-ci-snap-schedule').classList.add('hidden');
     _ciRefreshBackupAndScheduleBadges();
+  } catch(_) {}
+}
+
+// ====== Compose stack detail ================================================
+let _ciIsCompose = false;
+let _ciComposeContainers = [];
+let _ciComposeLogsWS = null;
+
+// _ciApplyComposeView shows/hides the Compose-only UI (containers card +
+// Update button) on the instance detail page.
+function _ciApplyComposeView() {
+  const card = document.getElementById('ci-compose-card');
+  const upd  = document.getElementById('ci-update-wrap');
+  if (card) card.style.display = _ciIsCompose ? '' : 'none';
+  if (upd)  upd.style.display  = _ciIsCompose ? '' : 'none';
+}
+
+function _ciComposeStateColor(state) {
+  const s = (state || '').toLowerCase();
+  if (s === 'running') return '#3fb950';
+  if (s === 'paused')  return '#58a6ff';
+  return '#6e7681'; // exited / created / dead / …
+}
+
+// ciLoadComposeContainers fetches the stack's container list + update state
+// and renders the Stack Containers card.
+async function ciLoadComposeContainers() {
+  if (!_ciCurrentName) return;
+  const body = document.getElementById('ci-compose-body');
+  try {
+    const r = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(_ciCurrentName));
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    _ciComposeContainers = d.containers || [];
+    _ciRenderComposeContainers(_ciComposeContainers, d.status || 'running');
+    const lu = document.getElementById('ci-update-last');
+    if (lu) lu.textContent = d.last_update ? new Date(d.last_update).toLocaleString() : 'never';
+    const sb = document.getElementById('ci-update-sched-btn');
+    if (sb) sb.textContent = d.schedule_exists ? '📅 Schedule… (on)' : '📅 Schedule…';
+  } catch(e) {
+    if (body) body.innerHTML = '<div style="text-align:center;color:var(--accent-danger);padding:16px 0;font-size:13px;">' + esc(String(e.message || e)) + '</div>';
+  }
+}
+
+function _ciRenderComposeContainers(list, stackStatus) {
+  const body = document.getElementById('ci-compose-body');
+  const count = document.getElementById('ci-compose-count');
+  if (count) count.textContent = list.length ? '(' + list.length + ')' : '';
+  if (!body) return;
+  // Friendly empty state when the stack itself is offline. Different
+  // wording (and a CTA) from "running but no containers", which is the
+  // case where compose has no services to run.
+  if (!list.length && stackStatus === 'stopped') {
+    body.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px 16px;gap:10px;">
+        <div style="font-size:28px;opacity:.5;">⏻</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text-2);">Stack is offline</div>
+        <div style="font-size:12px;color:var(--text-3);text-align:center;max-width:360px;">
+          The Compose host LXC is stopped, so no Podman containers are running.
+          Start the stack to bring its services back up.
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="ciTogglePowerMenu(event)" style="margin-top:4px;">▶ Start stack</button>
+      </div>`;
+    return;
+  }
+  if (!list.length) {
+    body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:18px 0;font-size:13px;">The stack is running, but Podman has no containers — the compose file may not define any services, or they failed to start. Check the Output tab for logs.</div>';
+    return;
+  }
+  let rows = '';
+  list.forEach((c, i) => {
+    const running = (c.state || '').toLowerCase() === 'running';
+    const color = _ciComposeStateColor(c.state);
+    const menu =
+      (running ? '' : `<button onclick="ciComposeContainerAction('${esc(c.name)}','${esc(c.service)}','start')">▶ Start</button>`) +
+      (running ? `<button onclick="ciComposeContainerAction('${esc(c.name)}','${esc(c.service)}','stop')">■ Stop</button>` : '') +
+      (running ? `<button onclick="ciComposeContainerAction('${esc(c.name)}','${esc(c.service)}','restart')">↻ Restart</button>` : '') +
+      `<button onclick="ciComposeContainerAction('${esc(c.name)}','${esc(c.service)}','update')">⬆ Update</button>` +
+      `<button onclick="_ciComposeShowLogs('${esc(c.name)}')">📜 Last Outputs</button>`;
+    const termMenu = running
+      ? `<button onclick="_ciComposeTermBottom('${esc(c.name)}')">LXD Bottom Terminal</button>` +
+        `<button onclick="_ciComposeTermNewTab('${esc(c.name)}')">LXD Tab Terminal</button>` +
+        `<button onclick="_ciComposeTermNewWindow('${esc(c.name)}')">LXD Window Terminal</button>`
+      : `<div style="padding:10px 14px;font-size:12px;color:var(--text-3);">Container must be running</div>`;
+    rows += `<tr>
+      <td style="font-family:monospace;font-size:12px;">${esc(c.name)}</td>
+      <td style="color:var(--text-2);">${esc(c.service || '—')}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(c.image)}</td>
+      <td><span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:${color};">
+        <span style="width:7px;height:7px;border-radius:50%;background:${color};"></span>${esc(c.status || c.state)}</span></td>
+      <td style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(c.ports || '—')}</td>
+      <td style="position:relative;text-align:right;width:62px;white-space:nowrap;">
+        <span onclick="_ciComposeTermMenu(event,${i})" title="Terminal" style="cursor:${running?'pointer':'not-allowed'};opacity:${running?'1':'.4'};color:var(--text-2);font-size:15px;padding:2px 4px;user-select:none;line-height:1;">🖥️</span>
+        <span onclick="_ciComposeRowMenu(event,${i})" style="cursor:pointer;color:var(--text-2);font-size:18px;padding:2px 6px;user-select:none;line-height:1;">⋮</span>
+        <div id="ci-compose-termmenu-${i}" class="row-menu-dropdown" style="display:none;position:absolute;right:32px;top:100%;min-width:200px;z-index:60;">${termMenu}</div>
+        <div id="ci-compose-menu-${i}" class="row-menu-dropdown" style="display:none;position:absolute;right:6px;top:100%;min-width:150px;z-index:60;">${menu}</div>
+      </td></tr>`;
+  });
+  body.innerHTML = `<table class="data-table" style="width:100%;">
+    <thead><tr>
+      <th>Container</th><th>Service</th><th>Image</th><th>State</th><th>Ports</th><th></th>
+    </tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function _ciComposeRowMenu(ev, idx) {
+  ev.stopPropagation();
+  const menu = document.getElementById('ci-compose-menu-' + idx);
+  if (!menu) return;
+  const wasOpen = menu.style.display !== 'none';
+  _ciComposeCloseAllRowMenus();
+  if (wasOpen) return;
+  menu.style.display = 'block';
+  const close = (e) => {
+    if (!menu.contains(e.target)) { menu.style.display = 'none'; document.removeEventListener('click', close); }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+function _ciComposeCloseAllRowMenus() {
+  document.querySelectorAll('[id^="ci-compose-menu-"],[id^="ci-compose-termmenu-"]').forEach(m => m.style.display = 'none');
+}
+
+function _ciComposeTermMenu(ev, idx) {
+  ev.stopPropagation();
+  // Only open when the container is actually running — backend would just
+  // fail otherwise and the menu still shows useful guidance.
+  const menu = document.getElementById('ci-compose-termmenu-' + idx);
+  if (!menu) return;
+  const wasOpen = menu.style.display !== 'none';
+  _ciComposeCloseAllRowMenus();
+  if (wasOpen) return;
+  menu.style.display = 'block';
+  const close = (e) => {
+    if (!menu.contains(e.target)) { menu.style.display = 'none'; document.removeEventListener('click', close); }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+function _ciComposeTermBottom(container) {
+  _ciComposeCloseAllRowMenus();
+  const stack = _ciCurrentName;
+  const key = 'compose:' + stack + '/' + container;
+  if (_ciTermTabs.has(key)) { _ciTermActivateTab(key); _ciTermEnsureVisible(); return; }
+  _ciTermEnsureVisible();
+  _ciTermOpenCustomTab(key, container,
+    '/ws/compose-console?stack=' + encodeURIComponent(stack) + '&container=' + encodeURIComponent(container));
+}
+function _ciComposeTermNewTab(container) {
+  _ciComposeCloseAllRowMenus();
+  const stack = _ciCurrentName;
+  window.open('/compose-console/' + encodeURIComponent(stack) + '/' + encodeURIComponent(container), '_blank');
+}
+function _ciComposeTermNewWindow(container) {
+  _ciComposeCloseAllRowMenus();
+  const stack = _ciCurrentName;
+  window.open('/compose-console/' + encodeURIComponent(stack) + '/' + encodeURIComponent(container),
+    'composeterm_' + stack + '_' + container, 'width=1080,height=680,noopener');
+}
+
+// ── Live podman-compose logs stream into the Output tab ─────────────────────
+function _ciStartComposeLogStream() {
+  _ciStopComposeLogStream();
+  if (!_ciCurrentName) return;
+  const body = document.getElementById('ci-console-body');
+  if (!body) return;
+  body.textContent = '';
+  const stack = _ciCurrentName;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(proto + '://' + location.host + '/ws/compose-logs?stack=' + encodeURIComponent(stack));
+  _ciComposeLogsWS = ws;
+  ws.onmessage = (ev) => {
+    // Switching instances mid-stream can leave a queued message — drop it.
+    if (_ciCurrentName !== stack || _ciActiveTab !== 'console') return;
+    const atBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 40;
+    body.appendChild(document.createTextNode(ev.data));
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  };
+  ws.onclose = () => {
+    if (_ciComposeLogsWS === ws) {
+      _ciComposeLogsWS = null;
+      if (body && _ciCurrentName === stack && _ciActiveTab === 'console') {
+        body.appendChild(document.createTextNode('\n[log stream ended]\n'));
+      }
+    }
+  };
+  ws.onerror = () => { /* onclose will fire; nothing extra to do */ };
+}
+function _ciStopComposeLogStream() {
+  if (_ciComposeLogsWS) {
+    try { _ciComposeLogsWS.close(); } catch(_) {}
+    _ciComposeLogsWS = null;
+  }
+}
+
+// ── Per-container Last Outputs (podman logs --tail=N) ──────────────────
+let _ciComposeLogsContainer = '';
+
+async function _ciComposeShowLogs(container) {
+  _ciComposeCloseAllRowMenus();
+  _ciComposeLogsContainer = container;
+  const stack = _ciCurrentName;
+  document.getElementById('ci-compose-logs-name').textContent = container;
+  document.getElementById('ci-compose-logs-meta').textContent = 'on stack ' + stack;
+  document.getElementById('modal-ci-compose-logs').classList.remove('hidden');
+  await _ciComposeReloadLogs();
+}
+
+async function _ciComposeReloadLogs() {
+  const stack = _ciCurrentName;
+  const container = _ciComposeLogsContainer;
+  if (!stack || !container) return;
+  const body = document.getElementById('ci-compose-logs-body');
+  const tail = parseInt(document.getElementById('ci-compose-logs-tail').value, 10) || 100;
+  body.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(stack)
+      + '/containers/' + encodeURIComponent(container) + '/logs?tail=' + tail);
+    if (!r.ok) {
+      const t = await r.text();
+      body.textContent = '✗ ' + (t || ('HTTP ' + r.status));
+      return;
+    }
+    const text = await r.text();
+    body.textContent = text || '(container has produced no output yet)';
+    requestAnimationFrame(() => body.scrollTop = body.scrollHeight);
+  } catch(e) {
+    body.textContent = '✗ ' + String(e.message || e);
+  }
+}
+
+function _ciComposeLogsScrollEnd() {
+  const body = document.getElementById('ci-compose-logs-body');
+  if (body) body.scrollTop = body.scrollHeight;
+}
+
+async function ciComposeContainerAction(container, service, action) {
+  document.querySelectorAll('[id^="ci-compose-menu-"]').forEach(m => m.style.display = 'none');
+  const stack = _ciCurrentName;
+  const verb = { start:'Starting', stop:'Stopping', restart:'Restarting', update:'Updating' }[action] || action;
+  showToast(verb + ' ' + container + '…', 'info');
+  try {
+    const r = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(stack) + '/container-action', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ container, service, action }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || (verb + ' failed'), 'error'); return; }
+    showToast(container + ' — ' + action + ' done', 'success');
+    ciLoadComposeContainers();
+  } catch(e) {
+    showToast(String(e.message || e), 'error');
+  }
+}
+
+// ── Update dropdown ──────────────────────────────────────────────────────────
+function ciToggleUpdateMenu(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('ci-update-menu');
+  if (!menu) return;
+  if (!menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
+  menu.classList.remove('hidden');
+  const close = (ev) => {
+    if (!document.getElementById('ci-update-wrap').contains(ev.target)) {
+      menu.classList.add('hidden'); document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+async function ciComposeUpdateNow() {
+  document.getElementById('ci-update-menu').classList.add('hidden');
+  const stack = _ciCurrentName;
+  // If an update for this stack is already running (this tab), reopen the
+  // existing progress modal instead of starting a second job — concurrent
+  // podman-compose pulls on the same stack would clobber each other.
+  for (const j of Object.values(activeJobs)) {
+    if (j && j.kind === 'compose-update' && j.stack === stack && j.clickArgs) {
+      _reopenLXDProgress(j.clickArgs[0], j.clickArgs[1]);
+      return;
+    }
+  }
+  try {
+    const r = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(stack) + '/update', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 409 && d.job_id) {
+      // Backend says an update is already in flight (e.g. started by the
+      // auto-update scheduler or another browser tab). Hook into it.
+      openLXDProgressModal('Updating compose stack ' + stack + '…', d.job_id,
+        { kind: 'compose-update', stack });
+      return;
+    }
+    if (!r.ok || !d.job_id) { showToast(d.error || 'Update failed to start', 'error'); return; }
+    openLXDProgressModal('Updating compose stack ' + stack + '…', d.job_id,
+      { kind: 'compose-update', stack });
+  } catch(e) {
+    showToast(String(e.message || e), 'error');
+  }
+}
+
+// ── Auto-update schedule modal ───────────────────────────────────────────────
+async function ciOpenComposeSchedule() {
+  document.getElementById('ci-update-menu').classList.add('hidden');
+  if (!_ciCurrentName) return;
+  document.getElementById('ci-cu-sched-instance').textContent = _ciCurrentName;
+  document.getElementById('ci-cu-sched-alert').classList.add('hidden');
+  document.getElementById('modal-ci-compose-schedule').classList.remove('hidden');
+  _v6519_fillN('ci-cu-sched-n', 'day', _v6519_allowedSnapUnits, 1);
+  _v6519_fillHour('ci-cu-sched-hour', 3);
+  _v6519_fillMin('ci-cu-sched-min', 0);
+  _v6519_fillDom('ci-cu-sched-dom', 1);
+  document.getElementById('ci-cu-sched-weekday').value = '0';
+  if (typeof initAllCustomSelects === 'function') initAllCustomSelects(document.getElementById('modal-ci-compose-schedule'));
+  ['ci-cu-sched-n','ci-cu-sched-unit','ci-cu-sched-hour','ci-cu-sched-min','ci-cu-sched-weekday','ci-cu-sched-dom'].forEach(_v6519_refreshCS);
+  try {
+    const r = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(_ciCurrentName) + '/schedule');
+    if (!r.ok) { ciComposeSchedRebuildN(); return; }
+    const d = await r.json();
+    const p = (d && d.policy) || {};
+    document.getElementById('ci-cu-sched-enabled').checked = !!p.enabled;
+    document.getElementById('ci-cu-sched-unit').value = p.unit || 'day';
+    _v6519_fillN('ci-cu-sched-n', p.unit || 'day', _v6519_allowedSnapUnits, p.every_n || 1);
+    _v6519_fillHour('ci-cu-sched-hour', p.hour_of_day || 3);
+    _v6519_fillMin('ci-cu-sched-min', p.minute_of_hour || 0);
+    _v6519_fillDom('ci-cu-sched-dom', p.day_of_month || 1);
+    document.getElementById('ci-cu-sched-weekday').value = String(p.weekday || 0);
+    _v6519_refreshCS('ci-cu-sched-unit');
+    _v6519_refreshCS('ci-cu-sched-weekday');
+    _v6519_refreshCS('ci-cu-sched-dom');
+    ciComposeSchedRebuildN();
+    if (d.next_run && d.exists) {
+      document.getElementById('ci-cu-sched-next').textContent = 'Next run: ' + new Date(d.next_run).toLocaleString();
+    }
+    document.getElementById('ci-cu-sched-disable-btn').style.display = d.exists ? '' : 'none';
+  } catch(_) { ciComposeSchedRebuildN(); }
+}
+
+function ciComposeSchedRebuildN() {
+  const unit = document.getElementById('ci-cu-sched-unit').value;
+  const cur = parseInt(document.getElementById('ci-cu-sched-n').value || '1', 10);
+  _v6519_fillN('ci-cu-sched-n', unit, _v6519_allowedSnapUnits, cur);
+  const showTime = (unit === 'day' || unit === 'week' || unit === 'month');
+  document.getElementById('ci-cu-sched-time-row').style.display    = showTime ? '' : 'none';
+  document.getElementById('ci-cu-sched-weekday-row').style.display = (unit === 'week')  ? '' : 'none';
+  document.getElementById('ci-cu-sched-dom-row').style.display     = (unit === 'month') ? '' : 'none';
+}
+
+async function ciSubmitComposeSchedule() {
+  const alertEl = document.getElementById('ci-cu-sched-alert');
+  alertEl.classList.add('hidden');
+  const body = {
+    enabled: document.getElementById('ci-cu-sched-enabled').checked,
+    every_n: parseInt(document.getElementById('ci-cu-sched-n').value, 10),
+    unit: document.getElementById('ci-cu-sched-unit').value,
+    hour_of_day: parseInt(document.getElementById('ci-cu-sched-hour').value || '0', 10),
+    minute_of_hour: parseInt(document.getElementById('ci-cu-sched-min').value || '0', 10),
+    weekday: parseInt(document.getElementById('ci-cu-sched-weekday').value || '0', 10),
+    day_of_month: parseInt(document.getElementById('ci-cu-sched-dom').value || '1', 10),
+  };
+  const btn = document.getElementById('ci-cu-sched-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(_ciCurrentName) + '/schedule', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) { alertEl.textContent = d.error || 'Save failed'; alertEl.classList.remove('hidden'); return; }
+    showToast('Auto-update schedule saved', 'success');
+    document.getElementById('modal-ci-compose-schedule').classList.add('hidden');
+    ciLoadComposeContainers();
+  } catch(e) {
+    alertEl.textContent = String(e); alertEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Schedule';
+  }
+}
+
+async function ciDeleteComposeSchedule() {
+  if (!_ciCurrentName) return;
+  try {
+    await fetch('/api/incus/compose-stacks/' + encodeURIComponent(_ciCurrentName) + '/schedule', { method: 'DELETE' });
+    showToast('Auto-update schedule disabled', 'success');
+    document.getElementById('modal-ci-compose-schedule').classList.add('hidden');
+    ciLoadComposeContainers();
   } catch(_) {}
 }
 
@@ -34393,9 +35191,13 @@ function _ciSwitchTab(tab) {
     }
   }
   if (tab === 'console') {
-    if (!_ciConsoleCache || _ciConsoleCache.name !== _ciCurrentName) {
+    if (_ciIsCompose) {
+      _ciStartComposeLogStream();
+    } else if (!_ciConsoleCache || _ciConsoleCache.name !== _ciCurrentName) {
       _ciLoadConsole();
     }
+  } else {
+    _ciStopComposeLogStream();
   }
   if (tab === 'monitor') {
     _ciMonStart();
@@ -34594,7 +35396,7 @@ function _ciMonExternalSparkTooltip(label, fmt) {
     const items = (tooltip.dataPoints || []).filter(p => p.parsed.y != null);
     if (!items.length) { tip.style.display = 'none'; return; }
     const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
-    const tipBg     = isLight ? '#ffffff' : '#1c1c1e';
+    const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
     const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
     const tipTitle  = isLight ? '#3a3a3c' : '#c7c7cc';
     const tipBody   = isLight ? '#1c1c1e' : '#f5f5f7';
@@ -34910,7 +35712,7 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor, labelMap) 
   const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
   const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
   const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
-  const tipBg     = style.getPropertyValue('--surface').trim() || (isLight ? '#ffffff' : '#1c1c1e');
+  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
   const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
   const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
   const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
@@ -35121,8 +35923,45 @@ async function loadCILogs(name) {
   const body = document.getElementById('ci-logs-body');
   if (!body) return;
   body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:40px 0;">Loading logs…</div>';
+  // Populate the file picker once per instance — the dropdown is what
+  // drives which file we then fetch. When loadCILogs is re-called from
+  // the picker's onchange we skip the (potentially slow) list refresh
+  // and just refetch the chosen file's content.
+  const sel = document.getElementById('ci-logs-file');
+  let chosenFile = sel ? sel.value : '';
+  const picker = sel && sel.dataset.instance === name;
+  if (sel && !picker) {
+    sel.innerHTML = '<option value="">Loading…</option>';
+    sel.dataset.instance = name;
+    try {
+      const lr = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/log-files');
+      if (lr.ok) {
+        const ld = await lr.json();
+        const files = ld.files || [];
+        chosenFile = ld.default || (files[0] && files[0].name) || '';
+        const fmt = (n) => (n || 0).toLocaleString();
+        sel.innerHTML = files.map(f =>
+          `<option value="${esc(f.name)}">${esc(f.name)} (${fmt(f.lines)} lines)</option>`
+        ).join('') || '<option value="">No log files</option>';
+        // Setting `selected` in the option HTML alone doesn't always
+        // update the trigger label after innerHTML replace — explicitly
+        // assigning sel.value forces the displayed text to follow.
+        sel.value = chosenFile;
+      } else {
+        sel.innerHTML = '<option value="">All logs</option>';
+        sel.value = '';
+        chosenFile = '';
+      }
+    } catch (_) {
+      sel.innerHTML = '<option value="">All logs</option>';
+      chosenFile = '';
+    }
+  }
+  // Fetch the chosen file's content (or merged view when chosenFile is "").
   try {
-    const res = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/logs');
+    const url = '/api/incus/instances/' + encodeURIComponent(name) + '/logs'
+              + (chosenFile ? '?file=' + encodeURIComponent(chosenFile) : '');
+    const res = await fetch(url);
     if (!res.ok) {
       const d = await res.json().catch(() => ({error: 'Request failed'}));
       body.innerHTML = `<div style="color:var(--danger);padding:20px 0;">${esc(d.error || 'Failed to load logs')}</div>`;
@@ -35146,11 +35985,34 @@ function _ciRenderLogs() {
   const levelFilter = (document.getElementById('ci-logs-level-filter') || {}).value || '';
   const search = ((document.getElementById('ci-logs-search') || {}).value || '').toLowerCase();
 
-  const entries = _ciLogsAll.filter(e => {
+  const filtered = _ciLogsAll.filter(e => {
+    // Hide completely empty rows (blank time + blank message); they're
+    // produced by blank lines in qemu/qmp logs and just create visual
+    // gaps in the table.
+    if (!(e.message || '').trim() && !(e.time || '').trim()) return false;
     if (levelFilter && e.level !== levelFilter) return false;
     if (search && !((e.message || '') + (e.time || '')).toLowerCase().includes(search)) return false;
     return true;
   });
+  // Newest-first order, but keep "── filename ──" section headers
+  // anchored above their own block — only the in-block lines are
+  // reversed, so the user reads top-down within each section as
+  // newest → oldest and still sees the file header at the section's
+  // top in the merged-files view.
+  const isHeader = (e) => !(e.time || '').trim() && /^──\s/.test(e.message || '');
+  const entries = [];
+  let blockStart = 0;
+  const pushBlock = (end) => {
+    for (let i = end - 1; i >= blockStart; i--) entries.push(filtered[i]);
+  };
+  for (let i = 0; i < filtered.length; i++) {
+    if (isHeader(filtered[i])) {
+      pushBlock(i);
+      entries.push(filtered[i]); // header in place
+      blockStart = i + 1;
+    }
+  }
+  pushBlock(filtered.length);
 
   if (entries.length === 0) {
     body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:40px 0;">No log entries' + (levelFilter || search ? ' matching filter' : '') + '.</div>';
@@ -35174,7 +36036,7 @@ function _ciRenderLogs() {
     CRITICAL: 'rgba(255,82,82,0.18)',
   };
 
-  let html = `<table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+  let html = `<table style="width:100%;border-collapse:collapse;font-size:11px;">
     <thead>
       <tr style="border-bottom:1px solid var(--border);">
         <th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;width:180px;">Timestamp</th>
@@ -35190,11 +36052,11 @@ function _ciRenderLogs() {
     const bg    = levelBg[lvl]    || 'transparent';
     const rowBg = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)';
     html += `<tr style="background:${rowBg};border-bottom:1px solid rgba(255,255,255,0.04);">
-      <td style="padding:5px 10px;font-family:monospace;color:var(--text-3);white-space:nowrap;font-size:11.5px;">${esc(e.time || '—')}</td>
-      <td style="padding:5px 10px;">
-        <span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;font-weight:700;background:${bg};color:${color};letter-spacing:.04em;">${esc(lvl)}</span>
+      <td style="padding:3px 10px;font-family:monospace;color:var(--text-3);white-space:nowrap;font-size:10px;">${esc(e.time || '—')}</td>
+      <td style="padding:3px 10px;">
+        <span style="display:inline-block;padding:0 6px;border-radius:3px;font-size:10px;font-weight:700;background:${bg};color:${color};letter-spacing:.04em;">${esc(lvl)}</span>
       </td>
-      <td style="padding:5px 10px;color:var(--text);font-family:monospace;word-break:break-all;">${esc(e.message || '')}</td>
+      <td style="padding:3px 10px;color:var(--text);font-family:monospace;font-size:11px;word-break:break-all;">${esc(e.message || '')}</td>
     </tr>`;
   });
   html += '</tbody></table>';
@@ -35542,9 +36404,15 @@ function _ciLoading() {
 }
 
 function _ciRow(label, value) {
-  return `<div style="display:flex;align-items:baseline;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;">
-    <span style="color:var(--text-3);min-width:120px;flex-shrink:0;">${label}</span>
-    <span style="color:var(--text);word-break:break-all;">${value}</span>
+  // Fixed-width first column so values line up across every row in the
+  // Virtual Hardware card. 100px is wide enough for the longest label
+  // we render ("Memory Limit", "Container ID" — 12 chars at the 12px
+  // label size) and leaves the value column more room to breathe.
+  // flex-start (instead of baseline) keeps the label anchored to the
+  // top line of multi-line values.
+  return `<div style="display:flex;align-items:flex-start;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:13px;line-height:1.45;">
+    <span style="color:var(--text-3);width:100px;flex-shrink:0;font-size:12px;">${label}</span>
+    <span style="color:var(--text);flex:1;min-width:0;word-break:break-word;">${value}</span>
   </div>`;
 }
 
@@ -35598,9 +36466,26 @@ async function loadComputeInstanceDetail(name, type) {
         + ' style="background:#8b5cf6;color:#fff;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;letter-spacing:.03em;margin-left:8px;white-space:nowrap;">↻ AutoRestart</span>';
     }
     html += _ciRow('Autostart', _autostartVal);
+    // Creation date — comes from Incus's `created_at` field on the
+    // instance API. Skipped if missing (older Incus or unusual JSON).
+    // Format: short date + HH:MM (no seconds), and the parenthetical
+    // collapses to "<N>d" once the instance is older than 24 h so we
+    // don't show "3 days, 7 hours, 14 minutes ago" on every reload.
+    if (cfg.created_at) {
+      const _ts = new Date(cfg.created_at);
+      if (!isNaN(_ts.getTime())) {
+        const _abs = _ts.toLocaleString(undefined,
+          { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const _ageMs = Date.now() - _ts.getTime();
+        const _days  = Math.floor(_ageMs / 86400000);
+        const _rel   = _days >= 1 ? _days + 'd' : timeSince(_ts);
+        html += _ciRow('Created',
+          `${esc(_abs)} <span style="color:var(--text-3);font-size:11px;">(${esc(_rel)})</span>`);
+      }
+    }
 
     if (cfg.nics && cfg.nics.length > 0) {
-      html += `<div style="margin-top:14px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;">Network</div>`;
+      html += `<div style="margin:10px 0 4px;font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;">Network</div>`;
       cfg.nics.forEach((n, i) => {
         let val = `<span style="font-family:monospace;">${esc(n.bridge || n.name)}</span>`;
         if (n.vlan_id) val += ` <span style="background:rgba(10,132,255,0.15);color:var(--accent);border-radius:3px;padding:1px 5px;font-size:11px;">VLAN ${n.vlan_id}</span>`;
@@ -35608,6 +36493,23 @@ async function loadComputeInstanceDetail(name, type) {
         if (n.connected === false) val += ` <span style="color:#58a6ff;font-size:11px;">disconnected</span>`;
         if (n.current_ip) val += `<br><span style="font-family:monospace;font-size:12px;color:var(--text-2);">${esc(n.current_ip)}</span>`;
         if (n.mac) val += `<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(n.mac)}</span>`;
+        // Port forwards — only shown when one or more are present. Each
+        // entry renders as "host:src → :dst (proto)" with a tiny arrow.
+        if (Array.isArray(n.port_forwards) && n.port_forwards.length > 0) {
+          // Stable sort by source port so the list reads predictably.
+          const sorted = n.port_forwards.slice().sort((a, b) => (a.source_port||0) - (b.source_port||0));
+          const rows = sorted.map(f =>
+            `<div style="display:flex;align-items:center;gap:6px;font-family:monospace;font-size:11px;color:var(--text-2);">
+              <span style="color:var(--text-3);">host:</span>${f.source_port}
+              <span style="color:var(--text-3);">→</span>
+              <span style="color:var(--text-3);">guest:</span>${f.target_port}
+              <span style="background:rgba(10,132,255,0.15);color:var(--accent);border-radius:3px;padding:0 5px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;">${esc(f.protocol||'tcp')}</span>
+            </div>`).join('');
+          val += `<div style="margin-top:4px;padding:4px 6px;border-left:2px solid var(--accent);background:var(--bg-2,rgba(255,255,255,0.03));border-radius:2px;">
+            <div style="font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px;">Port Forwards (${n.port_forwards.length})</div>
+            ${rows}
+          </div>`;
+        }
         html += _ciRow('NIC ' + (i + 1), val);
       });
     }
@@ -35615,7 +36517,7 @@ async function loadComputeInstanceDetail(name, type) {
     const _hasDisks  = cfg.disks && cfg.disks.length > 0;
     const _hasShares = cfg.bind_mounts && cfg.bind_mounts.length > 0;
     if (_hasDisks || _hasShares) {
-      html += `<div style="margin-top:14px;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;">Storage</div>`;
+      html += `<div style="margin:10px 0 4px;font-size:10px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.08em;">Storage</div>`;
       if (_hasDisks) cfg.disks.forEach((d) => {
         const label = d.is_root ? 'Root Disk' : esc(d.name);
         let val = d.pool ? `<span style="font-family:monospace;">${esc(d.pool)}</span>` : '';
@@ -35961,6 +36863,7 @@ let _lxdMachineVersions = null; // cached {i440fx: [...], q35: [...]}
 let _lxdVMDisks   = [];     // extra disk rows
 let _lxdVMExistingDisks = []; // existing zvol attachment rows
 let _lxdVMVirtioFS = [];    // VirtIO-FS host /mnt directory shares
+let _lxdComposeMode = false; // true while the container modal is in "+ Compose" mode
 let _lxdFreeZVols = [];     // available zvols cache
 let _lxdVMNICs    = [];     // vm NIC rows
 let _lxdVMUSBs    = [];     // usb passthrough list
@@ -36074,8 +36977,10 @@ async function loadLXDInstances() {
   // Gate the create buttons by the standard-user capability flags.
   const _nv = document.getElementById('lxd-btn-new-vm');
   const _nc = document.getElementById('lxd-btn-new-container');
+  const _ncs = document.getElementById('lxd-btn-new-compose');
   if (_nv) _nv.style.display = hasPerm('create_vm') ? '' : 'none';
   if (_nc) _nc.style.display = hasPerm('create_container') ? '' : 'none';
+  if (_ncs) _ncs.style.display = hasPerm('create_container') ? '' : 'none';
   tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:24px;">Loading…</td></tr>';
   // Refresh interlink server cache for the VM Push burger menu item.
   // Phase 1: fast endpoint returns last-cached online+lxd_enabled status instantly.
@@ -36352,6 +37257,7 @@ let _lxdEditUSBs  = [];  // {device_name, vendor_id, product_id, desc}
 let _lxdEditPCIs  = [];  // {device_name, address, desc}
 let _lxdEditCTDevs = []; // {device_name, type, host_path, extra}
 let _lxdEditIsVM  = false;
+let _lxdEditIsCompose = false; // true when editing a Podman Compose stack
 // Daemon capability flags — populated from the GET /config response. Drives
 // which per-disk knobs we render (io.bus / io.cache disabled on LXD 5.0.x).
 let _lxdEditCaps  = { disk_io_bus: false, disk_io_cache: false };
@@ -36469,6 +37375,21 @@ function lxdEditRenderNICs() {
         </div>`;
     }
 
+    // Port forwards block — visible only on host-nat (where the instance
+    // has a private IP and forwarding from the host is meaningful).
+    const showPFwd = nic.bridge === 'host-nat';
+    const pfwdHTML = `
+      <div id="lxd-edit-nic-pfwd-${i}" style="margin-top:10px;display:${showPFwd?'':'none'};">
+        <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+          Port Forwards
+          <span style="color:var(--text-3);font-size:11px;font-weight:400;">(host port → instance port)</span>
+          <i class="info-tip" data-tip="Incus proxy devices: traffic arriving at the host on a given protocol/port is forwarded to the instance. Adding or removing entries here is applied on Save."></i>
+        </label>
+        <div id="lxd-edit-nic-pfwd-list-${i}"></div>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="_editNicAddPFwd(${i})"
+          style="font-size:12px;padding:2px 10px;margin-top:6px;">+ Add Port Forward</button>
+      </div>`;
+
     section.innerHTML = `
       <div class="vm-hw-head" onclick="_vmhwToggle('edit-nic-${i}')">
         <span class="vm-hw-chevron">▶</span>
@@ -36491,8 +37412,10 @@ function lxdEditRenderNICs() {
           </div>
         </div>
         ${ipHTML}
+        ${pfwdHTML}
       </div>`;
     c.appendChild(section);
+    _editNicRenderPFwds(i);
   });
 
   // Update NIC section summary
@@ -36508,6 +37431,49 @@ function _editNicBridgeChange(i) {
   _lxdEditNICs[i].nictype = (_lxdAvailBridges.managed || []).includes(sel.value) ? 'network' : 'bridged';
   const sumEl = document.getElementById('edit-nic-' + i + '-summary');
   if (sumEl) sumEl.textContent = sel.value || '—';
+  // Show/hide port-forwards block — only meaningful on host-nat.
+  const pfwd = document.getElementById('lxd-edit-nic-pfwd-' + i);
+  if (pfwd) pfwd.style.display = (sel.value === 'host-nat') ? '' : 'none';
+}
+
+// ── Edit modal: per-NIC port forwards ──────────────────────────────────
+function _editNicAddPFwd(i) {
+  if (!_lxdEditNICs[i].port_forwards) _lxdEditNICs[i].port_forwards = [];
+  _lxdEditNICs[i].port_forwards.push({src:'',dst:'',proto:'tcp'});
+  _editNicRenderPFwds(i);
+}
+function _editNicRemovePFwd(i, idx) {
+  if (!_lxdEditNICs[i] || !_lxdEditNICs[i].port_forwards) return;
+  _lxdEditNICs[i].port_forwards.splice(idx, 1);
+  _editNicRenderPFwds(i);
+}
+function _editNicPFwdEdit(i, idx, key, val) {
+  if (!_lxdEditNICs[i] || !_lxdEditNICs[i].port_forwards[idx]) return;
+  if (key === 'proto') _lxdEditNICs[i].port_forwards[idx].proto = val;
+  else _lxdEditNICs[i].port_forwards[idx][key] = val;
+}
+function _editNicRenderPFwds(i) {
+  const box = document.getElementById('lxd-edit-nic-pfwd-list-' + i);
+  if (!box) return;
+  const list = (_lxdEditNICs[i] && _lxdEditNICs[i].port_forwards) || [];
+  if (list.length === 0) {
+    box.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:4px 0;">No forwards. Use + Add to expose a port from the host into the instance.</div>';
+    return;
+  }
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 110px 30px;gap:8px;align-items:end;font-size:11px;color:var(--text-3);margin-bottom:4px;">
+      <div>Host port</div><div>Instance port</div><div>Protocol</div><div></div>
+    </div>` +
+    list.map((f, idx) => `
+      <div style="display:grid;grid-template-columns:1fr 1fr 110px 30px;gap:8px;margin-bottom:6px;">
+        <input type="number" class="input" min="1" max="65535" placeholder="e.g. 8080" value="${esc(String(f.src||''))}" oninput="_editNicPFwdEdit(${i},${idx},'src',this.value)">
+        <input type="number" class="input" min="1" max="65535" placeholder="e.g. 80"   value="${esc(String(f.dst||''))}" oninput="_editNicPFwdEdit(${i},${idx},'dst',this.value)">
+        <select class="input" onchange="_editNicPFwdEdit(${i},${idx},'proto',this.value)">
+          <option value="tcp"${f.proto==='udp'?'':' selected'}>TCP</option>
+          <option value="udp"${f.proto==='udp'?' selected':''}>UDP</option>
+        </select>
+        <button type="button" onclick="_editNicRemovePFwd(${i},${idx})" title="Remove" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:0;">✕</button>
+      </div>`).join('');
 }
 
 function _editNicToggleStatic(i) {
@@ -36527,7 +37493,8 @@ function lxdEditAddNIC() {
   _lxdEditNICs.push({name: 'eth' + n, bridge: defaultBridge,
     nictype: (_lxdAvailBridges.managed || []).includes(defaultBridge) ? 'network' : 'bridged',
     vlan_id: 0, from_profile: false, _origBridge: '', _new: true, _deleted: false,
-    ipv4_mode: '', ipv4_addr: '', ipv4_gw: '', dns1: '', dns2: ''});
+    ipv4_mode: '', ipv4_addr: '', ipv4_gw: '', dns1: '', dns2: '',
+    port_forwards: [], _origPortForwards: []});
   lxdEditRenderNICs();
 }
 
@@ -36979,6 +37946,24 @@ function lxdEditAddCTDevice() {
   _lxdEditRenderCTDevList();
 }
 
+// _lxdEditLoadComposeFiles fills the edit modal's compose/.env textareas with
+// the files currently deployed in the stack.
+async function _lxdEditLoadComposeFiles(name) {
+  // Mount editors first so any setValue below lands on a real CM instance
+  // and not a hidden textarea.
+  _mountCMEditor('lxd-edit-compose-yaml', 'yaml');
+  _mountCMEditor('lxd-edit-compose-env',  'znas-env');
+  try {
+    const r = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(name));
+    if (!r.ok) return;
+    const d = await r.json();
+    const yt = document.getElementById('lxd-edit-compose-yaml');
+    const et = document.getElementById('lxd-edit-compose-env');
+    if (yt) { yt.value = d.compose_yaml || ''; if (yt._cmInstance) yt._cmInstance.setValue(yt.value); }
+    if (et) { et.value = d.env || '';          if (et._cmInstance) et._cmInstance.setValue(et.value); }
+  } catch(_) {}
+}
+
 async function openLXDEditModal(name, type) {
   _lxdEditName = name;
   _lxdEditNICs = []; _lxdEditDisks = [];
@@ -36986,6 +37971,13 @@ async function openLXDEditModal(name, type) {
   _lxdEditBindMounts = [];
   _lxdEditUSBs = []; _lxdEditPCIs = []; _lxdEditCTDevs = [];
   _lxdEditIsVM = (type === 'virtual-machine');
+  { const _ei = (_lxdInstancesCache || []).find(i => i.name === name); _lxdEditIsCompose = !!(_ei && _ei.is_compose); }
+  {
+    const cs = document.getElementById('lxd-edit-compose-section');
+    if (cs) cs.style.display = _lxdEditIsCompose ? '' : 'none';
+    const yt = document.getElementById('lxd-edit-compose-yaml'); if (yt) yt.value = '';
+    const et = document.getElementById('lxd-edit-compose-env');  if (et) et.value = '';
+  }
   document.getElementById('lxd-edit-title').textContent = name;
   document.getElementById('lxd-edit-alert').classList.add('hidden');
   document.getElementById('lxd-edit-description').value = '';
@@ -37055,7 +38047,7 @@ async function openLXDEditModal(name, type) {
   const addHWMenu = document.getElementById('lxd-edit-addhw-menu');
   if (addHWMenu) addHWMenu.style.display = 'none';
   // Collapse all sections so they start closed on every open
-  ['edithw-resources','edithw-memory','edithw-firmware','edithw-nics','edithw-disks','edithw-cdrom','edithw-usb','edithw-pci','edithw-ctdev','edithw-bindmount'].forEach(id => {
+  ['edithw-resources','edithw-memory','edithw-firmware','edithw-nics','edithw-disks','edithw-cdrom','edithw-usb','edithw-pci','edithw-ctdev','edithw-bindmount','edithw-compose-yaml','edithw-compose-env'].forEach(id => {
     const row = document.getElementById(id);
     if (!row) return;
     const body = row.querySelector('.vm-hw-body');
@@ -37068,6 +38060,7 @@ async function openLXDEditModal(name, type) {
   const btn = document.getElementById('lxd-edit-submit');
   btn.disabled = true; btn.textContent = 'Loading…';
   document.getElementById('modal-lxd-edit').classList.remove('hidden');
+  if (_lxdEditIsCompose) _lxdEditLoadComposeFiles(name);
   try {
     const [cfgRes, bridgesRes, poolsRes] = await Promise.all([
       fetch('/api/incus/instances/' + encodeURIComponent(name) + '/config'),
@@ -37199,7 +38192,16 @@ async function openLXDEditModal(name, type) {
       const fuse = document.getElementById('lxd-edit-fuse');
       if (fuse) fuse.checked = !!cfg.feature_fuse;
     }
-    _lxdEditNICs  = (cfg.nics  || []).map(n => ({...n, _origBridge: n.bridge, _origConnected: n.connected, _new: false, _deleted: false, ipv4_mode: n.ipv4_mode||'', ipv4_addr: n.ipv4_addr||'', ipv4_gw: n.ipv4_gw||'', dns1: n.dns1||'', dns2: n.dns2||''}));
+    _lxdEditNICs  = (cfg.nics  || []).map(n => ({
+      ...n, _origBridge: n.bridge, _origConnected: n.connected, _new: false, _deleted: false,
+      ipv4_mode: n.ipv4_mode||'', ipv4_addr: n.ipv4_addr||'', ipv4_gw: n.ipv4_gw||'',
+      dns1: n.dns1||'', dns2: n.dns2||'',
+      // Port forwards arrive from the backend as [{source_port,target_port,protocol}].
+      // Keep a stable shape in the editor state plus an _orig snapshot so the
+      // submit handler can compute add/remove diffs against the live config.
+      port_forwards: (n.port_forwards || []).map(f => ({src: String(f.source_port||''), dst: String(f.target_port||''), proto: (f.protocol||'tcp').toLowerCase()})),
+      _origPortForwards: JSON.parse(JSON.stringify(n.port_forwards || [])),
+    }));
     _lxdEditDisks = (cfg.disks || []).map(d => ({...d, path: d.mount_path || '', _new: false, _deleted: false}));
     _lxdEditBindMounts = (cfg.bind_mounts || []).map(b => ({...b}));
     _lxdEditUSBs  = (cfg.usb_devices  || []).map(u => ({...u}));
@@ -37279,9 +38281,21 @@ async function submitLXDEdit() {
 
   btn.disabled = true; btn.textContent = 'Saving…';
 
-  // Collect NICs: include instance-level ones + profile NICs whose bridge or connection changed
+  // Detect whether a NIC's port-forward set differs from the loaded
+  // state — profile NICs with only port-forward changes should still be
+  // sent so the backend can apply the diff.
+  const _pfwdChanged = (n) => {
+    const a = (n.port_forwards || []).map(f => ({s:+f.src||0, d:+f.dst||0, p:(f.proto||'tcp').toLowerCase()})).filter(f => f.s>0 && f.d>0);
+    const b = (n._origPortForwards || []).map(f => ({s:+f.source_port||0, d:+f.target_port||0, p:(f.protocol||'tcp').toLowerCase()}));
+    const key = (f) => f.s+'/'+f.d+'/'+f.p;
+    if (a.length !== b.length) return true;
+    const sa = a.map(key).sort(), sb = b.map(key).sort();
+    for (let i=0; i<sa.length; i++) if (sa[i] !== sb[i]) return true;
+    return false;
+  };
+  // Collect NICs: include instance-level ones + profile NICs whose bridge, connection, or port forwards changed
   const nics = _lxdEditNICs
-    .filter(n => !n._deleted && (!n.from_profile || n.bridge !== n._origBridge || n.connected !== n._origConnected))
+    .filter(n => !n._deleted && (!n.from_profile || n.bridge !== n._origBridge || n.connected !== n._origConnected || _pfwdChanged(n)))
     .map(n => ({
       name: n.name,
       bridge: n.bridge,
@@ -37294,6 +38308,12 @@ async function submitLXDEdit() {
       ipv4_gw:   n.ipv4_gw  || '',
       dns1:      n.dns1     || '',
       dns2:      n.dns2     || '',
+      // Always send port_forwards (even when empty) so backend can drop
+      // ones the user removed. Only fold-in entries where both ports are
+      // sensible numbers.
+      port_forwards: (n.port_forwards || [])
+        .map(f => ({source_port: parseInt(f.src)||0, target_port: parseInt(f.dst)||0, protocol: (f.proto||'tcp').toLowerCase()}))
+        .filter(f => f.source_port > 0 && f.target_port > 0),
     }));
 
   // Collect disks: instance-level non-profile only.
@@ -37406,6 +38426,37 @@ async function submitLXDEdit() {
       const labelSpan = navBtn.querySelector('span:nth-child(2)');
       if (labelSpan) labelSpan.textContent = newDesc || _lxdEditName;
       navBtn.title = newDesc ? newDesc + ' (' + _lxdEditName + ')' : _lxdEditName;
+    }
+    // Compose stack: re-apply the edited compose file / .env (docker-compose
+    // up -d). Runs as a progress job, same as stack creation.
+    // The instance-level config above has already been saved; if compose
+    // validation now fails we surface the popup but the modal stays
+    // closed (the hardware change was OK, the compose part needs fixing).
+    if (_lxdEditIsCompose) {
+      _syncCMEditor('lxd-edit-compose-yaml');
+      _syncCMEditor('lxd-edit-compose-env');
+      const cy = document.getElementById('lxd-edit-compose-yaml')?.value || '';
+      const ce = document.getElementById('lxd-edit-compose-env')?.value || '';
+      const yamlV = _composeValidate(cy);
+      const envV  = _envValidate(ce);
+      _markCMErrors(document.getElementById('lxd-edit-compose-yaml')?._cmInstance, yamlV.errors);
+      _markCMErrors(document.getElementById('lxd-edit-compose-env')?._cmInstance,  envV.errors);
+      if (!yamlV.ok || !envV.ok) {
+        _showComposeValidate(
+          'Compose validation failed — redeploy skipped',
+          'Hardware changes were saved, but the compose file has errors. Fix them below and Save again.',
+          (yamlV.errors||[]).concat(envV.errors||[]),
+          '✗');
+        btn.disabled = false; btn.textContent = 'Save';
+        return;
+      }
+      const rr = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(_lxdEditName), {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ compose_yaml: cy, env: ce }),
+      });
+      const rd = await rr.json().catch(() => ({}));
+      if (!rr.ok) { showToast(rd.error || 'Redeploy failed to start', 'error'); }
+      else if (rd.job_id) { openLXDProgressModal('Redeploying stack ' + _lxdEditName + '…', rd.job_id); }
     }
   } catch(e) {
     alertEl.textContent = e.message;
@@ -38227,6 +39278,7 @@ function _nextInstanceLabel(prefix) {
 async function openNewVMModal() {
   _lxdVMDisks = [];
   _lxdVMNICs  = [];
+  _lxdVMNic0PFwds = [];
   _lxdVMUSBs  = [];
   _lxdVMPCIs  = [];
   const _vmLabel = _nextInstanceLabel('vm');
@@ -38335,6 +39387,8 @@ async function openNewVMModal() {
   if (n0Sel.options.length > 0) {
     document.getElementById('vmhw-nic0-summary').textContent = n0Sel.value;
   }
+  _vmNic0BridgeChange();
+  _vmNic0RenderPFwds();
 
   // Load image source dropdown and auto-load local images
   loadLXDImageSources('lxd-vm-image-source', 'lxd-vm-image', 'virtual-machine');
@@ -38348,6 +39402,14 @@ function _vmhwToggle(id) {
   const open    = body.style.display !== 'none';
   body.style.display    = open ? 'none' : '';
   chevron.textContent   = open ? '▶' : '▼';
+  // Newly-revealed body: any CodeMirror inside (compose YAML / .env in the
+  // edit modal) was mounted when the body was display:none, so it didn't
+  // measure correctly and renders blank. Refresh now that it's visible.
+  if (!open && body) {
+    body.querySelectorAll('textarea').forEach(ta => {
+      if (ta._cmInstance) setTimeout(() => ta._cmInstance.refresh(), 0);
+    });
+  }
 }
 
 function _vmhwForceOpen(id) {
@@ -39470,6 +40532,99 @@ function _ctNic0ToggleStatic() {
   document.getElementById('lxd-ct-nic0-static-rows').style.display = (mode === 'static') ? '' : 'none';
 }
 
+// _ctNic0BridgeChange is the unified onchange for the container modal's
+// NIC0 bridge selector. It keeps the row summary in sync AND shows the
+// port-forwards table only when the chosen bridge is host-nat (where the
+// instance has a private IP and port forwarding is the only way for
+// external clients to reach a service on it).
+function _ctNic0BridgeChange() {
+  const sel = document.getElementById('lxd-ct-nic0-bridge');
+  const v = sel ? sel.value || '' : '';
+  const sum = document.getElementById('cthw-nic0-summary');
+  if (sum) sum.textContent = v || '—';
+  const pfwd = document.getElementById('lxd-ct-nic0-pfwd');
+  if (pfwd) pfwd.style.display = (v === 'host-nat') ? '' : 'none';
+}
+
+// ── NIC0 port-forwards state + rendering (VM modal) ──────────────────────
+let _lxdVMNic0PFwds = [];
+function _vmNic0BridgeChange() {
+  const sel = document.getElementById('lxd-vm-nic0-bridge');
+  const v = sel ? sel.value || '' : '';
+  const sum = document.getElementById('vmhw-nic0-summary');
+  if (sum) sum.textContent = v || '—';
+  const pfwd = document.getElementById('lxd-vm-nic0-pfwd');
+  if (pfwd) pfwd.style.display = (v === 'host-nat') ? '' : 'none';
+}
+function _vmNic0AddPFwd() { _lxdVMNic0PFwds.push({src:'',dst:'',proto:'tcp'}); _vmNic0RenderPFwds(); }
+function _vmNic0RemovePFwd(i) { _lxdVMNic0PFwds.splice(i,1); _vmNic0RenderPFwds(); }
+function _vmNic0PFwdEdit(i, key, val) {
+  if (!_lxdVMNic0PFwds[i]) return;
+  if (key === 'proto') _lxdVMNic0PFwds[i].proto = val;
+  else _lxdVMNic0PFwds[i][key] = val;
+}
+function _vmNic0RenderPFwds() {
+  const box = document.getElementById('lxd-vm-nic0-pfwd-list');
+  if (!box) return;
+  if (_lxdVMNic0PFwds.length === 0) {
+    box.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:4px 0;">No forwards. Use + Add to expose a port from the host into the VM.</div>';
+    return;
+  }
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 110px 30px;gap:8px;align-items:end;font-size:11px;color:var(--text-3);margin-bottom:4px;">
+      <div>Host port</div><div>VM port</div><div>Protocol</div><div></div>
+    </div>` +
+    _lxdVMNic0PFwds.map((f, i) => `
+      <div style="display:grid;grid-template-columns:1fr 1fr 110px 30px;gap:8px;margin-bottom:6px;">
+        <input type="number" class="input" min="1" max="65535" placeholder="e.g. 8080" value="${esc(String(f.src||''))}" oninput="_vmNic0PFwdEdit(${i},'src',this.value)">
+        <input type="number" class="input" min="1" max="65535" placeholder="e.g. 80"   value="${esc(String(f.dst||''))}" oninput="_vmNic0PFwdEdit(${i},'dst',this.value)">
+        <select class="input" onchange="_vmNic0PFwdEdit(${i},'proto',this.value)">
+          <option value="tcp"${f.proto==='udp'?'':' selected'}>TCP</option>
+          <option value="udp"${f.proto==='udp'?' selected':''}>UDP</option>
+        </select>
+        <button type="button" onclick="_vmNic0RemovePFwd(${i})" title="Remove" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:0;">✕</button>
+      </div>`).join('');
+}
+
+// ── NIC0 port-forwards state + rendering (container modal) ────────────────
+let _lxdCTNic0PFwds = []; // [{src,dst,proto}]
+
+function _ctNic0AddPFwd() {
+  _lxdCTNic0PFwds.push({ src: '', dst: '', proto: 'tcp' });
+  _ctNic0RenderPFwds();
+}
+function _ctNic0RemovePFwd(i) {
+  _lxdCTNic0PFwds.splice(i, 1);
+  _ctNic0RenderPFwds();
+}
+function _ctNic0PFwdEdit(i, key, val) {
+  if (!_lxdCTNic0PFwds[i]) return;
+  if (key === 'proto') _lxdCTNic0PFwds[i].proto = val;
+  else _lxdCTNic0PFwds[i][key] = val;
+}
+function _ctNic0RenderPFwds() {
+  const box = document.getElementById('lxd-ct-nic0-pfwd-list');
+  if (!box) return;
+  if (_lxdCTNic0PFwds.length === 0) {
+    box.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:4px 0;">No forwards. Use + Add to expose a port from the host into the instance.</div>';
+    return;
+  }
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 110px 30px;gap:8px;align-items:end;font-size:11px;color:var(--text-3);margin-bottom:4px;">
+      <div>Host port</div><div>Instance port</div><div>Protocol</div><div></div>
+    </div>` +
+    _lxdCTNic0PFwds.map((f, i) => `
+      <div style="display:grid;grid-template-columns:1fr 1fr 110px 30px;gap:8px;margin-bottom:6px;">
+        <input type="number" class="input" min="1" max="65535" placeholder="e.g. 8080" value="${esc(String(f.src||''))}" oninput="_ctNic0PFwdEdit(${i},'src',this.value)">
+        <input type="number" class="input" min="1" max="65535" placeholder="e.g. 80"   value="${esc(String(f.dst||''))}" oninput="_ctNic0PFwdEdit(${i},'dst',this.value)">
+        <select class="input" onchange="_ctNic0PFwdEdit(${i},'proto',this.value)">
+          <option value="tcp"${f.proto==='udp'?'':' selected'}>TCP</option>
+          <option value="udp"${f.proto==='udp'?' selected':''}>UDP</option>
+        </select>
+        <button type="button" onclick="_ctNic0RemovePFwd(${i})" title="Remove" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:0;">✕</button>
+      </div>`).join('');
+}
+
 function _editHwSyncResources() {
   const cpu = document.getElementById('lxd-edit-cpu').value || '—';
   const _memV = document.getElementById('lxd-edit-memory').value;
@@ -39973,7 +41128,14 @@ async function submitCreateVM(e) {
   const nic0Connected = document.getElementById('lxd-vm-nic0-connected').checked;
   const allNICs = [];
   if (nic0Bridge && nic0Connected) {
-    allNICs.push({ device_name: 'eth0', network: nic0Bridge });
+    const nic0 = { device_name: 'eth0', network: nic0Bridge };
+    if (nic0Bridge === 'host-nat' && _lxdVMNic0PFwds.length) {
+      const forwards = _lxdVMNic0PFwds
+        .map(f => ({ source_port: parseInt(f.src)||0, target_port: parseInt(f.dst)||0, protocol: (f.proto||'tcp').toLowerCase() }))
+        .filter(f => f.source_port > 0 && f.target_port > 0);
+      if (forwards.length) nic0.port_forwards = forwards;
+    }
+    allNICs.push(nic0);
   }
   allNICs.push(..._lxdVMNICs);
 
@@ -40043,20 +41205,447 @@ async function submitCreateVM(e) {
 
 // ---- New Container Modal ----
 
-async function openNewContainerModal() {
+// openComposeModal opens the container modal in "+ Compose" mode — a stack =
+// an LXC running Podman + the pasted docker-compose file.
+async function openComposeModal() {
+  await openNewContainerModal({ compose: true });
+}
+
+// _ctEnvAutoGrow keeps a .env textarea showing all pasted lines: it starts at
+// 5 rows and grows to fit the content past that.
+function _ctEnvAutoGrow(ta) {
+  if (!ta) return;
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+}
+
+// _ctPasteCleanText fixes pasting YAML / compose / .env content from styled
+// sources (web docs, GitHub blob views, chat clients). The browser hands the
+// textarea text that *looks* indented but actually contains:
+//   • U+00A0 NO-BREAK SPACE   — common when the source rendered indent via CSS
+//   • U+202F NARROW NO-BREAK  — pasted from some terminals
+//   • CR characters from CRLF line endings (mostly Windows)
+// podman-compose / docker-compose parse strict YAML and reject those, so we
+// pull the clipboard's text/plain form and replace those bytes with normal
+// spaces / LF before inserting.
+// _ctSanitizeYAMLText scrubs every byte we've seen YAML parsers complain
+// about: NUL and other C0 control bytes (Python's PyYAML refuses anything
+// not in its printable set — that's where the "ReaderError: unacceptable
+// character #x0000" error originates), BOMs and zero-width joiners that
+// invisible in editors but break key parsing at column 0, no-break spaces
+// (NBSP / NNBSP / figure space) that look like indentation but aren't,
+// and CRLF / CR line endings.
+// ── CodeMirror integration for compose YAML / .env editors ───────────────────
+// We use CodeMirror.fromTextArea so the underlying <textarea> stays in the
+// DOM (hidden) and code that already reads textarea.value works unchanged.
+// One CM instance per textarea is cached on the element as ._cmInstance.
+
+// Tiny .env mode — KEY=value lines with #-style comments. Avoids pulling
+// CodeMirror's properties-mode addon for ~15 lines of regex matchers.
+(function defineZnasEnvMode(){
+  if (typeof CodeMirror === 'undefined' || CodeMirror.modes && CodeMirror.modes['znas-env']) return;
+  CodeMirror.defineMode('znas-env', function () {
+    return {
+      token: function (stream) {
+        if (stream.sol()) {
+          if (stream.match(/^\s*#.*/, true)) return 'comment';
+          if (stream.match(/^[A-Za-z_][A-Za-z0-9_]*(?==)/, true)) return 'keyword';
+        }
+        if (stream.eat('=')) return 'operator';
+        if (stream.match(/[^=\n]+/, true)) return 'string';
+        stream.next();
+        return null;
+      },
+    };
+  });
+})();
+
+// Mount a CodeMirror editor on the textarea with the given id. Idempotent
+// — a second call refreshes layout (after a hidden→visible transition)
+// instead of mounting twice.
+function _mountCMEditor(textareaId, mode) {
+  if (typeof CodeMirror === 'undefined') return null; // vendor file missing — fall back to <textarea>
+  const ta = document.getElementById(textareaId);
+  if (!ta) return null;
+  if (ta._cmInstance) { ta._cmInstance.refresh(); return ta._cmInstance; }
+  const cm = CodeMirror.fromTextArea(ta, {
+    mode: mode || 'yaml',
+    theme: 'dracula',
+    lineNumbers: true,
+    lineWrapping: false,
+    indentUnit: 2,
+    tabSize: 2,
+    indentWithTabs: false,
+    smartIndent: true,
+    gutters: ['CodeMirror-linenumbers', 'znas-validate-gutter'],
+    extraKeys: {
+      'Tab': function (cm) { cm.replaceSelection('  ', 'end'); }, // YAML forbids tab indentation
+      // Persistent search dialog: Enter advances to the NEXT match
+      // instead of closing the dialog (CodeMirror's `find` command does
+      // close on Enter). Esc closes.
+      'Ctrl-F':       'findPersistent',
+      'Cmd-F':        'findPersistent',
+      'Ctrl-G':       'findPersistentNext',
+      'Cmd-G':        'findPersistentNext',
+      'Shift-Ctrl-G': 'findPersistentPrev',
+      'Shift-Cmd-G':  'findPersistentPrev',
+    },
+  });
+  ta._cmInstance = cm;
+  // The wrapper element CodeMirror creates is `cm.getWrapperElement()`;
+  // we tag it with a class so our CSS sizes it appropriately.
+  const wrap = cm.getWrapperElement();
+  wrap.classList.add('znas-cm');
+  wrap.classList.add(mode === 'znas-env' ? 'znas-cm-env' : 'znas-cm-yaml');
+  // YAML editors get a floating toolbar: font − / + + Find. Ctrl-F /
+  // Cmd-F still work through CodeMirror's search addon, but iPad /
+  // touch users have no keyboard shortcut so the visible buttons are
+  // the only entry point. Font size persists in localStorage so a
+  // user's preferred zoom sticks across modals + reloads.
+  if (mode === 'yaml') {
+    wrap.style.position = 'relative';
+    const bar = document.createElement('div');
+    bar.style.cssText =
+      'position:absolute;top:4px;right:6px;z-index:5;display:flex;gap:4px;';
+    const mkBtn = (label, title, onClick) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.title = title; b.innerHTML = label;
+      b.style.cssText =
+        'background:rgba(0,0,0,0.55);color:#fff;border:1px solid rgba(255,255,255,0.18);' +
+        'border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;line-height:1.3;';
+      b.onmouseenter = () => { b.style.background = 'rgba(10,132,255,0.5)'; };
+      b.onmouseleave = () => { b.style.background = 'rgba(0,0,0,0.55)'; };
+      b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); onClick(); };
+      return b;
+    };
+    // Apply font size to the wrapper itself (which IS the .CodeMirror
+    // element — there's no descendant to query). Inline style + !important
+    // through setProperty so it beats the CSS class default.
+    const applyFontSize = (px) => {
+      const clamped = Math.max(7, Math.min(20, px));
+      const root = cm.getWrapperElement();
+      root.style.setProperty('font-size', clamped + 'px', 'important');
+      root.style.setProperty('line-height', '1.3', 'important');
+      cm.refresh();
+      try { localStorage.setItem('znas_cm_fontsize', String(clamped)); } catch (_) {}
+    };
+    const currentFontSize = () => {
+      const root = cm.getWrapperElement();
+      const v = parseFloat(getComputedStyle(root).fontSize);
+      return isNaN(v) ? 9 : Math.round(v);
+    };
+    bar.appendChild(mkBtn('−', 'Smaller font', () => applyFontSize(currentFontSize() - 1)));
+    bar.appendChild(mkBtn('+', 'Larger font',  () => applyFontSize(currentFontSize() + 1)));
+    bar.appendChild(mkBtn('🔍 Find', 'Search (Ctrl-F / Cmd-F) — Enter to repeat', () => { cm.focus(); cm.execCommand('findPersistent'); }));
+    wrap.appendChild(bar);
+    // Apply any persisted preference (clamped + refreshed on next tick
+    // so layout settles after the editor mounts).
+    setTimeout(() => {
+      const saved = parseInt(localStorage.getItem('znas_cm_fontsize') || '', 10);
+      if (saved) applyFontSize(saved);
+    }, 0);
+  }
+  // Mirror CM edits back to the textarea AND fire the textarea's `input`
+  // event so existing oninput handlers (e.g. _ctCheckSubmitReady, which
+  // enables Create when the YAML is non-empty) keep working.
+  cm.on('change', () => {
+    cm.save();
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  // Refresh after a microtask so accurate measurements are picked up even
+  // when the editor was mounted inside a hidden modal.
+  setTimeout(() => cm.refresh(), 0);
+  return cm;
+}
+
+// Push the editor's value back into the textarea and clear any leftover
+// gutter / line markers from a previous validation pass.
+function _syncCMEditor(textareaId) {
+  const ta = document.getElementById(textareaId);
+  if (!ta) return '';
+  const cm = ta._cmInstance;
+  if (!cm) return ta.value;
+  cm.save();
+  return ta.value;
+}
+
+// Strip prior validation markers from a CM editor (called before each
+// validation pass + on input).
+function _clearCMMarkers(cm) {
+  if (!cm) return;
+  cm.eachLine(l => {
+    cm.removeLineClass(l, 'background', 'znas-line-error');
+    cm.removeLineClass(l, 'background', 'znas-line-warn');
+  });
+  cm.clearGutter('znas-validate-gutter');
+}
+
+// Apply line-level markers from a validation result onto a CM editor.
+function _markCMErrors(cm, errors) {
+  if (!cm) return;
+  _clearCMMarkers(cm);
+  (errors || []).forEach(e => {
+    if (e.line == null) return;
+    const li = Math.max(0, e.line - 1); // CM is 0-indexed
+    if (li >= cm.lineCount()) return;
+    cm.addLineClass(li, 'background', e.level === 'warn' ? 'znas-line-warn' : 'znas-line-error');
+    const marker = document.createElement('span');
+    marker.className = e.level === 'warn' ? 'znas-gutter-warn' : 'znas-gutter-error';
+    marker.textContent = e.level === 'warn' ? '⚠' : '✗';
+    marker.title = e.msg || '';
+    cm.setGutterMarker(li, 'znas-validate-gutter', marker);
+  });
+}
+
+// ── Validation ───────────────────────────────────────────────────────────────
+
+// Compose-spec top-level keys (most projects use only services/networks/
+// volumes/secrets/configs). Anything else is flagged as unknown so a typo
+// like "servces:" doesn't silently land at podman.
+const _composeTopLevelKeys = new Set([
+  'services', 'networks', 'volumes', 'secrets', 'configs',
+  'include', 'name', 'version', 'profiles',
+]);
+
+// Service-level keys docker-compose v2 supports. Anything not in this set
+// is flagged unknown. Kept conservative — additions are easy, removing
+// false positives is the harder bug.
+const _composeServiceKeys = new Set([
+  'image','build','command','entrypoint','container_name','hostname','user','working_dir',
+  'environment','env_file','ports','expose','volumes','volumes_from','networks','network_mode',
+  'depends_on','restart','restart_policy','healthcheck','labels','logging','tty','stdin_open',
+  'init','privileged','cap_add','cap_drop','devices','dns','dns_search','extra_hosts','sysctls',
+  'tmpfs','shm_size','ulimits','read_only','security_opt','stop_grace_period','stop_signal',
+  'cpu_shares','cpus','cpuset','cpu_period','cpu_quota','mem_limit','mem_reservation','memswap_limit',
+  'oom_kill_disable','oom_score_adj','pid','pids_limit','ipc','uts','userns_mode','isolation',
+  'platform','runtime','scale','secrets','configs','deploy','profiles','group_add','mac_address',
+  'storage_opt','external_links','links','annotations','attach','blkio_config','cgroup','cgroup_parent',
+  'credential_spec','develop','domainname','driver_opts','extends','gpus','x-*',
+]);
+
+// Service-level keys where docker-compose-talking-to-podman is known to
+// have caveats. We surface these as warnings (not blocking errors) with
+// a short note so the user can adjust before deploying.
+const _composeServicePodmanWarns = {
+  'build':       'Builds work only if buildah is installed in the stack; otherwise the image must exist before "up".',
+  'develop':     'docker-compose `develop:` block is Docker Desktop-specific; podman ignores it.',
+  'deploy':      'Swarm-only directives under `deploy:` (placement, mode, replicas, update_config) are ignored by podman.',
+  'profiles':    'Podman processes profiles, but "docker-compose --profile" is needed to start non-default profiles.',
+};
+
+// _composeValidate parses the YAML and runs structural + podman-compat
+// checks. Returns {ok, errors: [{line, msg, level, fix}], warnings} where
+// errors block submission and warnings are advisory.
+function _composeValidate(text) {
+  const errors = [];
+  text = (text || '').replace(/\r\n?/g, '\n');
+  if (!text.trim()) {
+    errors.push({line: 1, msg: 'docker-compose.yml is empty.', level: 'error',
+                 fix: 'Paste a valid compose file: services: web: image: nginx:alpine'});
+    return { ok: false, errors };
+  }
+  // Tab-as-indent catch — YAML rejects it but the parser error message
+  // is generic; we give a clearer pointer.
+  text.split('\n').forEach((line, i) => {
+    if (/^\t/.test(line)) {
+      errors.push({ line: i + 1, msg: 'YAML forbids tab characters for indentation.', level: 'error',
+                    fix: 'Replace leading tabs with spaces (2 spaces per indent level).' });
+    }
+  });
+
+  let doc;
+  try {
+    doc = jsyaml.load(text);
+  } catch (e) {
+    const line = (e && e.mark && typeof e.mark.line === 'number') ? (e.mark.line + 1) : 1;
+    errors.push({ line, msg: 'YAML parse error: ' + (e.reason || e.message || String(e)), level: 'error',
+                  fix: 'Fix the syntax on the highlighted line. Common causes: missing ":", inconsistent indentation, unquoted special characters.' });
+    return { ok: false, errors };
+  }
+  if (doc == null || typeof doc !== 'object') {
+    errors.push({ line: 1, msg: 'Top-level must be a YAML mapping.', level: 'error',
+                  fix: 'Start the file with "services:" and indent each service under it.' });
+    return { ok: false, errors };
+  }
+  // Check top-level keys.
+  Object.keys(doc).forEach(k => {
+    if (k.startsWith('x-')) return; // extension keys are allowed anywhere
+    if (!_composeTopLevelKeys.has(k)) {
+      errors.push({ line: _findKeyLine(text, k, 0), msg: 'Unknown top-level key: "' + k + '".', level: 'error',
+                    fix: 'Compose Spec allows only: ' + Array.from(_composeTopLevelKeys).join(', ') + ' (plus x-* extensions).' });
+    }
+  });
+  // Services must exist and be a mapping if present.
+  if (doc.services != null) {
+    if (typeof doc.services !== 'object' || Array.isArray(doc.services)) {
+      errors.push({ line: _findKeyLine(text, 'services', 0), msg: '"services" must be a mapping of service names → configs.', level: 'error' });
+    } else {
+      // Walk each service for unknown keys + podman-compat warnings.
+      Object.keys(doc.services).forEach(sname => {
+        const svc = doc.services[sname];
+        if (svc == null || typeof svc !== 'object' || Array.isArray(svc)) {
+          errors.push({ line: _findKeyLine(text, sname, 1), msg: 'Service "' + sname + '" must be a mapping.', level: 'error' });
+          return;
+        }
+        if (!svc.image && !svc.build) {
+          errors.push({ line: _findKeyLine(text, sname, 1),
+                        msg: 'Service "' + sname + '" must specify either "image:" or "build:".',
+                        level: 'error', fix: 'Add e.g.  image: docker.io/library/nginx:alpine' });
+        }
+        Object.keys(svc).forEach(k => {
+          if (k.startsWith('x-')) return;
+          if (!_composeServiceKeys.has(k)) {
+            errors.push({ line: _findKeyLine(text, k, 2), msg: 'Unknown service key "' + k + '" in service "' + sname + '".',
+                          level: 'error', fix: 'Check spelling against the Compose Spec.' });
+          }
+          if (_composeServicePodmanWarns[k]) {
+            errors.push({ line: _findKeyLine(text, k, 2), msg: '"' + k + '" in service "' + sname + '": ' + _composeServicePodmanWarns[k],
+                          level: 'warn' });
+          }
+        });
+      });
+    }
+  } else {
+    // No services key — possible but unusual; warn (won't deploy anything useful).
+    errors.push({ line: 1, msg: 'No "services:" section — nothing will be deployed.', level: 'warn',
+                  fix: 'Add a services: block with at least one service.' });
+  }
+  return { ok: !errors.some(e => e.level === 'error'), errors };
+}
+
+// _envValidate checks an .env-style document line by line. Empty content
+// is fine (the .env is optional).
+function _envValidate(text) {
+  const errors = [];
+  text = (text || '').replace(/\r\n?/g, '\n');
+  if (!text.trim()) return { ok: true, errors };
+  text.split('\n').forEach((raw, i) => {
+    const line = raw.replace(/\s+$/, '');
+    if (line === '' || /^\s*#/.test(line)) return;
+    // Allow: KEY, KEY=, KEY=value, optional inline export
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=?(.*)$/);
+    if (!m) {
+      errors.push({ line: i + 1, msg: '.env line is not in KEY=value format: ' + line.slice(0, 60), level: 'error',
+                    fix: 'Use UPPER_OR_lower identifiers (no dashes) and "=" between key and value.' });
+    } else if (/[\s"']/.test(m[1])) {
+      errors.push({ line: i + 1, msg: 'Invalid characters in .env key "' + m[1] + '".', level: 'error',
+                    fix: 'Keys must match [A-Za-z_][A-Za-z0-9_]*.' });
+    }
+  });
+  return { ok: !errors.some(e => e.level === 'error'), errors };
+}
+
+// _findKeyLine returns the 1-based line where a top-level (depth=0),
+// service-level (depth=1), or nested key first appears. Best-effort —
+// used only to point markers at the right line, never for semantic
+// decisions; falls back to 1 when no match.
+function _findKeyLine(text, key, depth) {
+  if (!key) return 1;
+  const lines = text.split('\n');
+  const indent = '  '.repeat(depth);
+  const re = new RegExp('^' + indent + key + ':\\s*(.*)?$');
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i])) return i + 1;
+  }
+  return 1;
+}
+
+// _showComposeValidate renders the validation modal with the given list
+// of errors/warnings.
+function _showComposeValidate(title, blurb, errors, headerIcon) {
+  document.getElementById('compose-validate-title').textContent = title;
+  document.getElementById('compose-validate-icon').textContent = headerIcon || '⚠';
+  document.getElementById('compose-validate-blurb').textContent = blurb || '';
+  const list = document.getElementById('compose-validate-list');
+  list.innerHTML = (errors || []).map(e => `
+    <div class="err-row level-${esc(e.level||'error')}">
+      <div class="lbl">${e.line ? 'L'+e.line : ''}</div>
+      <div>
+        <div class="msg">${esc(e.msg || '')}</div>
+        ${e.fix ? `<div class="fix">${esc(e.fix)}</div>` : ''}
+      </div>
+    </div>`).join('') || '<div style="padding:14px;color:var(--text-3);">No issues found.</div>';
+  document.getElementById('modal-compose-validate').classList.remove('hidden');
+}
+
+function _ctSanitizeYAMLText(text) {
+  return text
+    // Drop NUL + the rest of the C0 controls except \t (0x09) and \n (0x0A).
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    // Drop the UTF-8 BOM (often pasted from Windows text editors).
+    .replace(/\uFEFF/g, '')
+    // Drop zero-width spaces and joiners (often pasted from styled web docs).
+    .replace(/[\u200B-\u200D\u2060]/g, '')
+    // Fold no-break / narrow no-break / figure spaces to regular space —
+    // they look like indentation in a styled source but don't satisfy YAML.
+    .replace(/[\u00A0\u2007\u202F]/g, ' ')
+    // CRLF / CR → LF.
+    .replace(/\r\n?/g, '\n');
+}
+
+function _ctPasteCleanText(ev) {
+  const cd = ev.clipboardData || window.clipboardData;
+  if (!cd) return;
+  let text = cd.getData('text/plain');
+  if (text == null) return;
+  ev.preventDefault();
+  text = _ctSanitizeYAMLText(text);
+  const ta = ev.target;
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  // Use execCommand when available so the change registers in the browser's
+  // undo stack — falling back to direct value assignment for browsers that
+  // dropped insertText support.
+  if (document.execCommand) {
+    try {
+      const ok = document.execCommand('insertText', false, text);
+      if (ok) { ta.dispatchEvent(new Event('input', { bubbles: true })); return; }
+    } catch(_) {}
+  }
+  ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+  const pos = start + text.length;
+  ta.selectionStart = ta.selectionEnd = pos;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// _ctApplyComposeMode toggles the container modal between normal and Compose
+// presentation: the OS-image picker vs the compose-YAML box, titles, labels.
+function _ctApplyComposeMode() {
+  const cm = _lxdComposeMode;
+  const setDisp = (id, show) => { const e = document.getElementById(id); if (e) e.style.display = show ? '' : 'none'; };
+  setDisp('lxd-ct-image-section', !cm);
+  setDisp('lxd-ct-compose-section', cm);
+  setDisp('lxd-ct-env-section', cm);
+  const img = document.getElementById('lxd-ct-image');
+  if (img) img.required = !cm;
+  document.getElementById('lxd-ct-modal-title').textContent = cm ? 'New Compose Stack' : 'New LXC Container';
+  document.getElementById('lxd-ct-submit-btn').textContent  = cm ? 'Create Stack' : 'Create Container';
+  document.getElementById('lxd-ct-desc-label').innerHTML = cm
+    ? 'Stack Name <span style="color:var(--accent-danger);">*</span> <span style="font-size:11px;color:var(--text-3);font-weight:400;">(editable later)</span>'
+    : 'Container Name <span style="color:var(--accent-danger);">*</span>';
+  document.getElementById('lxd-ct-name-label').innerHTML = cm
+    ? 'Compose ID <span style="color:var(--accent-danger);">*</span> <span style="font-size:11px;color:var(--text-3);font-weight:400;">(letters, digits, hyphens — fixed after creation)</span>'
+    : 'Short Name Identifier <span style="color:var(--accent-danger);">*</span> <span style="font-size:11px;color:var(--text-3);font-weight:400;">(letters, digits, hyphens)</span>';
+}
+
+async function openNewContainerModal(opts) {
+  _lxdComposeMode     = !!(opts && opts.compose);
   _lxdCTNICs          = [];
+  _lxdCTNic0PFwds     = [];
   _lxdCTDevices       = [];
   _lxdCTDisks         = [];
   _lxdCTExistingDisks = [];
   _lxdCTBindMounts    = [];
   _lxdCTFreeZVols     = null;
-  const _ctLabel = _nextInstanceLabel('ct');
+  const _ctLabel = _nextInstanceLabel(_lxdComposeMode ? 'stack' : 'ct');
   document.getElementById('lxd-ct-name').value        = _ctLabel;
   document.getElementById('lxd-ct-description').value = _ctLabel;
-  document.getElementById('lxd-ct-cpu').value         = '1';
+  { const ta = document.getElementById('lxd-ct-compose-yaml'); if (ta) { ta.value = ''; if (ta._cmInstance) ta._cmInstance.setValue(''); } }
+  { const ta = document.getElementById('lxd-ct-compose-env'); if (ta) { ta.value = ''; ta.style.height = ''; if (ta._cmInstance) ta._cmInstance.setValue(''); } }
+  { const d = document.getElementById('lxd-ct-env-section'); if (d) d.open = false; }
+  document.getElementById('lxd-ct-cpu').value         = _lxdComposeMode ? '2' : '1';
   document.getElementById('lxd-ct-mem').value         = '2';
   { const u = document.getElementById('lxd-ct-mem-unit'); if (u) u.value = 'GB'; }
-  document.getElementById('lxd-ct-disk').value        = '10';
+  document.getElementById('lxd-ct-disk').value        = _lxdComposeMode ? '20' : '10';
   document.getElementById('lxd-ct-disk-unit').value   = 'GB';
   if (typeof csRefresh === 'function') csRefresh('lxd-ct-disk-unit');
   _ctRootSizeSync();
@@ -40089,9 +41678,9 @@ async function openNewContainerModal() {
   const _ctdisk = document.getElementById('cthw-extra-disks');
   if (_ctdisk) _ctdisk.style.display = 'none';
   // Reset summaries + collapse
-  document.getElementById('cthw-cpu-summary').textContent   = '1 core';
+  document.getElementById('cthw-cpu-summary').textContent   = _lxdComposeMode ? '2 cores' : '1 core';
   document.getElementById('cthw-mem-summary').textContent   = '2 GB';
-  document.getElementById('cthw-disk0-summary').textContent = '10 GB';
+  document.getElementById('cthw-disk0-summary').textContent = _lxdComposeMode ? '20 GB' : '10 GB';
   document.getElementById('cthw-nic0-summary').textContent  = '—';
   ['cthw-cpu','cthw-mem','cthw-disk0','cthw-nic0'].forEach(id => {
     const row = document.getElementById(id);
@@ -40099,7 +41688,24 @@ async function openNewContainerModal() {
     row.querySelector('.vm-hw-body').style.display = 'none';
     row.querySelector('.vm-hw-chevron').textContent = '▶';
   });
+  _ctApplyComposeMode();
   document.getElementById('modal-lxd-container').classList.remove('hidden');
+  // Mount syntax-highlighted editors once the modal is visible so
+  // CodeMirror measures its container correctly. Compose mode only —
+  // regular containers don't show these textareas.
+  if (_lxdComposeMode) {
+    _mountCMEditor('lxd-ct-compose-yaml', 'yaml');
+    _mountCMEditor('lxd-ct-compose-env',  'znas-env');
+    // Re-measure the .env editor when the user expands the <details>.
+    const det = document.getElementById('lxd-ct-env-section');
+    if (det && !det._znasRefreshHooked) {
+      det.addEventListener('toggle', () => {
+        const ta = document.getElementById('lxd-ct-compose-env');
+        if (ta && ta._cmInstance) ta._cmInstance.refresh();
+      });
+      det._znasRefreshHooked = true;
+    }
+  }
 
   initCustomSelect('lxd-ct-image', {searchable:true, richOpts:true, minWidth:640,
     headerCols:'100px 75px 80px 105px 1fr',
@@ -40132,6 +41738,8 @@ async function openNewContainerModal() {
     document.getElementById('cthw-nic0-summary').textContent = n0Sel.value;
   }
   csRefresh('lxd-ct-nic0-bridge');
+  _ctNic0BridgeChange();
+  _ctNic0RenderPFwds();
 
   // Load image source dropdown and auto-load local images
   await loadLXDImageSources('lxd-ct-image-source', 'lxd-ct-image', 'container');
@@ -40141,9 +41749,15 @@ async function openNewContainerModal() {
 function _ctCheckSubmitReady() {
   const name = (document.getElementById('lxd-ct-description')?.value || '').trim();
   const id   = (document.getElementById('lxd-ct-name')?.value || '').trim();
-  const img  = document.getElementById('lxd-ct-image')?.value || '';
   const btn  = document.getElementById('lxd-ct-submit-btn');
-  if (btn) btn.disabled = !(name && id && img);
+  if (!btn) return;
+  if (_lxdComposeMode) {
+    const yaml = (document.getElementById('lxd-ct-compose-yaml')?.value || '').trim();
+    btn.disabled = !(name && id && yaml);
+  } else {
+    const img = document.getElementById('lxd-ct-image')?.value || '';
+    btn.disabled = !(name && id && img);
+  }
 }
 
 function _ctAddHWToggle(e) {
@@ -40459,6 +42073,14 @@ async function submitCreateContainer(e) {
       nic0.dns1      = document.getElementById('lxd-ct-nic0-dns1').value.trim();
       nic0.dns2      = document.getElementById('lxd-ct-nic0-dns2').value.trim();
     }
+    // Port forwards (only meaningful on host-nat; the UI hides the table
+    // for any other bridge, but be defensive and drop incomplete rows).
+    if (nic0Bridge === 'host-nat' && _lxdCTNic0PFwds.length) {
+      const forwards = _lxdCTNic0PFwds
+        .map(f => ({ source_port: parseInt(f.src)||0, target_port: parseInt(f.dst)||0, protocol: (f.proto||'tcp').toLowerCase() }))
+        .filter(f => f.source_port > 0 && f.target_port > 0);
+      if (forwards.length) nic0.port_forwards = forwards;
+    }
     allNICs.push(nic0);
   }
   allNICs.push(..._lxdCTNICs);
@@ -40517,14 +42139,50 @@ async function submitCreateContainer(e) {
   };
   if (cpuLimit) body.cpu_limit_pct = parseInt(cpuLimit) || 0;
 
+  let endpoint = '/api/incus/containers';
+  let progressLabel = 'Creating container ' + body.name + '…';
+  if (_lxdComposeMode) {
+    // Sync editor → textarea, then validate before sending anything to
+    // the backend. A failure pops the validation modal (per-line errors)
+    // and re-enables the submit button so the user can fix and retry.
+    _syncCMEditor('lxd-ct-compose-yaml');
+    _syncCMEditor('lxd-ct-compose-env');
+    const yaml = (document.getElementById('lxd-ct-compose-yaml')?.value || '').trim();
+    const env  = document.getElementById('lxd-ct-compose-env')?.value || '';
+    if (!yaml) {
+      alertEl.textContent = 'Paste a docker-compose file to create a stack.';
+      alertEl.classList.remove('hidden'); btn.disabled = false; return;
+    }
+    const yamlV = _composeValidate(yaml);
+    const envV  = _envValidate(env);
+    const yamlCM = document.getElementById('lxd-ct-compose-yaml')?._cmInstance;
+    const envCM  = document.getElementById('lxd-ct-compose-env')?._cmInstance;
+    _markCMErrors(yamlCM, yamlV.errors);
+    _markCMErrors(envCM,  envV.errors);
+    if (!yamlV.ok || !envV.ok) {
+      const all = (yamlV.errors||[]).map(e => ({...e, _src:'compose'})).concat((envV.errors||[]).map(e => ({...e, _src:'env'})));
+      _showComposeValidate(
+        'Compose validation failed',
+        'Fix the errors below and try again. Warnings are advisory — they don\'t block creation.',
+        all, '✗');
+      btn.disabled = false;
+      return;
+    }
+    body.compose_yaml = yaml;
+    body.compose_env = env;
+    body.image = ''; // backend picks the base image from settings
+    endpoint = '/api/incus/compose-stacks';
+    progressLabel = 'Creating compose stack ' + body.name + '…';
+  }
+
   try {
-    const res = await fetch('/api/incus/containers', {
+    const res = await fetch(endpoint, {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     document.getElementById('modal-lxd-container').classList.add('hidden');
-    openLXDProgressModal('Creating container ' + body.name + '…', data.job_id);
+    openLXDProgressModal(progressLabel, data.job_id);
   } catch(e) {
     alertEl.textContent = e.message;
     alertEl.classList.remove('hidden');
@@ -40989,16 +42647,59 @@ function _bgPollLXDJob(jobId, label) {
   })();
 }
 
-function openLXDProgressModal(title, jobId) {
+// _lxdActivePollIds tracks which jobIds currently have a pollLXDProgress
+// loop running, so a reopen from the Activity panel can decide whether to
+// start a new poll or just unhide the modal (which the live poll is already
+// writing into).
+const _lxdActivePollIds = new Set();
+
+function openLXDProgressModal(title, jobId, opts) {
   document.getElementById('lxd-progress-title').textContent = title;
   document.getElementById('lxd-progress-log').textContent = '';
   document.getElementById('lxd-progress-footer').style.display = 'none';
+  document.getElementById('lxd-progress-bg-hint').style.display = '';
   document.getElementById('modal-lxd-progress').classList.remove('hidden');
-  addActiveJob('lxd-create-' + jobId, title);
+  // Every progress job becomes reopenable from the Activity panel: clicking
+  // the row calls _reopenLXDProgress(jobId, title). Callers can pile extra
+  // metadata (kind, stack) via opts — used by ciComposeUpdateNow to find an
+  // already-running update for the same stack.
+  const jobOpts = Object.assign(
+    { clickFnName: '_reopenLXDProgress', clickArgs: [String(jobId), String(title)] },
+    opts || {}
+  );
+  addActiveJob('lxd-create-' + jobId, title, jobOpts);
   pollLXDProgress(jobId, []);
 }
 
+// _reopenLXDProgress unhides the progress modal for a job that's still
+// running in the background. The poll loop has been writing to the log
+// element the whole time, so the only work is unhiding the modal — unless
+// a page reload wiped the in-memory poll state, in which case we start a
+// fresh poll (which will replay all server-buffered lines).
+function _reopenLXDProgress(jobId, title) {
+  const modal = document.getElementById('modal-lxd-progress');
+  if (!modal) return;
+  if (title) document.getElementById('lxd-progress-title').textContent = title;
+  document.getElementById('lxd-progress-bg-hint').style.display = '';
+  modal.classList.remove('hidden');
+  if (!_lxdActivePollIds.has(String(jobId))) {
+    // Lost poll (page refresh) — restart it. The backend buffer returns the
+    // full line history so the log repopulates from scratch.
+    document.getElementById('lxd-progress-log').textContent = '';
+    document.getElementById('lxd-progress-footer').style.display = 'none';
+    pollLXDProgress(jobId, []);
+  }
+}
+
+// _lxdProgressHideToBackground hides the progress modal without cancelling
+// the poll or removing the active job — the task keeps running and stays
+// visible in the Activity panel until it finishes.
+function _lxdProgressHideToBackground() {
+  document.getElementById('modal-lxd-progress').classList.add('hidden');
+}
+
 async function pollLXDProgress(jobId, seenLines) {
+  _lxdActivePollIds.add(String(jobId));
   try {
     const res = await fetch('/api/incus/create-progress?job_id=' + encodeURIComponent(jobId));
     if (!res.ok) throw new Error(await res.text());
@@ -41015,6 +42716,7 @@ async function pollLXDProgress(jobId, seenLines) {
       logEl.textContent += '\n✓ Complete.\n';
       logEl.scrollTop = logEl.scrollHeight;
       document.getElementById('lxd-progress-footer').style.display = '';
+      _lxdActivePollIds.delete(String(jobId));
       removeActiveJob('lxd-create-' + jobId);
       // Auto-dismiss the progress modal on success after a short delay so
       // the click-blocking backdrop doesn't trap subsequent interactions.
@@ -41031,6 +42733,7 @@ async function pollLXDProgress(jobId, seenLines) {
       logEl.textContent += '\n✗ Error: ' + (data.error||'unknown error') + '\n';
       logEl.scrollTop = logEl.scrollHeight;
       document.getElementById('lxd-progress-footer').style.display = '';
+      _lxdActivePollIds.delete(String(jobId));
       removeActiveJob('lxd-create-' + jobId);
       return;
     }
@@ -41039,6 +42742,7 @@ async function pollLXDProgress(jobId, seenLines) {
     const logEl = document.getElementById('lxd-progress-log');
     if (logEl) { logEl.textContent += '\n✗ ' + e.message + '\n'; }
     document.getElementById('lxd-progress-footer').style.display = '';
+    _lxdActivePollIds.delete(String(jobId));
     removeActiveJob('lxd-create-' + jobId);
   }
 }

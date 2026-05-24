@@ -22,9 +22,14 @@ func HandleGetSettings(appCfg *config.AppConfig) http.HandlerFunc {
 		if theme == "" {
 			theme = "dark"
 		}
+		composeImg := appCfg.ComposeBaseImage
+		if composeImg == "" {
+			composeImg = "debian"
+		}
 		jsonOK(w, map[string]interface{}{
 			"port":                 appCfg.Port,
 			"bind_port_443":        appCfg.BindPort443,
+			"compose_base_image":   composeImg,
 			"storage_unit":         appCfg.StorageUnit,
 			"login_theme":          theme,
 			"live_update_enabled":  appCfg.LiveUpdateEnabled,
@@ -40,6 +45,7 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 		var req struct {
 			Port              *int    `json:"port"`
 			BindPort443       *bool   `json:"bind_port_443"`
+			ComposeBaseImage  *string `json:"compose_base_image"`
 			StorageUnit       *string `json:"storage_unit"`
 			LoginTheme        *string `json:"login_theme"`
 			LiveUpdateEnabled *bool   `json:"live_update_enabled"`
@@ -62,6 +68,16 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		if req.BindPort443 != nil {
 			appCfg.BindPort443 = *req.BindPort443
+			changed = true
+		}
+		if req.ComposeBaseImage != nil {
+			switch *req.ComposeBaseImage {
+			case "alpine", "debian", "ubuntu":
+			default:
+				jsonErr(w, http.StatusBadRequest, "compose_base_image must be 'alpine', 'debian', or 'ubuntu'")
+				return
+			}
+			appCfg.ComposeBaseImage = *req.ComposeBaseImage
 			changed = true
 		}
 		if req.StorageUnit != nil {

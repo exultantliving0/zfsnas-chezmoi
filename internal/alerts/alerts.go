@@ -43,6 +43,7 @@ const (
 	EventVMBackupFailure    EventKey = "vm_backup_failure"
 	EventVMDiskFull         EventKey = "vm_disk_full"
 	EventVMHostSaturation   EventKey = "vm_host_saturation"
+	EventComposeUpdateFailure EventKey = "compose_update_failure"
 	EventTest            EventKey = "test" // always passes filter
 )
 
@@ -70,6 +71,7 @@ func matchesEvent(key EventKey, ev EventConfig) bool {
 	case EventVMBackupFailure:   return ev.VMBackupFailure
 	case EventVMDiskFull:        return ev.VMDiskFull
 	case EventVMHostSaturation:  return ev.VMHostSaturation
+	case EventComposeUpdateFailure: return ev.ComposeUpdateFailure
 	}
 	return false
 }
@@ -113,6 +115,7 @@ type EventConfig struct {
 	VMDiskFull              bool `json:"vm_disk_full"`
 	VMDiskFullThresholdPct  int  `json:"vm_disk_full_threshold_pct"`
 	VMHostSaturation        bool `json:"vm_host_saturation"`
+	ComposeUpdateFailure    bool `json:"compose_update_failure"`
 }
 
 type EmailTarget struct {

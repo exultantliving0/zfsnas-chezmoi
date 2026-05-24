@@ -172,6 +172,11 @@ const (
 	ActionLXDBackupRestore      = "lxd_backup_restore"       // instant restore (rename bkup--<vm> in place)
 	ActionLXDBackupCloneRestore = "lxd_backup_clone_restore" // clone-restore via syncoid
 
+	// Compose stack management.
+	ActionComposeUpdate   = "compose_update"   // podman-compose pull + up -d on a stack
+	ActionComposeRedeploy = "compose_redeploy" // compose file / .env edited and re-applied
+	ActionComposeAction   = "compose_action"   // per-container start/stop/restart/update
+
 	// Back-compat Go aliases. Old callers compile unchanged. ZNAS now writes
 	// the new strings, but these aliases let imports that still say e.g.
 	// `audit.ActionLXDStart` resolve to the new value seamlessly. Removed in

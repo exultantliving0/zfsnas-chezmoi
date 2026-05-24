@@ -45,6 +45,8 @@ var relayWSForwardPaths = []string{
 	"/ws/replication/",
 	"/ws/lxd-console",
 	"/ws/lxd-vga",
+	"/ws/compose-logs",
+	"/ws/compose-console",
 }
 
 // isRelayBypassed reports whether path should be served locally even when
