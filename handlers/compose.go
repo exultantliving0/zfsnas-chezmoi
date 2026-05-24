@@ -141,6 +141,28 @@ func HandleComposeContainerLogs(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(out)) //nolint:errcheck
 }
 
+// HandleComposeContainerInspect returns the raw `podman inspect` JSON
+// for one container in a stack. The response body is the podman array
+// (single element) sent unmodified — the frontend renders pretty
+// sections from it client-side so we stay decoupled from podman's
+// version-to-version field churn.
+// GET /api/lxd/compose-stacks/{name}/containers/{container}/inspect
+func HandleComposeContainerInspect(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+	container := vars["container"]
+	if !requireComposeStack(w, name) {
+		return
+	}
+	out, err := system.ComposeContainerInspect(name, container)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(out)) //nolint:errcheck
+}
+
 // HandleComposeContainerAction runs start/stop/restart/update on one
 // container of a stack.
 // POST /api/incus/compose-stacks/{name}/container-action

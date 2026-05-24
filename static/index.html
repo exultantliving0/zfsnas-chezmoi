@@ -4259,9 +4259,29 @@
             <div style="display:flex;align-items:center;gap:10px;">
               <span id="ci-mon-rt-indicator" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#30d158;"></span>
               <span style="font-size:13px;font-weight:700;color:var(--text);">Live</span>
-              <i class="info-tip" data-tip="Live numbers polled every 3 seconds from /1.0/instances/<name>/state. The sparkline shows the last ~5 minutes; older points roll off. Pause to freeze the view (useful for screenshots)."></i>
+              <i class="info-tip" data-tip="Live numbers polled from /1.0/instances/<name>/state at the interval you pick on the right. The sparkline shows the last ~5 minutes; older points roll off. Pause freezes the view (useful for screenshots)."></i>
             </div>
-            <button id="ci-mon-rt-pause" class="btn btn-sm" onclick="_ciMonTogglePause()" style="font-size:11px;padding:3px 10px;">⏸ Pause</button>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <!-- Custom dropdown — button + popover. The popover is fully
+                   styled so the OS-native <select> menu never shows. -->
+              <div id="ci-mon-int-wrap" style="position:relative;">
+                <button id="ci-mon-int-btn" type="button" onclick="_ciMonIntToggleMenu(event)" title="Live-poll interval"
+                        style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px 3px 10px;
+                               font-size:11px;font-weight:700;letter-spacing:.02em;line-height:1.2;
+                               border-radius:6px;border:1px solid rgba(191,90,242,0.4);
+                               background:rgba(191,90,242,0.12);color:var(--accent-1);cursor:pointer;">
+                  <span id="ci-mon-int-label">3 s</span>
+                  <svg width="9" height="6" viewBox="0 0 12 8" fill="none" stroke="#bf5af2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><polyline points="1.5 1.5 6 6 10.5 1.5"/></svg>
+                </button>
+                <div id="ci-mon-int-menu"
+                     style="display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:60;
+                            min-width:88px;padding:4px;border-radius:8px;
+                            background:var(--surface);border:1px solid var(--border);
+                            box-shadow:0 6px 20px rgba(0,0,0,.35);">
+                </div>
+              </div>
+              <button id="ci-mon-rt-pause" class="btn btn-sm" onclick="_ciMonTogglePause()" style="font-size:11px;padding:3px 10px;">⏸ Pause</button>
+            </div>
           </div>
 
           <div style="display:flex;flex-direction:row;gap:12px;margin-bottom:24px;align-items:stretch;flex-wrap:nowrap;">
@@ -4642,6 +4662,36 @@ Select the Console tab to load.</pre>
             style="background:#0d0d0f;color:#e6e6e6;margin:0;padding:14px 16px;flex:1;overflow:auto;
                    font-family:'SF Mono','Fira Code','JetBrains Mono',Menlo,monospace;font-size:12px;line-height:1.5;
                    white-space:pre-wrap;word-break:break-word;tab-size:4;-moz-tab-size:4;border-radius:0 0 var(--radius) var(--radius);"></pre>
+        </div>
+      </div>
+
+      <!-- ── Compose container "Inspect" modal ───────────────────────────────
+           Pretty-prints `podman inspect <container>` as themed cards plus a
+           Raw JSON tab. Sections are populated by _ciComposeRenderInspect
+           from the inspect array; we read fields tolerantly so podman
+           field drift doesn't break the UI. -->
+      <div class="modal-backdrop hidden" id="modal-ci-compose-inspect" onclick="if(event.target===this)document.getElementById('modal-ci-compose-inspect').classList.add('hidden')">
+        <div class="modal" style="max-width:1100px;width:96vw;max-height:92vh;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">
+              🔍 Inspect
+              <span id="ci-compose-inspect-name" style="font-family:monospace;font-weight:500;color:var(--accent);"></span>
+              <span id="ci-compose-inspect-meta" style="font-size:11px;font-weight:400;color:var(--text-3);"></span>
+            </h3>
+            <button class="modal-close" onclick="document.getElementById('modal-ci-compose-inspect').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:8px 16px;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border);flex-shrink:0;">
+            <button id="ci-compose-inspect-tab-pretty" class="btn btn-ghost btn-sm" onclick="_ciComposeInspectShowTab('pretty')" style="font-size:12px;">📋 Pretty</button>
+            <button id="ci-compose-inspect-tab-raw"    class="btn btn-ghost btn-sm" onclick="_ciComposeInspectShowTab('raw')"    style="font-size:12px;">{ } Raw JSON</button>
+            <span style="flex:1;"></span>
+            <button class="btn btn-ghost btn-sm" onclick="_ciComposeInspectReload()" style="font-size:12px;">↻ Refresh</button>
+            <button class="btn btn-ghost btn-sm" onclick="_ciComposeInspectCopyJSON()" style="font-size:12px;">⧉ Copy JSON</button>
+          </div>
+          <div id="ci-compose-inspect-pretty" style="flex:1;overflow:auto;padding:14px 16px;background:linear-gradient(180deg,#11141a 0%,#0d0f14 100%);"></div>
+          <pre id="ci-compose-inspect-raw"
+            style="display:none;background:#0d0d0f;color:#e6e6e6;margin:0;padding:14px 16px;flex:1;overflow:auto;
+                   font-family:'SF Mono','Fira Code','JetBrains Mono',Menlo,monospace;font-size:12px;line-height:1.5;
+                   white-space:pre-wrap;word-break:break-word;tab-size:2;-moz-tab-size:2;border-radius:0 0 var(--radius) var(--radius);"></pre>
         </div>
       </div>
 
@@ -13288,8 +13338,8 @@ function sudoersSectionHeaderTR(sec, label, optional, allForced) {
     : '';
   const secAttr = esc(sec);
   const btns = allForced ? '' : `
-    <button onclick="approveSectionSudoers('${secAttr}')" class="btn btn-sm" style="font-size:11px;padding:2px 8px;">✓ Approve</button>
-    <button onclick="refuseSectionSudoers('${secAttr}')" class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:color-mix(in srgb,var(--accent-danger) 8%,transparent);border-color:color-mix(in srgb,var(--accent-danger) 30%,var(--border));color:var(--accent-danger);">✗ Refuse</button>`;
+    <button onclick="refuseSectionSudoers('${secAttr}')" class="btn btn-sm" style="font-size:11px;padding:2px 8px;background:color-mix(in srgb,var(--accent-danger) 8%,transparent);border-color:color-mix(in srgb,var(--accent-danger) 30%,var(--border));color:var(--accent-danger);">✗ Refuse</button>
+    <button onclick="approveSectionSudoers('${secAttr}')" class="btn btn-sm" style="font-size:11px;padding:2px 8px;">✓ Approve</button>`;
   return `<tr class="sudoers-section-hdr" style="background:var(--bg-2);border-top:2px solid var(--border);">
     <td colspan="4" style="padding:7px 12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -14480,6 +14530,7 @@ async function loadAudit() {
     'perf-agg-sel': true,
     'ups-perf-agg-sel': true,
     'ci-mon-agg-sel': true,
+    'ci-mon-rt-interval': true,
   };
   window.initAllCustomSelects = function(root) {
     var scope = root || document;
@@ -33452,9 +33503,37 @@ function ciRefresh() {
   if (_ciCurrentName) openComputeInstance(_ciCurrentName, _ciCurrentType);
 }
 
+// _ciCloseAllTopMenus closes every dropdown in the instance detail
+// page header so that opening one always closes the others. Each
+// toggle below calls this at entry: if the click was on a different
+// trigger than the currently-open menu, the old menu disappears
+// first; if it was on the same trigger, this collapses everything
+// and the toggle's wasOpen check returns early (toggle-off behavior).
+function _ciCloseAllTopMenus(exceptId) {
+  ['ci-burger-menu', 'ci-term-menu', 'ci-snap-menu', 'ci-bkup-menu', 'ci-update-menu'].forEach(id => {
+    if (id === exceptId) return;
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  });
+  if (typeof _ciSnapMenuOpen !== 'undefined') _ciSnapMenuOpen = false;
+  if (typeof _ciBkupMenuOpen !== 'undefined') _ciBkupMenuOpen = false;
+  // The Power menu is a floating element created by toggleLXDPowerMenu;
+  // _closeLXDMenus removes it from the DOM and clears _openLXDMenu.
+  if (typeof _closeLXDMenus === 'function') _closeLXDMenus();
+}
+
 function ciTogglePowerMenu(e) {
   const badge = document.getElementById('ci-status-badge');
   const status = (badge && badge.dataset.status) || 'Stopped';
+  // toggleLXDPowerMenu calls _closeLXDMenus internally; we also need to
+  // close the burger/term/snap/bkup/update menus so they don't sit open
+  // behind the floating power menu.
+  ['ci-burger-menu', 'ci-term-menu', 'ci-snap-menu', 'ci-bkup-menu', 'ci-update-menu'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  });
+  if (typeof _ciSnapMenuOpen !== 'undefined') _ciSnapMenuOpen = false;
+  if (typeof _ciBkupMenuOpen !== 'undefined') _ciBkupMenuOpen = false;
   toggleLXDPowerMenu(e, _ciCurrentName, status);
 }
 
@@ -33504,11 +33583,9 @@ function _ciRenderSnapList() {
 function ciToggleSnapMenu(e) {
   e.stopPropagation();
   const menu = document.getElementById('ci-snap-menu');
-  _ciSnapMenuOpen = !menu.classList.contains('hidden');
-  if (_ciSnapMenuOpen) { _ciCloseSnapMenu(); return; }
-  // v6.5.19: Snapshot and Backup dropdowns are mutually exclusive — close
-  // the other one before opening this one.
-  if (typeof _ciCloseBackupMenu === 'function') _ciCloseBackupMenu();
+  const wasOpen = !menu.classList.contains('hidden');
+  _ciCloseAllTopMenus('ci-snap-menu');
+  if (wasOpen) { _ciCloseSnapMenu(); return; }
   menu.classList.remove('hidden');
   _ciSnapMenuOpen = true;
   const close = (ev) => { if (!document.getElementById('ci-snap-wrap').contains(ev.target)) { _ciCloseSnapMenu(); document.removeEventListener('click', close); } };
@@ -34074,7 +34151,8 @@ function _ciRenderComposeContainers(list, stackStatus) {
       (running ? `<button onclick="ciComposeContainerAction('${esc(c.name)}','${esc(c.service)}','stop')">■ Stop</button>` : '') +
       (running ? `<button onclick="ciComposeContainerAction('${esc(c.name)}','${esc(c.service)}','restart')">↻ Restart</button>` : '') +
       `<button onclick="ciComposeContainerAction('${esc(c.name)}','${esc(c.service)}','update')">⬆ Update</button>` +
-      `<button onclick="_ciComposeShowLogs('${esc(c.name)}')">📜 Last Outputs</button>`;
+      `<button onclick="_ciComposeShowLogs('${esc(c.name)}')">📜 Last Outputs</button>` +
+      `<button onclick="_ciComposeShowInspect('${esc(c.name)}')">🔍 Inspect</button>`;
     const termMenu = running
       ? `<button onclick="_ciComposeTermBottom('${esc(c.name)}')">LXD Bottom Terminal</button>` +
         `<button onclick="_ciComposeTermNewTab('${esc(c.name)}')">LXD Tab Terminal</button>` +
@@ -34270,6 +34348,278 @@ function _ciComposeLogsScrollEnd() {
   if (body) body.scrollTop = body.scrollHeight;
 }
 
+// ── Container Inspect ─────────────────────────────────────────────────────
+// Reads `podman inspect <container>` from the backend (raw JSON array)
+// and renders two views: a coloured "Pretty" card grid keyed off the
+// fields most operators want at a glance (state, image, network,
+// ports, mounts, env, labels, runtime), and a raw JSON dump for the
+// rest. The render walks fields tolerantly — podman field names shift
+// across versions, so missing keys just hide their card instead of
+// breaking the dialog.
+let _ciComposeInspectName = null;
+let _ciComposeInspectRaw  = '';
+
+async function _ciComposeShowInspect(container) {
+  _ciComposeCloseAllRowMenus();
+  _ciComposeInspectName = container;
+  const stack = _ciCurrentName;
+  document.getElementById('ci-compose-inspect-name').textContent = container;
+  document.getElementById('ci-compose-inspect-meta').textContent = 'on stack ' + stack;
+  document.getElementById('modal-ci-compose-inspect').classList.remove('hidden');
+  _ciComposeInspectShowTab('pretty');
+  await _ciComposeInspectReload();
+}
+
+function _ciComposeInspectShowTab(which) {
+  const pretty = document.getElementById('ci-compose-inspect-pretty');
+  const raw    = document.getElementById('ci-compose-inspect-raw');
+  const tp = document.getElementById('ci-compose-inspect-tab-pretty');
+  const tr = document.getElementById('ci-compose-inspect-tab-raw');
+  if (which === 'raw') {
+    pretty.style.display = 'none'; raw.style.display = 'block';
+    tp.classList.remove('btn-primary'); tp.classList.add('btn-ghost');
+    tr.classList.remove('btn-ghost');   tr.classList.add('btn-primary');
+  } else {
+    pretty.style.display = 'block'; raw.style.display = 'none';
+    tr.classList.remove('btn-primary'); tr.classList.add('btn-ghost');
+    tp.classList.remove('btn-ghost');   tp.classList.add('btn-primary');
+  }
+}
+
+async function _ciComposeInspectReload() {
+  const stack = _ciCurrentName;
+  const container = _ciComposeInspectName;
+  if (!stack || !container) return;
+  const pretty = document.getElementById('ci-compose-inspect-pretty');
+  const raw    = document.getElementById('ci-compose-inspect-raw');
+  pretty.innerHTML = '<div style="color:var(--text-3);font-size:12px;padding:8px 4px;">Loading…</div>';
+  raw.textContent = '';
+  try {
+    const r = await fetch('/api/incus/compose-stacks/' + encodeURIComponent(stack)
+      + '/containers/' + encodeURIComponent(container) + '/inspect');
+    if (!r.ok) {
+      const t = await r.text();
+      pretty.innerHTML = '<div style="color:#ff7676;font-size:12px;padding:8px;">✗ ' + esc(t || ('HTTP ' + r.status)) + '</div>';
+      return;
+    }
+    const text = await r.text();
+    _ciComposeInspectRaw = text;
+    let arr;
+    try { arr = JSON.parse(text); } catch(e) {
+      pretty.innerHTML = '<div style="color:#ff7676;font-size:12px;padding:8px;">✗ Could not parse inspect JSON: ' + esc(e.message) + '</div>';
+      raw.textContent = text;
+      return;
+    }
+    const obj = Array.isArray(arr) ? arr[0] : arr;
+    raw.textContent = JSON.stringify(obj || {}, null, 2);
+    pretty.innerHTML = _ciComposeRenderInspect(obj || {});
+  } catch(e) {
+    pretty.innerHTML = '<div style="color:#ff7676;font-size:12px;padding:8px;">✗ ' + esc(String(e.message || e)) + '</div>';
+  }
+}
+
+async function _ciComposeInspectCopyJSON() {
+  if (!_ciComposeInspectRaw) return;
+  try {
+    await navigator.clipboard.writeText(_ciComposeInspectRaw);
+    showToast('Inspect JSON copied to clipboard', 'success');
+  } catch(e) {
+    showToast('Copy failed: ' + (e.message || e), 'error');
+  }
+}
+
+// Picks the first present field name from a podman inspect object. Podman
+// has at least three casing conventions across versions; this lets every
+// card reach into the same logical fact without per-field if-else chains.
+function _ciPick(obj, paths) {
+  for (const p of paths) {
+    const parts = p.split('.');
+    let v = obj;
+    let ok = true;
+    for (const k of parts) {
+      if (v && typeof v === 'object' && k in v) v = v[k];
+      else { ok = false; break; }
+    }
+    if (ok && v !== null && v !== undefined && v !== '') return v;
+  }
+  return null;
+}
+
+function _ciComposeRenderInspect(o) {
+  const state = _ciPick(o, ['State.Status', 'State.status']) || 'unknown';
+  const stateColor = _ciComposeStateColor(state);
+  const pillStyle = 'display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:' + stateColor + ';';
+  const pillDot = '<span style="width:6px;height:6px;border-radius:50%;background:' + stateColor + ';"></span>';
+  const card = (title, accent, bodyHTML) =>
+    '<div style="background:#171a21;border:1px solid #262a33;border-left:3px solid ' + accent + ';border-radius:6px;padding:10px 12px 12px;margin:0 0 10px 0;">'
+    + '<div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:' + accent + ';margin-bottom:6px;">' + esc(title) + '</div>'
+    + bodyHTML + '</div>';
+  const kv = (rows) => {
+    if (!rows.length) return '<div style="font-size:12px;color:var(--text-3);">—</div>';
+    return '<div style="display:grid;grid-template-columns:170px 1fr;gap:4px 14px;font-size:12px;line-height:1.5;">'
+      + rows.map(r => '<div style="color:var(--text-3);">' + esc(r[0]) + '</div>'
+                    + '<div style="color:var(--text);font-family:' + (r[2] ? "'SF Mono','Fira Code',Menlo,monospace" : 'inherit') + ';word-break:break-all;">' + (r[3] === true ? r[1] : esc(String(r[1] === null || r[1] === undefined ? '—' : r[1]))) + '</div>'
+      ).join('')
+      + '</div>';
+  };
+  const list = (arr, fmt) => {
+    if (!arr || !arr.length) return '<div style="font-size:12px;color:var(--text-3);">—</div>';
+    return '<div style="display:flex;flex-direction:column;gap:4px;font-size:12px;font-family:\'SF Mono\',\'Fira Code\',Menlo,monospace;">'
+      + arr.map(fmt).join('') + '</div>';
+  };
+
+  // ── Overview / state ──
+  const id        = _ciPick(o, ['Id', 'ID']) || '';
+  const created   = _ciPick(o, ['Created']);
+  const restarts  = _ciPick(o, ['RestartCount', 'restartCount']);
+  const exitCode  = _ciPick(o, ['State.ExitCode']);
+  const started   = _ciPick(o, ['State.StartedAt', 'State.startedAt']);
+  const finished  = _ciPick(o, ['State.FinishedAt', 'State.finishedAt']);
+  const healthSt  = _ciPick(o, ['State.Health.Status', 'State.Healthcheck.Status']);
+  const overview = card('Overview', '#3aa1ff', kv([
+    ['Status',       pillDot + '<span style="' + pillStyle + '">' + esc(state) + '</span>', false, true],
+    ['Container ID', (id ? id.substring(0,12) : '—'), true],
+    ['Restart count', restarts === null ? '—' : restarts],
+    ['Exit code',    exitCode === null ? '—' : exitCode],
+    ['Created',      created],
+    ['Started at',   started],
+    ['Finished at',  finished],
+    ['Healthcheck',  healthSt],
+  ]));
+
+  // ── Image ──
+  const image   = _ciPick(o, ['ImageName', 'Image']) || '';
+  const imageID = _ciPick(o, ['Image']) || '';
+  const path    = _ciPick(o, ['Path']);
+  const argsA   = _ciPick(o, ['Args']);
+  const entry   = _ciPick(o, ['Config.Entrypoint', 'Config.entrypoint']);
+  const cmd     = _ciPick(o, ['Config.Cmd', 'Config.cmd']);
+  const wd      = _ciPick(o, ['Config.WorkingDir', 'Config.workingDir']);
+  const user    = _ciPick(o, ['Config.User', 'Config.user']);
+  const imageCard = card('Image & Command', '#a06bff', kv([
+    ['Image',       _composeShortImage(image), true],
+    ['Image ID',    typeof imageID === 'string' ? imageID.substring(0,16) : imageID, true],
+    ['Entrypoint',  Array.isArray(entry) ? entry.join(' ') : (entry || '—'), true],
+    ['Cmd',         Array.isArray(cmd) ? cmd.join(' ') : (cmd || '—'), true],
+    ['Path / Args', (path || '') + (Array.isArray(argsA) && argsA.length ? ' ' + argsA.join(' ') : ''), true],
+    ['Working dir', wd, true],
+    ['User',        user, true],
+  ]));
+
+  // ── Network ──
+  const ip       = _ciPick(o, ['NetworkSettings.IPAddress']);
+  const gw       = _ciPick(o, ['NetworkSettings.Gateway']);
+  const mac      = _ciPick(o, ['NetworkSettings.MacAddress']);
+  const ports    = _ciPick(o, ['NetworkSettings.Ports']) || {};
+  const networks = _ciPick(o, ['NetworkSettings.Networks']) || {};
+  const portsHTML = (() => {
+    const lines = [];
+    Object.keys(ports).sort().forEach(k => {
+      const bindings = ports[k];
+      if (!bindings || !bindings.length) { lines.push('<div>' + esc(k) + ' → (not published)</div>'); return; }
+      bindings.forEach(b => {
+        const host = (b.HostIp || '0.0.0.0') + ':' + b.HostPort;
+        lines.push('<div><span style="color:#3aa1ff;">' + esc(host) + '</span> → ' + esc(k) + '</div>');
+      });
+    });
+    return lines.length ? '<div style="font-family:\'SF Mono\',\'Fira Code\',Menlo,monospace;font-size:12px;display:flex;flex-direction:column;gap:3px;">' + lines.join('') + '</div>' : '<div style="font-size:12px;color:var(--text-3);">—</div>';
+  })();
+  const netList = (() => {
+    const names = Object.keys(networks);
+    if (!names.length) return '<div style="font-size:12px;color:var(--text-3);">—</div>';
+    return names.map(n => {
+      const net = networks[n] || {};
+      return '<div style="margin-bottom:4px;"><span style="color:#3aa1ff;">' + esc(n) + '</span>'
+        + (net.IPAddress ? ' — IP <span style="font-family:\'SF Mono\',\'Fira Code\',Menlo,monospace;">' + esc(net.IPAddress) + '</span>' : '')
+        + (net.Gateway   ? ', gw <span style="font-family:\'SF Mono\',\'Fira Code\',Menlo,monospace;">' + esc(net.Gateway) + '</span>' : '')
+        + (net.MacAddress ? ', mac <span style="font-family:\'SF Mono\',\'Fira Code\',Menlo,monospace;">' + esc(net.MacAddress) + '</span>' : '')
+        + '</div>';
+    }).join('');
+  })();
+  const network = card('Network', '#3ad9a0', kv([
+    ['IP address', ip, true],
+    ['Gateway',    gw, true],
+    ['MAC',        mac, true],
+    ['Published ports', portsHTML, false, true],
+    ['Networks',   netList, false, true],
+  ]));
+
+  // ── Mounts ──
+  const mounts = _ciPick(o, ['Mounts']) || [];
+  const mountsHTML = list(mounts, m => {
+    const src = m.Source || m.source || '';
+    const dst = m.Destination || m.destination || m.Target || '';
+    const ro  = (m.RW === false) || (m.Mode && /ro/.test(m.Mode));
+    return '<div style="display:flex;gap:6px;align-items:center;">'
+      + '<span style="color:#ffb84d;">' + esc(src) + '</span>'
+      + '<span style="color:var(--text-3);">→</span>'
+      + '<span style="color:#e6e6e6;">' + esc(dst) + '</span>'
+      + (ro ? '<span style="font-size:10px;background:#3a2a1a;color:#ffb84d;padding:1px 5px;border-radius:3px;">ro</span>' : '')
+      + '</div>';
+  });
+  const mountsCard = card('Mounts', '#ffb84d', mountsHTML);
+
+  // ── Environment ──
+  const env = _ciPick(o, ['Config.Env', 'Config.env']) || [];
+  const envHTML = list(env, e => {
+    const i = e.indexOf('=');
+    const k = i < 0 ? e : e.substring(0, i);
+    const v = i < 0 ? '' : e.substring(i + 1);
+    const sensitive = /(KEY|PASS|SECRET|TOKEN)/i.test(k);
+    const dv = sensitive ? '••••••••' : v;
+    return '<div><span style="color:#3aa1ff;">' + esc(k) + '</span>'
+      + '<span style="color:var(--text-3);">=</span>'
+      + '<span style="color:#e6e6e6;">' + esc(dv) + '</span></div>';
+  });
+  const envCard = card('Environment', '#3aa1ff', envHTML);
+
+  // ── Labels ──
+  const labels = _ciPick(o, ['Config.Labels', 'Config.labels']) || {};
+  const labelKeys = Object.keys(labels);
+  const labelsHTML = labelKeys.length
+    ? '<div style="display:flex;flex-direction:column;gap:3px;font-size:12px;font-family:\'SF Mono\',\'Fira Code\',Menlo,monospace;">'
+      + labelKeys.sort().map(k =>
+          '<div><span style="color:#c084fc;">' + esc(k) + '</span>'
+          + '<span style="color:var(--text-3);">=</span>'
+          + '<span style="color:#e6e6e6;">' + esc(String(labels[k])) + '</span></div>'
+        ).join('')
+      + '</div>'
+    : '<div style="font-size:12px;color:var(--text-3);">—</div>';
+  const labelsCard = card('Labels', '#c084fc', labelsHTML);
+
+  // ── Runtime / host config ──
+  const hostCfg = o.HostConfig || o.hostConfig || {};
+  const memLim   = hostCfg.Memory;
+  const cpuShare = hostCfg.CpuShares || hostCfg.CPUShares;
+  const cpuQuota = hostCfg.CpuQuota || hostCfg.CPUQuota;
+  const cpuPer   = hostCfg.CpuPeriod || hostCfg.CPUPeriod;
+  const restart  = hostCfg.RestartPolicy && (hostCfg.RestartPolicy.Name || hostCfg.RestartPolicy.name);
+  const privd    = hostCfg.Privileged;
+  const caps     = hostCfg.CapAdd || [];
+  const sec      = hostCfg.SecurityOpt || [];
+  const fmtMem = (n) => {
+    if (!n) return '—';
+    const u = ['B','KiB','MiB','GiB','TiB'];
+    let v = n, i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return v.toFixed(v < 10 ? 2 : 1) + ' ' + u[i];
+  };
+  const runtimeCard = card('Runtime / Host', '#ff7676', kv([
+    ['Memory limit',   fmtMem(memLim), true],
+    ['CPU shares',     cpuShare === 0 ? '—' : cpuShare],
+    ['CPU quota/period', (cpuQuota && cpuPer) ? (cpuQuota + ' / ' + cpuPer) : '—', true],
+    ['Restart policy', restart || '—'],
+    ['Privileged',     privd === true ? 'yes' : 'no'],
+    ['Cap add',        Array.isArray(caps) && caps.length ? caps.join(', ') : '—', true],
+    ['Security opt',   Array.isArray(sec) && sec.length ? sec.join(', ') : '—', true],
+  ]));
+
+  // Layout: two columns on wide screens, single column on narrow.
+  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:10px;">'
+    + overview + imageCard + network + mountsCard + envCard + labelsCard + runtimeCard
+    + '</div>';
+}
+
 async function ciComposeContainerAction(container, service, action) {
   document.querySelectorAll('[id^="ci-compose-menu-"]').forEach(m => m.style.display = 'none');
   const stack = _ciCurrentName;
@@ -34294,7 +34644,9 @@ function ciToggleUpdateMenu(e) {
   e.stopPropagation();
   const menu = document.getElementById('ci-update-menu');
   if (!menu) return;
-  if (!menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
+  const wasOpen = !menu.classList.contains('hidden');
+  _ciCloseAllTopMenus('ci-update-menu');
+  if (wasOpen) { menu.classList.add('hidden'); return; }
   menu.classList.remove('hidden');
   const close = (ev) => {
     if (!document.getElementById('ci-update-wrap').contains(ev.target)) {
@@ -34429,9 +34781,9 @@ let _ciBkupMenuOpen = false;
 function ciToggleBackupMenu(e) {
   e.stopPropagation();
   const menu = document.getElementById('ci-bkup-menu');
-  if (!menu.classList.contains('hidden')) { _ciCloseBackupMenu(); return; }
-  // Mutually exclusive with the Snapshot dropdown — at most one open at a time.
-  if (typeof _ciCloseSnapMenu === 'function') _ciCloseSnapMenu();
+  const wasOpen = !menu.classList.contains('hidden');
+  _ciCloseAllTopMenus('ci-bkup-menu');
+  if (wasOpen) { _ciCloseBackupMenu(); return; }
   menu.classList.remove('hidden');
   _ciBkupMenuOpen = true;
   _ciPositionBackupMenu();
@@ -35321,6 +35673,70 @@ function _ciConsoleScrollBottom() {
 
 let _ciMonTimer    = null;
 let _ciMonPaused   = false;
+// Live-poll interval in ms — persisted across instance navigations
+// + browser reloads via localStorage. Default 3 s; user can pick from
+// the custom dropdown next to the Pause button.
+let _ciMonInterval = parseInt(localStorage.getItem('znas_mon_interval') || '3000', 10) || 3000;
+// Allowed dropdown options. Keep these in lock-step with the popover
+// rendered by _ciMonRenderIntervalMenu.
+const _ciMonIntervalChoices = [
+  { ms: 1000,  label: '1 s'  },
+  { ms: 2000,  label: '2 s'  },
+  { ms: 3000,  label: '3 s'  },
+  { ms: 5000,  label: '5 s'  },
+  { ms: 10000, label: '10 s' },
+  { ms: 20000, label: '20 s' },
+  { ms: 30000, label: '30 s' },
+];
+
+function _ciMonIntervalLabel(ms) {
+  const m = _ciMonIntervalChoices.find(c => c.ms === ms);
+  return m ? m.label : (Math.round(ms / 1000) + ' s');
+}
+
+function _ciMonRenderIntervalMenu() {
+  const m = document.getElementById('ci-mon-int-menu');
+  if (!m) return;
+  m.innerHTML = _ciMonIntervalChoices.map(c => {
+    const active = c.ms === _ciMonInterval;
+    return `<button type="button" onclick="_ciMonPickInterval(${c.ms})"
+      style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
+             padding:5px 10px;font-size:11px;font-weight:600;line-height:1.2;
+             background:${active ? 'rgba(191,90,242,0.18)' : 'transparent'};
+             color:${active ? 'var(--accent-1)' : 'var(--text)'};
+             border:0;border-radius:5px;cursor:pointer;text-align:left;"
+      onmouseenter="this.style.background='rgba(191,90,242,0.12)'"
+      onmouseleave="this.style.background='${active ? 'rgba(191,90,242,0.18)' : 'transparent'}'">
+      <span>${c.label}</span>${active ? '<span style="color:var(--accent-1);">✓</span>' : ''}
+    </button>`;
+  }).join('');
+}
+
+function _ciMonIntToggleMenu(ev) {
+  if (ev) ev.stopPropagation();
+  const menu = document.getElementById('ci-mon-int-menu');
+  if (!menu) return;
+  const open = menu.style.display !== 'none';
+  if (open) { menu.style.display = 'none'; return; }
+  _ciMonRenderIntervalMenu();
+  menu.style.display = 'block';
+  // Close on outside click.
+  const close = (e) => {
+    if (!document.getElementById('ci-mon-int-wrap').contains(e.target)) {
+      menu.style.display = 'none';
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+function _ciMonPickInterval(ms) {
+  _ciMonSetInterval(ms);
+  const lbl = document.getElementById('ci-mon-int-label');
+  if (lbl) lbl.textContent = _ciMonIntervalLabel(_ciMonInterval);
+  const menu = document.getElementById('ci-mon-int-menu');
+  if (menu) menu.style.display = 'none';
+}
 let _ciMonBuffer   = { cpu: [], mem: [], disk: [], net: [] }; // rolling 5-min buffers
 let _ciMonSparks   = {}; // chart instances per metric
 let _ciMonHist     = {}; // historical chart instances per metric
@@ -35350,18 +35766,36 @@ function updateMonitorTabVisibility() {
   }
 }
 
+// _ciMonSetInterval is the dropdown handler — swap the polling cadence
+// live (clear the old timer, start a new one at the new interval) and
+// persist the choice so it survives navigations + reloads.
+function _ciMonSetInterval(ms) {
+  if (!ms || ms < 250) ms = 5000;
+  _ciMonInterval = ms;
+  try { localStorage.setItem('znas_mon_interval', String(ms)); } catch (_) {}
+  if (_ciMonTimer) {
+    clearInterval(_ciMonTimer);
+    _ciMonTimer = setInterval(_ciMonTick, _ciMonInterval);
+  }
+}
+
 function _ciMonStart() {
   if (!_ciCurrentName) return;
   // Reset state on entry — even if the same instance, treat as a fresh view.
   _ciMonBuffer = { cpu: [], mem: [], disk: [], net: [] };
   _ciMonPaused = false;
   document.getElementById('ci-mon-rt-pause').textContent = '⏸ Pause';
+  // Reflect the persisted interval on the custom dropdown label each
+  // time the tab opens. The popover renders lazily on open, so we only
+  // need to sync the button label here.
+  const lbl = document.getElementById('ci-mon-int-label');
+  if (lbl) lbl.textContent = _ciMonIntervalLabel(_ciMonInterval);
   // Build sparklines (lazy — Chart.js may not be ready until first call).
   _ciMonInitSparks();
   // Kick off the realtime poller.
   _ciMonStop(); // safety
   _ciMonTick();
-  _ciMonTimer = setInterval(_ciMonTick, 3000);
+  _ciMonTimer = setInterval(_ciMonTick, _ciMonInterval);
   // Pause when the browser tab loses visibility.
   document.addEventListener('visibilitychange', _ciMonVisibility);
   // Load the historical row.
@@ -35383,7 +35817,7 @@ function _ciMonVisibility() {
   } else {
     if (!_ciMonPaused && _ciActiveTab === 'monitor' && !_ciMonTimer) {
       _ciMonTick();
-      _ciMonTimer = setInterval(_ciMonTick, 3000);
+      _ciMonTimer = setInterval(_ciMonTick, _ciMonInterval);
     }
   }
 }
@@ -35397,7 +35831,7 @@ function _ciMonTogglePause() {
   } else {
     btn.textContent = '⏸ Pause';
     _ciMonTick();
-    _ciMonTimer = setInterval(_ciMonTick, 3000);
+    _ciMonTimer = setInterval(_ciMonTick, _ciMonInterval);
   }
 }
 
@@ -36142,11 +36576,12 @@ function ciToggleTermMenu(e) {
   const badge = document.getElementById('ci-status-badge');
   if (badge && badge.dataset.status !== 'Running') return;
   const menu = document.getElementById('ci-term-menu');
-  menu.classList.toggle('hidden');
-  if (!menu.classList.contains('hidden')) {
-    const close = () => { menu.classList.add('hidden'); document.removeEventListener('click', close); };
-    setTimeout(() => document.addEventListener('click', close), 0);
-  }
+  const wasOpen = !menu.classList.contains('hidden');
+  _ciCloseAllTopMenus('ci-term-menu');
+  if (wasOpen) { menu.classList.add('hidden'); return; }
+  menu.classList.remove('hidden');
+  const close = () => { menu.classList.add('hidden'); document.removeEventListener('click', close); };
+  setTimeout(() => document.addEventListener('click', close), 0);
 }
 function _ciCloseTermMenu() { document.getElementById('ci-term-menu').classList.add('hidden'); }
 
@@ -36455,11 +36890,12 @@ function ciToggleBurger(e) {
     else disabledStyle(pushBtn, 'VM must be stopped before pushing');
   }
 
-  menu.classList.toggle('hidden');
-  if (!menu.classList.contains('hidden')) {
-    const close = () => { menu.classList.add('hidden'); document.removeEventListener('click', close); };
-    setTimeout(() => document.addEventListener('click', close), 0);
-  }
+  const wasOpen = !menu.classList.contains('hidden');
+  _ciCloseAllTopMenus('ci-burger-menu');
+  if (wasOpen) { menu.classList.add('hidden'); return; }
+  menu.classList.remove('hidden');
+  const close = () => { menu.classList.add('hidden'); document.removeEventListener('click', close); };
+  setTimeout(() => document.addEventListener('click', close), 0);
 }
 
 function ciCloseBurger() {

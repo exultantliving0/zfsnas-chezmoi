@@ -6340,6 +6340,20 @@ func ComposeContainerLogs(stack, container string, tail int) (string, error) {
 	return composeAnsiRE.ReplaceAllString(string(out), ""), nil
 }
 
+// ComposeContainerInspect returns the raw `podman inspect <container>` JSON
+// for one container in a stack — a single-element JSON array, as podman
+// always wraps. We pass it through verbatim; the frontend renders pretty
+// sections from it without us imposing a schema, so podman version drift
+// doesn't break the UI.
+func ComposeContainerInspect(stack, container string) (string, error) {
+	out, err := exec.Command("incus", "exec", stack, "--",
+		"podman", "inspect", container).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("podman inspect: %s", strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
 // ComposeContainerAction runs a lifecycle action on a single container in a
 // stack. action ∈ {start, stop, restart, update}. For "update" the service
 // name is required: the image is pulled and the service recreated.

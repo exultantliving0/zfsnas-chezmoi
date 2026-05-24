@@ -910,17 +910,48 @@ function _renderCDROMMenu() {
   if (!_cdromState.available || !_cdromState.available.length) {
     const empty = document.createElement('div');
     empty.className = 'kbd-item muted';
-    empty.textContent = 'No ISOs in pool ' + (_cdromState.pool || '?');
+    empty.textContent = 'No ISOs on any pool';
     m.appendChild(empty);
   } else {
+    // Group ISOs by pool so the operator can tell where each disc lives.
+    // The VM's root pool floats to the top — that's the "default" pool
+    // the picker used to show alone, and is the most common pick.
+    const byPool = {};
+    const order = [];
     _cdromState.available.forEach(function(iso) {
-      const isCur = iso.name === cur.filename;
-      const row = document.createElement('div');
-      row.className = 'kbd-item' + (isCur ? ' current' : '');
-      row.textContent = (isCur ? '● ' : '') + iso.name;
-      row.dataset.iso = iso.name;
-      row.addEventListener('click', function() { swapCDROM(iso.name); });
-      m.appendChild(row);
+      const p = iso.pool || _cdromState.pool || '?';
+      if (!byPool[p]) { byPool[p] = []; order.push(p); }
+      byPool[p].push(iso);
+    });
+    const rootPool = _cdromState.pool || '';
+    order.sort(function(a, b) {
+      if (a === rootPool) return -1;
+      if (b === rootPool) return 1;
+      return a.localeCompare(b);
+    });
+    order.forEach(function(p) {
+      const hdr = document.createElement('div');
+      hdr.className = 'kbd-sub';
+      hdr.textContent = 'Pool: ' + p;
+      m.appendChild(hdr);
+      byPool[p].forEach(function(iso) {
+        // "current" is filename-only — Incus paths embed the pool name,
+        // but two different pools could legitimately hold same-named ISOs;
+        // mark current only when both the filename and pool match what's
+        // attached. The configured path includes the pool's mount point so
+        // a substring check on the pool name is enough.
+        const isCur = iso.name === cur.filename &&
+          (_cdromState.configured && _cdromState.configured[0] &&
+           _cdromState.configured[0].path &&
+           _cdromState.configured[0].path.indexOf('/' + p + '/') !== -1);
+        const row = document.createElement('div');
+        row.className = 'kbd-item' + (isCur ? ' current' : '');
+        row.textContent = (isCur ? '● ' : '') + iso.name;
+        row.dataset.iso = iso.name;
+        row.dataset.pool = p;
+        row.addEventListener('click', function() { swapCDROM(iso.name, p); });
+        m.appendChild(row);
+      });
     });
   }
   if (_cdromState.running) {
@@ -944,13 +975,13 @@ function toggleCDROMMenu(e) {
   }
 }
 
-async function swapCDROM(filename) {
+async function swapCDROM(filename, pool) {
   document.getElementById('cdrom-menu').style.display = 'none';
   try {
     const r = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/cdroms/swap', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: filename })
+      body: JSON.stringify({ filename: filename, pool: pool || '' })
     });
     const d = await r.json().catch(function(){ return {}; });
     if (!r.ok || d.ok === false) {

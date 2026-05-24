@@ -122,11 +122,15 @@ func zfsOneMountpoint(dataset string) (string, error) {
 // Must end in .iso (case-insensitive).
 var isoNameRe = regexp.MustCompile(`^[A-Za-z0-9._\-]+\.iso$`)
 
-// LXDISOInfo describes one ISO file.
+// LXDISOInfo describes one ISO file. Pool is only populated by
+// LXDListISOsAllPools (callers asking about a single pool already know
+// the pool name); when present it tells the UI which storage pool the
+// ISO lives in so the swap request can be routed back to the right one.
 type LXDISOInfo struct {
 	Name      string    `json:"name"`
 	SizeBytes int64     `json:"size_bytes"`
 	Modified  time.Time `json:"modified"`
+	Pool      string    `json:"pool,omitempty"`
 }
 
 // LXDISODir returns the absolute path of the ISO directory for the given Incus
@@ -217,6 +221,88 @@ func LXDListISOs(lxdPool string) ([]LXDISOInfo, error) {
 		out = []LXDISOInfo{}
 	}
 	return out, nil
+}
+
+// LXDListISOsAllPools enumerates every imported ZFS pool and returns the
+// union of ISOs from each pool's /<mountpoint>/.isos directory, tagged
+// with the originating ZFS pool name. We deliberately walk ZFS pools
+// rather than Incus storage pools — an operator might drop an installer
+// ISO under /<pool>/.isos on a ZFS pool that isn't (yet) registered as
+// an Incus backend, and the VGA picker should still surface it. Pools
+// without an .isos directory, or whose mountpoint we can't resolve, are
+// silently skipped: the goal is to show every disc that's actually
+// attachable, not to fail because one pool is misconfigured.
+func LXDListISOsAllPools() ([]LXDISOInfo, error) {
+	out, err := exec.Command("sudo", "zpool", "list", "-H", "-o", "name").Output()
+	if err != nil {
+		return nil, fmt.Errorf("zpool list: %w", err)
+	}
+	var isos []LXDISOInfo
+	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		mp, err := zfsResolvedMountpoint(name)
+		if err != nil {
+			continue
+		}
+		dir := filepath.Join(mp, ".isos")
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			n := e.Name()
+			if !strings.HasSuffix(strings.ToLower(n), ".iso") {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			isos = append(isos, LXDISOInfo{
+				Name:      n,
+				SizeBytes: info.Size(),
+				Modified:  info.ModTime().UTC(),
+				Pool:      name,
+			})
+		}
+	}
+	if isos == nil {
+		isos = []LXDISOInfo{}
+	}
+	return isos, nil
+}
+
+// LXDResolveISOPath returns the absolute path of an ISO file given a pool
+// name and filename. The pool may be either an Incus storage pool or a
+// raw ZFS pool — we try the Incus resolver first (preserves the existing
+// per-Incus-pool layout) and fall back to <zfs-mountpoint>/.isos for ZFS
+// pools that haven't been registered with Incus. This mirrors the union
+// that LXDListISOsAllPools surfaces to the picker.
+func LXDResolveISOPath(pool, filename string) (string, error) {
+	if !isoNameRe.MatchString(filename) {
+		return "", fmt.Errorf("invalid ISO filename")
+	}
+	if dir, err := LXDISODir(pool); err == nil {
+		p := filepath.Join(dir, filename)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	mp, err := zfsResolvedMountpoint(pool)
+	if err != nil {
+		return "", fmt.Errorf("resolve pool %q: %w", pool, err)
+	}
+	p := filepath.Join(mp, ".isos", filename)
+	if _, err := os.Stat(p); err != nil {
+		return "", fmt.Errorf("iso %q not found on pool %q", filename, pool)
+	}
+	return p, nil
 }
 
 // LXDDeleteISO deletes one ISO file from the pool's .isos directory.

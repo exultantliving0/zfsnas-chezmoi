@@ -817,6 +817,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleComposeStackContainers))).Methods("GET")
 	r.Handle("/api/lxd/compose-stacks/{name}/containers/{container}/logs",
 		RequireAuth(http.HandlerFunc(HandleComposeContainerLogs))).Methods("GET")
+	r.Handle("/api/lxd/compose-stacks/{name}/containers/{container}/inspect",
+		RequireAuth(http.HandlerFunc(HandleComposeContainerInspect))).Methods("GET")
 	r.Handle("/api/lxd/compose-stacks/{name}/container-action",
 		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleComposeContainerAction)))).Methods("POST")
 	r.Handle("/api/lxd/compose-stacks/{name}/update",

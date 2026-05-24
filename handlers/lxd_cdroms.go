@@ -55,7 +55,8 @@ func HandleLXDListCDROMs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Resolve the pool from the VM's root disk so we know where to list ISOs.
+	// Resolve the VM's root pool — it's the default destination for the swap
+	// when the UI doesn't pass an explicit pool (e.g. clicking "Eject").
 	for _, d := range cfg.Disks {
 		if d.IsRoot && d.Pool != "" {
 			resp.Pool = d.Pool
@@ -66,11 +67,11 @@ func HandleLXDListCDROMs(w http.ResponseWriter, r *http.Request) {
 		resp.Pool = cfg.Disks[0].Pool
 	}
 
-	if resp.Pool != "" {
-		isos, err := system.LXDListISOs(resp.Pool)
-		if err == nil {
-			resp.Available = isos
-		}
+	// List ISOs from every Incus storage pool, not just the VM's root pool,
+	// so the operator can attach an installer or driver disc that happens
+	// to live on another local pool without having to copy it first.
+	if isos, err := system.LXDListISOsAllPools(); err == nil {
+		resp.Available = isos
 	}
 	if resp.Available == nil {
 		resp.Available = []system.LXDISOInfo{}
@@ -87,17 +88,21 @@ func HandleLXDListCDROMs(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, resp)
 }
 
-// HandleLXDSwapCDROM replaces the first CD/DVD drive with the named ISO from
-// the VM's storage pool, or detaches it when filename is empty. The VM must
-// be restarted for the change to take effect — raw.qemu is consumed only at
-// QEMU start.
+// HandleLXDSwapCDROM replaces the first CD/DVD drive with the named ISO,
+// or detaches it when filename is empty. The pool field, if provided,
+// selects which storage pool the ISO is read from — required now that
+// the picker lists ISOs from every pool. When omitted (eject, legacy
+// callers) it falls back to the VM's root pool.
+// The VM must be restarted for the change to take effect — raw.qemu is
+// consumed only at QEMU start.
 // POST /api/lxd/instances/{name}/cdroms/swap
-// body: {"filename": "ubuntu.iso"} or {"filename": ""}
+// body: {"filename": "ubuntu.iso", "pool": "tank"} or {"filename": ""}
 func HandleLXDSwapCDROM(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["name"]
 	sess := MustSession(r)
 	var req struct {
 		Filename string `json:"filename"`
+		Pool     string `json:"pool"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	req.Filename = filepath.Base(strings.TrimSpace(req.Filename))
@@ -111,15 +116,17 @@ func HandleLXDSwapCDROM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pool := ""
-	for _, d := range cfg.Disks {
-		if d.IsRoot && d.Pool != "" {
-			pool = d.Pool
-			break
+	pool := strings.TrimSpace(req.Pool)
+	if pool == "" {
+		for _, d := range cfg.Disks {
+			if d.IsRoot && d.Pool != "" {
+				pool = d.Pool
+				break
+			}
 		}
-	}
-	if pool == "" && len(cfg.Disks) > 0 {
-		pool = cfg.Disks[0].Pool
+		if pool == "" && len(cfg.Disks) > 0 {
+			pool = cfg.Disks[0].Pool
+		}
 	}
 	if pool == "" {
 		jsonErr(w, http.StatusBadRequest, "could not resolve storage pool for VM")
@@ -127,15 +134,17 @@ func HandleLXDSwapCDROM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the new CDROM list: replace slot 0 with the chosen ISO (or empty),
-	// keep any additional slots untouched.
+	// keep any additional slots untouched. Resolve via the unified pool
+	// helper so we accept either an Incus storage pool or a raw ZFS pool
+	// — the picker can list ISOs from any pool the host can see.
 	var newPaths []string
 	if req.Filename != "" {
-		isoDir, err := system.LXDISODir(pool)
+		p, err := system.LXDResolveISOPath(pool, req.Filename)
 		if err != nil {
-			jsonErr(w, http.StatusBadRequest, "cannot resolve ISO directory: "+err.Error())
+			jsonErr(w, http.StatusBadRequest, "cannot resolve ISO: "+err.Error())
 			return
 		}
-		newPaths = append(newPaths, filepath.Join(isoDir, req.Filename))
+		newPaths = append(newPaths, p)
 	} else {
 		newPaths = append(newPaths, "")
 	}
@@ -157,6 +166,8 @@ func HandleLXDSwapCDROM(w http.ResponseWriter, r *http.Request) {
 	target := req.Filename
 	if target == "" {
 		target = "(empty)"
+	} else {
+		target = pool + "/" + target
 	}
 	audit.Log(audit.Entry{User: sess.Username, Role: sess.Role, Action: audit.ActionLXDEditConfig, Target: name, Result: audit.ResultOK, Details: "cdrom → " + target})
 
