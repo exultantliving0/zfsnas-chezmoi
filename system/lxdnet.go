@@ -313,6 +313,42 @@ func vlanIfaceName(parent string, vid int) string {
 const znasManagedVLANStart = "# znas-managed-vlan-start"
 const znasManagedVLANEnd = "# znas-managed-vlan-end"
 
+// insertVLANStanzaAfterParent splices a ready-formatted VLAN stanza into the
+// interfaces file directly below the parent NIC's stanza, so the VLAN
+// sub-interfaces come up before ifup-a walks the bridge stanza further down.
+// `stanza` is expected to already begin and end with newlines.
+//
+// If the parent NIC's `iface` line isn't found (rare; e.g. a hand-rolled
+// interfaces file), the stanza is appended at the end — matching the old
+// behaviour so we never silently lose the entry.
+func insertVLANStanzaAfterParent(content, parent, stanza string) string {
+	marker := "iface " + parent + " "
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), marker) {
+			continue
+		}
+		// Walk forward to the end of the parent's stanza — the first
+		// blank line, or the next stanza keyword.
+		end := i + 1
+		for end < len(lines) {
+			t := strings.TrimSpace(lines[end])
+			if t == "" ||
+				strings.HasPrefix(t, "auto ") ||
+				strings.HasPrefix(t, "allow-hotplug ") ||
+				strings.HasPrefix(t, "iface ") ||
+				strings.HasPrefix(t, "mapping ") {
+				break
+			}
+			end++
+		}
+		head := strings.Join(lines[:end], "\n")
+		tail := strings.Join(lines[end:], "\n")
+		return head + "\n" + stanza + tail
+	}
+	return content + stanza
+}
+
 // forceRemoveVLANKernelInterface brings down and removes a kernel VLAN interface if it exists.
 func forceRemoveVLANKernelInterface(iface string) {
 	data, _ := os.ReadFile("/proc/net/dev")
@@ -362,7 +398,19 @@ iface %s inet manual
 		existing, _ = os.ReadFile("/etc/network/interfaces")
 	}
 
-	newContent := string(existing) + stanza
+	// Position the new VLAN stanza right after the parent NIC stanza so it
+	// precedes the bridge stanza further down. `ifup -a` walks the file
+	// top-to-bottom; on Ubuntu 26.04 a bridge stanza carrying a
+	// `dns-nameservers` directive can stall ifup for ~270 s (three 90-s
+	// resolvectl calls into a not-yet-ready systemd-resolved), and
+	// networking.service hits its 5-minute deadline before reaching any
+	// stanza below the bridge. Appending VLAN stanzas at the end meant
+	// they routinely never came up at boot — leaving every vmbr0-* bridge
+	// without an uplink and every guest on those bridges isolated. By
+	// placing the VLAN block above the bridge, `ifup` brings the VLAN
+	// sub-interfaces up cleanly (they have no dns-* directives, so no
+	// resolvectl hang) before it ever touches the bridge stanza.
+	newContent := insertVLANStanzaAfterParent(string(existing), parent, stanza)
 
 	// /etc/network/interfaces edits go through writeInterfacesFile (root → direct
 	// I/O; sudo-all → "sudo tee"); the hardened sudoers template grants no entry

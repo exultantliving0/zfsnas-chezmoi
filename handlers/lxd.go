@@ -505,9 +505,45 @@ func HandleLXDSetConfig(w http.ResponseWriter, r *http.Request) {
 			Iso  string `json:"iso"`
 		} `json:"cdrom_list"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Read the body once so we can decode it twice — into the typed struct
+	// for use, and into a key-presence map so we know which device sections
+	// the caller actually included. A partial PUT (e.g. just `{"nics":[…]}`)
+	// must NOT trigger destructive diffs on sections the caller didn't
+	// mention. See LXDInstanceConfig.Manage* doc for the full rationale.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "could not read request body")
+		return
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(body, &present); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if _, ok := present["nics"]; ok {
+		req.LXDInstanceConfig.ManageNICs = true
+	}
+	if _, ok := present["disks"]; ok {
+		req.LXDInstanceConfig.ManageDisks = true
+	}
+	if _, ok := present["bind_mounts"]; ok {
+		req.LXDInstanceConfig.ManageBindMounts = true
+	}
+	if _, ok := present["usb_devices"]; ok {
+		req.LXDInstanceConfig.ManageUSBDevices = true
+	}
+	if _, ok := present["pci_devices"]; ok {
+		req.LXDInstanceConfig.ManagePCIDevices = true
+	}
+	if _, ok := present["passthrough_devices"]; ok {
+		req.LXDInstanceConfig.ManagePassthroughDevices = true
+	}
+	if _, ok := present["existing_disks_raw"]; ok {
+		req.LXDInstanceConfig.ManageExistingDisks = true
 	}
 	// Multi-drive path: resolve cdrom_list entries to absolute paths.
 	if len(req.CDROMList) > 0 {

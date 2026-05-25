@@ -209,6 +209,10 @@ type UPSConfig struct {
 	RawUPSConf      string            `json:"raw_ups_conf,omitempty"` // original nut-scanner output, base for ups.conf
 	ShutdownPolicy  UPSShutdownPolicy `json:"shutdown_policy"`
 	NominalPowerW   *int              `json:"nominal_power_w,omitempty"` // user-overridable nominal VA/W rating
+	// CostCentsPerKWh is the user's electricity rate in cents per kWh
+	// (integer cents, e.g. 12 for $0.12/kWh). Used by the UI to surface a
+	// $/Year estimate next to the Load %; nil when the user hasn't set it.
+	CostCentsPerKWh *int              `json:"cost_cents_per_kwh,omitempty"`
 	// --- Network Server extra fields ---
 	NUTServer       *NUTServerConfig  `json:"nut_server,omitempty"`
 	// --- Network Client fields ---

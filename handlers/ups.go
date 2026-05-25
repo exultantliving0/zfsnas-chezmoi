@@ -106,6 +106,7 @@ func HandleUpdateUPSConfig(appCfg *config.AppConfig) http.HandlerFunc {
 		// Preserve fields the frontend never sends back.
 		cfg.MonitorPassword = appCfg.UPS.MonitorPassword
 		cfg.NominalPowerW = appCfg.UPS.NominalPowerW
+		cfg.CostCentsPerKWh = appCfg.UPS.CostCentsPerKWh
 		if cfg.UPSName == "" {
 			cfg.UPSName = appCfg.UPS.UPSName
 		}
@@ -292,6 +293,40 @@ func HandleSetNominalPower(appCfg *config.AppConfig) http.HandlerFunc {
 			Action: audit.ActionUpdateSettings,
 			Result: audit.ResultOK,
 			Target: "ups_nominal_power",
+		})
+		jsonOK(w, map[string]bool{"ok": true})
+	}
+}
+
+// HandleSetCostPerKWh stores the user's electricity rate in integer cents
+// per kWh. Combined with NominalPowerW and the live load %, the UI uses
+// it to surface a $/Year estimate. Storing nil clears the override.
+// PUT /api/ups/cost-per-kwh  Body: {"cents": 12}
+func HandleSetCostPerKWh(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Cents *int `json:"cents"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.Cents != nil && *req.Cents < 0 {
+			jsonErr(w, http.StatusBadRequest, "cents must be >= 0")
+			return
+		}
+		appCfg.UPS.CostCentsPerKWh = req.Cents
+		if err := config.SaveAppConfig(appCfg); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:   sess.Username,
+			Role:   sess.Role,
+			Action: audit.ActionUpdateSettings,
+			Result: audit.ResultOK,
+			Target: "ups_cost_per_kwh",
 		})
 		jsonOK(w, map[string]bool{"ok": true})
 	}

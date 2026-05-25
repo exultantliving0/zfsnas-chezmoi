@@ -10697,7 +10697,12 @@ Select the Console tab to load.</pre>
     if (!ev) return false;
     const ca = (this && this.chart && this.chart.chartArea) || null;
     let x = ev.x;
-    let y = ev.y + 22; // below the pointer
+    // Generous gap so the tooltip's top edge sits well below the cursor —
+    // Chart.js renders the tooltip body below the caret point when
+    // yAlign='top' is forced (see below), but the body still has its own
+    // padding above the caret, so we need a healthy offset to keep the
+    // cursor *fully clear* of the tooltip. Bumped from 22 → 50.
+    let y = ev.y + 50;
     // Keep the tooltip inside the chart area horizontally so it doesn't
     // get clipped at the edges; vertical clamp lets Chart.js flip it
     // above the cursor near the bottom edge automatically.
@@ -10708,6 +10713,33 @@ Select the Console tab to load.</pre>
     return { x: x, y: y };
   };
   Chart.defaults.plugins.tooltip.position = 'znasBelowCursor';
+  // Force the tooltip body to render BELOW the caret/anchor point. Without
+  // this, Chart.js's auto yAlign can flip the body above the caret when
+  // the cursor is in the lower half of the chart, which puts the body
+  // back on top of the curve. yAlign='top' means "the caret is on the
+  // top edge of the body" — i.e. body sits below the anchor we returned.
+  Chart.defaults.plugins.tooltip.yAlign = 'top';
+
+  // Unified tooltip across the entire app: replace Chart.js's built-in
+  // tooltip renderer with a single DOM-based external tooltip
+  // (_znasExternalTooltip). This gives every chart the same look and the
+  // same below-cursor placement instead of mixing the canvas-clipped
+  // built-in renderer (which can flip above the cursor near chart edges)
+  // with the DOM tooltip the Network chart used to have on its own.
+  Chart.defaults.plugins.tooltip.enabled = false;
+  Chart.defaults.plugins.tooltip.external = _znasExternalTooltip;
+  // Tracks the most recent canvas-local mouse y on every chart so the
+  // external tooltip can position from the real cursor instead of the
+  // caretY snapped to a data point (which interaction.mode='xDedup'
+  // forces, breaking "below cursor" on mirrored / 0-valued points).
+  Chart.register({
+    id: 'znasMouseTrack',
+    afterEvent(chart, args) {
+      const evt = args.event;
+      if (evt.type === 'mousemove') chart._znasMouseY = evt.y;
+      else if (evt.type === 'mouseout') chart._znasMouseY = null;
+    },
+  });
   // Translucent surfaces so the data points and gridlines stay visible
   // through the tooltip card. Theme-aware default colour; per-chart
   // configs that set their own backgroundColor get patched in step 2.
@@ -10998,6 +11030,7 @@ let _perfDragState   = null;     // active drag: { pool, metric, canvas, sel, st
 let _perfOldestTs    = {};       // pool → oldest tier-0 timestamp (seconds), cached
 let _upsChart        = null;    // Chart instance for the UPS battery tab
 let _upsPerfNominalW = null;    // nominal power (W) for power calc in UPS tooltip
+let _upsPerfCostCents = null;   // electricity cost (¢/kWh) for $/yr in UPS tooltip
 
 // ===== Init =====
 (async () => {
@@ -24799,7 +24832,21 @@ function renderUPSPanel(body, s, cfg) {
   const metrics = [
     ['Input Voltage',  st?.input_voltage != null  ? st.input_voltage.toFixed(1) + ' V' : '—',  'AC voltage supplied by the wall outlet.'],
     ['Output Voltage', st?.output_voltage != null ? st.output_voltage.toFixed(1) + ' V' : '—', 'Voltage the UPS is delivering to connected equipment.'],
-    ['Load',           (() => { if (st?.load_pct == null) return '—'; const nomW = cfg.nominal_power_w != null ? cfg.nominal_power_w : (st.all_vars?.['ups.realpower.nominal'] != null ? parseFloat(st.all_vars['ups.realpower.nominal']) : null); return st.load_pct.toFixed(0) + ' %' + (nomW != null ? ' (' + Math.round(st.load_pct / 100 * nomW) + ' W)' : ''); })(), 'Percentage of UPS power capacity currently in use.'],
+    ['Load',           (() => {
+      if (st?.load_pct == null) return '—';
+      const nomW = cfg.nominal_power_w != null ? cfg.nominal_power_w
+        : (st.all_vars?.['ups.realpower.nominal'] != null ? parseFloat(st.all_vars['ups.realpower.nominal']) : null);
+      if (nomW == null) return st.load_pct.toFixed(0) + ' %';
+      const watts = Math.round(st.load_pct / 100 * nomW);
+      const cents = cfg.cost_cents_per_kwh;
+      // $/yr = watts × 24 h × 365 d ÷ 1000 (Wh→kWh) × cents/100 ($/kWh)
+      //      = watts × cents × 0.0876
+      const yr = (cents != null) ? watts * cents * 0.0876 : null;
+      const paren = yr != null
+        ? watts + ' W, $' + (yr >= 1000 ? Math.round(yr) : yr.toFixed(0)) + '/yr'
+        : watts + ' W';
+      return st.load_pct.toFixed(0) + ' % (' + paren + ')';
+    })(), 'Percentage of UPS power capacity currently in use. The parenthesised power and $/year estimate use the Nominal Power and Cost (¢/kWh) values below.'],
     ['Battery Voltage',st?.batt_voltage != null   ? st.batt_voltage.toFixed(2) + ' V'   : '—', 'Current battery cell voltage.'],
     ['Temperature',    st?.temp_c != null         ? st.temp_c.toFixed(1) + ' °C'        : '—', 'Internal UPS temperature (if reported by device).'],
     ['Model',          st?.model || '—',                                                          'UPS model as reported by the device.'],
@@ -24831,6 +24878,28 @@ function renderUPSPanel(body, s, cfg) {
         <span style="font-size:12px;color:var(--text-3);">W</span>
         <button onclick="upsNominalSave()" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">✓</button>
         <button onclick="upsNominalCancel()" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;color:var(--text-2);">✕</button>
+      </div>
+    </div>
+  </div>`;
+
+  // Cost (¢/kWh) — sits just below Nominal Power so the user has both
+  // values to drive the $/yr estimate on the Load tile + chart tooltip.
+  // Same edit pattern as nominal power so the UI stays uniform.
+  const cents = cfg.cost_cents_per_kwh != null ? cfg.cost_cents_per_kwh : '';
+  metricsHtml += `<div style="background:var(--surface2);border-radius:var(--radius-sm);padding:10px 12px;position:relative;" id="ups-cost-box">
+    <div style="font-size:11px;color:var(--text-3);margin-bottom:3px;">Cost (¢/kWh)</div>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span id="ups-cost-display" style="font-weight:600;font-size:14px;">${cents !== '' ? cents + ' ¢' : '<span style="color:var(--text-3);font-weight:400;font-size:13px;">Not set</span>'}</span>
+      <button onclick="upsEditCost()" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;padding:0 2px;line-height:1;" title="Edit">✎</button>
+    </div>
+    <div id="ups-cost-edit" style="display:none;margin-top:6px;">
+      <div style="display:flex;align-items:center;gap:4px;">
+        <input id="ups-cost-input" type="number" min="0" max="999" step="0.1" value="${cents}"
+          style="width:70px;background:var(--bg);border:1px solid var(--accent);border-radius:4px;color:var(--text-1);padding:3px 6px;font-size:13px;"
+          onkeydown="if(event.key==='Enter')upsCostSave();if(event.key==='Escape')upsCostCancel();">
+        <span style="font-size:12px;color:var(--text-3);">¢/kWh</span>
+        <button onclick="upsCostSave()" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;">✓</button>
+        <button onclick="upsCostCancel()" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;color:var(--text-2);">✕</button>
       </div>
     </div>
   </div>`;
@@ -25287,8 +25356,71 @@ async function upsNominalSave() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ watts }),
     });
-    if (!r.ok) { const d = await r.json(); showToast(d.error || 'Save failed', 'error'); return; }
+    if (!r.ok) {
+      // Same defensive parse as upsCostSave — older ZNAS builds without
+      // this route return an empty body and JSON.parse would throw.
+      const text = await r.text();
+      let msg = '';
+      if (text && text.trim().startsWith('{')) {
+        try { msg = (JSON.parse(text) || {}).error || ''; } catch (_) {}
+      }
+      if (!msg) msg = text && text.trim() ? text.trim() : ('Server returned HTTP ' + r.status + ' (this ZNAS host may need an update)');
+      showToast(msg, 'error');
+      return;
+    }
     // Re-render by reloading the panel data so cfg.nominal_power_w is fresh.
+    loadUPSPanel();
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+// Edit/Save/Cancel for the Cost (¢/kWh) box — mirrors the Nominal Power
+// trio above. PUT /api/ups/cost-per-kwh takes integer cents (e.g. 12 for
+// $0.12/kWh); a blank field stores nil and clears the override so the
+// Load tile and chart tooltip fall back to "no $/yr estimate".
+function upsEditCost() {
+  const editDiv = document.getElementById('ups-cost-edit');
+  const input   = document.getElementById('ups-cost-input');
+  if (!editDiv) return;
+  editDiv.style.display = 'block';
+  if (input) { input.focus(); input.select(); }
+}
+
+function upsCostCancel() {
+  const editDiv = document.getElementById('ups-cost-edit');
+  if (editDiv) editDiv.style.display = 'none';
+}
+
+async function upsCostSave() {
+  const input = document.getElementById('ups-cost-input');
+  const val   = input ? input.value.trim() : '';
+  // Accept fractional input (e.g. "12.5") but round to integer cents for
+  // storage — sub-cent precision isn't meaningful for an annual estimate.
+  const cents = val === '' ? null : Math.round(parseFloat(val));
+  if (cents !== null && (isNaN(cents) || cents < 0)) {
+    input.style.borderColor = 'var(--accent-danger)';
+    return;
+  }
+  try {
+    const r = await fetch('/api/ups/cost-per-kwh', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cents }),
+    });
+    if (!r.ok) {
+      // Older ZNAS builds don't have this route yet; the server can
+      // return 404/405 with an empty body. `r.json()` would then throw
+      // "Unexpected end of JSON input", which masks the real problem.
+      // Read the body as text first, try JSON.parse only if it looks
+      // like JSON, fall back to a clear HTTP-status message otherwise.
+      const text = await r.text();
+      let msg = '';
+      if (text && text.trim().startsWith('{')) {
+        try { msg = (JSON.parse(text) || {}).error || ''; } catch (_) {}
+      }
+      if (!msg) msg = text && text.trim() ? text.trim() : ('Server returned HTTP ' + r.status + ' (this ZNAS host may need an update)');
+      showToast(msg, 'error');
+      return;
+    }
     loadUPSPanel();
   } catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
@@ -27966,6 +28098,7 @@ function _renderGlobalPerfCharts(series, ifaces) {
     opts.plugins.tooltip = Object.assign({}, opts.plugins.tooltip, {
       enabled: false,
       external: _netExternalTooltip,
+      _znasSortByMag: true, // RX/TX entries sorted by |y|, near-zero rows hidden
     });
     _dashCharts['dash-chart-net'] = new Chart(canvas, {
       type: 'line',
@@ -28208,6 +28341,7 @@ function _makeDashChartNet(canvasId, datasets, labels) {
   base.plugins.tooltip = Object.assign({}, base.plugins.tooltip, {
     enabled: false,
     external: _netExternalTooltip,
+    _znasSortByMag: true, // RX/TX (or Read/Write) sorted by |y|, near-zero rows hidden
   });
   const chart = new Chart(canvas, {
     type: 'line',
@@ -28577,6 +28711,7 @@ async function _loadUPSPerfData() {
       _upsPerfNominalW = cfg.nominal_power_w != null ? cfg.nominal_power_w
                        : (cfg.ups_vars?.['ups.realpower.nominal'] != null
                           ? parseFloat(cfg.ups_vars['ups.realpower.nominal']) : null);
+      _upsPerfCostCents = cfg.cost_cents_per_kwh != null ? cfg.cost_cents_per_kwh : null;
     }
   } catch(_) {}
 
@@ -28718,6 +28853,14 @@ function _renderUPSPerfChart(series) {
                 if (_upsPerfNominalW != null) {
                   const watts = Math.round(ctx.parsed.y / 100 * _upsPerfNominalW);
                   lines.push('  Power:  ~' + watts + ' W');
+                  // $/yr = watts × cents × 0.0876 (= 24 h × 365 d / 1000 / 100¢).
+                  // Only emit when both pieces are known; otherwise stay silent
+                  // so a half-configured UPS doesn't show "$0/yr".
+                  if (_upsPerfCostCents != null && _upsPerfCostCents > 0) {
+                    const yr = watts * _upsPerfCostCents * 0.0876;
+                    const shown = yr >= 1000 ? Math.round(yr) : yr.toFixed(0);
+                    lines.push('  Cost:  ~$' + shown + '/yr');
+                  }
                 }
                 return lines;
               }
@@ -29427,61 +29570,121 @@ const _perfTooltipPlugin = {
   },
 };
 
-// External tooltip for the Network I/O chart — can grow beyond the card bounds.
-// Items are sorted by current value descending so the busiest interfaces appear first.
-function _netExternalTooltip(context) {
+// Generic external tooltip used by EVERY Chart.js chart in the app. Renders
+// a uniform DOM card with: timestamp title, one row per dataset (color
+// swatch + the line the chart's own label callback would have produced).
+// Anchored to the real mouse position (chart._znasMouseY), 50 px below
+// the cursor — so the user's mouse never sits on the tooltip body.
+//
+// Per-chart customisation:
+//   tooltip.options._znasSortByMag — true → sort rows by |y| descending
+//     and drop rows with |y| < 0.0005. Net/Disk-mirror charts opt in.
+function _znasExternalTooltip(context) {
   const tip = document.getElementById('chart-net-tooltip');
   if (!tip) return;
   const { tooltip, chart } = context;
   if (!tooltip || tooltip.opacity === 0) { tip.style.display = 'none'; return; }
   const items = tooltip.dataPoints || [];
   if (!items.length) { tip.style.display = 'none'; return; }
-  // Sort by absolute value descending — RX is plotted as a negative
-  // number so the natural numeric sort would always rank RX last.
-  const absY = p => Math.abs(p.parsed.y ?? 0);
-  const sorted = [...items].filter(p => p.parsed.y != null)
-    .sort((a, b) => absY(b) - absY(a));
-  if (!sorted.length) { tip.style.display = 'none'; return; }
-  // Build timestamp title
-  const d   = new Date(sorted[0].parsed.x);
-  const pad = n => String(n).padStart(2, '0');
-  const ts  = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
-              + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-  // Build HTML
+  const sortByMag = !!(tooltip.options && tooltip.options._znasSortByMag);
+  // Pair each dataPoint with its index so we can find the right entry in
+  // tooltip.body[] / tooltip.labelColors[] even after a sort/filter pass.
+  let rows = items
+    .map((p, i) => ({ p, i }))
+    .filter(o => o.p && o.p.parsed && o.p.parsed.y != null);
+  if (sortByMag) {
+    rows = rows.filter(o => Math.abs(o.p.parsed.y) >= 0.0005);
+    rows.sort((a, b) => Math.abs(b.p.parsed.y) - Math.abs(a.p.parsed.y));
+  }
+  if (!rows.length) { tip.style.display = 'none'; return; }
+  // Title — prefer Chart.js's pre-computed tooltip.title (from the chart's
+  // own callbacks.title); fall back to a YYYY-MM-DD HH:MM rendering of
+  // the first datapoint's x value.
+  let titleText = (tooltip.title && tooltip.title.length) ? tooltip.title[0] : '';
+  if (!titleText && rows[0].p.parsed.x != null) {
+    const d   = new Date(rows[0].p.parsed.x);
+    const pad = n => String(n).padStart(2, '0');
+    titleText = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+                + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
   const isLight = document.body.classList.contains('light') || document.body.classList.contains('dawn');
-  const _cssStyle  = getComputedStyle(document.body);
-  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
-  const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+  const tipBg      = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
+  const tipBorder  = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+  const titleColor = isLight ? '#6c6c70' : '#8e8e93';
+  const textColor  = isLight ? '#1c1c1e' : '#f5f5f7';
   tip.style.background  = tipBg;
   tip.style.borderColor = tipBorder;
-  let html = `<div style="font-size:11px;color:${isLight?'#6c6c70':'#8e8e93'};margin-bottom:6px;">${ts}</div>`;
-  let visibleCount = 0;
-  sorted.forEach(p => {
-    if (Math.abs(p.parsed.y) < 0.0005) return; // hide zero entries
-    visibleCount++;
-    const color = p.dataset.borderColor || '#fff';
-    const val   = Math.abs(p.parsed.y).toFixed(1);
-    html += `<div style="display:flex;align-items:center;gap:7px;padding:2px 0;">
-      <span style="width:10px;height:2px;background:${color};flex-shrink:0;display:inline-block;border-radius:1px;"></span>
-      <span style="flex:1;color:${isLight?'#1c1c1e':'#f5f5f7'};white-space:nowrap;">${esc(p.dataset.label)}</span>
-      <span style="color:${color};font-weight:600;font-size:11px;min-width:60px;text-align:right;">${val} Mbit/s</span>
-    </div>`;
+  let html = '';
+  if (titleText) html += `<div style="font-size:11px;color:${titleColor};margin-bottom:6px;">${esc(titleText)}</div>`;
+  rows.forEach(({ p, i }) => {
+    // Row text: Chart.js puts the formatted "Label: value" strings at
+    // tooltip.body[i].lines[] (from the chart's own callbacks.label). The
+    // callback can legally return an array — used by the UPS chart's Load
+    // entry to add Power + Cost rows under "Load: 20 %". Render every
+    // line under the same color swatch so multi-line entries read as a
+    // grouped block. Fall back to dataset.label + raw value if a chart
+    // never set a label callback.
+    const body = tooltip.body && tooltip.body[i];
+    const lines = (body && body.lines && body.lines.length)
+      ? body.lines
+      : [p.dataset.label + ': ' + p.parsed.y];
+    const lc   = tooltip.labelColors && tooltip.labelColors[i];
+    const swatch = (lc && (lc.borderColor || lc.backgroundColor)) || p.dataset.borderColor || '#fff';
+    lines.forEach((line, lineIdx) => {
+      // Show the swatch only on the first line of the entry; following
+      // sub-lines (Power, Cost) align under it with the swatch column
+      // left blank so they read as belonging to the same series.
+      const showSwatch = lineIdx === 0;
+      html += `<div style="display:flex;align-items:center;gap:7px;padding:1px 0;">
+        <span style="width:10px;height:2px;background:${showSwatch ? swatch : 'transparent'};flex-shrink:0;display:inline-block;border-radius:1px;"></span>
+        <span style="flex:1;color:${textColor};white-space:nowrap;${showSwatch ? '' : 'font-size:11px;color:' + titleColor + ';'}">${esc(String(line).trim())}</span>
+      </div>`;
+    });
   });
-  if (!visibleCount) { tip.style.display = 'none'; return; }
   tip.innerHTML = html;
   tip.style.display = 'block';
-  // Position: follow canvas, stay within viewport
+  // Position: below the cursor, horizontally centered on it. Matches the
+  // global `znasBelowCursor` Chart.js positioner so the Net/Disk external
+  // tooltips don't sit on top of the curve — they sit below it, the way
+  // every other chart in the app does. Falls back to *above* the cursor
+  // when below would clip the viewport bottom, and clamps left/right so
+  // the tooltip never spills past the canvas or the viewport edge.
   const canvasRect = chart.canvas.getBoundingClientRect();
   const tipW = tip.offsetWidth;
   const tipH = tip.offsetHeight;
-  let left = canvasRect.left + tooltip.caretX + 12;
-  let top  = canvasRect.top  + tooltip.caretY - tipH / 2;
-  if (left + tipW + 8 > window.innerWidth) left = canvasRect.left + tooltip.caretX - tipW - 12;
-  if (top < 4) top = 4;
-  if (top + tipH + 4 > window.innerHeight) top = window.innerHeight - tipH - 4;
+  // Y anchor: prefer the real mouse y stashed by _netTooltipPlugin's
+  // mousemove handler (chart._znasMouseY is canvas-local). Falls back
+  // to caretY only if we haven't seen a mousemove yet, which keeps the
+  // first tooltip render reasonable.
+  const cursorX = canvasRect.left + tooltip.caretX;
+  const localY  = (chart._znasMouseY != null) ? chart._znasMouseY : tooltip.caretY;
+  const cursorY = canvasRect.top  + localY;
+  let left = cursorX - tipW / 2;
+  // Generous gap so the tooltip's top edge sits well below the cursor —
+  // matches the Chart.js znasBelowCursor positioner. The user's mouse
+  // should never overlap the tooltip body while hovering.
+  let top  = cursorY + 50;
+  // Horizontal clamp — keep inside the canvas first, then the viewport.
+  left = Math.max(canvasRect.left + 4, Math.min(canvasRect.right - tipW - 4, left));
+  left = Math.max(4, Math.min(window.innerWidth - tipW - 4, left));
+  // Vertical flip — if the below-cursor placement clips the viewport
+  // bottom, switch to above; clamp to >= 4 px from the top if even that
+  // doesn't fit on a very short window.
+  if (top + tipH + 4 > window.innerHeight) {
+    top = cursorY - tipH - 12;
+    if (top < 4) top = 4;
+  }
   tip.style.left = Math.round(left) + 'px';
   tip.style.top  = Math.round(top)  + 'px';
 }
+
+// Back-compat alias for the few call sites that explicitly set
+// `external: _netExternalTooltip` (dashboard Net + Disk chart helpers,
+// workload tab Net chart). All point at the same generic implementation;
+// these can safely be removed if the per-chart overrides ever get
+// cleaned up — Chart.defaults.plugins.tooltip.external already points
+// at _znasExternalTooltip for every chart in the app.
+const _netExternalTooltip = _znasExternalTooltip;
 
 // Plugin to keep all points active on the net chart (for the external tooltip).
 const _netTooltipPlugin = {
@@ -29496,6 +29699,15 @@ const _netTooltipPlugin = {
       return;
     }
     if (evt.type !== 'mousemove') return;
+    // Stash the raw mouse y (canvas-local) on the chart so the external
+    // tooltip can position from the real cursor instead of caretY.
+    // Chart.js's `interaction.mode: 'xDedup'` snaps caretY to the nearest
+    // data point's y — for a mirrored area chart that can land near the
+    // canvas mid-height on a 0-value point, which makes "cursorY + 50"
+    // exceed the viewport bottom and trip the above-cursor fallback,
+    // pulling the tooltip back on top of the curve. Tracking the actual
+    // mouse y keeps the tooltip below where the user's finger is.
+    chart._znasMouseY = evt.y;
     const xScale = chart.scales.x;
     if (!xScale) return;
     const xVal = xScale.getValueForPixel(evt.x);
@@ -36979,12 +37191,32 @@ async function loadComputeInstanceDetail(name, type) {
       if (!isNaN(_ts.getTime())) {
         const _abs = _ts.toLocaleString(undefined,
           { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const _ageMs = Date.now() - _ts.getTime();
-        const _days  = Math.floor(_ageMs / 86400000);
-        const _rel   = _days >= 1 ? _days + 'd' : timeSince(_ts);
+        // Relative age: collapse to the single largest meaningful unit
+        // and round to the closest integer with a "~" prefix. Picking
+        // one unit avoids "288m 48s"-style noise that gives the
+        // impression of false precision when nobody cares about the
+        // seconds (a 4-hour-old container reads as ~5h, not 288m 48s).
+        const _ageS = Math.max(0, (Date.now() - _ts.getTime()) / 1000);
+        const _rel = _ageS < 60        ? '~' + Math.round(_ageS)            + 's'
+                   : _ageS < 3600      ? '~' + Math.round(_ageS / 60)       + 'm'
+                   : _ageS < 86400     ? '~' + Math.round(_ageS / 3600)     + 'h'
+                   : _ageS < 86400*30  ? '~' + Math.round(_ageS / 86400)    + 'd'
+                   : _ageS < 86400*365 ? '~' + Math.round(_ageS / (86400*30))  + 'mo'
+                                       : '~' + Math.round(_ageS / (86400*365)) + 'y';
         html += _ciRow('Created',
           `${esc(_abs)} <span style="color:var(--text-3);font-size:11px;">(${esc(_rel)})</span>`);
       }
+    }
+    // Source image — full-width row so a long Incus image description
+    // (e.g. "Debian bookworm amd64 (20260524_05:24)") fits on one line
+    // instead of being squeezed into the 100px-label / value column of
+    // _ciRow. The label sits inline at the left, the rest of the row is
+    // monospace value taking all remaining width.
+    if (cfg.image) {
+      html += `<div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:13px;line-height:1.45;">
+        <span style="color:var(--text-3);font-size:12px;flex-shrink:0;">Image</span>
+        <span style="color:var(--text-2);flex:1;min-width:0;font-family:monospace;font-size:11.5px;word-break:break-all;">${esc(cfg.image)}</span>
+      </div>`;
     }
 
     if (cfg.nics && cfg.nics.length > 0) {
@@ -37541,6 +37773,19 @@ function _lxdRenderRows(instances) {
   // v6.5.19: defensive filter — backups (bkup--*) never appear in the main
   // VMs & Containers table.
   instances = (instances || []).filter(i => !((i.name || '').startsWith('bkup--')));
+  // Defence-in-depth dedup by name. The backend already filters duplicates
+  // out of `incus list --format json` (see listLXDInstancesImpl) and logs
+  // them. The frontend guard is here so a future code path that merges
+  // multiple sources (e.g. interlink aggregation) into the table can't
+  // ever produce two rows with the same vm-id again.
+  {
+    const seen = new Set();
+    instances = instances.filter(i => {
+      if (seen.has(i.name)) return false;
+      seen.add(i.name);
+      return true;
+    });
+  }
   const hasImg = (instances || []).some(i => i.image);
   const imgTh = document.getElementById('lxd-main-th-image');
   if (imgTh) imgTh.style.display = hasImg ? '' : 'none';
@@ -37836,8 +38081,19 @@ function lxdEditRenderNICs() {
       ? `<div class="form-group" style="margin:0;"><label class="form-label">Device Name</label><input type="text" class="input" id="lxd-edit-nic-name-${i}" value="${esc(nic.name)}" placeholder="eth1" oninput="_lxdEditNICs[${i}].name=this.value.trim()"></div>`
       : `<div class="form-group" style="margin:0;"><label class="form-label">Status</label><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-top:8px;"><input type="checkbox" id="lxd-edit-nic-conn-${i}" ${nic.connected!==false?'checked':''} onchange="_lxdEditNICs[${i}].connected=this.checked"> Connected${currentIPBadge}</label></div>`;
 
-    // IPv4 config (container-only)
-    const mode = nic.ipv4_mode || '';
+    // IPv4 config (container-only). The mode dropdown shows whichever
+    // mode the container is currently configured for — read off the
+    // persistent config files inside the rootfs by the backend. When
+    // the backend returns no mode (NIC never managed by ZNAS), default
+    // to "dhcp" since that's what every LXC base image ships with and
+    // re-saving will start managing the NIC explicitly. No "— keep
+    // current —" sentinel: showing a sentinel asks the user to remember
+    // their own config, which was exactly the complaint that motivated
+    // surfacing the real values here.
+    const mode = nic.ipv4_mode || (_lxdEditIsVM ? '' : 'dhcp');
+    // Mirror the resolved mode back onto the working copy so saving
+    // without touching the dropdown still writes the right value.
+    if (!_lxdEditIsVM) nic.ipv4_mode = mode;
     let ipHTML = '';
     if (!_lxdEditIsVM) {
       const showStatic = mode === 'static';
@@ -37846,7 +38102,6 @@ function lxdEditRenderNICs() {
           <div class="form-group" style="margin:0;">
             <label class="form-label">IPv4 Mode</label>
             <select id="lxd-edit-nic-ipv4mode-${i}" class="input" onchange="_editNicToggleStatic(${i})">
-              <option value=""${!mode?' selected':''}>— keep current —</option>
               <option value="dhcp"${mode==='dhcp'?' selected':''}>DHCP</option>
               <option value="static"${mode==='static'?' selected':''}>Static</option>
               <option value="none"${mode==='none'?' selected':''}>None</option>
@@ -38588,21 +38843,37 @@ async function openLXDEditModal(name, type) {
       const pinInp = document.getElementById('lxd-edit-cpu-pin');
       if (pinInp) pinInp.value = cfg.cpu_pin || '';
     }
-    const _memStr = cfg.memory_limit || '';
-    const _memM = _memStr.match(/^(\d+(?:\.\d+)?)\s*(MiB|GiB|MB|GB)?$/i);
+    // Memory pre-fill: parse whatever incus stored (raw bytes, B/KiB/MiB/GiB,
+    // or the decimal variants) into a byte count, then pick the (number,
+    // unit) pair the dropdown can express. ≥ 1 GiB → GB (binary), else MB.
+    //
+    // We also have to nudge initCustomSelect's wrapper to repaint its
+    // trigger label — setting <select>.value directly updates the DOM
+    // element but leaves the visible custom-pill stuck on whatever was
+    // there at wrap time. Without csRefresh, the user saw the trigger
+    // say "GB" while the underlying select sat at "MB", and the submit
+    // path turned a typed "12" + visible-GB into a stored 12 MiB.
     const _memNumInp  = document.getElementById('lxd-edit-memory');
     const _memUnitSel = document.getElementById('lxd-edit-memory-unit');
-    if (_memM) {
-      _memNumInp.value = _memM[1];
-      // Normalise the displayed unit to the dropdown's MB/GB option — the
-      // user typed "GB" / "MB" and the submit path re-attaches the "iB" so
-      // the value goes back to incus as the binary MiB/GiB variant.
-      const u = (_memM[2] || 'GB').toUpperCase();
-      if (_memUnitSel) _memUnitSel.value = (u === 'GIB' || u === 'GB') ? 'GB' : 'MB';
+    const _memBytes = parseIncusMemoryBytes(cfg.memory_limit || '');
+    if (_memBytes > 0) {
+      const _GiB = 1024 * 1024 * 1024;
+      const _MiB = 1024 * 1024;
+      if (_memBytes >= _GiB) {
+        const v = _memBytes / _GiB;
+        // Show as integer when exact (the common case), 2-decimal otherwise.
+        _memNumInp.value = (v === Math.floor(v)) ? String(v) : v.toFixed(2);
+        if (_memUnitSel) _memUnitSel.value = 'GB';
+      } else {
+        const v = _memBytes / _MiB;
+        _memNumInp.value = (v === Math.floor(v)) ? String(v) : v.toFixed(0);
+        if (_memUnitSel) _memUnitSel.value = 'MB';
+      }
     } else {
-      _memNumInp.value = _memStr.replace(/[^0-9]/g, '') || '';
+      _memNumInp.value = '';
       if (_memUnitSel) _memUnitSel.value = 'GB';
     }
+    if (_memUnitSel && typeof csRefresh === 'function') csRefresh('lxd-edit-memory-unit');
     document.getElementById('lxd-edit-autostart').checked = !!cfg.autostart;
     const _editForceChk = document.getElementById('lxd-edit-force-running');
     if (_editForceChk) _editForceChk.checked = !!cfg.force_running;
@@ -41318,19 +41589,25 @@ function addVMDiskRow() {
 
 // Convert a (value, unit) pair to a GB number — for backend submission.
 // MB and TB are SI base-1000 here, matching incus' string parser ("100MB" etc).
+// _diskGB normalises a "value + unit" pair into the size_gb number sent to
+// the backend. The field is historically named size_gb but is interpreted
+// as binary GiB by both ends, so the math here uses 1024 (not 1000) — that
+// keeps the number the operator types in line with what `df -h` reports
+// inside the container. The UI selectors still display "MB / GB / TB" for
+// familiarity; only the conversion factor changed.
 function _diskGB(val, unit) {
   const n = +val || 0;
-  if (unit === 'MB') return n / 1000;
-  if (unit === 'TB') return n * 1000;
+  if (unit === 'MB') return n / 1024;
+  if (unit === 'TB') return n * 1024;
   return n;
 }
 
-// Display-side helper: pick a sensible (value, unit) pair to show a GB number
-// (used when a row stores legacy `size_gb` only and the unit was never
-// captured). Falls back to GB.
+// Display-side helper: pick a sensible (value, unit) pair to show a GiB
+// number (used when a row stores legacy `size_gb` only and the unit was
+// never captured). Falls back to GB. Same 1024 convention as _diskGB.
 function _diskUnitFromGB(gb) {
-  if (gb && gb < 1) return { value: gb * 1000, unit: 'MB' };
-  if (gb && gb >= 1000) return { value: gb / 1000, unit: 'TB' };
+  if (gb && gb < 1) return { value: gb * 1024, unit: 'MB' };
+  if (gb && gb >= 1024) return { value: gb / 1024, unit: 'TB' };
   return { value: gb || 0, unit: 'GB' };
 }
 

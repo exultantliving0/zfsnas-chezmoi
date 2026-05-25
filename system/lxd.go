@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"os/exec"
@@ -1487,8 +1488,23 @@ func listLXDInstancesImpl() ([]LXDInstance, error) {
 		return nil, fmt.Errorf("lxc list parse: %w", err)
 	}
 
+	// Dedup guard: a small number of users have reported `incus list --format
+	// json` returning the same instance twice — most often on clustered
+	// daemons mid-migration, or with mis-scoped project configs that surface
+	// the same name from two projects. The text-format CLI sometimes hides
+	// the second row (column collapsing); the JSON output doesn't. Skip the
+	// second occurrence and log it so we can chase the upstream cause if it
+	// happens again. The first occurrence wins — its state is whatever
+	// incus returned first, which matches what `incus exec`, `incus stop`
+	// etc. would target.
+	seen := make(map[string]bool, len(raw))
 	instances := make([]LXDInstance, 0, len(raw))
 	for _, r := range raw {
+		if seen[r.Name] {
+			log.Printf("listLXDInstancesImpl: duplicate instance %q from `incus list --format json` (type=%s status=%s) — dropping; keeping first occurrence", r.Name, r.Type, r.Status)
+			continue
+		}
+		seen[r.Name] = true
 		inst := LXDInstance{
 			Name:        r.Name,
 			Description: r.Description,
@@ -1621,6 +1637,19 @@ func LXDStart(name string) error {
 }
 
 // LXDStop stops a running instance gracefully (force=false) or immediately (force=true).
+//
+// The graceful timeout is chosen per-instance:
+//
+//   - 10 s for plain VMs and containers — fits well within an HTTP request,
+//     and the client's "shutdown or kill" flow handles longer real-world
+//     waits with a force-stop fallback.
+//   - 120 s for Compose stacks (`user.zfsnas.compose=true`). Stopping a
+//     stack means each Docker service has to do its own graceful shutdown
+//     (DB checkpoint, queue drain, volume unmount), and the propagation
+//     happens through systemd → docker-compose → containers. 10 s reliably
+//     produces "context deadline exceeded" on a normal stack with more
+//     than a handful of services. 120 s covers the typical worst case
+//     without making the user fall back to a force stop.
 func LXDStop(name string, force bool) error {
 	if !lxdNameRe.MatchString(name) {
 		return fmt.Errorf("invalid instance name")
@@ -1632,11 +1661,11 @@ func LXDStop(name string, force bool) error {
 	if force {
 		args = append(args, "--force")
 	} else {
-		// Use a short server-side timeout so the HTTP handler returns promptly.
-		// The "shutdown or kill" flow on the client manages the real deadline and
-		// sends a force stop when needed. Without this, lxc stop blocks the
-		// goroutine for the VM's full ACPI shutdown wait (30 s+).
-		args = append(args, "--timeout=10")
+		timeout := "10"
+		if ComposeGetConfigKey(name, "user.zfsnas.compose") == "true" {
+			timeout = "120"
+		}
+		args = append(args, "--timeout="+timeout)
 	}
 	out, err := exec.Command("incus", args...).CombinedOutput()
 	if err != nil {
@@ -1747,6 +1776,12 @@ type LXDInstanceConfig struct {
 	// CreatedAt is the timestamp Incus recorded when the instance was
 	// created. Surfaced verbatim from the /1.0/instances/<n> API.
 	CreatedAt         time.Time `json:"created_at,omitempty"`
+	// Image is a human-readable label for the image the instance was
+	// initially launched from — Incus' `image.description` config key
+	// (e.g. "Debian bookworm amd64 (20260524_05:24)") with a fallback
+	// to "<os> <release>" when description isn't populated. Empty for
+	// instances created without a recognised image (e.g. blank VMs).
+	Image             string    `json:"image,omitempty"`
 	CPULimit          string `json:"cpu_limit"`
 	CPUPin            string `json:"cpu_pin"`     // LXD range string for pinning; overrides CPULimit when non-empty
 	CPUSockets        int    `json:"cpu_sockets"` // QEMU socket topology (0=auto)
@@ -1801,6 +1836,35 @@ type LXDInstanceConfig struct {
 	// Daemon-side capability flags (read-only on GET; ignored on PUT). Lets
 	// the editor disable inputs that the running LXD will silently reject.
 	Capabilities LXDCapabilities `json:"capabilities,omitempty"`
+
+	// ── PUT-only guards: which device sections the request manages ──
+	//
+	// LXDSetConfig's per-section diffs are "set this whole list" — any
+	// existing device whose name isn't in the desired list gets removed
+	// (and for disks, the backing volume is destroyed). That's correct
+	// when the caller meant to manage the section, but catastrophic when
+	// the caller sent a partial PUT and just forgot to echo a section
+	// back.
+	//
+	// HandleLXDSetConfig sets each flag below to true only when the
+	// matching JSON key was present in the request body (any value,
+	// including an explicit empty list). When a flag is false the
+	// corresponding diff loop is SKIPPED entirely, leaving the
+	// instance's current devices untouched. The web edit modal always
+	// sends the full config so the flags will all be true for normal
+	// edits; the new behaviour only matters for API callers that
+	// PUT a partial body.
+	//
+	// History note: a partial PUT with just `{"nics":[...]}` once wiped
+	// a stack's second disk via the disk diff and ZFS-destroyed the
+	// backing volume. This guard exists to make sure that can't recur.
+	ManageNICs               bool `json:"-"`
+	ManageDisks              bool `json:"-"`
+	ManageBindMounts         bool `json:"-"`
+	ManageUSBDevices         bool `json:"-"`
+	ManagePCIDevices         bool `json:"-"`
+	ManagePassthroughDevices bool `json:"-"`
+	ManageExistingDisks      bool `json:"-"`
 }
 
 var lxdDevNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
@@ -2694,9 +2758,23 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 	if secureBoot && strings.Contains(raw.Config["raw.qemu"], lxdSBOffMarker) {
 		secureBoot = false
 	}
+	// Source image label — Incus stamps image.description on init from the
+	// image's own metadata. When that's missing (rare), fall back to
+	// "<os> <release>" pieced together from the matching keys; if those
+	// are also empty the field stays blank and the UI hides the row.
+	imageLabel := raw.Config["image.description"]
+	if imageLabel == "" {
+		os := raw.Config["image.os"]
+		rel := raw.Config["image.release"]
+		if v := strings.TrimSpace(os + " " + rel); v != "" {
+			imageLabel = v
+		}
+	}
+
 	cfg := LXDInstanceConfig{
 		Description:       raw.Description,
 		CreatedAt:         raw.CreatedAt,
+		Image:             imageLabel,
 		CPULimit:          raw.Config["limits.cpu"],
 		CPUSockets:        rawQemuSockets,
 		MemoryLimit:       raw.Config["limits.memory"],
@@ -2770,7 +2848,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 			if mac == "" {
 				mac = raw.ExpandedConfig["volatile."+devName+".hwaddr"]
 			}
-			cfg.NICs = append(cfg.NICs, LXDNICConfig{
+			n := LXDNICConfig{
 				Name:        devName,
 				Bridge:      bridge,
 				NICType:     nicType,
@@ -2778,7 +2856,22 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 				VlanID:      vlanID,
 				FromProfile: !isInstanceLevel,
 				MAC:         mac,
-			})
+			}
+			// For container NICs, surface the IPv4 mode + addr + gw + DNS
+			// the operator previously set so the edit modal can pre-fill
+			// every field instead of showing "— keep current —" + blank
+			// inputs. Reads ZNAS-managed config files inside the rootfs;
+			// missing files (NIC never touched by ZNAS) leave the fields
+			// blank, which is the right default for the dropdown.
+			if raw.Type != "virtual-machine" {
+				m, a, g, d1, d2 := _readNICPersistentConfig(name, devName)
+				n.IPv4Mode = m
+				n.IPv4Addr = a
+				n.IPv4GW = g
+				n.DNS1 = d1
+				n.DNS2 = d2
+			}
+			cfg.NICs = append(cfg.NICs, n)
 		case "disk":
 			// Separate CD-ROM devices from regular disks.
 			if devCfg["readonly"] == "true" && strings.HasSuffix(strings.ToLower(devCfg["source"]), ".iso") {
@@ -3556,6 +3649,9 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	}
 
 	// ── NIC diff ──────────────────────────────────────────────────────────────
+	// Guard: when the request didn't include a `nics` field at all, leave
+	// the instance's current NICs untouched. See LXDInstanceConfig.ManageNICs.
+	if cfg.ManageNICs {
 	wantNICs := map[string]struct{}{}
 	for _, nic := range cfg.NICs {
 		if !lxdDevNameRe.MatchString(nic.Name) {
@@ -3768,19 +3864,45 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		}
 	}
 
-	// Apply static IP config for container NICs when IPv4Mode is set to "static".
+	// Apply per-NIC IPv4 config for containers. We act on BOTH "static" and
+	// "dhcp" modes — switching from one to the other has to write the new
+	// persistent shape AND clean up the old one, otherwise reboot picks up
+	// the stale config (eg. a leftover DHCP netplan file beats the new
+	// static systemd-networkd file at boot and the interface ends up with
+	// no IP). Mode "" means "keep current" and is intentionally a no-op.
 	if !isVM {
 		var staticNICs []LXDNIC
+		var changedDevs []string
 		for _, nic := range cfg.NICs {
-			if nic.IPv4Mode != "static" || nic.IPv4Addr == "" {
-				continue
+			switch nic.IPv4Mode {
+			case "static":
+				if nic.IPv4Addr == "" {
+					continue
+				}
+				n := LXDNIC{IPv4Mode: "static", IPv4Addr: nic.IPv4Addr, IPv4GW: nic.IPv4GW, DNS1: nic.DNS1, DNS2: nic.DNS2}
+				_pushNICPersistentConfig(name, nic.Name, n)
+				if isRunning {
+					_applyStaticIPCommands(name, nic.Name, n)
+				}
+				staticNICs = append(staticNICs, n)
+				changedDevs = append(changedDevs, nic.Name)
+			case "dhcp":
+				n := LXDNIC{IPv4Mode: "dhcp"}
+				_pushNICPersistentConfig(name, nic.Name, n)
+				if isRunning {
+					_applyDHCPRuntime(name, nic.Name, changedDevs)
+				}
+				changedDevs = append(changedDevs, nic.Name)
 			}
-			n := LXDNIC{IPv4Mode: nic.IPv4Mode, IPv4Addr: nic.IPv4Addr, IPv4GW: nic.IPv4GW, DNS1: nic.DNS1, DNS2: nic.DNS2}
-			_pushStaticNetworkConfig(name, nic.Name, n)
-			if isRunning {
-				_applyStaticIPCommands(name, nic.Name, n)
-			}
-			staticNICs = append(staticNICs, n)
+		}
+		// Single network-manager reload at the end (one `netplan apply` on
+		// Ubuntu, or `networkctl reload` + per-link `networkctl reconfigure`
+		// elsewhere) makes the new persistent config take effect for every
+		// NIC that changed shape, without a guest reboot. Skipped for VMs
+		// (managed inside the guest) and for stopped containers (the
+		// configs will be read at next boot).
+		if len(changedDevs) > 0 && isRunning {
+			_reloadContainerNetwork(name, changedDevs)
 		}
 		if isRunning {
 			if dnsLines := _collectDNSLines(staticNICs); len(dnsLines) > 0 {
@@ -3788,7 +3910,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 				cmd := exec.Command("incus", "exec", name, "--", "/bin/sh", "-c",
 					"rm -f /etc/resolv.conf && cat > /etc/resolv.conf")
 				cmd.Stdin = strings.NewReader(resolvConf)
-				cmd.Run()
+				cmd.Run() //nolint:errcheck
 			}
 		}
 
@@ -3803,8 +3925,12 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			syncNICPortForwards(name, nic.Name, nic.PortForwards, rawDev.ExpandedDevices)
 		}
 	}
+	} // end ManageNICs guard
 
 	// ── Disk diff ─────────────────────────────────────────────────────────────
+	// Guard: a partial PUT without a `disks` field must NOT remove disks
+	// or destroy their backing volumes. See LXDInstanceConfig.ManageDisks.
+	if cfg.ManageDisks {
 	wantDisks := map[string]struct{}{}
 	for _, disk := range cfg.Disks {
 		if !lxdDevNameRe.MatchString(disk.Name) {
@@ -4017,6 +4143,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			}
 		}
 	}
+	} // end ManageDisks guard
 
 	// Apply DiskBus to the root disk independently of the cfg.Disks loop.
 	// Root disks are typically profile-inherited (absent from cfg.Disks/curDisks) and
@@ -4107,6 +4234,10 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	}
 
 	// ── Attach existing ZVol / LXD-managed volumes ───────────────────────────
+	// Guard: only attach when the request listed `existing_disks_raw`. This
+	// loop only adds; it never detaches existing devices, so leaving it
+	// gated is precautionary rather than data-protective.
+	if cfg.ManageExistingDisks {
 	for _, ed := range cfg.ExistingDisks {
 		devName := ed.DeviceName
 		if devName == "" || !lxdDevNameRe.MatchString(devName) {
@@ -4129,10 +4260,14 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			return fmt.Errorf("attach existing disk %s: %s", devName, strings.TrimSpace(string(out)))
 		}
 	}
+	} // end ManageExistingDisks guard
 
 	// ── Bind mounts (host /mnt directories) — full reconcile ─────────────────
 	// cfg.BindMounts is the complete desired set: add new ones, update
 	// changed ones, and remove any /mnt-sourced device no longer listed.
+	// Guard: only reconcile when the request listed `bind_mounts` — otherwise
+	// a partial PUT would silently drop every bind-mounted directory.
+	if cfg.ManageBindMounts {
 	wantBind := map[string]bool{}
 	for i, bm := range cfg.BindMounts {
 		devName := bm.DeviceName
@@ -4192,8 +4327,11 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			}
 		}
 	}
+	} // end ManageBindMounts guard
 
 	// ── USB passthrough diff ───────────────────────────────────────────────────
+	// Guard: leave USB passthrough untouched unless the request listed it.
+	if cfg.ManageUSBDevices {
 	wantUSB := map[string]struct{}{}
 	for _, usb := range cfg.USBDevices {
 		if !lxdDevNameRe.MatchString(usb.DeviceName) {
@@ -4220,8 +4358,11 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			exec.Command("incus", "config", "device", "remove", name, n).Run()
 		}
 	}
+	} // end ManageUSBDevices guard
 
 	// ── PCI passthrough diff ───────────────────────────────────────────────────
+	// Guard: leave PCI passthrough untouched unless the request listed it.
+	if cfg.ManagePCIDevices {
 	wantPCI := map[string]struct{}{}
 	for _, pci := range cfg.PCIDevices {
 		if !lxdDevNameRe.MatchString(pci.DeviceName) {
@@ -4248,8 +4389,11 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			exec.Command("incus", "config", "device", "remove", name, n).Run()
 		}
 	}
+	} // end ManagePCIDevices guard
 
 	// ── Generic passthrough diff (containers) ─────────────────────────────────
+	// Guard: leave generic passthrough devices untouched unless listed.
+	if cfg.ManagePassthroughDevices {
 	wantPT := map[string]struct{}{}
 	for _, dev := range cfg.PassthroughDevices {
 		if !lxdDevNameRe.MatchString(dev.DeviceName) {
@@ -4275,6 +4419,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			exec.Command("incus", "config", "device", "remove", name, n).Run()
 		}
 	}
+	} // end ManagePassthroughDevices guard
 
 	// FUSE device add/remove for containers (tracked separately from generic passthrough).
 	if !isVM && cfg.ApplyContainerFeatures {
@@ -4652,12 +4797,18 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		// (16K by default). LXD prepends a 6144-byte image header to VM
 		// block volumes, so we need (userBytes + 6144) to be 16K-aligned —
 		// otherwise `zfs set volsize=…` fails with "must be a multiple of
-		// volume block size (16K)" (e.g. 20GB → volsize=20000006144,
-		// remainder 8192). Round up so the user always gets at least the
-		// requested size.
+		// volume block size (16K)" (e.g. 20GiB → volsize=21474836480,
+		// remainder 0; non-power-of-two values pad to alignment). Round
+		// up so the user always gets at least the requested size.
+		//
+		// SizeGB is named "GB" for backwards-compat with the existing
+		// JSON / UI label, but is interpreted as GiB (binary) so the
+		// number the user types matches what `df -h` shows inside the
+		// container — the old decimal-GB convention made a 128-typed
+		// disk appear as 120 G inside, because df-h uses 2^30 units.
 		const headerBytes int64 = 6144
 		const blockSize int64 = 16384
-		sizeBytes := int64(req.RootSizeGB * 1000 * 1000 * 1000)
+		sizeBytes := int64(req.RootSizeGB * 1024 * 1024 * 1024)
 		aligned := ((sizeBytes+headerBytes+blockSize-1)/blockSize)*blockSize - headerBytes
 		args = append(args, "-d", fmt.Sprintf("root,size=%dB", aligned))
 	}
@@ -4767,9 +4918,12 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 			devName = fmt.Sprintf("disk%d", i+1)
 		}
 		// LXD 5.x: create a named block volume first, then attach with source=.
+		// SizeGB is the number the operator typed in the UI's "size + GB"
+		// pair; we send it to Incus as GiB so it matches `df -h` units
+		// inside the guest (see comment on root disk sizing).
 		volName := req.Name + "-" + devName
 		volArgs := []string{"storage", "volume", "create", disk.Pool, volName,
-			"--type", "block", fmt.Sprintf("size=%vGB", disk.SizeGB)}
+			"--type", "block", fmt.Sprintf("size=%vGiB", disk.SizeGB)}
 		log("Adding disk " + devName + "…")
 		if out, err := exec.Command("incus", volArgs...).CombinedOutput(); err != nil {
 			log("WARNING: create volume for " + devName + ": " + strings.TrimSpace(string(out)))
@@ -5189,9 +5343,13 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 			dArgs = append(dArgs, "pool="+req.RootPool)
 		}
 		if req.DiskSizeGB > 0 {
-			// %vGB so fractional GB (sub-GB sizes from a "MB" unit selector)
-			// pass through as e.g. "0.1GB" — incus accepts decimals here.
-			dArgs = append(dArgs, fmt.Sprintf("size=%vGB", req.DiskSizeGB))
+			// %vGiB so fractional sizes (e.g. 0.1 from an MB unit pick)
+			// pass through as "0.1GiB" — incus accepts decimals here.
+			// GiB (binary) is used so the in-container `df -h` reading
+			// matches the number the operator typed (the old %vGB form
+			// underreported by ~6.87% per GB — see lxd_root sizeBytes
+			// comment).
+			dArgs = append(dArgs, fmt.Sprintf("size=%vGiB", req.DiskSizeGB))
 		}
 		log("Configuring root disk…")
 		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
@@ -5221,11 +5379,17 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 			log("WARNING: add NIC " + devName + ": " + strings.TrimSpace(string(out)))
 		}
 
-		// Push static network config files to the stopped container so that
-		// it boots with the correct IP immediately (no DHCP race).
+		// Push the right persistent network config to the stopped container
+		// so it boots with the operator's chosen mode in effect. For static
+		// this avoids the DHCP race; for explicit dhcp this overwrites any
+		// stale netplan/networkd file from an earlier mode. Mode "" leaves
+		// the default DHCP setup from pushUbuntuNetplanIfNeeded in place.
 		if nic.IPv4Mode == "static" && nic.IPv4Addr != "" {
 			log("Pre-configuring static IP for " + devName + "…")
-			_pushStaticNetworkConfig(req.Name, devName, nic)
+			_pushNICPersistentConfig(req.Name, devName, nic)
+		} else if nic.IPv4Mode == "dhcp" {
+			log("Pre-configuring DHCP for " + devName + "…")
+			_pushNICPersistentConfig(req.Name, devName, nic)
 		}
 
 		// Attach host→instance port-forward proxy devices. Idempotent at
@@ -5295,10 +5459,12 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 			continue
 		}
 		volName := req.Name + "-" + devName
-		// Storage volume `size` option doesn't accept fractional GB strings
-		// like "0.3GB"; format as integer bytes (incus parses raw byte counts
-		// without a unit suffix) so MB-precision sizes still work.
-		sizeBytes := int64(disk.SizeGB * 1000 * 1000 * 1000)
+		// Storage volume `size` option doesn't accept fractional GiB strings
+		// like "0.3GiB"; format as integer bytes (incus parses raw byte
+		// counts without a unit suffix) so MB-precision sizes still work.
+		// 1024^3 (binary) so the operator's number lines up with `df -h`
+		// inside the guest — see root-disk sizeBytes comment for context.
+		sizeBytes := int64(disk.SizeGB * 1024 * 1024 * 1024)
 		log(fmt.Sprintf("Creating storage volume %s/%s (size=%d bytes)…", pool, volName, sizeBytes))
 		args := []string{"storage", "volume", "create", pool, volName}
 		if sizeBytes > 0 {
@@ -5788,6 +5954,16 @@ func instanceImageIsUbuntu(name string) bool {
 func ensureUbuntuDHCP(name string) {
 	out, err := exec.Command("incus", "exec", name, "--", "cat", "/etc/os-release").Output()
 	if err != nil || !strings.Contains(string(out), "ID=ubuntu") {
+		return
+	}
+	// If the operator already pushed a per-NIC netplan (e.g. via Edit
+	// Instance with a static IP) before container start, do NOT overwrite
+	// it. Without this check there's a race: this function runs right
+	// after `incus start`, sees eth0 has no IP yet (netplan hasn't applied
+	// the static config), and overwrites our 99-znas-eth0.yaml with DHCP,
+	// which is exactly the bug that left stack containers without an IP
+	// after a DHCP→static switch.
+	if existing, _ := lxdReadFileInside(name, "/etc/netplan/99-znas-eth0.yaml"); strings.Contains(existing, "dhcp4: false") {
 		return
 	}
 	// Skip if a non-ZNAS netplan config already brought eth0 up.
@@ -6434,46 +6610,272 @@ func _waitContainerReady(name string, timeoutSec int) error {
 	return fmt.Errorf("system not running after %d seconds", timeoutSec)
 }
 
-// _pushStaticNetworkConfig writes static IP config files to a stopped (or running)
-// container for both systemd-networkd and ifupdown-based distros.
-func _pushStaticNetworkConfig(ctName, devName string, nic LXDNIC) {
-	// systemd-networkd config (Debian/Ubuntu default in LXD images).
-	var nd strings.Builder
-	nd.WriteString("[Match]\nName=" + devName + "\n\n[Network]\nDHCP=false\nAddress=" + nic.IPv4Addr + "\n")
-	if nic.IPv4GW != "" {
-		nd.WriteString("Gateway=" + nic.IPv4GW + "\n")
+// _pushNICPersistentConfig writes per-interface persistent network config
+// into a container's rootfs. Handles BOTH "static" and "dhcp" modes; mode
+// "" (keep current) and "none" are no-ops — ZNAS never owns a "no config"
+// state, so the caller is responsible for whatever cleanup mode=none needs.
+//
+// Distro detection (instanceImageIsUbuntu) picks the on-disk shape:
+//
+//   - Ubuntu uses netplan. We write /etc/netplan/99-znas-<dev>.yaml, which
+//     deliberately reuses the same filename pushUbuntuNetplanIfNeeded picks
+//     for eth0 so a DHCP→static switch *overwrites* the old DHCP yaml. The
+//     old code skipped this step and left a stale DHCP netplan file that
+//     generated /run/systemd/network/10-netplan-eth0.network at boot —
+//     and that lexicographically wins over /etc/systemd/network/eth0.network,
+//     so the static IP we'd planted never took effect on reboot.
+//
+//   - Non-Ubuntu distros get a systemd-networkd file at
+//     /etc/systemd/network/<dev>.network AND an ifupdown fallback at
+//     /etc/network/interfaces.d/<dev>. Writing both is cheap and covers
+//     every common base image (Debian, Alpine OpenRC + ifupdown, etc.)
+//     without us having to probe which network manager is actually in
+//     control inside the rootfs.
+//
+// `incus file push` writes through the rootfs on disk, so this is safe to
+// call against running AND stopped containers — the new config is in
+// place either way for the next boot. For an immediate take-effect on a
+// running container, the caller should also invoke _reloadContainerNetwork
+// and (for static) _applyStaticIPCommands.
+func _pushNICPersistentConfig(ctName, devName string, nic LXDNIC) {
+	if nic.IPv4Mode != "static" && nic.IPv4Mode != "dhcp" {
+		return
 	}
-	if nic.DNS1 != "" {
-		nd.WriteString("DNS=" + nic.DNS1 + "\n")
-	}
-	if nic.DNS2 != "" {
-		nd.WriteString("DNS=" + nic.DNS2 + "\n")
-	}
-	cmd := exec.Command("incus", "file", "push", "-", ctName+"/etc/systemd/network/"+devName+".network")
-	cmd.Stdin = strings.NewReader(nd.String())
-	cmd.Run()
+	isUbuntu := instanceImageIsUbuntu(ctName)
 
-	// ifupdown config (fallback for containers without systemd-networkd).
-	var ifd strings.Builder
-	ifd.WriteString("auto " + devName + "\n")
-	ifd.WriteString("iface " + devName + " inet static\n")
-	ifd.WriteString("    address " + nic.IPv4Addr + "\n")
-	if nic.IPv4GW != "" {
-		ifd.WriteString("    gateway " + nic.IPv4GW + "\n")
+	if isUbuntu {
+		var y strings.Builder
+		y.WriteString("# Written by ZNAS — interface " + devName + " managed via Edit Instance.\n")
+		y.WriteString("network:\n  version: 2\n  renderer: networkd\n  ethernets:\n")
+		y.WriteString("    " + devName + ":\n")
+		if nic.IPv4Mode == "dhcp" {
+			y.WriteString("      dhcp4: true\n      dhcp6: false\n")
+		} else {
+			y.WriteString("      dhcp4: false\n      dhcp6: false\n")
+			y.WriteString("      addresses: [" + nic.IPv4Addr + "]\n")
+			if nic.IPv4GW != "" {
+				y.WriteString("      routes:\n        - to: default\n          via: " + nic.IPv4GW + "\n")
+			}
+			if nic.DNS1 != "" || nic.DNS2 != "" {
+				y.WriteString("      nameservers:\n        addresses:\n")
+				if nic.DNS1 != "" {
+					y.WriteString("          - " + nic.DNS1 + "\n")
+				}
+				if nic.DNS2 != "" {
+					y.WriteString("          - " + nic.DNS2 + "\n")
+				}
+			}
+		}
+		cmd := exec.Command("incus", "file", "push", "--mode=0600", "--create-dirs", "-",
+			ctName+"/etc/netplan/99-znas-"+devName+".yaml")
+		cmd.Stdin = strings.NewReader(y.String())
+		cmd.Run() //nolint:errcheck
 	}
-	cmd2 := exec.Command("incus", "file", "push", "-", ctName+"/etc/network/interfaces.d/"+devName)
+
+	// systemd-networkd .network drop-in — primary for non-Ubuntu networkd
+	// distros, harmless extra for Ubuntu (netplan's generated file wins via
+	// lower-numbered prefix). Same filename across modes so a switch
+	// overwrites the previous mode's content in one shot.
+	var nd strings.Builder
+	nd.WriteString("# Written by ZNAS — interface " + devName + ".\n")
+	nd.WriteString("[Match]\nName=" + devName + "\n\n[Network]\n")
+	if nic.IPv4Mode == "dhcp" {
+		nd.WriteString("DHCP=ipv4\n")
+	} else {
+		nd.WriteString("DHCP=false\nAddress=" + nic.IPv4Addr + "\n")
+		if nic.IPv4GW != "" {
+			nd.WriteString("Gateway=" + nic.IPv4GW + "\n")
+		}
+		if nic.DNS1 != "" {
+			nd.WriteString("DNS=" + nic.DNS1 + "\n")
+		}
+		if nic.DNS2 != "" {
+			nd.WriteString("DNS=" + nic.DNS2 + "\n")
+		}
+	}
+	cmd := exec.Command("incus", "file", "push", "--mode=0644", "--create-dirs", "-",
+		ctName+"/etc/systemd/network/"+devName+".network")
+	cmd.Stdin = strings.NewReader(nd.String())
+	cmd.Run() //nolint:errcheck
+
+	// ifupdown drop-in — fallback for Debian/Alpine images without networkd.
+	var ifd strings.Builder
+	ifd.WriteString("# Written by ZNAS — interface " + devName + ".\n")
+	ifd.WriteString("auto " + devName + "\n")
+	if nic.IPv4Mode == "dhcp" {
+		ifd.WriteString("iface " + devName + " inet dhcp\n")
+	} else {
+		ifd.WriteString("iface " + devName + " inet static\n")
+		ifd.WriteString("    address " + nic.IPv4Addr + "\n")
+		if nic.IPv4GW != "" {
+			ifd.WriteString("    gateway " + nic.IPv4GW + "\n")
+		}
+	}
+	cmd2 := exec.Command("incus", "file", "push", "--mode=0644", "--create-dirs", "-",
+		ctName+"/etc/network/interfaces.d/"+devName)
 	cmd2.Stdin = strings.NewReader(ifd.String())
-	cmd2.Run()
+	cmd2.Run() //nolint:errcheck
+}
+
+// _readNICPersistentConfig reads back what _pushNICPersistentConfig wrote
+// for the given container NIC and returns the IPv4 mode + addr + gateway
+// + DNS so the edit modal can pre-fill the actual current values instead
+// of asking the user to remember them.
+//
+// Priority:
+//   - Ubuntu netplan (/etc/netplan/99-znas-<dev>.yaml) — only present
+//     when ZNAS managed the NIC on this Ubuntu container.
+//   - systemd-networkd (/etc/systemd/network/<dev>.network) — written
+//     for every distro by _pushNICPersistentConfig.
+//
+// Returns zero values when neither file exists (the NIC is on the system
+// default DHCP, or was configured outside ZNAS). The frontend then shows
+// the mode dropdown unselected so the user makes an explicit choice on
+// save instead of us guessing.
+func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns2 string) {
+	// Try netplan first — that's the source of truth on Ubuntu.
+	if y, _ := lxdReadFileInside(ctName, "/etc/netplan/99-znas-"+devName+".yaml"); y != "" {
+		if strings.Contains(y, "dhcp4: true") {
+			mode = "dhcp"
+		} else if strings.Contains(y, "dhcp4: false") {
+			mode = "static"
+		}
+		// Parse the single-line "addresses: [10.0.0.10/24]" form we emit.
+		if i := strings.Index(y, "addresses: ["); i >= 0 {
+			rest := y[i+len("addresses: ["):]
+			if j := strings.Index(rest, "]"); j > 0 {
+				addr = strings.TrimSpace(rest[:j])
+			}
+		}
+		// "via: <ip>" appears on the default-route line we emit under routes.
+		if i := strings.Index(y, "via: "); i >= 0 {
+			line := y[i+len("via: "):]
+			if j := strings.IndexAny(line, "\r\n"); j > 0 {
+				line = line[:j]
+			}
+			gw = strings.TrimSpace(line)
+		}
+		// Nameservers — we emit them as "          - <ip>" lines under a
+		// "nameservers:\n        addresses:" block. Pluck the first two.
+		var dnsList []string
+		for _, ln := range strings.Split(y, "\n") {
+			t := strings.TrimSpace(ln)
+			if strings.HasPrefix(t, "- ") {
+				v := strings.TrimSpace(strings.TrimPrefix(t, "-"))
+				// Cheap IP-looking check: at least one dot, no spaces. The
+				// only "- " items we emit in our netplan are nameserver
+				// addresses, so this is enough to filter accidental matches.
+				if v != "" && strings.Contains(v, ".") && !strings.ContainsAny(v, " \t") {
+					dnsList = append(dnsList, v)
+				}
+			}
+		}
+		if len(dnsList) > 0 {
+			dns1 = dnsList[0]
+		}
+		if len(dnsList) > 1 {
+			dns2 = dnsList[1]
+		}
+		if mode != "" {
+			return
+		}
+	}
+
+	// Fall back to systemd-networkd .network (non-Ubuntu).
+	if nd, _ := lxdReadFileInside(ctName, "/etc/systemd/network/"+devName+".network"); nd != "" {
+		var dnsList []string
+		for _, ln := range strings.Split(nd, "\n") {
+			t := strings.TrimSpace(ln)
+			switch {
+			case t == "DHCP=ipv4" || t == "DHCP=yes" || t == "DHCP=true":
+				mode = "dhcp"
+			case t == "DHCP=false" || t == "DHCP=no":
+				if mode == "" {
+					mode = "static"
+				}
+			case strings.HasPrefix(t, "Address="):
+				addr = strings.TrimSpace(strings.TrimPrefix(t, "Address="))
+				if mode == "" {
+					mode = "static"
+				}
+			case strings.HasPrefix(t, "Gateway="):
+				gw = strings.TrimSpace(strings.TrimPrefix(t, "Gateway="))
+			case strings.HasPrefix(t, "DNS="):
+				dnsList = append(dnsList, strings.TrimSpace(strings.TrimPrefix(t, "DNS=")))
+			}
+		}
+		if len(dnsList) > 0 {
+			dns1 = dnsList[0]
+		}
+		if len(dnsList) > 1 {
+			dns2 = dnsList[1]
+		}
+	}
+	return
+}
+
+// _pushStaticNetworkConfig is a thin compatibility wrapper kept so older
+// call sites stay compiling — the real work is in _pushNICPersistentConfig.
+// New code should call _pushNICPersistentConfig directly with the full NIC.
+func _pushStaticNetworkConfig(ctName, devName string, nic LXDNIC) {
+	if nic.IPv4Mode == "" {
+		nic.IPv4Mode = "static"
+	}
+	_pushNICPersistentConfig(ctName, devName, nic)
+}
+
+// _reloadContainerNetwork asks the running container's network manager to
+// re-read its config so a mode change takes effect without a reboot. The
+// per-NIC names (devNames) drive a `networkctl reconfigure <dev>` on
+// non-Ubuntu hosts — that's what actually re-triggers a DHCP discover
+// after a mode flip. Each command is best-effort: if netplan isn't
+// installed, or systemd-networkd is masked, we still rely on
+// _applyStaticIPCommands (static) or networkd's own retry loop (dhcp)
+// to converge.
+//
+// We deliberately avoid `systemctl restart systemd-networkd` on the
+// non-Ubuntu path: restarting networkd while interfaces are up causes
+// the new networkd PID to miss the RTM_NEWLINK events for those
+// interfaces — the link ends up stuck in "carrier (initialized)" /
+// "Online state: offline" and DHCP never fires. `networkctl reload`
+// re-reads .network files in-place, `networkctl reconfigure <dev>`
+// kicks the per-link state machine; both run against the existing
+// daemon and avoid the restart race.
+func _reloadContainerNetwork(ctName string, devNames []string) {
+	if instanceImageIsUbuntu(ctName) {
+		exec.Command("incus", "exec", ctName, "--", "netplan", "apply").Run() //nolint:errcheck
+		return
+	}
+	exec.Command("incus", "exec", ctName, "--", "networkctl", "reload").Run() //nolint:errcheck
+	for _, d := range devNames {
+		if d == "" {
+			continue
+		}
+		exec.Command("incus", "exec", ctName, "--", "networkctl", "reconfigure", d).Run() //nolint:errcheck
+	}
+}
+
+// _applyDHCPRuntime flushes any leftover static address on the named
+// interface and brings the link up so a subsequent network-manager reload
+// (done once for all changed NICs by the caller via _reloadContainerNetwork)
+// can issue a fresh DHCP discover instead of holding onto the previous
+// static address. We deliberately do NOT reload the network stack here —
+// reloading once per changed NIC would needlessly bounce other interfaces.
+func _applyDHCPRuntime(ctName, devName string, _ []string) {
+	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "flush", "dev", devName).Run() //nolint:errcheck
+	exec.Command("incus", "exec", ctName, "--", "ip", "link", "set", devName, "up").Run()    //nolint:errcheck
 }
 
 // _applyStaticIPCommands applies a static IP immediately via ip commands in a
-// running container (the persistent config was already pushed before start).
+// running container — gets the address visible NOW, before the slower
+// netplan/networkd reload converges. Idempotent: flushes any existing
+// addresses first so a re-apply on the same NIC doesn't pile up duplicates.
 func _applyStaticIPCommands(ctName, devName string, nic LXDNIC) {
-	exec.Command("incus", "exec", ctName, "--", "ip", "link", "set", devName, "up").Run()
-	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "flush", "dev", devName).Run()
-	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "add", nic.IPv4Addr, "dev", devName).Run()
+	exec.Command("incus", "exec", ctName, "--", "ip", "link", "set", devName, "up").Run()             //nolint:errcheck
+	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "flush", "dev", devName).Run()          //nolint:errcheck
+	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "add", nic.IPv4Addr, "dev", devName).Run() //nolint:errcheck
 	if nic.IPv4GW != "" {
-		exec.Command("incus", "exec", ctName, "--", "ip", "route", "replace", "default", "via", nic.IPv4GW).Run()
+		exec.Command("incus", "exec", ctName, "--", "ip", "route", "replace", "default", "via", nic.IPv4GW).Run() //nolint:errcheck
 	}
 }
 

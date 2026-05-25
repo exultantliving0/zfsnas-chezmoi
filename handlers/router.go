@@ -619,6 +619,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleDetectUPS(appCfg))))).Methods("POST")
 	r.Handle("/api/ups/nominal-power",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetNominalPower(appCfg))))).Methods("PUT")
+	r.Handle("/api/ups/cost-per-kwh",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetCostPerKWh(appCfg))))).Methods("PUT")
 	r.Handle("/api/ups/perf/data",
 		RequireAuth(http.HandlerFunc(HandleUPSPerfData))).Methods("GET")
 	r.Handle("/api/ups/perf/oldest",
