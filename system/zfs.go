@@ -1268,6 +1268,7 @@ func parseImportOutput(output string) []ImportablePool {
 
 // ScrubInfo holds the parsed state of a ZFS pool scrub.
 type ScrubInfo struct {
+	Pool        string  `json:"pool,omitempty"`        // pool this status applies to (v6.5.26+)
 	State       string  `json:"state"`                 // idle | running | finished | canceled
 	ProgressPct float64 `json:"progress_pct,omitempty"`
 	TimeLeft    string  `json:"time_left,omitempty"`
@@ -1283,7 +1284,9 @@ func GetScrubStatus(poolName string) (*ScrubInfo, error) {
 	if err != nil && len(out) == 0 {
 		return nil, fmt.Errorf("zpool status: %w", err)
 	}
-	return parseScrubInfo(string(out)), nil
+	info := parseScrubInfo(string(out))
+	info.Pool = poolName
+	return info, nil
 }
 
 func parseScrubInfo(output string) *ScrubInfo {

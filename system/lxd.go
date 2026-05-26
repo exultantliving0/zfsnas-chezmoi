@@ -1346,6 +1346,17 @@ func LXDAvailable() bool {
 	return cmd.Run() == nil
 }
 
+// LXDAvailableTimeout is the same probe but with a hard deadline. Used at
+// startup so a wedged incus daemon (e.g. cluster recovery, broken socket)
+// can't block the main goroutine before the HTTPS listener starts.
+// Returns false on timeout or any other failure — caller treats the
+// VMs & Containers feature as disabled, which is the safe degradation.
+func LXDAvailableTimeout(d time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return exec.CommandContext(ctx, "incus", "list", "--format", "json").Run() == nil
+}
+
 // LXDVersion returns the lxc client version string.
 func LXDVersion() string {
 	out, err := exec.Command("incus", "version").Output()
@@ -5054,11 +5065,39 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 	}
 
 	// Add NICs.
-	for i, nic := range req.NICs {
-		devName := nic.DeviceName
-		if devName == "" {
-			devName = fmt.Sprintf("eth%d", i)
+	//
+	// Defence in depth (v6.5.26): the frontend used to default the first
+	// extra NIC's device_name to "eth0", colliding with the primary NIC
+	// the profile/extra request already added. Pre-fix, `incus config
+	// device add` returned an error which we logged as a WARNING and
+	// kept going — the VM was created "successfully" but missing the
+	// second NIC, and the user only noticed when they reopened the Edit
+	// dialog. The frontend now defaults to eth1+, but we also dedup
+	// here: an empty or duplicate DeviceName falls back to the next
+	// unused eth<N> across the whole request. Failures still get logged
+	// but they're collected into a final error so the caller surfaces a
+	// real banner instead of silently swallowing the loss.
+	usedNICNames := map[string]bool{}
+	nextFreeETHN := func() string {
+		for n := 0; n < 64; n++ {
+			c := fmt.Sprintf("eth%d", n)
+			if !usedNICNames[c] {
+				return c
+			}
 		}
+		return fmt.Sprintf("eth%d", len(usedNICNames)) // pathological; tests bound things
+	}
+	var nicErrors []string
+	for _, nic := range req.NICs {
+		devName := nic.DeviceName
+		if devName == "" || usedNICNames[devName] {
+			orig := devName
+			devName = nextFreeETHN()
+			if orig != "" {
+				log(fmt.Sprintf("NIC device name %q already used in this request — renaming to %s", orig, devName))
+			}
+		}
+		usedNICNames[devName] = true
 		nArgs := []string{"config", "device", "add", req.Name, devName, "nic",
 			"nictype=bridged", "parent=" + nic.Network,
 		}
@@ -5070,7 +5109,10 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 		}
 		log("Adding NIC " + devName + "…")
 		if out, err := exec.Command("incus", nArgs...).CombinedOutput(); err != nil {
-			log("WARNING: add NIC " + devName + ": " + strings.TrimSpace(string(out)))
+			msg := strings.TrimSpace(string(out))
+			log("WARNING: add NIC " + devName + ": " + msg)
+			nicErrors = append(nicErrors, devName+": "+msg)
+			continue // skip port-forwards on a NIC that didn't attach
 		}
 
 		// Host→VM port-forward proxy devices. For VMs the connect side
@@ -5084,6 +5126,14 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 			}
 		}
 	}
+	// Defer the NIC-error report so it shows up after the bulk of the
+	// VM creation log; we don't return early because the user's VM is
+	// already in a usable state with whatever NICs *did* attach.
+	defer func() {
+		if len(nicErrors) > 0 {
+			log("ERROR: one or more NICs failed to attach: " + strings.Join(nicErrors, " | "))
+		}
+	}()
 
 	// Add USB devices.
 	for _, usb := range req.USBDevices {

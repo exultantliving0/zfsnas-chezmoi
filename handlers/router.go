@@ -521,6 +521,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// WebSocket: real-time in-app alert notifications
 	r.Handle("/ws/alerts",
 		RequireAuth(http.HandlerFunc(HandleAlertsWS))).Methods("GET")
+	// Incus daemon health snapshot — used by the persistent-banner
+	// hydration on page load (v6.5.26).
+	r.Handle("/api/lxd/health",
+		RequireAuth(http.HandlerFunc(HandleIncusHealth))).Methods("GET")
 
 	// --- Disk I/O metrics ---
 	r.Handle("/api/sysinfo/diskio",
@@ -897,6 +901,27 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleComposeConsoleWS)))).Methods("GET")
 	r.Handle("/compose-console/{stack}/{container}",
 		RequireAuth(http.HandlerFunc(ServeComposeConsolePage))).Methods("GET")
+	// v6.5.26 — Docker Detection inside user-managed VMs/LXCs.
+	r.Handle("/api/lxd/instances/{name}/docker/probe",
+		RequireAuth(http.HandlerFunc(HandleDockerProbe(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/docker/containers",
+		RequireAuth(http.HandlerFunc(HandleDockerListContainers(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/docker/containers/{id}/logs",
+		RequireAuth(http.HandlerFunc(HandleDockerContainerLogs(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/docker/containers/{id}/inspect",
+		RequireAuth(http.HandlerFunc(HandleDockerContainerInspect(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/docker/compose-file",
+		RequireAuth(http.HandlerFunc(HandleDockerGetComposeFile(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/docker/compose-file",
+		RequireAuth(RequirePermission("manage_docker_detect")(http.HandlerFunc(HandleDockerPutComposeFile(appCfg))))).Methods("PUT")
+	r.Handle("/api/lxd/instances/{name}/docker/compose-action",
+		RequireAuth(RequirePermission("manage_docker_detect")(http.HandlerFunc(HandleDockerComposeAction(appCfg))))).Methods("POST")
+	r.Handle("/api/lxd/instances/{name}/docker/container-action",
+		RequireAuth(RequirePermission("manage_docker_detect")(http.HandlerFunc(HandleDockerContainerAction(appCfg))))).Methods("POST")
+	r.Handle("/ws/docker-console",
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleDockerConsoleWS(appCfg))))).Methods("GET")
+	r.Handle("/docker-console/{instance}/{container}",
+		RequireAuth(http.HandlerFunc(ServeDockerConsolePage))).Methods("GET")
 	r.Handle("/ws/lxd-vga",
 		RequireAuth(http.HandlerFunc(HandleLXDVGAConsole))).Methods("GET")
 	r.Handle("/lxd-vga-console/{name}",

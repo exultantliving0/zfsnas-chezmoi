@@ -27,14 +27,16 @@ func HandleGetSettings(appCfg *config.AppConfig) http.HandlerFunc {
 			composeImg = "debian"
 		}
 		jsonOK(w, map[string]interface{}{
-			"port":                 appCfg.Port,
-			"bind_port_443":        appCfg.BindPort443,
-			"compose_base_image":   composeImg,
-			"storage_unit":         appCfg.StorageUnit,
-			"login_theme":          theme,
-			"live_update_enabled":  appCfg.LiveUpdateEnabled,
-			"max_smbd_processes":   appCfg.MaxSmbdProcesses,
-			"web_session":          appCfg.WebSession,
+			"port":                       appCfg.Port,
+			"bind_port_443":              appCfg.BindPort443,
+			"compose_base_image":         composeImg,
+			"storage_unit":               appCfg.StorageUnit,
+			"login_theme":                theme,
+			"live_update_enabled":        appCfg.LiveUpdateEnabled,
+			"max_smbd_processes":         appCfg.MaxSmbdProcesses,
+			"web_session":                appCfg.WebSession,
+			"docker_detect_vms":          appCfg.DockerDetectVMs,
+			"docker_detect_containers":   appCfg.DockerDetectContainers,
 		})
 	}
 }
@@ -51,6 +53,8 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 			LiveUpdateEnabled *bool   `json:"live_update_enabled"`
 			MaxSmbdProcesses  *int    `json:"max_smbd_processes"`
 			WebSession        *config.WebSessionPolicy `json:"web_session"`
+			DockerDetectVMs        *bool `json:"docker_detect_vms"`
+			DockerDetectContainers *bool `json:"docker_detect_containers"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -108,6 +112,14 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 				return
 			}
 			appCfg.MaxSmbdProcesses = *req.MaxSmbdProcesses
+			changed = true
+		}
+		if req.DockerDetectVMs != nil {
+			appCfg.DockerDetectVMs = *req.DockerDetectVMs
+			changed = true
+		}
+		if req.DockerDetectContainers != nil {
+			appCfg.DockerDetectContainers = *req.DockerDetectContainers
 			changed = true
 		}
 		if req.WebSession != nil {

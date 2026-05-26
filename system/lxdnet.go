@@ -36,12 +36,21 @@ func GetBridgeMembers(bridge string) ([]BridgeMember, error) {
 		return nil, err
 	}
 
+	// Incus's `used_by` lists one entry per *usage* of the network, so a
+	// VM with two NICs on the same bridge appears twice. Dedup by name
+	// (the first occurrence wins) so the members table shows one row
+	// per instance — matching the storage-pool members handler below.
+	seen := map[string]bool{}
 	var members []BridgeMember
 	for _, uri := range net.UsedBy {
 		if !strings.Contains(uri, "/1.0/instances/") {
 			continue
 		}
 		instName := uri[strings.LastIndex(uri, "/")+1:]
+		if seen[instName] {
+			continue
+		}
+		seen[instName] = true
 
 		// Get instance config: type, description, devices, expanded_config (volatile MACs).
 		cfgOut, err := exec.Command("incus", "query", "/1.0/instances/"+instName).Output()

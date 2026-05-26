@@ -157,6 +157,27 @@ func HandleAlertsWS(w http.ResponseWriter, r *http.Request) {
 
 const alertDedup = 24 * time.Hour
 
+// BroadcastAlertJSON pushes a custom payload to every connected
+// /ws/alerts session. Used by the incus health watchdog to ship a
+// `{kind:"incus_stuck", persistent:true, …}` envelope the frontend
+// promotes to a persistent red banner (instead of an auto-dismiss
+// toast). Returns silently if the hub isn't initialised yet — startup
+// race shouldn't crash the watchdog.
+func BroadcastAlertJSON(v any) {
+	if hub := alerts.GetHub(); hub != nil {
+		hub.BroadcastJSON(v)
+	}
+}
+
+// HandleIncusHealth serves the current daemon health state. The browser
+// hits this on page load so the persistent banner can rehydrate after a
+// hard refresh — without it, the user would need to wait up to 30 s for
+// the next watcher tick to learn the daemon is stuck.
+// GET /api/incus/health
+func HandleIncusHealth(w http.ResponseWriter, r *http.Request) {
+	jsonOK(w, system.IncusHealth())
+}
+
 // isSmartUnsupported returns true when a disk has no genuine SMART failure.
 func isSmartUnsupported(msg string) bool {
 	switch msg {

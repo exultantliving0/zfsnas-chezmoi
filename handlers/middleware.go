@@ -124,6 +124,7 @@ func permEnabled(p *config.StandardPermissions, perm string) bool {
 	case "manage_snapshots":    return p.ManageSnapshots
 	case "edit_settings":       return p.EditSettings
 	case "manage_interlink":    return p.ManageInterlink
+	case "manage_docker_detect": return p.ManageDockerDetect
 	case "manage_networking":   return p.ManageNetworking
 	case "view_virtualization":     return p.ViewVirtualization
 	case "create_vm":               return p.CreateVM

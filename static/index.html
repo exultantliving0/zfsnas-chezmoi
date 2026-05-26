@@ -3345,6 +3345,65 @@
         </div>
       </div>
 
+      <!-- v6.5.26 — Docker logs modal (row "Last Outputs" action). -->
+      <div class="modal-backdrop hidden" id="modal-docker-logs">
+        <div class="modal" style="max-width:1000px;max-height:90vh;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3>Docker Logs — <span id="docker-logs-name" style="font-family:monospace;color:var(--text-2);"></span></h3>
+            <button class="modal-close" onclick="document.getElementById('modal-docker-logs').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:8px 24px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);">
+            <span style="font-size:12px;color:var(--text-3);">Tail</span>
+            <input type="number" id="docker-logs-tail" value="200" min="1" max="10000" style="width:100px;" class="znas-input">
+            <button class="btn btn-sm" onclick="_ciDockerReloadLogs()">Reload</button>
+          </div>
+          <pre id="docker-logs-body" style="flex:1;margin:0;padding:14px 24px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.45;color:#cdd9e5;background:#0d1117;overflow:auto;white-space:pre-wrap;word-break:break-word;"></pre>
+        </div>
+      </div>
+
+      <!-- v6.5.26 — Docker inspect modal (row "Inspect" action). -->
+      <div class="modal-backdrop hidden" id="modal-docker-inspect">
+        <div class="modal" style="max-width:1000px;max-height:90vh;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3>Docker Inspect — <span id="docker-inspect-name" style="font-family:monospace;color:var(--text-2);"></span></h3>
+            <button class="modal-close" onclick="document.getElementById('modal-docker-inspect').classList.add('hidden')">✕</button>
+          </div>
+          <pre id="docker-inspect-body" style="flex:1;margin:0;padding:14px 24px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.45;color:#cdd9e5;background:#0d1117;overflow:auto;white-space:pre-wrap;word-break:break-word;"></pre>
+        </div>
+      </div>
+
+      <!-- v6.5.26 — Docker Detection: edit-compose modal. Opens from the
+           ✎ Edit button on a project header row inside the Docker card. -->
+      <div class="modal-backdrop hidden" id="modal-docker-edit-compose">
+        <div class="modal" style="max-width:880px;max-height:90vh;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3>Edit <code style="font-size:13px;">docker-compose.yml</code></h3>
+            <button class="modal-close" onclick="dockerEditComposeCancel()">✕</button>
+          </div>
+          <div style="padding:14px 24px 8px;flex:1;display:flex;flex-direction:column;min-height:0;">
+            <div style="font-size:12px;color:var(--text-3);margin-bottom:6px;">
+              Project: <strong id="docker-edit-project" style="color:var(--text-2);"></strong>
+              <span style="color:var(--text-3);"> · path </span>
+              <code id="docker-edit-path" style="font-family:monospace;font-size:11.5px;color:var(--text-2);"></code>
+            </div>
+            <div id="docker-edit-missing" class="hidden" style="margin-bottom:8px;padding:8px 12px;border-left:3px solid #d29922;background:rgba(210,153,34,0.08);border-radius:4px;font-size:12px;color:var(--text-2);">
+              File not found at this path — saving will create it.
+            </div>
+            <div id="docker-edit-extra" class="hidden" style="margin-bottom:8px;padding:8px 12px;border-left:3px solid var(--accent);background:rgba(88,166,255,0.06);border-radius:4px;font-size:12px;color:var(--text-2);">
+              <strong>Extra compose files in this project (read-only):</strong>
+              <div id="docker-edit-extra-list" style="font-family:monospace;font-size:11.5px;color:var(--text-3);margin-top:4px;"></div>
+            </div>
+            <textarea id="docker-edit-yaml" spellcheck="false"
+              style="flex:1;min-height:340px;font-family:'SF Mono','Fira Code',monospace;font-size:12.5px;line-height:1.45;padding:12px;background:#0d1117;color:#cdd9e5;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
+            <div id="docker-edit-alert" class="hidden" style="margin-top:8px;padding:8px 12px;border-radius:4px;background:rgba(248,81,73,0.08);color:#f85149;font-size:12px;"></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="dockerEditComposeCancel()">Cancel</button>
+            <button class="btn btn-primary" id="docker-edit-save-btn" onclick="dockerEditComposeSave()">Save &amp; Apply</button>
+          </div>
+        </div>
+      </div>
+
       <!-- LXD USB picker modal -->
       <div class="modal-backdrop hidden" id="modal-lxd-usb">
         <div class="modal" style="max-width:620px;max-height:80vh;display:flex;flex-direction:column;">
@@ -4202,6 +4261,24 @@
                 <span id="ci-compose-refresh" onclick="ciLoadComposeContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;">↻ Refresh</span>
               </div>
               <div id="ci-compose-body">
+                <div style="text-align:center;color:var(--text-3);padding:20px 0;">Loading…</div>
+              </div>
+            </div>
+
+            <!-- Docker Detection card (v6.5.26). Visible only when the user
+                 opted in for this instance type AND the in-guest docker
+                 daemon responded to the probe. Containers are grouped by
+                 com.docker.compose.project; ungrouped ones land in an
+                 "Individual containers" section. -->
+            <div class="card" id="ci-docker-card" style="margin-bottom:0;display:none;grid-column:1/-1;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                <span style="font-size:18px;">🐳</span>
+                <span style="font-weight:700;font-size:14px;color:var(--text);">Stack Containers</span>
+                <span id="ci-docker-count" style="font-size:12px;color:var(--text-3);"></span>
+                <span style="flex:1;"></span>
+                <span id="ci-docker-refresh" onclick="ciLoadDockerContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;">↻ Refresh</span>
+              </div>
+              <div id="ci-docker-body">
                 <div style="text-align:center;color:var(--text-3);padding:20px 0;">Loading…</div>
               </div>
             </div>
@@ -5784,6 +5861,30 @@ Select the Console tab to load.</pre>
             </div>
           </div>
 
+          <!-- Card — Docker Detection (v6.5.26). Opt-in per type. Probes each
+               VM / LXC the user opens for a running docker daemon and renders
+               the containers/stacks it finds, grouped by compose project. -->
+          <div class="card">
+            <h3 style="margin-bottom:6px;">Docker Detection</h3>
+            <p style="font-size:12px;color:var(--text-3);margin:0 0 14px;line-height:1.55;">
+              When enabled, ZNAS probes each VM or LXC you open for a running Docker daemon and renders the containers/stacks it finds on the instance's main screen. Stacks are grouped by their <code>com.docker.compose.project.config_files</code> label so you can Stop / Start / Restart / Update / Edit each project as a unit.
+              <br><br>
+              Works only on instances where the <strong>LXD Terminal opens without a password</strong> — for LXC, that is any running container; for VMs, the <code>incus-agent</code> must be running inside the guest (Linux cloud images include it; Windows VMs and stripped-down Linuxes do not). Instances without the agent are silently skipped.
+            </p>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-bottom:8px;">
+              <input type="checkbox" id="virt-docker-detect-vm">
+              Detect / Manage dockers on VMs
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+              <input type="checkbox" id="virt-docker-detect-ct">
+              Detect / Manage dockers on LXC Containers
+            </label>
+            <div class="virt-card-footer">
+              <span id="virt-docker-msg" class="virt-card-msg"></span>
+              <button class="btn btn-primary btn-sm" onclick="applyDockerDetectCard()">Apply</button>
+            </div>
+          </div>
+
           <!-- Card 5 — Memory Compression (zram-tools), v6.5.3+. Self-contained:
                has its own Apply / Disable buttons and doesn't participate in
                the panel's "Save changes" flow. Lives in the 2-col grid like
@@ -5959,6 +6060,20 @@ Select the Console tab to load.</pre>
 
     <!-- ===== IN-APP ALERT TOASTS ===== -->
     <div id="alert-toasts"></div>
+
+    <!-- ===== PERSISTENT SYSTEM-LEVEL BANNER (v6.5.26) =====
+         Used by the incus health watchdog: stays visible while the
+         daemon is stuck, auto-clears when it recovers. Survives page
+         reloads via /api/incus/health hydration in initAlertsWebSocket. -->
+    <div id="incus-stuck-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9000;background:#3b0d0d;border-bottom:2px solid #f85149;color:#ffd5d3;padding:10px 16px;font-size:13px;line-height:1.45;box-shadow:0 2px 8px rgba(0,0,0,0.35);">
+      <div style="max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:12px;">
+        <span style="font-size:18px;flex-shrink:0;">⚠️</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:700;color:#fff;">Incus daemon not responding</div>
+          <div style="opacity:.85;">ZNAS' <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px;">incus</code> commands are timing out. VMs &amp; Containers actions will hang until the daemon recovers — see <a id="incus-stuck-doc" href="https://linuxcontainers.org/incus/docs/main/howto/troubleshoot/" target="_blank" rel="noopener" style="color:#ffb4b1;text-decoration:underline;">Incus troubleshooting docs</a>.</div>
+        </div>
+      </div>
+    </div>
 
     <!-- ===== BOTTOM ACTIVITY BAR ===== -->
     <div class="activity-bar expanded" id="activity-bar">
@@ -11292,6 +11407,7 @@ async function loadVirtSettings() {
   // immediate load when the tab opens so we don't wait the full 10 s.
   loadMemCompCard();
   loadComposeImageCard();
+  loadDockerDetectCard();
 }
 
 // Compose Stacks card — the LXC base image new Compose stacks are built from.
@@ -11316,6 +11432,46 @@ async function applyComposeImageCard() {
       body: JSON.stringify({ compose_base_image: sel.value }),
     });
     if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--accent-2)'; setTimeout(() => { msg.textContent = ''; }, 3000); }
+  } catch (e) {
+    if (msg) { msg.textContent = String(e.message || e); msg.style.color = 'var(--danger)'; }
+  }
+}
+
+// Docker Detection card (v6.5.26). Two booleans persisted in AppConfig
+// via /api/settings; consulted on every openComputeInstance() to decide
+// whether to render the in-instance Docker card.
+async function loadDockerDetectCard() {
+  try {
+    const r = await fetch('/api/settings');
+    if (!r.ok) return;
+    const d = await r.json();
+    const vm = document.getElementById('virt-docker-detect-vm');
+    const ct = document.getElementById('virt-docker-detect-ct');
+    if (vm) vm.checked = !!d.docker_detect_vms;
+    if (ct) ct.checked = !!d.docker_detect_containers;
+    // Keep the global appSettings cache in sync so openComputeInstance()
+    // sees the latest value without re-fetching.
+    appSettings.docker_detect_vms        = !!d.docker_detect_vms;
+    appSettings.docker_detect_containers = !!d.docker_detect_containers;
+  } catch (_) {}
+}
+
+async function applyDockerDetectCard() {
+  const vm  = document.getElementById('virt-docker-detect-vm');
+  const ct  = document.getElementById('virt-docker-detect-ct');
+  const msg = document.getElementById('virt-docker-msg');
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        docker_detect_vms:        vm.checked,
+        docker_detect_containers: ct.checked,
+      }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    appSettings.docker_detect_vms        = vm.checked;
+    appSettings.docker_detect_containers = ct.checked;
     if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--accent-2)'; setTimeout(() => { msg.textContent = ''; }, 3000); }
   } catch (e) {
     if (msg) { msg.textContent = String(e.message || e); msg.style.color = 'var(--danger)'; }
@@ -15447,15 +15603,48 @@ async function testAlertTarget(target) {
 // ===== In-app alert WebSocket toasts =====
 
 function initAlertsWebSocket() {
+  // Hydrate persistent banners (currently just the incus health one)
+  // on page load so a hard refresh while the daemon is stuck still
+  // shows the warning without waiting up to 30 s for the next watcher
+  // tick.
+  fetch('/api/incus/health').then(r => r.ok ? r.json() : null).then(s => {
+    if (s) applyIncusStuckBanner(s.stuck, s);
+  }).catch(() => {});
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/alerts`);
     ws.onmessage = e => {
-      try { showAlertToast(JSON.parse(e.data)); } catch {}
+      try {
+        const d = JSON.parse(e.data);
+        // The watchdog tags its envelope with kind:"incus_stuck" so
+        // we can promote it to the persistent banner instead of the
+        // auto-dismissing toast list. Everything else stays a toast.
+        if (d && d.kind === 'incus_stuck') {
+          applyIncusStuckBanner(!!d.stuck, d);
+          return;
+        }
+        showAlertToast(d);
+      } catch {}
     };
     ws.onclose = () => setTimeout(connect, 5000);
   }
   connect();
+}
+
+function applyIncusStuckBanner(stuck, d) {
+  const el = document.getElementById('incus-stuck-banner');
+  if (!el) return;
+  if (stuck) {
+    // Honour any docs URL the server sent so we can re-target the
+    // link without a frontend rebuild if upstream renames the page.
+    if (d && d.docs_url) {
+      const a = document.getElementById('incus-stuck-doc');
+      if (a) a.href = d.docs_url;
+    }
+    el.style.display = '';
+  } else {
+    el.style.display = 'none';
+  }
 }
 
 function showAlertToast(d) {
@@ -16582,6 +16771,7 @@ function renderPoolExists(el, pool) {
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
           <span style="font-size:13px;font-weight:600;color:var(--text-1);">Auto-Scrub Schedule</span>
+          <span id="scrub-sched-pool-label" style="font-size:11px;color:var(--text-3);font-weight:500;"></span>
           <i class="info-tip tip-down" style="cursor:pointer;" onclick="openScrubScheduleHelp()"></i>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -17014,15 +17204,26 @@ async function submitImportPool() {
 }
 
 // ===== Scrub =====
+// The scrub card lives in the Pool tab and acts on whichever pool the
+// user has selected there (`selectedPoolName`). Without this param, the
+// backend defaults to the host's first pool — so on a multi-pool host
+// "Start scrub" from the NVMe view would silently target the HDD pool.
+// v6.5.26 fix: every call carries `?pool=<selectedPoolName>` (or the
+// equivalent body for POSTs).
 async function _fetchScrubStatus() {
   const body = document.getElementById('scrub-status-body');
   const actions = document.getElementById('scrub-actions');
   if (!body || !actions) return;
+  const poolQ = selectedPoolName ? '?pool=' + encodeURIComponent(selectedPoolName) : '';
+  // Capture the pool we requested for so a slow response that arrives
+  // after the user switched tabs/pools doesn't paint stale state.
+  const requestedPool = selectedPoolName;
   try {
     const [sResp, schedResp] = await Promise.all([
-      fetch('/api/pool/scrub/status'),
-      fetch('/api/pool/scrub/schedule'),
+      fetch('/api/pool/scrub/status' + poolQ),
+      fetch('/api/pool/scrub/schedule' + poolQ),
     ]);
+    if (selectedPoolName !== requestedPool) return; // user switched pools mid-fetch
     if (!sResp.ok) return;
     const s     = await sResp.json();
     const sched = schedResp.ok ? await schedResp.json() : {};
@@ -17044,6 +17245,18 @@ async function _fetchScrubStatus() {
     if (schedSel) { schedSel.value = sched.schedule || ''; csRefresh('scrub-schedule-select'); }
     if (hourSel)  { hourSel.value  = sched.hour ?? 2; csRefresh('scrub-hour-select'); }
     if (hourWrap) hourWrap.style.display = sched.schedule ? 'flex' : 'none';
+    // v6.5.26 — each pool carries its own schedule. The label clarifies
+    // that changes here apply only to the currently selected pool, and
+    // "(inherited)" tells the user the entry is still falling back to
+    // the legacy global (set on any one pool to make it explicit).
+    const lbl = document.getElementById('scrub-sched-pool-label');
+    if (lbl) {
+      if (sched.pool) {
+        lbl.textContent = '· for ' + sched.pool + (sched.explicit === false ? ' (inherited)' : '');
+      } else {
+        lbl.textContent = '';
+      }
+    }
 
     // Actions bar
     const isAdmin = hasPerm('manage_protection');
@@ -17093,20 +17306,32 @@ async function _fetchScrubStatus() {
 }
 
 async function startScrub() {
-  const resp = await fetch('/api/pool/scrub/start', { method: 'POST' });
+  if (!selectedPoolName) { showToast('No pool selected.', 'error'); return; }
+  const resp = await fetch('/api/pool/scrub/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pool: selectedPoolName })
+  });
   const data = await resp.json();
   if (!resp.ok) { showToast(data.error || 'Failed to start scrub.', 'error'); return; }
+  showToast('Scrub started on ' + selectedPoolName, 'success');
   _fetchScrubStatus();
 }
 
 async function stopScrub() {
+  if (!selectedPoolName) { showToast('No pool selected.', 'error'); return; }
+  const targetPool = selectedPoolName;
   showConfirm({
-    title: 'Stop Scrub',
-    body: 'Stop the currently running scrub? You can restart it at any time.',
+    title: 'Stop Scrub on ' + targetPool,
+    body: 'Stop the currently running scrub on <strong>' + esc(targetPool) + '</strong>? You can restart it at any time.',
     confirmText: 'Stop Scrub',
     danger: false,
     onConfirm: async () => {
-      const resp = await fetch('/api/pool/scrub/stop', { method: 'POST' });
+      const resp = await fetch('/api/pool/scrub/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pool: targetPool })
+      });
       const data = await resp.json();
       if (!resp.ok) { showToast(data.error || 'Failed to stop scrub.', 'error'); return; }
       _fetchScrubStatus();
@@ -17119,10 +17344,14 @@ async function setScrubSchedule() {
   const hour     = parseInt(document.getElementById('scrub-hour-select')?.value ?? '2', 10);
   const hourWrap = document.getElementById('scrub-hour-wrap');
   if (hourWrap) hourWrap.style.display = schedule ? 'flex' : 'none';
+  // v6.5.26+ — every PUT targets a specific pool. Without `pool`, the
+  // backend treats the request as legacy and writes the global
+  // ScrubSchedule/ScrubHour, which is wrong on multi-pool hosts.
+  if (!selectedPoolName) return;
   await fetch('/api/pool/scrub/schedule', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ schedule, hour }),
+    body: JSON.stringify({ pool: selectedPoolName, schedule, hour }),
   });
 }
 
@@ -33702,6 +33931,18 @@ function openComputeInstance(name, type) {
   _ciIsCompose = !!(_ciInst && _ciInst.is_compose);
   _ciApplyComposeView();
   if (_ciIsCompose) ciLoadComposeContainers();
+  // v6.5.26 — Docker Detection inside user-managed VMs/LXCs. The probe
+  // is the source of truth for whether the card paints; the user-side
+  // toggle in Settings → Virtualization just gates whether we run the
+  // probe at all. Skip entirely for compose stacks (their Podman card
+  // already covers the same surface).
+  document.getElementById('ci-docker-card').style.display = 'none';
+  if (!_ciIsCompose) {
+    const want = (type === 'virtual-machine')
+      ? !!appSettings.docker_detect_vms
+      : !!appSettings.docker_detect_containers;
+    if (want) ciLoadDockerContainers();
+  }
   loadComputeInstanceDetail(name, type);
   loadCISnapshots(name);
   // v6.5.19: load backup count + refresh "📅" badge on the Snapshots button.
@@ -34482,6 +34723,536 @@ function _ciComposeTermNewWindow(container) {
   const stack = _ciCurrentName;
   window.open('/compose-console/' + encodeURIComponent(stack) + '/' + encodeURIComponent(container),
     'composeterm_' + stack + '_' + container, 'width=1080,height=680,noopener');
+}
+
+// ============================================================================
+// Docker Detection inside user-managed VMs/LXCs (v6.5.26)
+// ----------------------------------------------------------------------------
+// All `docker compose` invocations on the backend run with cwd = the YAML
+// file's directory so any relative path in the compose file resolves the
+// same way it would when the user runs the command themselves from that
+// folder. The frontend just passes the absolute YAML path.
+// ============================================================================
+let _ciDockerContainers = [];
+let _ciDockerProject = '';   // current edit-modal context
+let _ciDockerPath    = '';
+let _ciDockerOrigYAML = '';  // for dirty check
+
+// Per-instance, per-project collapse state. localStorage so it survives
+// reloads and tab switches.
+function _dockerCollapseKey(project) {
+  return 'znas.docker.collapsed.' + _ciCurrentName + '::' + project;
+}
+function _dockerIsCollapsed(project) {
+  return localStorage.getItem(_dockerCollapseKey(project)) === '1';
+}
+function _dockerToggleCollapsed(project) {
+  if (_dockerIsCollapsed(project)) localStorage.removeItem(_dockerCollapseKey(project));
+  else                              localStorage.setItem(_dockerCollapseKey(project), '1');
+  _ciRenderDockerGroups(_ciDockerContainers);
+}
+
+async function ciLoadDockerContainers() {
+  if (!_ciCurrentName) return;
+  const card = document.getElementById('ci-docker-card');
+  const body = document.getElementById('ci-docker-body');
+  if (!card || !body) return;
+  body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:20px 0;">Probing for Docker…</div>';
+  try {
+    const pr = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/probe');
+    const probe = pr.ok ? await pr.json() : { available: false };
+    if (!probe.available) {
+      // Silent hide — the card is opt-in and we don't want to spam users
+      // who installed docker once and removed it. The settings card
+      // explains the prerequisites; that's where the user should look.
+      card.style.display = 'none';
+      return;
+    }
+    const lr = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/containers');
+    if (!lr.ok) throw new Error(await lr.text());
+    const d = await lr.json();
+    _ciDockerContainers = d.containers || [];
+    card.style.display = '';
+    _ciRenderDockerGroups(_ciDockerContainers);
+  } catch (e) {
+    card.style.display = '';
+    body.innerHTML = '<div style="text-align:center;color:var(--accent-danger);padding:16px 0;font-size:13px;">'
+      + esc(String(e.message || e)) + '</div>';
+  }
+}
+
+// Group containers by com.docker.compose.project. Containers without
+// that label go into a synthetic "__individual__" bucket rendered last.
+function _ciDockerGroup(list) {
+  const groups = new Map(); // project → {project, working_dir, config_files[], containers[]}
+  const order = [];
+  const indiv = [];
+  list.forEach(c => {
+    if (!c.project) { indiv.push(c); return; }
+    let g = groups.get(c.project);
+    if (!g) {
+      g = { project: c.project, working_dir: c.working_dir || '', config_files: c.config_files || [], containers: [] };
+      groups.set(c.project, g);
+      order.push(c.project);
+    } else {
+      // Take the union of config_files seen across services so a stack
+      // with a base + override file still surfaces both.
+      (c.config_files || []).forEach(p => {
+        if (!g.config_files.includes(p)) g.config_files.push(p);
+      });
+    }
+    g.containers.push(c);
+  });
+  const out = order.map(p => groups.get(p));
+  if (indiv.length) out.push({ project: '__individual__', containers: indiv });
+  return out;
+}
+
+// _dockerFmtPorts splits docker's port string ("0.0.0.0:53->53/tcp, …"),
+// sorts TCP first then UDP (stable order within each protocol so multiple
+// host IPs for the same port stay adjacent), truncates to the first 4
+// entries with "…" when more exist. Returns {display, full} — caller
+// sticks `full` on `title=` for the hover tooltip.
+function _dockerFmtPorts(portsStr) {
+  if (!portsStr || portsStr === '—') return { display: '—', full: '' };
+  const parts = String(portsStr).split(',').map(s => s.trim()).filter(Boolean);
+  const tcp = parts.filter(p => /\/tcp\b/i.test(p));
+  const udp = parts.filter(p => /\/udp\b/i.test(p));
+  const other = parts.filter(p => !/\/tcp\b/i.test(p) && !/\/udp\b/i.test(p));
+  const sorted = [...tcp, ...udp, ...other];
+  const shown = sorted.slice(0, 4).join(', ') + (sorted.length > 4 ? ', …' : '');
+  return { display: shown, full: sorted.join(', ') };
+}
+
+// _dockerBuildColgroup scans every container across every group and
+// derives one shared <colgroup> sized to the actual data. Char counts
+// are converted to weights with per-column floor/ceiling so a single
+// outlier (very long image tag, etc.) can't starve the rest, but a
+// card of short names doesn't waste space either.
+function _dockerBuildColgroup(groups) {
+  // Track widest content per column. Header labels seed the floor so a
+  // column never shrinks below its own title.
+  let mxName  = 'Container'.length;
+  let mxImage = 'Image'.length;
+  let mxState = 'State'.length;
+  let mxPorts = 'Ports'.length;
+  groups.forEach(g => {
+    g.containers.forEach(c => {
+      mxName  = Math.max(mxName,  (c.name  || '').length);
+      mxImage = Math.max(mxImage, _composeShortImage(c.image || '').length);
+      mxState = Math.max(mxState, (c.status || c.state || '').length);
+      mxPorts = Math.max(mxPorts, _dockerFmtPorts(c.ports).display.length);
+    });
+  });
+  // Clamp each contributor so one giant row can't dominate. Floors keep
+  // every column legible even on cards with very short content.
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const wName  = clamp(mxName,  10, 40);
+  const wImage = clamp(mxImage, 12, 50);
+  const wState = clamp(mxState, 10, 28);
+  const wPorts = clamp(mxPorts, 10, 50);
+  // Distribute the fluid width by character weight. The actions column
+  // is a fixed 56 px so its two icons never wrap; the browser's
+  // table-layout:fixed algorithm subtracts that from total width before
+  // applying the four percentages, so we don't need to math it in here.
+  const totalChars = wName + wImage + wState + wPorts;
+  const pct = (chars) => ((chars / totalChars) * 100).toFixed(2) + '%';
+  return `<colgroup>
+    <col style="width:${pct(wName)};">
+    <col style="width:${pct(wImage)};">
+    <col style="width:${pct(wState)};">
+    <col style="width:${pct(wPorts)};">
+    <col style="width:56px;">
+  </colgroup>`;
+}
+
+function _ciRenderDockerGroups(list) {
+  const body = document.getElementById('ci-docker-body');
+  const count = document.getElementById('ci-docker-count');
+  if (!body) return;
+  if (count) count.textContent = list.length ? '(' + list.length + ')' : '';
+  if (!list.length) {
+    body.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:20px 0;font-size:13px;">Docker is running but reports no containers.</div>';
+    return;
+  }
+  const groups = _ciDockerGroup(list);
+  // Column geometry is computed from the actual content so a card full
+  // of short names doesn't waste 30% on whitespace, and a card with
+  // a long status string ("Up 4 hours (healthy)") gets the room. We
+  // pick the widest text per column across EVERY container in EVERY
+  // group, then convert to relative weights — applied identically to
+  // every per-group table so the sections still line up column-for-
+  // column. table-layout:fixed honours the <col> widths.
+  const COLGROUP = _dockerBuildColgroup(groups);
+  let html = '';
+  groups.forEach((g, gi) => {
+    const isIndiv = g.project === '__individual__';
+    const headerTitle = isIndiv ? 'Individual containers' : g.project;
+    const collapsed = _dockerIsCollapsed(g.project);
+    const chevron = collapsed ? '▶' : '▼';
+    const editable = !isIndiv && Array.isArray(g.config_files) && g.config_files.length > 0;
+    const projAttr = encodeURIComponent(g.project);
+    const cfgAttr  = editable ? encodeURIComponent(g.config_files[0]) : '';
+    // Header
+    html += `<div style="margin:${gi===0?'0':'18px'} 0 6px;display:flex;align-items:center;gap:10px;position:relative;">
+      <span onclick="_dockerToggleCollapsed('${projAttr}')" style="cursor:pointer;color:var(--text-3);font-size:11px;width:14px;user-select:none;">${chevron}</span>
+      <span onclick="_dockerToggleCollapsed('${projAttr}')" style="cursor:pointer;font-weight:700;font-size:13px;color:var(--text);">${esc(headerTitle)}</span>
+      <span style="font-size:11px;color:var(--text-3);">(${g.containers.length})</span>
+      <span style="flex:1;"></span>`;
+    if (!isIndiv) {
+      // Three controls: power (opens menu), update (opens menu), edit.
+      // The icon itself is the click target that opens the dropdown —
+      // no separate ⋮ to the right.
+      html += `<span style="position:relative;">
+        <span onclick="_ciDockerStackPowerMenu(event,${gi})" title="Power" style="cursor:pointer;color:var(--text-2);font-size:14px;padding:2px 8px;user-select:none;line-height:1;">⏻</span>
+        <div id="ci-docker-power-${gi}" class="row-menu-dropdown" style="display:none;position:absolute;right:0;top:100%;min-width:170px;z-index:60;">
+          <button onclick="_ciDockerStackAction(${gi},'start')">▶ Start stack</button>
+          <button onclick="_ciDockerStackAction(${gi},'stop')">■ Stop stack</button>
+          <button onclick="_ciDockerStackAction(${gi},'restart')">↻ Restart stack</button>
+        </div>
+      </span>
+      <span style="position:relative;">
+        <span onclick="_ciDockerStackUpdateMenu(event,${gi})" title="Update" style="cursor:pointer;color:var(--text-2);font-size:14px;padding:2px 8px;user-select:none;line-height:1;">⬆</span>
+        <div id="ci-docker-upd-${gi}" class="row-menu-dropdown" style="display:none;position:absolute;right:0;top:100%;min-width:200px;z-index:60;">
+          <button onclick="_ciDockerStackAction(${gi},'update')">⬆ Pull + Up (recreate)</button>
+        </div>
+      </span>`;
+      if (editable) {
+        html += `<button class="btn btn-sm btn-ghost" style="padding:2px 10px;font-size:11px;" onclick="dockerEditComposeOpen('${projAttr}','${cfgAttr}')">✎ Edit</button>`;
+      } else {
+        html += `<span style="font-size:11px;color:var(--text-3);padding:2px 6px;" title="No compose file recorded in labels">✎ Edit</span>`;
+      }
+    }
+    html += `</div>`;
+    if (collapsed) return;
+    // Body: container table (mirror compose stack)
+    const cellTd = 'padding:2px 8px;font-size:11px;line-height:1.35;';
+    let rows = '';
+    g.containers.forEach((c, ci) => {
+      const idx = gi + ':' + ci; // unique per render
+      const running = (c.state || '').toLowerCase() === 'running';
+      const color = _ciComposeStateColor(c.state);
+      const startStop = running
+        ? `<button onclick="_ciDockerContainerAction('${esc(c.id)}','stop')">■ Stop</button>
+           <button onclick="_ciDockerContainerAction('${esc(c.id)}','restart')">↻ Restart</button>`
+        : `<button onclick="_ciDockerContainerAction('${esc(c.id)}','start')">▶ Start</button>`;
+      const updateItem = c.project
+        ? `<button onclick="_ciDockerContainerAction('${esc(c.id)}','update')">⬆ Update</button>`
+        : `<div style="padding:8px 14px;font-size:11px;color:var(--text-3);">Update: recreate via your own deploy method</div>`;
+      const menu = startStop + updateItem
+        + `<button onclick="_ciDockerShowLogs('${esc(c.id)}','${esc(c.name)}')">📜 Last Outputs</button>`
+        + `<button onclick="_ciDockerShowInspect('${esc(c.id)}','${esc(c.name)}')">🔍 Inspect</button>`;
+      const termMenu = running
+        ? `<button onclick="_ciDockerTermBottom('${esc(c.id)}','${esc(c.name)}')">LXD Bottom Terminal</button>`
+          + `<button onclick="_ciDockerTermNewTab('${esc(c.id)}')">LXD Tab Terminal</button>`
+          + `<button onclick="_ciDockerTermNewWindow('${esc(c.id)}')">LXD Window Terminal</button>`
+        : `<div style="padding:10px 14px;font-size:12px;color:var(--text-3);">Container must be running</div>`;
+      const portsFmt = _dockerFmtPorts(c.ports);
+      // text-overflow ellipsis on the truncated cells (name, image, ports)
+      // so a long value can't blow past the column width and re-misalign
+      // the table — `table-layout:fixed` honours these widths.
+      const truncStyle = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      rows += `<tr>
+        <td style="${cellTd}font-family:monospace;${truncStyle}" title="${esc(c.name)}">${esc(c.name)}</td>
+        <td style="${cellTd}font-family:monospace;color:var(--text-3);${truncStyle}" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
+        <td style="${cellTd}${truncStyle}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${color};">
+          <span style="width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0;"></span>${esc(c.status || c.state)}</span></td>
+        <td style="${cellTd}font-family:monospace;color:var(--text-3);${truncStyle}" title="${esc(portsFmt.full || (c.ports || ''))}">${esc(portsFmt.display)}</td>
+        <td style="${cellTd}position:relative;text-align:right;white-space:nowrap;">
+          <span onclick="_ciDockerTermMenu(event,'${idx}')" title="Terminal" style="cursor:${running?'pointer':'not-allowed'};opacity:${running?'1':'.4'};color:var(--text-2);font-size:13px;padding:0 3px;user-select:none;line-height:1;">🖥️</span>
+          <span onclick="_ciDockerRowMenu(event,'${idx}')" style="cursor:pointer;color:var(--text-2);font-size:16px;padding:0 4px;user-select:none;line-height:1;">⋮</span>
+          <div id="ci-docker-termmenu-${idx}" class="row-menu-dropdown" style="display:none;position:absolute;right:28px;top:100%;min-width:200px;z-index:60;">${termMenu}</div>
+          <div id="ci-docker-menu-${idx}" class="row-menu-dropdown" style="display:none;position:absolute;right:6px;top:100%;min-width:170px;z-index:60;">${menu}</div>
+        </td></tr>`;
+    });
+    // Headers render only on the first group; later groups skip the
+    // <thead> so their first body row sits flush against the section
+    // header. Column widths come from the shared <colgroup>, so even
+    // without a visible header the alignment is preserved.
+    const thead = gi === 0
+      ? `<thead><tr>
+          <th style="padding:3px 8px;font-size:10px;text-align:left;">Container</th>
+          <th style="padding:3px 8px;font-size:10px;text-align:left;">Image</th>
+          <th style="padding:3px 8px;font-size:10px;text-align:left;">State</th>
+          <th style="padding:3px 8px;font-size:10px;text-align:left;">Ports</th>
+          <th style="padding:3px 8px;"></th>
+        </tr></thead>`
+      : '';
+    html += `<table class="data-table" style="width:100%;table-layout:fixed;font-size:11px;margin-top:4px;">
+      ${COLGROUP}${thead}
+      <tbody>${rows}</tbody></table>`;
+  });
+  body.innerHTML = html;
+}
+
+function _ciDockerCloseAllRowMenus() {
+  document.querySelectorAll('[id^="ci-docker-menu-"],[id^="ci-docker-termmenu-"],[id^="ci-docker-power-"],[id^="ci-docker-upd-"]')
+    .forEach(m => m.style.display = 'none');
+}
+function _ciDockerRowMenu(ev, idx) {
+  ev.stopPropagation();
+  const m = document.getElementById('ci-docker-menu-' + idx);
+  if (!m) return;
+  const wasOpen = m.style.display !== 'none';
+  _ciDockerCloseAllRowMenus();
+  if (wasOpen) return;
+  m.style.display = 'block';
+  const close = (e) => { if (!m.contains(e.target)) { m.style.display = 'none'; document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+function _ciDockerTermMenu(ev, idx) {
+  ev.stopPropagation();
+  const m = document.getElementById('ci-docker-termmenu-' + idx);
+  if (!m) return;
+  const wasOpen = m.style.display !== 'none';
+  _ciDockerCloseAllRowMenus();
+  if (wasOpen) return;
+  m.style.display = 'block';
+  const close = (e) => { if (!m.contains(e.target)) { m.style.display = 'none'; document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+function _ciDockerStackPowerMenu(ev, gi) {
+  ev.stopPropagation();
+  const m = document.getElementById('ci-docker-power-' + gi);
+  if (!m) return;
+  const wasOpen = m.style.display !== 'none';
+  _ciDockerCloseAllRowMenus();
+  if (wasOpen) return;
+  m.style.display = 'block';
+  const close = (e) => { if (!m.contains(e.target)) { m.style.display = 'none'; document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+function _ciDockerStackUpdateMenu(ev, gi) {
+  ev.stopPropagation();
+  const m = document.getElementById('ci-docker-upd-' + gi);
+  if (!m) return;
+  const wasOpen = m.style.display !== 'none';
+  _ciDockerCloseAllRowMenus();
+  if (wasOpen) return;
+  m.style.display = 'block';
+  const close = (e) => { if (!m.contains(e.target)) { m.style.display = 'none'; document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+// Poll the shared progress endpoint until the job finishes, then refresh
+// the Docker card. openLXDProgressModal's "on done" path hard-fires
+// loadLXDInstances() which doesn't repaint our card, so we attach our
+// own refresh through a lightweight side-poller.
+function _ciDockerPollUntilIdle(jobId) {
+  const inst = _ciCurrentName;
+  let tries = 0;
+  const tick = async () => {
+    if (_ciCurrentName !== inst) return; // user switched instances; abort
+    tries++;
+    try {
+      const r = await fetch('/api/incus/create-progress?job_id=' + encodeURIComponent(jobId));
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.status === 'done' || d.status === 'error') {
+        // Small grace so any incus-side state mutation settles before re-listing.
+        setTimeout(() => { if (_ciCurrentName === inst) ciLoadDockerContainers(); }, 600);
+        return;
+      }
+    } catch (_) {}
+    if (tries < 600) setTimeout(tick, 1500); // cap at ~15 min
+  };
+  setTimeout(tick, 1500);
+}
+
+// ── Stack-level actions ─────────────────────────────────────────────────────
+async function _ciDockerStackAction(gi, action) {
+  _ciDockerCloseAllRowMenus();
+  const groups = _ciDockerGroup(_ciDockerContainers);
+  const g = groups[gi];
+  if (!g || !g.config_files || !g.config_files.length) return;
+  const path = g.config_files[0];
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/compose-action', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ path, action })
+    });
+    if (r.status === 202) {
+      const d = await r.json();
+      openLXDProgressModal('Docker ' + action + ' · ' + g.project + '…', d.job_id, { kind: 'docker-action' });
+      _ciDockerPollUntilIdle(d.job_id);
+    } else if (!r.ok) {
+      throw new Error((await r.json()).error || 'failed');
+    } else {
+      ciLoadDockerContainers();
+    }
+  } catch (e) {
+    showToast('Docker stack action failed: ' + e.message, 'error');
+  }
+}
+
+// ── Per-container actions ───────────────────────────────────────────────────
+async function _ciDockerContainerAction(id, action) {
+  _ciDockerCloseAllRowMenus();
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/container-action', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ id, action })
+    });
+    if (r.status === 202) {
+      const d = await r.json();
+      openLXDProgressModal('Docker ' + action + ' · ' + id + '…', d.job_id, { kind: 'docker-action' });
+      _ciDockerPollUntilIdle(d.job_id);
+    } else if (!r.ok) {
+      throw new Error((await r.json()).error || 'failed');
+    } else {
+      setTimeout(() => ciLoadDockerContainers(), 400);
+    }
+  } catch (e) {
+    showToast('Docker action failed: ' + e.message, 'error');
+  }
+}
+
+let _ciDockerLogsID = '';
+function _ciDockerShowLogs(id, name) {
+  _ciDockerCloseAllRowMenus();
+  _ciDockerLogsID = id;
+  document.getElementById('docker-logs-name').textContent = name || id;
+  document.getElementById('docker-logs-body').textContent = 'Loading…';
+  document.getElementById('modal-docker-logs').classList.remove('hidden');
+  _ciDockerReloadLogs();
+}
+async function _ciDockerReloadLogs() {
+  if (!_ciDockerLogsID) return;
+  const body = document.getElementById('docker-logs-body');
+  const tail = parseInt(document.getElementById('docker-logs-tail').value, 10) || 200;
+  body.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName)
+      + '/docker/containers/' + encodeURIComponent(_ciDockerLogsID) + '/logs?tail=' + tail);
+    const txt = await r.text();
+    body.textContent = r.ok
+      ? (txt || '(container has produced no output yet)')
+      : ('✗ ' + (txt || ('HTTP ' + r.status)));
+    requestAnimationFrame(() => body.scrollTop = body.scrollHeight);
+  } catch (e) {
+    body.textContent = '✗ ' + String(e.message || e);
+  }
+}
+async function _ciDockerShowInspect(id, name) {
+  _ciDockerCloseAllRowMenus();
+  document.getElementById('docker-inspect-name').textContent = name || id;
+  document.getElementById('docker-inspect-body').textContent = 'Loading…';
+  document.getElementById('modal-docker-inspect').classList.remove('hidden');
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName)
+      + '/docker/containers/' + encodeURIComponent(id) + '/inspect');
+    const txt = await r.text();
+    if (!r.ok) {
+      document.getElementById('docker-inspect-body').textContent = '✗ ' + txt;
+      return;
+    }
+    try {
+      const arr = JSON.parse(txt);
+      const obj = Array.isArray(arr) ? arr[0] : arr;
+      document.getElementById('docker-inspect-body').textContent = JSON.stringify(obj || {}, null, 2);
+    } catch (_) {
+      document.getElementById('docker-inspect-body').textContent = txt;
+    }
+  } catch (e) {
+    document.getElementById('docker-inspect-body').textContent = '✗ ' + String(e.message || e);
+  }
+}
+
+// ── Terminals (bottom / new tab / new window) ───────────────────────────────
+function _ciDockerTermBottom(id, name) {
+  _ciDockerCloseAllRowMenus();
+  const key = 'docker:' + _ciCurrentName + '/' + id;
+  if (_ciTermTabs.has(key)) { _ciTermActivateTab(key); _ciTermEnsureVisible(); return; }
+  _ciTermEnsureVisible();
+  _ciTermOpenCustomTab(key, name || id,
+    '/ws/docker-console?instance=' + encodeURIComponent(_ciCurrentName) + '&container=' + encodeURIComponent(id));
+}
+function _ciDockerTermNewTab(id) {
+  _ciDockerCloseAllRowMenus();
+  window.open('/docker-console/' + encodeURIComponent(_ciCurrentName) + '/' + encodeURIComponent(id), '_blank');
+}
+function _ciDockerTermNewWindow(id) {
+  _ciDockerCloseAllRowMenus();
+  window.open('/docker-console/' + encodeURIComponent(_ciCurrentName) + '/' + encodeURIComponent(id),
+    'dockerterm_' + _ciCurrentName + '_' + id, 'width=1080,height=680,noopener');
+}
+
+// ── Edit compose modal ──────────────────────────────────────────────────────
+async function dockerEditComposeOpen(projectEnc, pathEnc) {
+  _ciDockerCloseAllRowMenus();
+  const project = decodeURIComponent(projectEnc);
+  const path    = decodeURIComponent(pathEnc);
+  _ciDockerProject = project;
+  _ciDockerPath    = path;
+  document.getElementById('docker-edit-project').textContent = project;
+  document.getElementById('docker-edit-path').textContent    = path;
+  document.getElementById('docker-edit-missing').classList.add('hidden');
+  document.getElementById('docker-edit-extra').classList.add('hidden');
+  document.getElementById('docker-edit-alert').classList.add('hidden');
+  const ta = document.getElementById('docker-edit-yaml');
+  ta.value = '';
+  ta.disabled = true;
+  document.getElementById('modal-docker-edit-compose').classList.remove('hidden');
+  // Surface the project's *other* compose files (override / fragment files)
+  // read-only so the user sees the full set.
+  const g = _ciDockerGroup(_ciDockerContainers).find(x => x.project === project);
+  if (g && g.config_files && g.config_files.length > 1) {
+    const extra = g.config_files.slice(1).map(p => esc(p)).join('<br>');
+    document.getElementById('docker-edit-extra-list').innerHTML = extra
+      + '<div style="margin-top:6px;color:var(--text-3);font-style:italic;">Edit these in a terminal — only the first config file is editable here.</div>';
+    document.getElementById('docker-edit-extra').classList.remove('hidden');
+  }
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName)
+      + '/docker/compose-file?path=' + encodeURIComponent(path));
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    const d = await r.json();
+    ta.value = d.yaml || '';
+    _ciDockerOrigYAML = ta.value;
+    if (d.missing) document.getElementById('docker-edit-missing').classList.remove('hidden');
+    ta.disabled = false;
+    ta.focus();
+  } catch (e) {
+    document.getElementById('docker-edit-alert').textContent = 'Failed to load: ' + e.message;
+    document.getElementById('docker-edit-alert').classList.remove('hidden');
+  }
+}
+
+function dockerEditComposeCancel() {
+  const ta = document.getElementById('docker-edit-yaml');
+  if (ta && ta.value !== _ciDockerOrigYAML) {
+    const al = document.getElementById('docker-edit-alert');
+    if (al.classList.contains('hidden')) {
+      al.textContent = 'Unsaved changes — click Cancel again to discard.';
+      al.classList.remove('hidden');
+      return;
+    }
+  }
+  document.getElementById('modal-docker-edit-compose').classList.add('hidden');
+}
+
+async function dockerEditComposeSave() {
+  const ta = document.getElementById('docker-edit-yaml');
+  const btn = document.getElementById('docker-edit-save-btn');
+  const al = document.getElementById('docker-edit-alert');
+  al.classList.add('hidden');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/compose-file', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ path: _ciDockerPath, yaml: ta.value })
+    });
+    if (r.status !== 202) throw new Error((await r.json()).error || 'failed');
+    const d = await r.json();
+    document.getElementById('modal-docker-edit-compose').classList.add('hidden');
+    openLXDProgressModal('Applying ' + _ciDockerProject + '…', d.job_id, { kind: 'docker-action' });
+    _ciDockerPollUntilIdle(d.job_id);
+  } catch (e) {
+    al.textContent = 'Save failed: ' + e.message;
+    al.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save & Apply';
+  }
 }
 
 // ── Live podman-compose logs stream into the Output tab ─────────────────────
@@ -40035,11 +40806,17 @@ function openLXDConsole(name) {
   window.open('/incus-console/' + encodeURIComponent(name), '_blank');
 }
 
-// Returns the next available label like "vm-1", "vm-2", ... based on existing instance descriptions.
+// Returns the next available label like "vm-1", "vm-2", ... — picks the
+// lowest integer N such that neither the name nor the description of any
+// existing instance (VM or container) matches `<prefix>-N`. Checking both
+// fields prevents proposing an ID already taken when the description
+// doesn't mirror the name.
 function _nextInstanceLabel(prefix) {
-  const existing = new Set(
-    (_lxdInstancesCache || []).map(i => (i.description || i.name).toLowerCase())
-  );
+  const existing = new Set();
+  (_lxdInstancesCache || []).forEach(i => {
+    if (i.name)        existing.add(String(i.name).toLowerCase());
+    if (i.description) existing.add(String(i.description).toLowerCase());
+  });
   for (let n = 1; n <= 999; n++) {
     const candidate = prefix + '-' + n;
     if (!existing.has(candidate)) return candidate;
@@ -41755,29 +42532,79 @@ function _removeVMVirtioFS(i) {
 }
 
 function addVMNICRow() {
+  // The Create VM modal always has a primary NIC at eth0 (the "NIC 0"
+  // section above), so extra NICs must start at eth1. Previously this
+  // defaulted to 'eth' + idx, meaning the first extra row landed on
+  // eth0 — and `incus config device add` then refused the duplicate
+  // device name, silently dropping the second NIC. v6.5.26 fix.
   const idx = _lxdVMNICs.length;
-  _lxdVMNICs.push({ device_name: 'eth'+idx, network: _lxdNetworks[0]||'lxdbr0', mac: '', vlan_id: 0, connected: true });
+  _lxdVMNICs.push({ device_name: 'eth' + (idx + 1), network: _lxdNetworks[0]||'lxdbr0', mac: '', vlan_id: 0, connected: true });
   _renderVMNICRows();
 }
 
 function _renderVMNICRows() {
   const container = document.getElementById('lxd-vm-nics');
-  container.innerHTML = _lxdVMNICs.map((n, i) => `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-      <input type="text" class="input" style="width:110px;flex-shrink:0;" placeholder="eth1" value="${esc(n.device_name)}" onchange="_lxdVMNICs[${i}].device_name=this.value">
-      <select id="lxd-vm-nic-net-${i}" class="input" style="flex:1;">
-        ${_lxdNetworks.map(net=>`<option value="${esc(net)}" ${n.network===net?'selected':''}>${esc(_bridgeLabel(net))}</option>`).join('')}
-      </select>
-      <input type="text" class="input" style="width:150px;flex-shrink:0;" placeholder="MAC (auto)" value="${esc(n.mac)}" onchange="_lxdVMNICs[${i}].mac=this.value">
-      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;white-space:nowrap;flex-shrink:0;">
-        <input type="checkbox" ${n.connected !== false ? 'checked' : ''} onchange="_lxdVMNICs[${i}].connected=this.checked"> Connected
-      </label>
-      <button type="button" class="btn btn-ghost btn-sm" style="padding:4px 8px;flex-shrink:0;" onclick="_removeVMNIC(${i})">✕</button>
-    </div>`).join('');
+  // Each extra NIC is rendered as a full collapsible .vm-hw-row card
+  // matching "Network Adapter 1" — open by default so the user can see
+  // and edit the bridge/MAC/etc. without an extra click. The header
+  // carries a summary chip (selected bridge) and a remove (✕) button
+  // that doesn't trigger the toggle. Numbering starts at 2 because
+  // Network Adapter 1 is the built-in primary NIC.
+  container.innerHTML = _lxdVMNICs.map((n, i) => {
+    const adapterNum = i + 2; // built-in NIC0 occupies "Network Adapter 1"
+    const rowId = 'vmhw-nic-extra-' + i;
+    const summary = esc(_bridgeLabel(n.network) || n.network || '—');
+    const opts = _lxdNetworks.map(net =>
+      `<option value="${esc(net)}" ${n.network === net ? 'selected' : ''}>${esc(_bridgeLabel(net))}</option>`
+    ).join('');
+    return `
+    <div class="vm-hw-row" id="${rowId}">
+      <div class="vm-hw-head" onclick="_vmhwToggle('${rowId}')">
+        <span class="vm-hw-chevron">▼</span>
+        <span class="vm-hw-title">Network Adapter ${adapterNum}</span>
+        <span class="vm-hw-summary" id="${rowId}-summary">${summary}</span>
+        <button type="button" onclick="event.stopPropagation();_removeVMNIC(${i});"
+          style="margin-left:8px;padding:2px 8px;background:none;border:none;cursor:pointer;color:var(--danger);font-size:14px;flex-shrink:0;"
+          title="Remove this network adapter">✕</button>
+      </div>
+      <div class="vm-hw-body">
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+          <div class="form-group" style="margin:0;flex:1;min-width:200px;">
+            <label>Bridge / Network</label>
+            <select id="lxd-vm-nic-net-${i}" class="input" onchange="_onExtraNICBridgeChange(${i},this.value)">${opts}</select>
+          </div>
+          <div class="form-group" style="margin:0;width:140px;">
+            <label>Device Name</label>
+            <input type="text" class="input" placeholder="eth${adapterNum - 1}" value="${esc(n.device_name)}"
+              oninput="_lxdVMNICs[${i}].device_name=this.value.trim()">
+          </div>
+          <div class="form-group" style="margin:0;width:170px;">
+            <label>MAC</label>
+            <input type="text" class="input" placeholder="auto-assigned" value="${esc(n.mac)}" style="font-family:monospace;"
+              oninput="_lxdVMNICs[${i}].mac=this.value.trim().toLowerCase()">
+          </div>
+          <div style="margin-bottom:2px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;white-space:nowrap;">
+              <input type="checkbox" ${n.connected !== false ? 'checked' : ''}
+                onchange="_lxdVMNICs[${i}].connected=this.checked"> Connected
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
   _lxdVMNICs.forEach((n, i) => {
-    initCustomSelect('lxd-vm-nic-net-'+i);
-    csRefresh('lxd-vm-nic-net-'+i);
+    initCustomSelect('lxd-vm-nic-net-' + i);
+    csRefresh('lxd-vm-nic-net-' + i);
   });
+}
+
+// _onExtraNICBridgeChange keeps both the model and the header summary
+// in sync when the user picks a different bridge in the dropdown.
+function _onExtraNICBridgeChange(i, val) {
+  _lxdVMNICs[i].network = val;
+  const sum = document.getElementById('vmhw-nic-extra-' + i + '-summary');
+  if (sum) sum.textContent = _bridgeLabel(val) || val || '—';
 }
 
 function _removeVMNIC(i) { _lxdVMNICs.splice(i, 1); _renderVMNICRows(); }

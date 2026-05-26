@@ -278,36 +278,66 @@ func main() {
 	}()
 
 	// ===== Experimental features =====
+	//
+	// CRITICAL: the LXD probe + helpers below must NOT block the main
+	// goroutine. They shell out to `incus list`, `sudo ln -sf`, and
+	// InterLink peers — any of which can wedge for minutes on a sick
+	// daemon, a stuck sudoers prompt, or a network-isolated peer. If
+	// that happens before line 357's listener setup, the HTTPS server
+	// never opens its socket; systemd sees the process running, the
+	// log shows "Experimental mode enabled" + maybe a sudo call, but
+	// the user can't reach :8443. Moving everything into a goroutine
+	// lets the listener come up immediately and the LXD bits fill in
+	// asynchronously. (6.5.26 fix.)
 	if *experimentalMode {
 		version.SetExperimental(true)
 		log.Println("Experimental mode enabled.")
-		if system.LXDAvailable() {
+		// Health watchdog runs even if the first probe in the goroutine
+		// below fails — that's the whole point: we want the UI to
+		// recover automatically when the daemon comes back, without
+		// needing a portal restart.
+		system.StartIncusHealthWatcher(func(s system.IncusHealthState) {
+			payload := map[string]any{
+				"kind":       "incus_stuck",
+				"persistent": true,
+				"stuck":      s.Stuck,
+				"subject":    "Incus daemon not responding",
+				"details":    "ZNAS' `incus` commands are timing out. VMs & Containers actions will hang until the daemon recovers.",
+				"docs_url":   "https://linuxcontainers.org/incus/docs/main/howto/troubleshoot/",
+				"time":       s.ChangedAt.Format(time.RFC3339),
+			}
+			if !s.Stuck {
+				payload["subject"] = "Incus daemon recovered"
+				payload["details"] = "`incus` commands are responding again."
+			}
+			handlers.BroadcastAlertJSON(payload)
+		})
+		go func() {
+			if !system.LXDAvailableTimeout(8 * time.Second) {
+				log.Println("WARNING: Incus not accessible. Ensure the ZNAS user is in the '" + system.HVUserGroup + "' group. VMs & Containers feature disabled.")
+				return
+			}
 			log.Println("Incus detected and accessible — VMs & Containers feature enabled.")
 			handlers.SetLXDAvailable(true)
 			// Ensure cross-distro OVMF firmware symlinks exist (Ubuntu ↔ Debian naming).
 			system.EnsureOVMFCompat()
-			// Background: sync Incus trust with all InterLink peers that don't
-			// have it confirmed yet, so the flag is set without requiring manual
-			// action. (Field name kept as LXDTrusted for config-file backwards
-			// compat with 6.5.1 and earlier installs.)
-			go func() {
-				for i := range appCfg.InterLink {
-					ls := &appCfg.InterLink[i]
-					if ls.LXDTrusted {
-						continue
-					}
-					if err := system.LXDSyncInterlinkTrustForPeer(*ls, ls.ID); err != nil {
-						log.Printf("Incus trust auto-sync for %s: %v", ls.Hostname, err)
-						continue
-					}
-					ls.LXDTrusted = true
-					config.SaveAppConfig(appCfg) //nolint:errcheck
-					log.Printf("Incus trust auto-synced for %s", ls.Hostname)
+			// Sync Incus trust with all InterLink peers that don't have it
+			// confirmed yet. (Field name kept as LXDTrusted for config-file
+			// backwards compat with 6.5.1 and earlier installs.)
+			for i := range appCfg.InterLink {
+				ls := &appCfg.InterLink[i]
+				if ls.LXDTrusted {
+					continue
 				}
-			}()
-		} else {
-			log.Println("WARNING: Incus not accessible. Ensure the ZNAS user is in the '" + system.HVUserGroup + "' group. VMs & Containers feature disabled.")
-		}
+				if err := system.LXDSyncInterlinkTrustForPeer(*ls, ls.ID); err != nil {
+					log.Printf("Incus trust auto-sync for %s: %v", ls.Hostname, err)
+					continue
+				}
+				ls.LXDTrusted = true
+				config.SaveAppConfig(appCfg) //nolint:errcheck
+				log.Printf("Incus trust auto-synced for %s", ls.Hostname)
+			}
+		}()
 	}
 
 	// ===== Static file system =====

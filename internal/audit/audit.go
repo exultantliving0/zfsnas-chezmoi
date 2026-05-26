@@ -177,6 +177,11 @@ const (
 	ActionComposeRedeploy = "compose_redeploy" // compose file / .env edited and re-applied
 	ActionComposeAction   = "compose_action"   // per-container start/stop/restart/update
 
+	// v6.5.26 — Docker Detection inside user-managed VMs/LXCs.
+	ActionDockerComposeEdit     = "docker_compose_edit"     // YAML edited + up -d
+	ActionDockerComposeAction   = "docker_compose_action"   // per-stack start/stop/restart/pull/up
+	ActionDockerContainerAction = "docker_container_action" // per-container start/stop/restart/update
+
 	// Back-compat Go aliases. Old callers compile unchanged. ZNAS now writes
 	// the new strings, but these aliases let imports that still say e.g.
 	// `audit.ActionLXDStart` resolve to the new value seamlessly. Removed in

@@ -50,6 +50,11 @@ type StandardPermissions struct {
 	ManageSnapshots   bool `json:"manage_snapshots,omitempty"`
 	EditSettings      bool `json:"edit_settings,omitempty"`
 	ManageInterlink   bool `json:"manage_interlink,omitempty"`
+	// ManageDockerDetect gates the Docker Detection card on a VM/LXC's
+	// main page. Independent from CreateContainer/EditInstances so an
+	// admin can let a standard user manage in-guest Docker stacks
+	// without granting Incus-level mutation rights on the instance.
+	ManageDockerDetect bool `json:"manage_docker_detect,omitempty"`
 	// Virtualization tab capabilities. All default false — pre-existing
 	// standard users get no VM/container/networking access until an admin
 	// explicitly grants it.
@@ -353,6 +358,16 @@ type VersionCacheEntry struct {
 	ServiceInstalled bool   `json:"service_installed"`
 }
 
+// PoolScrubPolicy holds the scrub schedule for one ZFS pool. Set
+// Schedule="" to mean "no scrub on this pool"; Hour is 0-23 host-local.
+// v6.5.26+ — replaces the single-global ScrubSchedule/ScrubHour on
+// multi-pool hosts.
+type PoolScrubPolicy struct {
+	Pool     string `json:"pool"`
+	Schedule string `json:"schedule"` // "" | "weekly" | "biweekly" | "monthly" | "2months" | "4months"
+	Hour     int    `json:"hour"`     // 0-23
+}
+
 // AppConfig holds top-level application settings.
 type AppConfig struct {
 	ConfigDir         string    `json:"-"` // runtime-only, not persisted
@@ -364,12 +379,25 @@ type AppConfig struct {
 	// ComposeBaseImage is the LXC base image used for Compose stacks
 	// ("alpine" | "debian" | "ubuntu"). Empty defaults to "debian".
 	ComposeBaseImage  string    `json:"compose_base_image,omitempty"`
+	// Docker Detection (v6.5.26) — when enabled, the portal probes each
+	// VM or LXC the user opens for a running Docker daemon and renders
+	// a Docker card listing the containers/stacks found. Both default
+	// off; admin opts in per type from Settings → Virtualization.
+	DockerDetectVMs        bool      `json:"docker_detect_vms,omitempty"`
+	DockerDetectContainers bool      `json:"docker_detect_containers,omitempty"`
 	StorageUnit       string    `json:"storage_unit,omitempty"`        // "gb" (1000-based) or "gib" (1024-based)
 	LoginTheme        string    `json:"login_theme,omitempty"`         // "dark" | "light" | "auto"
 	SMARTLastRefresh  time.Time `json:"smart_last_refresh,omitempty"`
 	WeeklyScrub       bool      `json:"weekly_scrub"`                  // deprecated: migrated to ScrubSchedule
-	ScrubSchedule     string    `json:"scrub_schedule,omitempty"`      // weekly | biweekly | monthly | 2months | 4months | "" (off)
-	ScrubHour         int       `json:"scrub_hour"`                    // hour of day to run scrub (0-23), default 2
+	ScrubSchedule     string    `json:"scrub_schedule,omitempty"`      // legacy global (pre-v6.5.26): default for pools without an entry in ScrubPolicies
+	ScrubHour         int       `json:"scrub_hour"`                    // legacy global hour, used the same way (default 2)
+	// ScrubPolicies stores per-pool scrub schedules (v6.5.26+). Each
+	// entry overrides the legacy global ScrubSchedule/ScrubHour for that
+	// one pool. Pools with no entry inherit the global (or no scrub at
+	// all if the global is "" too). The slice is the authoritative store;
+	// the global fields are kept for back-compat with older configs and
+	// single-pool installs that never opened the new per-pool UI.
+	ScrubPolicies     []PoolScrubPolicy `json:"scrub_policies,omitempty"`
 	LiveUpdateEnabled      bool               `json:"live_update_enabled,omitempty"`       // enable in-place binary self-update
 	VersionCheckInterval   string             `json:"version_check_interval,omitempty"`    // daily (default) | weekly | monthly | manual
 	VersionCheckCache      *VersionCacheEntry `json:"version_check_cache,omitempty"`       // server-side cache of last GitHub check
