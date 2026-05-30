@@ -6975,7 +6975,7 @@ Select the Console tab to load.</pre>
           <div id="dsd-usedsnap" style="font-size:17px;font-weight:700;color:var(--accent-warn,#f0b429);"></div>
         </div>
         <div class="card-sm" style="padding:12px 14px;">
-          <div class="text-3 text-xs" style="text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Quota</div>
+          <div class="text-3 text-xs" style="text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;" id="dsd-quota-label">Quota</div>
           <div id="dsd-quota" style="font-size:17px;font-weight:700;"></div>
         </div>
       </div>
@@ -16057,7 +16057,7 @@ function renderPoolBar() {
       const usedPctOfPool = total > 0 ? (bytes / total * 100).toFixed(1) : '0';
       rows += row('Used (own)', fmtBytes(bytes));
       rows += row('% of pool', usedPctOfPool + '%');
-      if (d.quota > 0) rows += row('Quota', fmtBytes(d.quota));
+      { const aq = _dsActiveQuota(d); if (aq.bytes > 0) rows += row(aq.type === 'refquota' ? 'Refquota' : 'Quota', fmtBytes(aq.bytes)); }
       rows += row('Compress ratio', d.compress_ratio || '—');
       if (d.mountpoint) rows += row('Mount', d.mountpoint);
       return `<div class="tip-name"><span style="${dotStyle}"></span>${esc(fullPath)}</div>${rows}`;
@@ -16156,7 +16156,7 @@ function showPoolTip(e, idx) {
     html += row('Used (own)', fmtBytes(bytes));
     html += row('% of pool', p + '%');
     if (d.used !== bytes) html += row('Total incl. children', fmtBytes(d.used));
-    if (d.quota > 0) html += row('Quota', fmtBytes(d.quota));
+    { const aq = _dsActiveQuota(d); if (aq.bytes > 0) html += row(aq.type === 'refquota' ? 'Refquota' : 'Quota', fmtBytes(aq.bytes)); }
     html += row('Compress ratio', d.compress_ratio || '—');
     if (d.mountpoint && d.mountpoint !== 'none' && d.mountpoint !== '-') html += row('Mountpoint', d.mountpoint);
   } else if (isZVol) {
@@ -19528,15 +19528,36 @@ function _datasetRow(d, showComment, showQuota, hasChildren) {
       </td>
       <td style="font-family:monospace;font-size:13px;">
         ${(() => {
-          const poolTotal = poolData ? (poolData.usable_size || (poolData.usable_used + poolData.usable_avail) || poolData.size) : 0;
-          const cap = d.quota > 0 ? d.quota : poolTotal;
-          const pct = cap > 0 ? Math.min(100, d.used / cap * 100) : 0;
+          // Used-capacity bar: numerator is the dataset's used bytes.
+          // Denominator is the active quota (refquota or quota — whichever
+          // is set) so the bar fills to 100% when the dataset hits its
+          // limit. When neither quota is set, fall back to the pool's
+          // usable total so users still see the dataset's share of the
+          // whole pool.
+          //
+          // The dataset's pool comes from its own first-segment name
+          // (e.g. "BIGRAID5/DRONE" → BIGRAID5), NOT the global
+          // `poolData` which tracks the *top-bar-selected* pool. Prior
+          // versions used poolData and showed wildly wrong percentages
+          // when the user had a small pool selected in the top bar
+          // while looking at a dataset on a big pool (a 700 GB dataset
+          // on a 40 TB pool was rendering as 80% green because the
+          // top-bar pool happened to be 875 GB).
+          const aq = _dsActiveQuota(d);
+          const myPoolName = String(d.name || '').split('/')[0];
+          const myPool = (allPoolsData || []).find(p => p.name === myPoolName);
+          const poolTotal = myPool ? (myPool.usable_size || ((myPool.usable_used || 0) + (myPool.usable_avail || 0)) || myPool.size) : 0;
+          const cap = aq.bytes > 0 ? aq.bytes : poolTotal;
+          const pct = cap > 0 ? Math.min(100, (d.used || 0) / cap * 100) : 0;
           const barColor = pct >= 90 ? 'var(--accent-danger)' : pct >= 75 ? '#ff9f0a' : 'var(--accent-3)';
-          const label = d.quota > 0 ? 'of quota' : 'of pool';
+          const label = aq.bytes > 0 ? 'of quota' : 'of pool';
           return `${fmtBytes(d.used)}<div title="${pct.toFixed(1)}% ${label}" style="margin-top:3px;height:3px;border-radius:2px;background:rgba(128,128,128,0.3);width:72px;overflow:hidden;"><div style="height:100%;width:${pct.toFixed(1)}%;background:${barColor};border-radius:2px;"></div></div>`;
         })()}
       </td>
-      ${showQuota ? `<td style="font-family:monospace;font-size:13px;">${d.quota > 0 ? fmtBytes(d.quota) : 'none'}</td>` : ''}
+      ${showQuota ? (() => {
+        const aq = _dsActiveQuota(d);
+        return `<td style="font-family:monospace;font-size:13px;">${aq.bytes > 0 ? fmtBytes(aq.bytes) : 'none'}</td>`;
+      })() : ''}
       <td style="font-size:13px;">${esc(d.compression)} <span class="text-3">${esc(_fmtRatio(d.compress_ratio))}</span></td>
       ${showComment ? `<td style="font-size:12px;color:var(--text-2);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(d.comment||'')}">${d.comment ? esc(d.comment) : '<span style="color:var(--text-3);">—</span>'}</td>` : ''}
       <td style="text-align:right;white-space:nowrap;">
@@ -19586,6 +19607,27 @@ function _applyDsRowCollapse() {
   });
 }
 
+// _dsActiveQuota returns the dataset's "effective" quota: {bytes, type,
+// label}. If `refquota` is set we surface that; otherwise `quota`; zero
+// for either means "no limit". v6.5.30 — added so the Datasets table,
+// the pool-bar tooltips, and the dataset-detail panel all show refquota
+// when it's the property the user actually configured (was only ever
+// reading d.quota, leaving refquota-only datasets looking unlimited).
+function _dsActiveQuota(d) {
+  if (d && d.refquota > 0) return { bytes: d.refquota, type: 'refquota' };
+  if (d && d.quota > 0)    return { bytes: d.quota,    type: 'quota' };
+  return { bytes: 0, type: '' };
+}
+// Small inline tag rendered next to a refquota value so the user can
+// tell at a glance which kind of quota is in effect. Empty string for
+// the standard `quota`.
+function _dsQuotaTag(type) {
+  if (type !== 'refquota') return '';
+  return ' <span title="refquota — caps dataset\'s own data only (snapshots + children not counted)" '
+       + 'style="font-family:inherit;font-size:10px;font-weight:600;color:var(--accent);background:rgba(10,132,255,0.15);'
+       + 'border-radius:3px;padding:1px 4px;margin-left:3px;letter-spacing:.02em;">ref</span>';
+}
+
 function renderDatasets(el) {
   if (!datasetCache.length && !zvolCache.length) {
     el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📁</div><h3>No datasets yet</h3><p>Create your first dataset to get started.</p></div>';
@@ -19615,7 +19657,10 @@ function renderDatasets(el) {
     const poolDs = datasetCache.filter(d => d.name.split('/')[0] === poolName && d.depth > 0);
     const poolZVols = zvolCache.filter(z => z.pool === poolName);
     const showComment = poolDs.some(d => d.comment && d.comment.trim()) || poolZVols.some(z => z.comment && z.comment.trim());
-    const showQuota   = poolDs.some(d => d.quota > 0);
+    // Show the Quota column when ANY dataset in the pool has a quota
+    // OR refquota set. Previously only checked d.quota, so a pool that
+    // only used refquota would hide the column entirely.
+    const showQuota   = poolDs.some(d => d.quota > 0 || d.refquota > 0);
     const poolDsNames = poolDs.map(d => d.name);
     const poolZvolNames = poolZVols.map(z => z.name);
     const hasChildrenSet = new Set(poolDsNames.filter(n =>
@@ -20138,7 +20183,11 @@ function openCreateDataset() {
   document.getElementById('cds-name').value = '';
   document.getElementById('cds-quota-amount').value = '0';
   document.getElementById('cds-quota-unit').value = 'GB'; csRefresh('cds-quota-unit');
-  document.getElementById('cds-quota-type').value = 'quota'; csRefresh('cds-quota-type');
+  // Default to refquota for new datasets — it's the more useful cap in
+  // most setups (a runaway dataset can fill the pool with snapshots that
+  // `quota` happily counts; `refquota` traps that). The user can flip to
+  // standard quota if they want to include snapshots + children.
+  document.getElementById('cds-quota-type').value = 'refquota'; csRefresh('cds-quota-type');
   document.getElementById('cds-refreserv-amount').value = '0';
   document.getElementById('cds-refreserv-unit').value = 'GB'; csRefresh('cds-refreserv-unit');
   document.getElementById('cds-compression').value = 'inherit'; csRefresh('cds-compression');
@@ -20389,17 +20438,51 @@ function openEditDataset(name) {
   // (1024-based) by an older build won't divide evenly into GB SI and
   // will fall through to "MB" with a fractional value — re-save at a
   // clean SI value to clean that up.
+  //
+  // ZFS exposes two distinct properties: `quota` (caps dataset + snapshots
+  // + descendants) and `refquota` (caps the dataset's own referenced
+  // bytes only). Pick whichever one is actually set on the dataset so
+  // the form shows the value the user already chose. If both are set
+  // (rare — admins generally pick one), refquota wins because it's the
+  // more specific limit the dataset was tagged with. The type dropdown
+  // mirrors the choice. When the user flips the dropdown, swap the
+  // displayed amount to whatever the *other* property is currently set
+  // to on disk — so they always see the value that's actually in
+  // effect for the type they're looking at. (v6.5.30 fix.)
   const unitMap = {'MB':1e6,'GB':1e9,'TB':1e12};
-  const quota   = d.quota || 0;
-  let qAmt = 0, qUnit = 'GB';
-  if (quota > 0) {
-    if (quota % unitMap['TB'] === 0) { qAmt = quota / unitMap['TB']; qUnit = 'TB'; }
-    else if (quota % unitMap['GB'] === 0) { qAmt = quota / unitMap['GB']; qUnit = 'GB'; }
-    else { qAmt = quota / unitMap['MB']; qUnit = 'MB'; }
+  const _splitToAmountUnit = (bytes) => {
+    if (!bytes || bytes <= 0) return { amt: 0, unit: 'GB' };
+    if (bytes % unitMap['TB'] === 0) return { amt: bytes / unitMap['TB'], unit: 'TB' };
+    if (bytes % unitMap['GB'] === 0) return { amt: bytes / unitMap['GB'], unit: 'GB' };
+    return { amt: bytes / unitMap['MB'], unit: 'MB' };
+  };
+  const _qFromQuota    = _splitToAmountUnit(d.quota    || 0);
+  const _qFromRefquota = _splitToAmountUnit(d.refquota || 0);
+  // Active type defaults to refquota whenever refquota is set — this
+  // matches the listing's Quota column (which surfaces refquota with
+  // a `ref` chip in preference to the broader quota), so opening the
+  // edit modal from a row shows the same value the user was looking
+  // at. Also defaults to refquota when *neither* property is set, so a
+  // user adding a brand-new quota from the edit dialog gets the
+  // recommended one (matches the create-dataset default). Only when
+  // standard `quota` is the one actively configured do we surface it.
+  const initialType = (d.quota > 0 && !(d.refquota > 0)) ? 'quota' : 'refquota';
+  const initial = initialType === 'refquota' ? _qFromRefquota : _qFromQuota;
+  document.getElementById('eds-quota-amount').value = initial.amt;
+  document.getElementById('eds-quota-unit').value   = initial.unit; csRefresh('eds-quota-unit');
+  document.getElementById('eds-quota-type').value   = initialType; csRefresh('eds-quota-type');
+  // Wire the type-switch: each time the user flips quota ↔ refquota,
+  // repaint the amount + unit with whatever the other property is
+  // currently set to on disk. The user can then edit it before saving.
+  const _qSel = document.getElementById('eds-quota-type');
+  if (_qSel) {
+    _qSel.onchange = () => {
+      const which = _qSel.value === 'refquota' ? _qFromRefquota : _qFromQuota;
+      document.getElementById('eds-quota-amount').value = which.amt;
+      document.getElementById('eds-quota-unit').value   = which.unit;
+      csRefresh('eds-quota-unit');
+    };
   }
-  document.getElementById('eds-quota-amount').value = qAmt;
-  document.getElementById('eds-quota-unit').value   = qUnit; csRefresh('eds-quota-unit');
-  document.getElementById('eds-quota-type').value   = d.refquota > 0 ? 'refquota' : 'quota'; csRefresh('eds-quota-type');
 
   // Refreservation — same SI convention.
   const refreserv = d.refreservation || 0;
@@ -21770,7 +21853,10 @@ function openDatasetDetail(name) {
   const snapEl = document.getElementById('dsd-usedsnap');
   snapEl.textContent   = usedSnap > 0 ? fmtBytes(usedSnap) : '0';
   snapEl.style.color   = usedSnap > 0 ? 'var(--accent-warn,#f0b429)' : 'var(--text-3)';
-  document.getElementById('dsd-quota').textContent    = d.quota > 0 ? fmtBytes(d.quota) : '—';
+  { const aq = _dsActiveQuota(d);
+    document.getElementById('dsd-quota-label').textContent = aq.type === 'refquota' ? 'Refquota' : 'Quota';
+    document.getElementById('dsd-quota').textContent = aq.bytes > 0 ? fmtBytes(aq.bytes) : '—';
+  }
 
   document.getElementById('dsd-comp').textContent       = d.compression || '—';
   document.getElementById('dsd-ratio').textContent      = _fmtRatio(d.compress_ratio) || '—';
