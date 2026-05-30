@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"zfsnas/internal/alerts"
@@ -867,6 +868,56 @@ func HandleInterlinkRemotePools(appCfg *config.AppConfig) http.HandlerFunc {
 			// a reverse proxy that doesn't forward SSH.
 			SSHHosts:    system.LocalSSHHosts(),
 		})
+	}
+}
+
+// HandleInterlinkRemoteFolders handles POST /api/interlink/remote-folders — no session auth.
+// HMAC-authenticated by a peer; returns the dataset paths (one or more levels deep) under
+// the requested pool, with the pool prefix stripped so the caller gets folder names like
+// "" (pool root), "DRONE", "backups/nightly".
+func HandleInterlinkRemoteFolders(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req system.RemoteFoldersRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		age := time.Since(time.Unix(req.Timestamp, 0))
+		if age > 30*time.Second || age < -5*time.Second {
+			jsonErr(w, http.StatusUnauthorized, "request timestamp out of range")
+			return
+		}
+		if req.Pool == "" || strings.ContainsAny(req.Pool, "/ \t\n") {
+			jsonErr(w, http.StatusBadRequest, "invalid pool name")
+			return
+		}
+		var matched bool
+		for _, ls := range appCfg.InterLink {
+			if hmac.Equal([]byte(system.RemoteFoldersHMAC(ls.SharedSecret, req.Pool, req.Timestamp, req.Nonce)), []byte(req.HMAC)) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			jsonErr(w, http.StatusUnauthorized, "invalid HMAC")
+			return
+		}
+		dsList, err := system.ListDatasets(req.Pool)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "cannot list datasets: "+err.Error())
+			return
+		}
+		folders := make([]string, 0, len(dsList))
+		prefix := req.Pool + "/"
+		for _, d := range dsList {
+			if d.Name == req.Pool {
+				continue
+			}
+			if strings.HasPrefix(d.Name, prefix) {
+				folders = append(folders, strings.TrimPrefix(d.Name, prefix))
+			}
+		}
+		jsonOK(w, system.RemoteFoldersResponse{Folders: folders})
 	}
 }
 

@@ -40,6 +40,37 @@ func HandlePushInterlinkGetRemotePools(appCfg *config.AppConfig) http.HandlerFun
 	}
 }
 
+// HandlePushInterlinkGetRemoteFolders handles GET /api/interlink/remote-folders/{server_id}?pool=<name>.
+// Proxies an HMAC-auth call to the linked remote server and returns the dataset folder paths
+// under the requested pool (paths are returned relative to the pool root).
+func HandlePushInterlinkGetRemoteFolders(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["server_id"]
+		pool := r.URL.Query().Get("pool")
+		if pool == "" {
+			jsonErr(w, http.StatusBadRequest, "pool query parameter is required")
+			return
+		}
+		var ls *config.LinkedServer
+		for i := range appCfg.InterLink {
+			if appCfg.InterLink[i].ID == id {
+				ls = &appCfg.InterLink[i]
+				break
+			}
+		}
+		if ls == nil {
+			jsonErr(w, http.StatusNotFound, "linked server not found")
+			return
+		}
+		resp, err := system.GetRemoteFolders(ls.URL, ls.SharedSecret, ls.TLSFingerprint, pool)
+		if err != nil {
+			jsonErr(w, http.StatusBadGateway, "cannot get remote folders: "+err.Error())
+			return
+		}
+		jsonOK(w, resp)
+	}
+}
+
 // HandlePushInterlinkStart handles POST /api/push-interlink/start (admin only).
 // Sets up SSH key exchange then launches a background zfs send | ssh zfs recv job.
 func HandlePushInterlinkStart(appCfg *config.AppConfig) http.HandlerFunc {

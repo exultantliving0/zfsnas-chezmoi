@@ -432,6 +432,67 @@ func GetRemotePools(remoteURL, sharedSecret, tlsFP string) (*RemotePoolsResponse
 	return &r, nil
 }
 
+// ── Remote folders (HMAC-auth) ────────────────────────────────────────────────
+
+// RemoteFoldersRequest is the HMAC-signed payload for POST /api/interlink/remote-folders.
+type RemoteFoldersRequest struct {
+	Pool      string `json:"pool"`
+	Timestamp int64  `json:"timestamp"`
+	Nonce     string `json:"nonce"`
+	HMAC      string `json:"hmac"`
+}
+
+// RemoteFoldersResponse lists the dataset paths under a pool on the peer (excluding the pool itself).
+type RemoteFoldersResponse struct {
+	Folders []string `json:"folders"`
+}
+
+// RemoteFoldersHMAC computes the HMAC for a remote-folders request.
+func RemoteFoldersHMAC(sharedSecret, pool string, timestamp int64, nonce string) string {
+	key, _ := hex.DecodeString(sharedSecret)
+	if len(key) == 0 {
+		key = []byte(sharedSecret)
+	}
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte("remote-folders|" + pool + "|" + strconv.FormatInt(timestamp, 10) + "|" + nonce))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// GetRemoteFolders fetches the dataset folder paths under the given pool from a linked remote server.
+func GetRemoteFolders(remoteURL, sharedSecret, tlsFP, pool string) (*RemoteFoldersResponse, error) {
+	nonce := make([]byte, 8)
+	rand.Read(nonce) //nolint:errcheck
+	ts := time.Now().Unix()
+	nh := hex.EncodeToString(nonce)
+	req := RemoteFoldersRequest{
+		Pool:      pool,
+		Timestamp: ts,
+		Nonce:     nh,
+		HMAC:      RemoteFoldersHMAC(sharedSecret, pool, ts, nh),
+	}
+	body, _ := json.Marshal(req)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", remoteURL+"/api/interlink/remote-folders", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := interlinkClientFor(tlsFP).Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("remote-folders returned status %d", resp.StatusCode)
+	}
+	var r RemoteFoldersResponse
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // ── ZFS push over SSH ─────────────────────────────────────────────────────────
 
 // datasetIsEncrypted reports whether the ZFS dataset (or the dataset that owns

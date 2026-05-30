@@ -655,6 +655,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.HandleFunc("/api/interlink/check-user", HandleInterlinkCheckUser(appCfg)).Methods("POST")
 	r.HandleFunc("/api/interlink/remote-unlink", HandleInterlinkRemoteUnlink(appCfg)).Methods("POST")
 	r.HandleFunc("/api/interlink/remote-pools", HandleInterlinkRemotePools(appCfg)).Methods("POST")
+	r.HandleFunc("/api/interlink/remote-folders", HandleInterlinkRemoteFolders(appCfg)).Methods("POST")
 	r.HandleFunc("/api/interlink/push-ssh-key", HandleInterlinkPushSSHKey(appCfg)).Methods("POST")
 	r.HandleFunc("/api/interlink/check-zfs-access", HandleInterlinkCheckZFSAccess(appCfg)).Methods("POST")
 	r.HandleFunc("/api/interlink/grant-zfs-access", HandleInterlinkGrantZFSAccess(appCfg)).Methods("POST")
@@ -678,6 +679,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandleInterlinkUnlink(appCfg))))).Methods("DELETE")
 	r.Handle("/api/interlink/remote-pools/{server_id}",
 		RequireAuth(http.HandlerFunc(HandlePushInterlinkGetRemotePools(appCfg)))).Methods("GET")
+	r.Handle("/api/interlink/remote-folders/{server_id}",
+		RequireAuth(http.HandlerFunc(HandlePushInterlinkGetRemoteFolders(appCfg)))).Methods("GET")
 	r.Handle("/api/interlink/remote-lxd-storage/{server_id}",
 		RequireAuth(http.HandlerFunc(HandleInterlinkRemoteLXDStorage(appCfg)))).Methods("GET")
 	r.Handle("/api/interlink/remote-lxd-bridges/{server_id}",

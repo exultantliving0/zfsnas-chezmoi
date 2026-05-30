@@ -10897,10 +10897,21 @@ Select the Console tab to load.</pre>
         </select>
       </div>
 
-      <!-- Step 3: destination name (shown once pool selected) -->
-      <div class="form-group" id="push-ds-il-dest-grp" style="display:none;margin-bottom:0;">
+      <!-- Step 3: destination folder dropdown (shown once pool selected) -->
+      <div class="form-group" id="push-ds-il-folder-grp" style="display:none;">
         <label style="display:flex;align-items:center;gap:8px;">
           <span style="background:var(--accent);color:#fff;border-radius:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">3</span>
+          Destination Folder
+        </label>
+        <select id="push-ds-il-folder" onchange="onPushDsILFolderChange()">
+          <option value="">— pool root —</option>
+        </select>
+      </div>
+
+      <!-- Step 4: destination name (shown once pool selected) -->
+      <div class="form-group" id="push-ds-il-dest-grp" style="display:none;margin-bottom:0;">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <span style="background:var(--accent);color:#fff;border-radius:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">4</span>
           Destination Path
         </label>
         <input type="text" id="push-ds-il-dest" placeholder="pool/name" spellcheck="false" autocomplete="off"
@@ -33667,6 +33678,7 @@ async function openPushDsILModal(dsName, isZvol) {
   document.getElementById('push-ds-il-name').textContent = dsName;
   document.getElementById('push-ds-il-alert').classList.add('hidden');
   document.getElementById('push-ds-il-pool-grp').style.display  = 'none';
+  document.getElementById('push-ds-il-folder-grp').style.display = 'none';
   document.getElementById('push-ds-il-dest-grp').style.display  = 'none';
   document.getElementById('push-ds-il-cap').style.display       = 'none';
   const _pushDsBtn = document.getElementById('btn-push-ds-il');
@@ -33675,6 +33687,7 @@ async function openPushDsILModal(dsName, isZvol) {
 
   initCustomSelect('push-ds-il-server');
   initCustomSelect('push-ds-il-pool');
+  initCustomSelect('push-ds-il-folder');
   const serverSel = document.getElementById('push-ds-il-server');
   serverSel.innerHTML = '<option value="">Loading servers…</option>';
   document.getElementById('modal-push-ds-il').classList.remove('hidden');
@@ -33702,15 +33715,22 @@ function closePushDsILModal() {
 
 async function onPushDsILServerChange() {
   const serverId = document.getElementById('push-ds-il-server').value;
-  const poolGrp  = document.getElementById('push-ds-il-pool-grp');
-  const destGrp  = document.getElementById('push-ds-il-dest-grp');
-  const poolSel  = document.getElementById('push-ds-il-pool');
+  const poolGrp   = document.getElementById('push-ds-il-pool-grp');
+  const folderGrp = document.getElementById('push-ds-il-folder-grp');
+  const destGrp   = document.getElementById('push-ds-il-dest-grp');
+  const poolSel   = document.getElementById('push-ds-il-pool');
   document.getElementById('btn-push-ds-il').disabled = true;
 
-  if (!serverId) { poolGrp.style.display = 'none'; destGrp.style.display = 'none'; return; }
+  if (!serverId) {
+    poolGrp.style.display = 'none';
+    folderGrp.style.display = 'none';
+    destGrp.style.display = 'none';
+    return;
+  }
 
   poolSel.innerHTML = '<option value="">Loading pools…</option>';
   poolGrp.style.display = '';
+  folderGrp.style.display = 'none';
   destGrp.style.display = 'none';
 
   try {
@@ -33727,7 +33747,6 @@ async function onPushDsILServerChange() {
     poolSel.innerHTML = '<option value="">— select pool —</option>' +
       pools.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
     csRefresh('push-ds-il-pool');
-    destGrp.style.display = '';
     onPushDsILPoolChange(); // reset dest input
   } catch(e) {
     poolSel.innerHTML = `<option value="">Error: ${esc(e.message)}</option>`;
@@ -33735,24 +33754,77 @@ async function onPushDsILServerChange() {
   }
 }
 
-function onPushDsILPoolChange() {
-  const pool    = document.getElementById('push-ds-il-pool').value;
-  const destInp = document.getElementById('push-ds-il-dest');
-  const capDiv  = document.getElementById('push-ds-il-cap');
-  const btn     = document.getElementById('btn-push-ds-il');
-  btn.disabled  = true;
+async function onPushDsILPoolChange() {
+  const pool      = document.getElementById('push-ds-il-pool').value;
+  const folderGrp = document.getElementById('push-ds-il-folder-grp');
+  const folderSel = document.getElementById('push-ds-il-folder');
+  const destInp   = document.getElementById('push-ds-il-dest');
+  const capDiv    = document.getElementById('push-ds-il-cap');
+  const btn       = document.getElementById('btn-push-ds-il');
+  btn.disabled    = true;
 
   if (!pool) {
+    folderGrp.style.display = 'none';
     destInp.value = '';
     capDiv.style.display = 'none';
     return;
   }
 
-  // Suggest: remote_pool / source_dataset_path_without_its_pool
-  const leafPath = (_pushDsILDataset || '').split('/').slice(1).join('/');
-  destInp.value = leafPath ? pool + '/' + leafPath : pool;
+  // Default destination: <pool>/<source-leaf-path>, picking pool root.
+  _pushDsILApplyDest(pool, '');
 
-  // Show capacity info row.
+  // Load folders on the remote pool, asynchronously.
+  folderGrp.style.display = '';
+  folderSel.innerHTML = '<option value="">Loading folders…</option>';
+  csRefresh('push-ds-il-folder');
+  try {
+    const serverId = document.getElementById('push-ds-il-server').value;
+    const resp = await fetch(`/api/interlink/remote-folders/${encodeURIComponent(serverId)}?pool=${encodeURIComponent(pool)}`,
+                             {credentials:'same-origin'});
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to load folders');
+    const folders = (data.folders || []).slice().sort();
+    const opts = [`<option value="">— ${esc(pool)} (pool root) —</option>`]
+                 .concat(folders.map(f => `<option value="${esc(f)}">${esc(pool)}/${esc(f)}</option>`));
+    folderSel.innerHTML = opts.join('');
+    folderSel.value = '';
+    csRefresh('push-ds-il-folder');
+  } catch (e) {
+    folderSel.innerHTML = `<option value="">— ${esc(pool)} (pool root) —</option>` +
+                          `<option value="" disabled>Could not list folders: ${esc(e.message)}</option>`;
+    csRefresh('push-ds-il-folder');
+  }
+}
+
+function onPushDsILFolderChange() {
+  const pool   = document.getElementById('push-ds-il-pool').value;
+  const folder = document.getElementById('push-ds-il-folder').value;
+  if (!pool) return;
+  _pushDsILApplyDest(pool, folder);
+}
+
+function _pushDsILApplyDest(pool, folder) {
+  const destInp = document.getElementById('push-ds-il-dest');
+  const destGrp = document.getElementById('push-ds-il-dest-grp');
+  const capDiv  = document.getElementById('push-ds-il-cap');
+  const btn     = document.getElementById('btn-push-ds-il');
+
+  // No folder picked → preserve full sub-path from source under the pool root.
+  // Folder picked   → use the source's leaf name only inside the chosen folder.
+  const srcParts = (_pushDsILDataset || '').split('/');
+  let path = pool;
+  if (folder) {
+    path += '/' + folder;
+    const leafName = srcParts.length > 1 ? srcParts[srcParts.length - 1] : '';
+    if (leafName) path += '/' + leafName;
+  } else {
+    const leafPath = srcParts.slice(1).join('/');
+    if (leafPath) path += '/' + leafPath;
+  }
+  destInp.value = path;
+  destGrp.style.display = '';
+
+  // Capacity info row.
   const avail  = _pushDsILPoolAvail[pool] || 0;
   const enough = avail === 0 || _pushDsILSourceSize === 0 || _pushDsILSourceSize <= avail;
   document.getElementById('push-ds-il-cap-src').textContent   = fmtBytes(_pushDsILSourceSize);
@@ -33766,8 +33838,7 @@ function onPushDsILPoolChange() {
     warnEl.style.display = 'none';
   }
   capDiv.style.display = '';
-
-  btn.disabled = !enough;
+  btn.disabled = !path.trim() || !enough;
 }
 
 function _pushDsILOnDestInput(val) {
