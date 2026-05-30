@@ -367,7 +367,22 @@ func buildFilesAlias() string {
 		"    /usr/bin/chown *, \\\n" +
 		"    /usr/bin/chown -R *, \\\n" +
 		"    /usr/bin/chmod *, \\\n" +
-		"    /usr/bin/chmod -R *\n"
+		"    /usr/bin/chmod -R *, \\\n" +
+		// v6.5.29 — full file browser mutations.
+		"    /usr/bin/mkdir -p *, \\\n" +
+		"    /usr/bin/rm -rf *, \\\n" +
+		"    /usr/bin/rm -f *, \\\n" +
+		"    /usr/bin/mv -f *, \\\n" +
+		"    /usr/bin/mv -n *, \\\n" +
+		"    /usr/bin/cp -a -f *, \\\n" +
+		"    /usr/bin/cp -a -n *, \\\n" +
+		"    /usr/bin/cp -a *, \\\n" +
+		// v6.5.29 — raw-file preview endpoint streams allow-listed MIME
+		// types from inside knownRoots; uses stat for size+mtime,
+		// head for the 512-byte MIME sniff, cat for the body.
+		"    /usr/bin/stat -c *, \\\n" +
+		"    /usr/bin/head -c *, \\\n" +
+		"    /usr/bin/cat *\n"
 }
 
 // GetCurrentSudoersContent reads /etc/sudoers.d/zfsnas.

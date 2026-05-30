@@ -1,8 +1,16 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
 	"zfsnas/system"
@@ -176,4 +184,408 @@ func HandleFileBrowserChmod(w http.ResponseWriter, r *http.Request) {
 	})
 
 	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// ── v6.5.29 — Browse Files becomes a real browser ────────────────────────────
+
+// fbResolveRoot does the common upfront work: pulls the root token out
+// of the query/body, looks up knownRoots, and returns (absRoot, label)
+// on success. Writes the error to `w` and returns ("", "", false) on
+// failure so the caller can `return` immediately.
+func fbResolveRoot(w http.ResponseWriter, token string) (string, string, bool) {
+	knownRoots, err := system.ResolveKnownRoots(config.Dir())
+	if err != nil && len(knownRoots) == 0 {
+		jsonErr(w, http.StatusInternalServerError, "could not resolve known roots")
+		return "", "", false
+	}
+	absRoot, label, err := system.ValidateRootToken(token, knownRoots)
+	if err != nil {
+		jsonErr(w, http.StatusForbidden, err.Error())
+		return "", "", false
+	}
+	return absRoot, label, true
+}
+
+// HandleFileBrowserRoots returns every dataset mountpoint + share root
+// the FE is allowed to address. Used by the left-pane multi-root tree:
+// the modal opens at one root, but the user can navigate to / copy /
+// move between any of them. Each entry carries the same base64url
+// root token the other endpoints expect, sorted by label for a stable
+// display order. v6.5.29.
+// GET /api/files/roots
+func HandleFileBrowserRoots(w http.ResponseWriter, r *http.Request) {
+	known, err := system.ResolveKnownRoots(config.Dir())
+	if err != nil && len(known) == 0 {
+		jsonErr(w, http.StatusInternalServerError, "could not resolve known roots")
+		return
+	}
+	type rootEntry struct {
+		Label    string `json:"label"`
+		Token    string `json:"token"`
+		AbsPath  string `json:"abs_path"`
+	}
+	out := make([]rootEntry, 0, len(known))
+	for abs, label := range known {
+		out = append(out, rootEntry{
+			Label:   label,
+			Token:   base64.RawURLEncoding.EncodeToString([]byte(abs)),
+			AbsPath: abs,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	jsonOK(w, map[string]interface{}{"roots": out})
+}
+
+// HandleFileBrowserTree returns the folder tree for the left pane.
+// GET /api/files/tree?root=<b64>&subpath=&depth=1
+func HandleFileBrowserTree(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("root")
+	if token == "" {
+		jsonErr(w, http.StatusBadRequest, "missing root parameter")
+		return
+	}
+	absRoot, label, ok := fbResolveRoot(w, token)
+	if !ok {
+		return
+	}
+	subpath := r.URL.Query().Get("subpath")
+	depth := 1
+	if d, err := strconv.Atoi(r.URL.Query().Get("depth")); err == nil && d >= 0 {
+		depth = d
+	}
+	tree, err := system.WalkTree(absRoot, subpath, depth)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]interface{}{
+		"root_label": label,
+		"tree":       tree,
+	})
+}
+
+// HandleFileBrowserMkdir creates a new folder.
+// POST /api/files/mkdir  body: {root, subpath, name}
+func HandleFileBrowserMkdir(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Root    string `json:"root"`
+		Subpath string `json:"subpath"`
+		Name    string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	absRoot, _, ok := fbResolveRoot(w, req.Root)
+	if !ok {
+		return
+	}
+	if err := system.MakeDir(absRoot, req.Subpath, req.Name); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sess, _ := SessionFromRequest(r)
+	user := ""
+	if sess != nil {
+		user = sess.Username
+	}
+	audit.Log(audit.Entry{
+		User:    user,
+		Action:  audit.ActionFileBrowserMkdir,
+		Target:  filepath.Join(absRoot, req.Subpath, req.Name),
+		Result:  audit.ResultOK,
+		Details: "mkdir " + req.Name,
+	})
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// HandleFileBrowserDelete removes one or more entries.
+// POST /api/files/delete  body: {root, subpaths[], recursive}
+func HandleFileBrowserDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Root      string   `json:"root"`
+		Subpaths  []string `json:"subpaths"`
+		Recursive bool     `json:"recursive"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	absRoot, _, ok := fbResolveRoot(w, req.Root)
+	if !ok {
+		return
+	}
+	if err := system.RemovePaths(absRoot, req.Subpaths, req.Recursive); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sess, _ := SessionFromRequest(r)
+	user := ""
+	if sess != nil {
+		user = sess.Username
+	}
+	first := ""
+	if len(req.Subpaths) > 0 {
+		first = req.Subpaths[0]
+	}
+	details := fmt.Sprintf("rm %d path(s)", len(req.Subpaths))
+	if len(req.Subpaths) <= 5 {
+		details += ": " + strings.Join(req.Subpaths, ", ")
+	}
+	audit.Log(audit.Entry{
+		User:    user,
+		Action:  audit.ActionFileBrowserDelete,
+		Target:  filepath.Join(absRoot, first),
+		Result:  audit.ResultOK,
+		Details: details,
+	})
+	jsonOK(w, map[string]interface{}{"ok": true, "removed": len(req.Subpaths)})
+}
+
+// HandleFileBrowserMove / Copy share the same request shape.
+type fbMoveCopyReq struct {
+	SrcRoot     string   `json:"src_root"`
+	SrcSubpaths []string `json:"src_subpaths"`
+	DstRoot     string   `json:"dst_root"`
+	DstSubpath  string   `json:"dst_subpath"`
+	Overwrite   bool     `json:"overwrite"`
+}
+
+// HandleFileBrowserMove moves entries (across roots when both are
+// knownRoots).
+// POST /api/files/move
+func HandleFileBrowserMove(w http.ResponseWriter, r *http.Request) {
+	var req fbMoveCopyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	srcAbs, _, ok := fbResolveRoot(w, req.SrcRoot)
+	if !ok {
+		return
+	}
+	dstAbs, _, ok := fbResolveRoot(w, req.DstRoot)
+	if !ok {
+		return
+	}
+	if err := system.MovePaths(srcAbs, req.SrcSubpaths, dstAbs, req.DstSubpath, req.Overwrite); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sess, _ := SessionFromRequest(r)
+	user := ""
+	if sess != nil {
+		user = sess.Username
+	}
+	details := fmt.Sprintf("mv %d → %s", len(req.SrcSubpaths), filepath.Join(dstAbs, req.DstSubpath))
+	audit.Log(audit.Entry{
+		User:    user,
+		Action:  audit.ActionFileBrowserMove,
+		Target:  filepath.Join(dstAbs, req.DstSubpath),
+		Result:  audit.ResultOK,
+		Details: details,
+	})
+	jsonOK(w, map[string]interface{}{"ok": true, "moved": len(req.SrcSubpaths)})
+}
+
+// HandleFileBrowserCopy copies entries (cp -a, cross-root OK).
+// POST /api/files/copy
+func HandleFileBrowserCopy(w http.ResponseWriter, r *http.Request) {
+	var req fbMoveCopyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	srcAbs, _, ok := fbResolveRoot(w, req.SrcRoot)
+	if !ok {
+		return
+	}
+	dstAbs, _, ok := fbResolveRoot(w, req.DstRoot)
+	if !ok {
+		return
+	}
+	if err := system.CopyPaths(srcAbs, req.SrcSubpaths, dstAbs, req.DstSubpath, req.Overwrite); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sess, _ := SessionFromRequest(r)
+	user := ""
+	if sess != nil {
+		user = sess.Username
+	}
+	details := fmt.Sprintf("cp -a %d → %s", len(req.SrcSubpaths), filepath.Join(dstAbs, req.DstSubpath))
+	audit.Log(audit.Entry{
+		User:    user,
+		Action:  audit.ActionFileBrowserCopy,
+		Target:  filepath.Join(dstAbs, req.DstSubpath),
+		Result:  audit.ResultOK,
+		Details: details,
+	})
+	jsonOK(w, map[string]interface{}{"ok": true, "copied": len(req.SrcSubpaths)})
+}
+
+// HandleFileBrowserDownload streams an arbitrary file with
+// `Content-Disposition: attachment` so the browser saves it instead of
+// previewing it. Unlike /api/files/raw, this endpoint has no MIME
+// allowlist — downloads of any byte content are legitimate. SafeJoin
+// still constrains the path to knownRoots so a session can't fetch
+// /etc/shadow.
+// GET /api/files/download?root=<b64>&subpath=<rel>
+func HandleFileBrowserDownload(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("root")
+	if token == "" {
+		http.Error(w, "missing root", http.StatusBadRequest)
+		return
+	}
+	absRoot, _, ok := fbResolveRoot(w, token)
+	if !ok {
+		return
+	}
+	subpath := r.URL.Query().Get("subpath")
+	abs, err := system.SafeJoin(absRoot, subpath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Same sudo stat / cat pattern the raw endpoint uses — works
+	// inside traverse-denied parents (root:root 0770 datasets etc.).
+	out, err := exec.Command("sudo", "stat", "-c", "%s %Y %F", abs).Output()
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) < 3 {
+		http.Error(w, "stat parse", http.StatusInternalServerError)
+		return
+	}
+	size, _ := strconv.ParseInt(parts[0], 10, 64)
+	ftype := strings.Join(parts[2:], " ")
+	if strings.Contains(ftype, "directory") {
+		http.Error(w, "is a directory", http.StatusBadRequest)
+		return
+	}
+	name := filepath.Base(abs)
+	// Content-Disposition: a quoted filename + the modern * form so
+	// browsers handle non-ASCII names correctly.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="`+strings.ReplaceAll(name, `"`, `\"`)+`"; filename*=UTF-8''`+urlQueryEscape(name))
+	cmd := exec.Command("sudo", "cat", abs)
+	cmd.Stdout = w
+	cmd.Run() //nolint:errcheck
+}
+
+// urlQueryEscape is the percent-encoding the RFC 5987 `filename*` form
+// expects (different rule than url.QueryEscape, which leaves '/' alone).
+func urlQueryEscape(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+			c == '-' || c == '.' || c == '_' || c == '~' {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
+}
+
+// fbRawAllowedMIMEs is the allowlist of MIME prefixes /api/files/raw
+// will stream. Anything else → 415. We don't want this becoming an
+// arbitrary file server — the allowlist is exactly the preview surface
+// the FE supports (thumbnails / image viewer / future text + PDF
+// preview).
+var fbRawAllowedMIMEs = []string{
+	"image/",
+	"text/",
+	"application/pdf",
+}
+
+// HandleFileBrowserRaw streams the bytes of one file. SafeJoin-validated
+// + MIME-allowlisted. We can't use os.Open directly because many dataset
+// mountpoints are owned root:root mode 0770 — the zfsnas service user
+// lacks traverse permission, so the existing chown/chmod/list paths all
+// shell through sudo. Raw does the same: `sudo head -c 512` for the
+// MIME sniff, `sudo stat` for the size + mtime headers, then
+// `sudo cat` to stream the body. Range-handling is left to a future
+// release (browsers tolerate full responses for images; big-photo
+// viewers don't need partial fetches at the scale we ship).
+// GET /api/files/raw?root=<b64>&subpath=
+func HandleFileBrowserRaw(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("root")
+	if token == "" {
+		http.Error(w, "missing root", http.StatusBadRequest)
+		return
+	}
+	absRoot, _, ok := fbResolveRoot(w, token)
+	if !ok {
+		return
+	}
+	subpath := r.URL.Query().Get("subpath")
+	abs, err := system.SafeJoin(absRoot, subpath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Stat first so we know it exists, isn't a directory, and can set
+	// Content-Length + Last-Modified. `sudo stat -c '%s %Y %F'` keeps
+	// the output parser trivial.
+	out, err := exec.Command("sudo", "stat", "-c", "%s %Y %F", abs).Output()
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) < 3 {
+		http.Error(w, "stat parse", http.StatusInternalServerError)
+		return
+	}
+	size, _ := strconv.ParseInt(parts[0], 10, 64)
+	mtimeUnix, _ := strconv.ParseInt(parts[1], 10, 64)
+	// parts[2..] is the file type ("regular file", "directory", …).
+	ftype := strings.Join(parts[2:], " ")
+	if strings.Contains(ftype, "directory") {
+		http.Error(w, "is a directory", http.StatusBadRequest)
+		return
+	}
+	// MIME sniff from the first 512 B via sudo head.
+	sniff, err := exec.Command("sudo", "head", "-c", "512", abs).Output()
+	if err != nil {
+		http.Error(w, "read failed", http.StatusInternalServerError)
+		return
+	}
+	mime := http.DetectContentType(sniff)
+	allowed := false
+	for _, pfx := range fbRawAllowedMIMEs {
+		if strings.HasPrefix(mime, pfx) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		http.Error(w, "file type not previewable", http.StatusUnsupportedMediaType)
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Last-Modified", time.Unix(mtimeUnix, 0).UTC().Format(time.RFC1123))
+	// SecurityHeaders middleware sets X-Frame-Options: DENY for every
+	// response, which kills the in-modal PDF preview (Chrome refuses
+	// to display the file in our same-origin iframe). Override to
+	// SAMEORIGIN for raw previews so the file browser can embed them
+	// — still blocks cross-origin framing.
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	// Stream the body. `sudo cat` is the minimal-overhead path — one
+	// fork per request, output piped straight to the response writer.
+	cmd := exec.Command("sudo", "cat", abs)
+	cmd.Stdout = w
+	if err := cmd.Run(); err != nil {
+		// Headers are already sent at this point; nothing we can do
+		// except log. http.Server will reset the connection.
+		return
+	}
 }

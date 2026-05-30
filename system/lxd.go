@@ -5661,18 +5661,16 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 	return nil
 }
 
-// ComposeBaseImageAlias maps a ComposeBaseImage setting value to the Incus
-// remote image alias used to launch a Compose stack container, plus the
-// distro family ("alpine" | "debian" | "ubuntu") that drives provisioning.
-func ComposeBaseImageAlias(name string) (alias, distro string) {
-	switch name {
-	case "alpine":
-		return "images:alpine/3.21", "alpine"
-	case "ubuntu":
-		return "images:ubuntu/24.04", "ubuntu"
-	default: // debian is the default
-		return "images:debian/12", "debian"
-	}
+// ComposeBaseImageAlias used to map a per-user setting (alpine / debian
+// / ubuntu) to the Incus remote alias. As of v6.5.26 ZNAS standardises
+// on Debian for every Compose stack — the per-user picker was removed
+// from Settings → Virtualization because the alpine/ubuntu paths added
+// surface area (musl, snap layers) for negligible benefit. The signature
+// is kept and the argument is intentionally ignored so older callers
+// (and stored configs that still carry compose_base_image) compile and
+// run without churn.
+func ComposeBaseImageAlias(_ string) (alias, distro string) {
+	return "images:debian/12", "debian"
 }
 
 // lxdWriteFileInside writes content to a path inside an instance via

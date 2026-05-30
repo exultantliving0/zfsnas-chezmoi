@@ -165,18 +165,66 @@ func HandleDockerGetComposeFile(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "path is not a known compose file for this instance")
 			return
 		}
+		// `incus file pull` returns "Error: file does not exist" on a
+		// missing file (older versions said "not found"); os.IsNotExist
+		// doesn't catch that because the error is wrapped string-only.
+		// We check a few well-known fragments rather than re-typing the
+		// error to keep this resilient across Incus versions.
+		isNotExistErr := func(err error) bool {
+			if err == nil {
+				return false
+			}
+			if os.IsNotExist(err) {
+				return true
+			}
+			m := err.Error()
+			return strings.Contains(m, "no such file") ||
+				strings.Contains(m, "does not exist") ||
+				strings.Contains(m, "not found")
+		}
 		yaml, err := system.DockerReadComposeFile(name, path)
+		yamlMissing := false
 		if err != nil {
-			// File missing is fine: the modal opens with an empty YAML
-			// and a banner so the user knows Save will create it.
-			if os.IsNotExist(err) || strings.Contains(err.Error(), "no such file") {
-				jsonOK(w, map[string]interface{}{"path": path, "project": project, "yaml": "", "missing": true})
+			if isNotExistErr(err) {
+				yamlMissing = true
+				yaml = ""
+			} else {
+				jsonErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			jsonErr(w, http.StatusInternalServerError, err.Error())
-			return
 		}
-		jsonOK(w, map[string]interface{}{"path": path, "project": project, "yaml": yaml})
+		// Sibling .env discovery (v6.5.26). `docker compose` defaults
+		// to reading <project-dir>/.env automatically, so the convention
+		// is rock-solid in practice. We surface it next to the YAML
+		// editor so the user doesn't need a separate terminal to tweak
+		// variables. The path is always returned so the frontend can
+		// offer to create one even when none exists yet.
+		envPath := filepath.Join(filepath.Dir(path), ".env")
+		envBody, envErr := system.DockerReadComposeFile(name, envPath)
+		envMissing := false
+		if envErr != nil {
+			if isNotExistErr(envErr) {
+				envMissing = true
+				envBody = ""
+			} else {
+				// Don't fail the whole call on a perms hiccup reading
+				// the .env — just hide that section in the UI by
+				// returning an empty path.
+				envPath = ""
+			}
+		}
+		resp := map[string]interface{}{
+			"path":        path,
+			"project":     project,
+			"yaml":        yaml,
+			"env_path":    envPath,
+			"env":         envBody,
+			"env_missing": envMissing,
+		}
+		if yamlMissing {
+			resp["missing"] = true
+		}
+		jsonOK(w, resp)
 	}
 }
 
@@ -192,8 +240,13 @@ func HandleDockerPutComposeFile(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			Path string `json:"path"`
-			YAML string `json:"yaml"`
+			Path string  `json:"path"`
+			YAML string  `json:"yaml"`
+			// Env is a pointer so we can distinguish "field omitted"
+			// (frontend never showed the .env editor) from "field
+			// present with empty string" (user blanked the .env on
+			// purpose, which we treat as 'delete the file').
+			Env  *string `json:"env,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -222,6 +275,22 @@ func HandleDockerPutComposeFile(appCfg *config.AppConfig) http.HandlerFunc {
 				}
 			}()
 			err := system.DockerWriteComposeFile(name, req.Path, req.YAML)
+			// Sibling .env write (v6.5.26). Only touch the file when
+			// the frontend included the field — that way unrelated
+			// .env files on the guest aren't risked by clients that
+			// don't know about the new field.
+			if err == nil && req.Env != nil {
+				envPath := filepath.Join(filepath.Dir(req.Path), ".env")
+				if strings.TrimSpace(*req.Env) == "" {
+					// User blanked the editor → delete the file. A
+					// stray .env left on disk with whitespace-only
+					// content would still be sourced by docker compose,
+					// which can shadow legitimate process env vars.
+					err = system.DockerDeleteFile(name, envPath)
+				} else {
+					err = system.DockerWriteComposeFile(name, envPath, *req.Env)
+				}
+			}
 			if err == nil {
 				err = system.DockerComposeAction(name, req.Path, []string{"up", "-d"}, logCh)
 			}

@@ -260,6 +260,22 @@ func DockerWriteComposeFile(instance, path, content string) error {
 	return nil
 }
 
+// DockerDeleteFile removes one file inside the guest via `incus exec`.
+// Used by the edit-compose modal when the user blanks the sidekick
+// .env editor → remove the file rather than leave a whitespace-only
+// .env on disk that docker compose would still source. A non-existent
+// target is not an error (rm -f).
+func DockerDeleteFile(instance, path string) error {
+	if path == "" || path[0] != '/' {
+		return fmt.Errorf("file path must be absolute, got %q", path)
+	}
+	out, err := exec.Command("incus", "exec", instance, "--", "rm", "-f", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("rm -f %s: %s", path, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // DockerComposeAction runs `docker compose <verb…>` for the project at
 // configFile. `verb` is the *full* sub-command — caller passes
 // {"up","-d"} or {"pull"} or {"down","-t","10"} etc.

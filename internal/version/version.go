@@ -2,7 +2,7 @@ package version
 
 import "time"
 
-const Version = "6.5.25"
+const Version = "6.5.30"
 const ReleasesURL = "https://github.com/macgaver/zfsnas-chezmoi/releases"
 
 var experimentalMode bool

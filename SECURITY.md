@@ -237,12 +237,28 @@ Cmnd_Alias ZFSNAS_SCAN = \
 #   The portal validates every target path against known dataset mountpoints
 #   and share roots before invoking these commands; arbitrary paths cannot be
 #   targeted from the UI.
+# since v6.5.29 — Browse Files promoted to a full file browser. mkdir / rm / mv /
+#   cp -a entries added so the new + Folder, Delete, Move, Copy buttons can
+#   mutate inside dataset mountpoints + share roots (each path is SafeJoin'd
+#   against a knownRoot server-side before any sudo call runs, regardless of
+#   how permissive the alias entry looks).
 Cmnd_Alias ZFSNAS_FILES = \
     /usr/bin/find *, \
     /usr/bin/chown *, \
     /usr/bin/chown -R *, \
     /usr/bin/chmod *, \
-    /usr/bin/chmod -R *
+    /usr/bin/chmod -R *, \
+    /usr/bin/mkdir -p *, \
+    /usr/bin/rm -rf *, \
+    /usr/bin/rm -f *, \
+    /usr/bin/mv -f *, \
+    /usr/bin/mv -n *, \
+    /usr/bin/cp -a -f *, \
+    /usr/bin/cp -a -n *, \
+    /usr/bin/cp -a *, \
+    /usr/bin/stat -c *, \
+    /usr/bin/head -c *, \
+    /usr/bin/cat *
 
 # ── System management ─────────────────────────────────────────────────────────
 # since v1.0.0 — timezone setting, shutdown/reboot from power menu, ZFS kernel module load

@@ -703,6 +703,23 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserChown)))).Methods("POST")
 	r.Handle("/api/files/chmod",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserChmod)))).Methods("POST")
+	// v6.5.29 — full file browser:
+	r.Handle("/api/files/roots",
+		RequireAuth(RequirePermission("browse_files")(http.HandlerFunc(HandleFileBrowserRoots)))).Methods("GET")
+	r.Handle("/api/files/tree",
+		RequireAuth(RequirePermission("browse_files")(http.HandlerFunc(HandleFileBrowserTree)))).Methods("GET")
+	r.Handle("/api/files/raw",
+		RequireAuth(RequirePermission("browse_files")(http.HandlerFunc(HandleFileBrowserRaw)))).Methods("GET")
+	r.Handle("/api/files/download",
+		RequireAuth(RequirePermission("browse_files")(http.HandlerFunc(HandleFileBrowserDownload)))).Methods("GET")
+	r.Handle("/api/files/mkdir",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserMkdir)))).Methods("POST")
+	r.Handle("/api/files/delete",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserDelete)))).Methods("POST")
+	r.Handle("/api/files/move",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserMove)))).Methods("POST")
+	r.Handle("/api/files/copy",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserCopy)))).Methods("POST")
 
 	// --- LXD VM & Container management (experimental) ---
 	// /api/lxd/status and /api/lxd/enable/* are always registered so the frontend

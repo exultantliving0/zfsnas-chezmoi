@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"zfsnas/internal/version"
 )
 
 // Package describes a required system package and its install status.
@@ -105,10 +107,17 @@ type SudoStatus struct {
 // gate optional-feature entries (e.g. NUT, MinIO, iSCSI) that are irrelevant on
 // systems that have not enabled the feature.
 type sudoCheck struct {
-	Binary   string // executable name passed to exec.LookPath
-	Match    string // extra suffix after the binary path (empty = binary path alone)
-	Name     string // display name reported in MissingCommands
-	IfBinary string // skip this check if the named binary is absent from PATH
+	Binary         string // executable name passed to exec.LookPath
+	Match          string // extra suffix after the binary path (empty = binary path alone)
+	Name           string // display name reported in MissingCommands
+	IfBinary       string // skip this check if the named binary is absent from PATH
+	IfExperimental bool   // skip this check when ZNAS is not started with --experimental
+	// — required for entries whose Cmnd_Alias is in experimentalSudoersAliases
+	// (sudoers_hardening.go). Without this gate, installing the underlying
+	// binary (e.g. `sanoid` pulls in syncoid as a transitive dep) would
+	// produce a "missing sudo entry" warning that the user can't fix from
+	// the sudo editor — the alias isn't part of the template stripped for
+	// non-experimental hosts. (v6.5.30 fix.)
 }
 
 // requiredSudoChecks lists every entry covered by the hardened sudoers template
@@ -176,8 +185,15 @@ var requiredSudoChecks = []sudoCheck{
 	// ── Disk Power Management (hdparm) — only checked when hdparm is installed
 	{Binary: "hdparm", Match: "*", Name: "hdparm *", IfBinary: "hdparm"},
 	{Binary: "tee", Match: "/etc/hdparm.conf", Name: "tee /etc/hdparm.conf", IfBinary: "hdparm"},
-	// ── ZFS Replication (syncoid) — only checked when syncoid is installed (v6.5.19+)
-	{Binary: "syncoid", Match: "*", Name: "syncoid *", IfBinary: "syncoid"},
+	// ── ZFS Replication (syncoid) — only checked when syncoid is installed
+	// AND ZNAS is running with --experimental. syncoid is part of the
+	// `sanoid` package, which can be a transitive dep on Ubuntu 26.04
+	// (and gets pulled in by completely unrelated workloads). Without
+	// IfExperimental the user would see a "syncoid * missing" warning
+	// they can't dismiss — the sudo editor's template strips
+	// ZFSNAS_SYNCOID on non-experimental hosts so the line never appears
+	// in the editor for them to "Apply".
+	{Binary: "syncoid", Match: "*", Name: "syncoid *", IfBinary: "syncoid", IfExperimental: true},
 	// ── System/Platform Power Management ─────────────────────────────────────
 	{Binary: "tee", Match: "/etc/rc.local", Name: "tee /etc/rc.local"},
 	{Binary: "chmod", Match: "+x /etc/rc.local", Name: "chmod +x /etc/rc.local"},
@@ -223,6 +239,17 @@ func CheckSudoAccess() SudoStatus {
 	// Hardened configuration — check each required entry.
 	var missing []string
 	for _, chk := range requiredSudoChecks {
+		// Skip experimental-only entries on non-experimental hosts.
+		// The sudoers template removes their alias block entirely in
+		// that mode (see stripExperimentalSudoersSections), so warning
+		// about a missing line the user can't add from the editor is
+		// pure noise. v6.5.30 fix for a user on Ubuntu 26.04 who saw
+		// "syncoid *" perpetually missing because their system had
+		// syncoid installed (transitive sanoid dep) but no
+		// virtualization feature in use.
+		if chk.IfExperimental && !version.IsExperimental() {
+			continue
+		}
 		// Skip optional-feature entries when the feature is not installed.
 		if chk.IfBinary != "" {
 			if _, err := exec.LookPath(chk.IfBinary); err != nil {

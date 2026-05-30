@@ -122,8 +122,12 @@ const (
 	// Sudoers hardening.
 	ActionUpdateSudoers = "update_sudoers"
 	// File Browser.
-	ActionFileBrowserChown = "filebrowser_chown"
-	ActionFileBrowserChmod = "filebrowser_chmod"
+	ActionFileBrowserChown  = "filebrowser_chown"
+	ActionFileBrowserChmod  = "filebrowser_chmod"
+	ActionFileBrowserMkdir  = "filebrowser_mkdir"
+	ActionFileBrowserDelete = "filebrowser_delete"
+	ActionFileBrowserMove   = "filebrowser_move"
+	ActionFileBrowserCopy   = "filebrowser_copy"
 	// Dataset encryption actions.
 	ActionLockDataset     = "lock_dataset"
 	ActionUnlockDataset   = "unlock_dataset"

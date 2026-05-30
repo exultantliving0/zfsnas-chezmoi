@@ -344,6 +344,174 @@
     .vm-hw-body { padding:12px 14px;border-top:1px solid var(--border); }
     .vm-hw-tag { display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(10,132,255,0.12);color:#58a6ff;border:1px solid rgba(10,132,255,0.25); }
 
+    /* Generic confirm modal must always stack above every other modal
+       (it's used from inside the File Browser, Compose stack edit, etc.).
+       Both .modal-backdrop default to z-index:100 — file browser comes
+       later in DOM order so it wins the tie and hides the confirm,
+       which is why "Delete" looked like a no-op. Force confirm to a
+       higher index. */
+    #modal-generic-confirm { z-index:200 !important; }
+    /* ── v6.5.29 — Full file browser (Browse Files modal) ──────────────── */
+    .fbnew-modal { width:80vw;height:80vh;min-width:640px;min-height:480px;max-width:100vw;max-height:100vh;resize:both;overflow:hidden;display:flex;flex-direction:column;padding:0; }
+    .fbnew-modal.maximized { width:95vw;height:95vh;resize:none; }
+    /* Neutralise the generic .modal > div rule at style.css:2002 —
+       `.modal > div:not(.modal-header):not(.modal-body):not(.modal-footer)`
+       has specificity (0,4,0) and forces every section here to
+       flex:1 with 32 px horizontal padding + 28 px bottom padding on
+       the last child, which made the header / toolbar look hugely
+       tall with massive empty rows below them. `!important` is the
+       cleanest beat since the global rule lives in style.css and we
+       don't want to refactor every modal in the codebase. */
+    .fbnew-modal > div { flex:0 0 auto !important;padding:0 !important;min-height:0 !important; }
+    .fbnew-modal > .fbnew-body { flex:1 1 auto !important;display:grid !important; }
+    .fbnew-modal-header { display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface2);min-height:0; }
+    .fbnew-modal-header h3 { margin:0;font-size:13px;font-weight:600;line-height:1.4; }
+    .fbnew-iconbtn { background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-2);padding:2px 8px;font-size:14px;cursor:pointer;line-height:1; }
+    .fbnew-iconbtn:hover { background:var(--surface3);color:var(--text); }
+    .fbnew-toolbar { display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:5px 12px;border-bottom:1px solid var(--border);background:var(--surface); }
+    .fbnew-toolbar .fbnew-spacer { flex:1; }
+    .fbnew-btn { background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:3px 9px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;line-height:1.4; }
+    .fbnew-btn:hover:not(:disabled) { background:var(--surface3);border-color:var(--accent); }
+    .fbnew-btn:disabled { opacity:.45;cursor:not-allowed; }
+    /* v6.5.29 — explorer-style nav row: back / forward / refresh +
+       boxed path + search. The path "address bar" looks like Windows
+       Explorer / Files. */
+    .fbnew-navrow { display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--surface); }
+    .fbnew-navbtn { background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1;cursor:pointer;padding:0;flex-shrink:0; }
+    .fbnew-navbtn:hover:not(:disabled) { background:var(--surface3);border-color:var(--accent);color:var(--accent); }
+    .fbnew-navbtn:disabled { opacity:.35;cursor:not-allowed; }
+    .fbnew-crumb { flex:1;min-width:0;padding:5px 10px;font-family:monospace;font-size:12.5px;color:var(--text-2);background:var(--bg);border:1px solid var(--border);border-radius:4px;user-select:text;height:28px;display:flex;align-items:center;gap:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+    .fbnew-crumb a { color:var(--accent);cursor:pointer;text-decoration:none;padding:0 2px;border-radius:2px;flex-shrink:0; }
+    .fbnew-crumb a:hover { background:var(--surface2);text-decoration:underline; }
+    .fbnew-crumb .fbnew-crumb-sep { color:var(--text-3);padding:0 1px;flex-shrink:0; }
+    /* Needs `input.fbnew-search` because the global `input[type="text"]`
+       rule in style.css:745 is specificity (0,1,1) — same as a single
+       class. Adding the `input` tag ties the specificity and source
+       order wins (we come after style.css). The search box is sized
+       as ~20 % of the row (flex basis), clamped to [120 px … 220 px]
+       so it stays usable on a narrow modal but never hogs the row on
+       a wide one. The breadcrumb (.fbnew-crumb flex:1) gets the rest. */
+    input.fbnew-search { background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 10px;font-size:12.5px;height:28px;flex:0 0 20%;min-width:120px;max-width:220px; }
+    input.fbnew-search:focus { outline:none;border-color:var(--accent);background:var(--surface); }
+    .fbnew-body { flex:1;display:grid;grid-template-columns:260px 1fr;min-height:0; }
+    .fbnew-tree { border-right:1px solid var(--border);overflow-y:auto;background:var(--surface);padding:6px 4px;font-size:13px; }
+    .fbnew-tree-node { padding:3px 6px;cursor:pointer;border-radius:3px;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+    .fbnew-tree-node:hover { background:var(--surface2); }
+    .fbnew-tree-node.selected { background:rgba(10,132,255,0.18);color:var(--accent); }
+    .fbnew-tree-chevron { font-size:9px;color:var(--text-3);width:10px;flex-shrink:0;text-align:center; }
+    .fbnew-tree-icon { font-size:14px;flex-shrink:0; }
+    .fbnew-tree-children { padding-left:14px; }
+    .fbnew-listing { overflow:auto;background:var(--bg);position:relative; }
+    .fbnew-listing[data-view="list"] { padding:0; }
+    .fbnew-listing[data-view="tiles"] { padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;align-content:start; }
+    .fbnew-listing[data-view="small"] { padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;align-content:start; }
+    .fbnew-listing[data-view="medium"] { padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(144px,1fr));gap:10px;align-content:start; }
+    .fbnew-listing[data-view="large"] { padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;align-content:start; }
+    /* List view (grid masquerading as a table) */
+    .fb-list-head, .fb-list-row { display:grid;grid-template-columns:24px 1fr 90px 130px 100px 140px;gap:8px;align-items:center;padding:5px 12px;font-size:12.5px; }
+    .fb-list-head { position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--border);font-weight:600;color:var(--text-2);z-index:1;font-size:11px;text-transform:uppercase;letter-spacing:.04em; }
+    .fb-list-row { cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04); }
+    .fb-list-row:hover { background:var(--surface2); }
+    .fb-list-row.selected { background:rgba(10,132,255,0.16); }
+    .fb-list-row .fb-name { display:flex;align-items:center;gap:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+    .fb-list-row .fb-name .fb-icon { font-size:16px;width:22px;text-align:center;flex-shrink:0; }
+    .fb-list-row .fb-name img { width:22px;height:22px;border-radius:3px;object-fit:cover;flex-shrink:0; }
+    .fb-list-row .fb-mono { font-family:monospace;font-size:11.5px;color:var(--text-3); }
+    /* Tile / icon views */
+    .fb-tile { padding:8px;border:1px solid transparent;border-radius:6px;cursor:pointer;background:var(--surface);display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center; }
+    .fb-tile:hover { background:var(--surface2);border-color:var(--border); }
+    .fb-tile.selected { background:rgba(10,132,255,0.16);border-color:var(--accent); }
+    .fb-tile .fb-thumb { width:56px;height:56px;display:flex;align-items:center;justify-content:center;font-size:34px;border-radius:4px;background:var(--bg);flex-shrink:0;overflow:hidden; }
+    .fb-tile .fb-thumb img { width:100%;height:100%;object-fit:cover; }
+    .fb-tile .fb-tilemeta { min-width:0; }
+    .fb-tile .fb-tilemeta .fb-tilename { font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+    .fb-tile .fb-tilemeta .fb-tilesub { font-size:11px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+    .fb-icon-cell { padding:6px 4px;border:1px solid transparent;border-radius:6px;cursor:pointer;text-align:center;display:flex;flex-direction:column;align-items:center;gap:4px; }
+    .fb-icon-cell:hover { background:var(--surface2);border-color:var(--border); }
+    .fb-icon-cell.selected { background:rgba(10,132,255,0.16);border-color:var(--accent); }
+    .fb-icon-cell .fb-thumb { display:flex;align-items:center;justify-content:center;border-radius:4px;background:var(--bg);overflow:hidden; }
+    .fb-icon-cell .fb-thumb img { width:100%;height:100%;object-fit:cover; }
+    .fb-icon-cell[data-size="small"] .fb-thumb { width:64px;height:64px;font-size:38px; }
+    .fb-icon-cell[data-size="medium"] .fb-thumb { width:112px;height:112px;font-size:66px; }
+    .fb-icon-cell[data-size="large"] .fb-thumb { width:160px;height:160px;font-size:90px; }
+    .fb-icon-cell .fb-iconname { font-size:11.5px;color:var(--text);max-width:100%;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.3;word-break:break-word; }
+    /* Clipboard banner */
+    .fbnew-clipboard { padding:6px 12px;border-top:1px solid var(--border);background:var(--surface);font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:10px; }
+    .fbnew-clipboard .fbnew-clip-clear { color:var(--accent);cursor:pointer;text-decoration:underline;font-size:11.5px; }
+    /* Dropdowns (View / Sort) */
+    .fbnew-dropdown { position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.4);padding:4px 0;font-size:12.5px;z-index:1000;min-width:200px; }
+    .fbnew-dropdown-item { padding:6px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none; }
+    .fbnew-dropdown-item:hover { background:var(--surface2); }
+    .fbnew-dropdown-item .fbnew-check { width:14px;color:var(--accent);font-weight:700; }
+    .fbnew-dropdown-divider { height:1px;background:var(--border);margin:4px 0; }
+    /* Right-click context menu */
+    #fb-context-menu { position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 28px rgba(0,0,0,.5);padding:4px 0;font-size:12.5px;z-index:9500;min-width:220px;display:none; }
+    #fb-context-menu .fb-ctx-item { padding:5px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;justify-content:space-between; }
+    #fb-context-menu .fb-ctx-item:hover { background:var(--surface2); }
+    #fb-context-menu .fb-ctx-item.disabled { opacity:.45;cursor:not-allowed; }
+    #fb-context-menu .fb-ctx-item.disabled:hover { background:transparent; }
+    #fb-context-menu .fb-ctx-shortcut { color:var(--text-3);font-size:10.5px;font-family:monospace; }
+    #fb-context-menu .fb-ctx-divider { height:1px;background:var(--border);margin:4px 0; }
+    /* Drag-over feedback */
+    .fbnew-droptarget { outline:2px solid var(--accent);outline-offset:-2px;background:rgba(10,132,255,0.08); }
+    /* Image viewer modal */
+    /* v6.5.30 — start-truncation helper used by Image columns in the
+       compose-stack and docker-detection container tables. Long image
+       refs (e.g. `ghcr.io/long/org/path/very-long-repo:tag-2025-05-29`)
+       are far more useful with the head trimmed (the tag is at the
+       end, which is what the user actually scans for). CSS truncates
+       from the start by flipping the cell's writing direction; ASCII
+       content keeps reading LTR because the characters themselves are
+       LTR, and the ellipsis lands on the left. */
+    .fb-truncstart { direction:rtl; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    /* Image viewer takes the full viewport — no inset, no rounded
+       corners, no backdrop visible at the edges. Click ✕ / Esc to
+       dismiss. */
+    #modal-fb-image-viewer { padding:0; }
+    #modal-fb-image-viewer .modal { width:100vw;height:100vh;max-width:none;max-height:none;padding:0;display:flex;flex-direction:column;background:#0d1117;border-radius:0;border:none;overflow:hidden; }
+    /* Same fix as .fbnew-modal — style.css:2002 forces every div child
+       of .modal to flex:1 + 32 px padding, which here made the image
+       body only one-third of the viewport. Pin the header / footer to
+       their content, let only iv-body grow, and strip the padding so
+       the image hits the edges. */
+    #modal-fb-image-viewer .modal > div { flex:0 0 auto !important;padding:0 !important;min-height:0 !important; }
+    #modal-fb-image-viewer .modal > .iv-body { flex:1 1 auto !important;display:flex !important; }
+    #modal-fb-image-viewer .iv-header { display:flex;align-items:center;gap:14px;padding:10px 14px;border-bottom:1px solid #21262d;color:#cdd9e5; }
+    #modal-fb-image-viewer .iv-name { font-family:monospace;font-size:13px;color:#cdd9e5; }
+    #modal-fb-image-viewer .iv-meta { font-size:12px;color:#8b949e;flex:1; }
+    #modal-fb-image-viewer .iv-body { flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#0a0d12; }
+    #modal-fb-image-viewer .iv-body img { max-width:100%;max-height:100%;object-fit:contain; }
+    #modal-fb-image-viewer .iv-footer { display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 14px;border-top:1px solid #21262d;color:#cdd9e5;font-size:12.5px; }
+    #modal-fb-image-viewer .iv-nav { background:none;border:1px solid #30363d;color:#cdd9e5;border-radius:4px;padding:4px 10px;font-size:14px;cursor:pointer; }
+    #modal-fb-image-viewer .iv-nav:hover:not(:disabled) { background:#21262d; }
+    /* Generic file viewer (v6.5.29) — PDF via <iframe>, text/source in a
+       <pre>, lightweight markdown render for *.md. Same full-viewport
+       layout pattern as the image viewer; same style.css:2002 override. */
+    #modal-fb-file-viewer { padding:0; }
+    #modal-fb-file-viewer .modal { width:100vw;height:100vh;max-width:none;max-height:none;padding:0;display:flex;flex-direction:column;background:var(--surface);border-radius:0;border:none;overflow:hidden; }
+    #modal-fb-file-viewer .modal > div { flex:0 0 auto !important;padding:0 !important;min-height:0 !important; }
+    #modal-fb-file-viewer .modal > .fv-body { flex:1 1 auto !important; }
+    #modal-fb-file-viewer .fv-header { display:flex;align-items:center;gap:12px;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface2); }
+    #modal-fb-file-viewer .fv-name { font-family:monospace;font-size:13px;color:var(--text); }
+    #modal-fb-file-viewer .fv-meta { font-size:12px;color:var(--text-3);flex:1; }
+    #modal-fb-file-viewer .fv-body { overflow:auto;background:var(--bg); }
+    #modal-fb-file-viewer .fv-body > iframe { width:100%;height:100%;border:none;background:#fff;display:block; }
+    #modal-fb-file-viewer .fv-text { margin:0;padding:14px 18px;font-family:'SF Mono','Fira Code',monospace;font-size:13px;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-word; }
+    #modal-fb-file-viewer .fv-md { padding:24px 32px;max-width:920px;margin:0 auto;font-size:15px;line-height:1.6;color:var(--text); }
+    #modal-fb-file-viewer .fv-md h1 { font-size:26px;margin:22px 0 10px;border-bottom:1px solid var(--border);padding-bottom:6px; }
+    #modal-fb-file-viewer .fv-md h2 { font-size:22px;margin:20px 0 8px; }
+    #modal-fb-file-viewer .fv-md h3 { font-size:18px;margin:16px 0 6px; }
+    #modal-fb-file-viewer .fv-md h4 { font-size:16px;margin:14px 0 4px; }
+    #modal-fb-file-viewer .fv-md code { background:var(--surface2);padding:2px 5px;border-radius:3px;font-family:'SF Mono',monospace;font-size:90%; }
+    #modal-fb-file-viewer .fv-md pre { background:var(--surface2);padding:12px 14px;border-radius:5px;overflow:auto;margin:10px 0; }
+    #modal-fb-file-viewer .fv-md pre code { background:transparent;padding:0;font-size:13px; }
+    #modal-fb-file-viewer .fv-md ul, #modal-fb-file-viewer .fv-md ol { padding-left:24px;margin:8px 0; }
+    #modal-fb-file-viewer .fv-md p { margin:8px 0; }
+    #modal-fb-file-viewer .fv-md a { color:var(--accent); }
+    #modal-fb-file-viewer .fv-md blockquote { border-left:3px solid var(--accent);padding:4px 14px;color:var(--text-2);margin:10px 0; }
+    #modal-fb-file-viewer .fv-md hr { border:none;border-top:1px solid var(--border);margin:18px 0; }
+    #modal-fb-image-viewer .iv-nav:disabled { opacity:.4;cursor:not-allowed; }
+
     /* Force LXD modal inputs to match standard ZNAS styling */
     #modal-lxd-vm input:not([type="checkbox"]):not([type="radio"]),
     #modal-lxd-container input:not([type="checkbox"]):not([type="radio"]) {
@@ -374,6 +542,13 @@
        match nothing (the wrapper has no .CodeMirror child). */
     .znas-cm-yaml.CodeMirror { height: 280px !important; font-size:9px !important; line-height:1.3 !important; }
     .znas-cm-env.CodeMirror  { height: 130px !important; font-size:9px !important; line-height:1.3 !important; }
+    /* v6.5.26 — larger CM heights inside the Docker edit-compose modal.
+       The modal itself is full-width / 95vh, so the editor can afford
+       much more vertical room than the compose-creation form. .znas-cm-
+       docker-yaml is the big YAML editor; .znas-cm-docker-env is the
+       small sidekick under it (only shown when a .env file exists). */
+    .znas-cm-docker-yaml.CodeMirror { height: 56vh !important; font-size:12px !important; line-height:1.45 !important; }
+    .znas-cm-docker-env.CodeMirror  { height: 18vh !important; font-size:11px !important; line-height:1.4 !important; }
     .CodeMirror { font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', Menlo, monospace; }
     /* Lines flagged by our validator get a soft red wash + a danger-coloured gutter bar. */
     .CodeMirror-line.znas-line-error  { background: rgba(255, 69, 58, 0.14); }
@@ -3373,9 +3548,11 @@
       </div>
 
       <!-- v6.5.26 — Docker Detection: edit-compose modal. Opens from the
-           ✎ Edit button on a project header row inside the Docker card. -->
+           ✎ Edit button on a project header row inside the Docker card.
+           Reuses the same CodeMirror+validation editor as the compose
+           creation modal via _mountCMEditor + _composeValidate. -->
       <div class="modal-backdrop hidden" id="modal-docker-edit-compose">
-        <div class="modal" style="max-width:880px;max-height:90vh;display:flex;flex-direction:column;">
+        <div class="modal" style="max-width:1240px;width:95vw;max-height:95vh;display:flex;flex-direction:column;">
           <div class="modal-header">
             <h3>Edit <code style="font-size:13px;">docker-compose.yml</code></h3>
             <button class="modal-close" onclick="dockerEditComposeCancel()">✕</button>
@@ -3393,8 +3570,25 @@
               <strong>Extra compose files in this project (read-only):</strong>
               <div id="docker-edit-extra-list" style="font-family:monospace;font-size:11.5px;color:var(--text-3);margin-top:4px;"></div>
             </div>
-            <textarea id="docker-edit-yaml" spellcheck="false"
-              style="flex:1;min-height:340px;font-family:'SF Mono','Fira Code',monospace;font-size:12.5px;line-height:1.45;padding:12px;background:#0d1117;color:#cdd9e5;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
+            <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;">docker-compose.yml</div>
+            <textarea id="docker-edit-yaml" spellcheck="false" wrap="off"
+              style="min-height:56vh;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.4;padding:12px;background:#0d1117;color:#cdd9e5;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
+
+            <!-- v6.5.26 — sidekick .env editor. Only revealed when a
+                 sibling .env exists in the same directory as the YAML
+                 (or `dockerEditComposeOpen` decides the user should be
+                 offered the option to add one). Smaller height — .env
+                 files are typically a few dozen lines. -->
+            <div id="docker-edit-env-section" class="hidden" style="margin-top:14px;display:flex;flex-direction:column;min-height:0;">
+              <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+                <span>.env</span>
+                <code id="docker-edit-env-path" style="font-family:monospace;font-size:11px;color:var(--text-3);text-transform:none;letter-spacing:0;"></code>
+                <span id="docker-edit-env-missing" class="hidden" style="background:rgba(210,153,34,0.15);color:#d29922;border-radius:3px;padding:1px 6px;font-weight:600;text-transform:none;letter-spacing:0;">new file</span>
+              </div>
+              <textarea id="docker-edit-env" spellcheck="false" wrap="off"
+                style="min-height:18vh;font-family:'SF Mono','Fira Code',monospace;font-size:11px;line-height:1.4;padding:12px;background:#0d1117;color:#cdd9e5;border:1px solid var(--border);border-radius:6px;resize:vertical;"></textarea>
+            </div>
+
             <div id="docker-edit-alert" class="hidden" style="margin-top:8px;padding:8px 12px;border-radius:4px;background:rgba(248,81,73,0.08);color:#f85149;font-size:12px;"></div>
           </div>
           <div class="modal-footer">
@@ -5842,24 +6036,6 @@ Select the Console tab to load.</pre>
             </div>
           </div>
 
-          <!-- Card — Compose stacks base image -->
-          <div class="card">
-            <h3 style="margin-bottom:14px;">Compose Stacks</h3>
-            <div class="form-group">
-              <label>Base image for Compose stacks
-                <i class="info-tip" data-tip="The LXC base image used when you create a Compose stack — a container running Podman + your docker-compose file.&#10;&#10;Debian (recommended): glibc and standard apt mean the fewest surprises when ZNAS installs Podman and the compose tooling.&#10;Ubuntu: Debian-family, similar.&#10;Alpine: lightest base image, but musl/busybox can occasionally trip tooling."></i>
-              </label>
-              <select id="virt-compose-image" style="max-width:220px;">
-                <option value="debian">Debian (recommended)</option>
-                <option value="ubuntu">Ubuntu</option>
-                <option value="alpine">Alpine</option>
-              </select>
-            </div>
-            <div class="virt-card-footer">
-              <span id="virt-compose-msg" class="virt-card-msg"></span>
-              <button class="btn btn-primary btn-sm" onclick="applyComposeImageCard()">Apply</button>
-            </div>
-          </div>
 
           <!-- Card — Docker Detection (v6.5.26). Opt-in per type. Probes each
                VM / LXC the user opens for a running docker daemon and renders
@@ -11406,36 +11582,7 @@ async function loadVirtSettings() {
   // Memory Compression card refresh runs on its own cadence; trigger an
   // immediate load when the tab opens so we don't wait the full 10 s.
   loadMemCompCard();
-  loadComposeImageCard();
   loadDockerDetectCard();
-}
-
-// Compose Stacks card — the LXC base image new Compose stacks are built from.
-// Stored in AppConfig (compose_base_image) via /api/settings, not the Incus
-// global-config the other virt cards use.
-async function loadComposeImageCard() {
-  try {
-    const r = await fetch('/api/settings');
-    if (!r.ok) return;
-    const d = await r.json();
-    const sel = document.getElementById('virt-compose-image');
-    if (sel) { sel.value = d.compose_base_image || 'debian'; if (typeof csRefresh === 'function') csRefresh('virt-compose-image'); }
-  } catch (_) {}
-}
-
-async function applyComposeImageCard() {
-  const sel = document.getElementById('virt-compose-image');
-  const msg = document.getElementById('virt-compose-msg');
-  try {
-    const r = await fetch('/api/settings', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ compose_base_image: sel.value }),
-    });
-    if (!r.ok) throw new Error((await r.json()).error || 'failed');
-    if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--accent-2)'; setTimeout(() => { msg.textContent = ''; }, 3000); }
-  } catch (e) {
-    if (msg) { msg.textContent = String(e.message || e); msg.style.color = 'var(--danger)'; }
-  }
 }
 
 // Docker Detection card (v6.5.26). Two booleans persisted in AppConfig
@@ -30567,6 +30714,12 @@ function applyTheme(theme) {
   else if (effective === 'dusk') document.body.classList.add('dusk');
   else if (effective === 'dawn') document.body.classList.add('dawn');
 
+  // Push the matching CodeMirror theme to any live editors (compose
+  // create modal, docker-edit modal, …) so colours stay in step with
+  // the ZFSNAS theme the user just picked. No-op when no editor is
+  // currently mounted. v6.5.26.
+  if (typeof _cmRefreshThemeForAllInstances === 'function') _cmRefreshThemeForAllInstances();
+
   // Update icon
   ['sun','moon','auto','tron','tron-legacy','matrix','matrix-reload','purple','ghost-shell','dusk','dawn'].forEach(n => {
     const el = document.getElementById('theme-icon-' + n);
@@ -32635,6 +32788,72 @@ function runReplicationTask(id, name) {
     });
   }
 
+  // Build the subpath (relative to the dataset root) for the tile
+  // representing `child`. Walks the drill stack and appends the
+  // child's own name. Returns "" when the tile represents the dataset
+  // root itself (shouldn't happen — tiles are always children).
+  function _capTreeBuildSubpath(child) {
+    const segs = [];
+    capTreeDrillStack.forEach(e => {
+      // Skip the synthetic root entry whose name is the dataset itself.
+      if (e && e.name && e !== capTreeCurrentData.root) segs.push(e.name);
+    });
+    if (child && child.name) segs.push(child.name);
+    return segs.join('/');
+  }
+
+  // Tiny one-item context menu used by right-click on treemap tiles.
+  // Kept self-contained — no dependency on the file browser's context
+  // menu element (that one lives inside the file browser modal scope).
+  function _capTreeShowBrowseMenu(x, y, subpath) {
+    _capTreeHideBrowseMenu();
+    const m = document.createElement('div');
+    m.id = '_capTreeCtxMenu';
+    m.style.cssText =
+      'position:fixed;background:var(--surface);border:1px solid var(--border);' +
+      'border-radius:6px;box-shadow:0 8px 28px rgba(0,0,0,.5);padding:4px 0;' +
+      'font-size:12.5px;z-index:9500;min-width:180px;';
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = '📂 Browse Files';
+    item.style.cssText =
+      'display:block;width:100%;background:none;border:none;text-align:left;' +
+      'padding:6px 14px;color:var(--text);cursor:pointer;font-size:12.5px;font-family:inherit;';
+    item.onmouseenter = () => item.style.background = 'var(--surface2)';
+    item.onmouseleave = () => item.style.background = 'transparent';
+    item.onclick = () => {
+      _capTreeHideBrowseMenu();
+      openFileBrowser('dataset', capTreeCurrentDs, subpath);
+    };
+    m.appendChild(item);
+    document.body.appendChild(m);
+    // Flip above/left when near the viewport edge.
+    const r = m.getBoundingClientRect();
+    if (x + r.width  > window.innerWidth)  x = Math.max(4, x - r.width);
+    if (y + r.height > window.innerHeight) y = Math.max(4, y - r.height);
+    m.style.left = x + 'px';
+    m.style.top  = y + 'px';
+    // Dismiss on click-outside or Esc.
+    const onOutside = (ev) => {
+      if (!m.contains(ev.target)) _capTreeHideBrowseMenu();
+    };
+    const onKey = (ev) => { if (ev.key === 'Escape') _capTreeHideBrowseMenu(); };
+    setTimeout(() => {
+      document.addEventListener('click', onOutside);
+      document.addEventListener('keydown', onKey);
+    }, 0);
+    m._cleanup = () => {
+      document.removeEventListener('click', onOutside);
+      document.removeEventListener('keydown', onKey);
+    };
+  }
+  function _capTreeHideBrowseMenu() {
+    const m = document.getElementById('_capTreeCtxMenu');
+    if (!m) return;
+    if (m._cleanup) m._cleanup();
+    m.remove();
+  }
+
   function _capTreeRenderNode(entry) {
     const svg = document.getElementById('cap-tree-svg');
     if (!svg) return;
@@ -32715,6 +32934,54 @@ function runReplicationTask(id, name) {
           _capTreeRenderNode(child);
         });
       }
+
+      // v6.5.30 — Folder icon at top-right of every tile (when there's
+      // room for it). One click opens the file browser at this folder.
+      // The icon swallows clicks so it doesn't also drill-down.
+      const childSubpath = _capTreeBuildSubpath(child);
+      const iconSide = 18;
+      if (r.w > 36 && r.h > 28) {
+        const iconG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        iconG.style.cursor = 'pointer';
+        iconG.setAttribute('transform',
+          'translate(' + (r.x + r.w - iconSide - 6) + ',' + (r.y + 6) + ')');
+        // Background pill so the icon is readable on every tile colour.
+        const iconBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        iconBg.setAttribute('x', -2); iconBg.setAttribute('y', -1);
+        iconBg.setAttribute('width', iconSide + 4); iconBg.setAttribute('height', iconSide + 2);
+        iconBg.setAttribute('rx', 3);
+        iconBg.setAttribute('fill', 'rgba(0,0,0,0.35)');
+        iconG.appendChild(iconBg);
+        const iconPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        // Simple folder glyph (Heroicons style), scaled to fit iconSide.
+        iconPath.setAttribute('d',
+          'M2 5 a2 2 0 0 1 2 -2 h4 l2 2 h6 a2 2 0 0 1 2 2 v7 a2 2 0 0 1 -2 2 h-12 a2 2 0 0 1 -2 -2 Z');
+        iconPath.setAttribute('fill', 'none');
+        iconPath.setAttribute('stroke', '#fff');
+        iconPath.setAttribute('stroke-width', '1.5');
+        iconPath.setAttribute('transform', 'scale(' + (iconSide / 20) + ')');
+        iconG.appendChild(iconPath);
+        // Title for hover tooltip.
+        const tip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        tip.textContent = 'Browse Files in ' + childSubpath;
+        iconG.appendChild(tip);
+        iconG.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          openFileBrowser('dataset', capTreeCurrentDs, childSubpath);
+        });
+        // Keep the hover tooltip from showing the parent tile's data
+        // when the cursor sits on the icon.
+        iconG.addEventListener('mouseenter', (ev) => ev.stopPropagation());
+        g.appendChild(iconG);
+      }
+
+      // Right-click → one-item context menu "📂 Browse Files".
+      g.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        _capTreeShowBrowseMenu(ev.clientX, ev.clientY, childSubpath);
+      });
 
       // Hover tooltip
       const tt    = document.getElementById('cap-tree-tooltip');
@@ -33803,7 +34070,9 @@ function renderComputeNav(instances) {
     const statusColor = inst.status === 'Running' ? '#3fb950' : inst.status === 'Stopped' ? '#6e7681' : inst.status === 'Error' ? '#ff453a' : '#f0b429';
     const label = inst.description || inst.name;
     const fullTip = inst.description ? `${inst.description} (${inst.name})` : inst.name;
-    return `<button class="nav-compute-instance" id="nav-ci-${esc(inst.name)}" title="${esc(fullTip)}" onclick='openComputeInstance(${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>
+    return `<button class="nav-compute-instance" id="nav-ci-${esc(inst.name)}" title="${esc(fullTip)}"
+        onclick='openComputeInstance(${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'
+        oncontextmenu='event.preventDefault();_navContextMenuFor(event,"compute",${JSON.stringify(inst.name)})'>
       ${isVM ? vmIcon : ctIcon}
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${esc(label)}</span>
       <span class="nav-dot" style="background:${statusColor};"></span>
@@ -34611,10 +34880,10 @@ function _ciRenderComposeContainers(list, stackStatus) {
         `<button onclick="_ciComposeTermNewTab('${esc(c.name)}')">LXD Tab Terminal</button>` +
         `<button onclick="_ciComposeTermNewWindow('${esc(c.name)}')">LXD Window Terminal</button>`
       : `<div style="padding:10px 14px;font-size:12px;color:var(--text-3);">Container must be running</div>`;
-    rows += `<tr>
-      <td style="${cellTd}font-family:monospace;">${esc(c.name)}</td>
+    rows += `<tr oncontextmenu="event.preventDefault();_ciComposeRowCtxMenu(event,'${esc(c.name)}','${esc(c.service||'')}',${running})">
+      <td class="fb-truncstart" style="${cellTd}font-family:monospace;" title="${esc(c.name)}">${esc(c.name)}</td>
       <td style="${cellTd}color:var(--text-2);">${esc(c.service || '—')}</td>
-      <td style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
+      <td class="fb-truncstart" style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
       <td style="${cellTd}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${color};">
         <span style="width:6px;height:6px;border-radius:50%;background:${color};"></span>${esc(c.status || c.state)}</span></td>
       <td style="${cellTd}font-family:monospace;color:var(--text-3);">${_renderComposePortsLinks(c.ports, _stackIP)}</td>
@@ -34831,34 +35100,41 @@ function _dockerFmtPorts(portsStr) {
 // card of short names doesn't waste space either.
 function _dockerBuildColgroup(groups) {
   // Track widest content per column. Header labels seed the floor so a
-  // column never shrinks below its own title.
-  let mxName  = 'Container'.length;
-  let mxImage = 'Image'.length;
-  let mxState = 'State'.length;
-  let mxPorts = 'Ports'.length;
+  // column never shrinks below its own title. v6.5.30: Service column
+  // added as the 2nd column (matches the compose-stack containers
+  // table) — surfaces `com.docker.compose.service` so the user can
+  // tell which YAML service produced each container.
+  let mxName    = 'Container'.length;
+  let mxService = 'Service'.length;
+  let mxImage   = 'Image'.length;
+  let mxState   = 'State'.length;
+  let mxPorts   = 'Ports'.length;
   groups.forEach(g => {
     g.containers.forEach(c => {
-      mxName  = Math.max(mxName,  (c.name  || '').length);
-      mxImage = Math.max(mxImage, _composeShortImage(c.image || '').length);
-      mxState = Math.max(mxState, (c.status || c.state || '').length);
-      mxPorts = Math.max(mxPorts, _dockerFmtPorts(c.ports).display.length);
+      mxName    = Math.max(mxName,    (c.name    || '').length);
+      mxService = Math.max(mxService, (c.service || '').length);
+      mxImage   = Math.max(mxImage,   _composeShortImage(c.image || '').length);
+      mxState   = Math.max(mxState,   (c.status  || c.state || '').length);
+      mxPorts   = Math.max(mxPorts,   _dockerFmtPorts(c.ports).display.length);
     });
   });
   // Clamp each contributor so one giant row can't dominate. Floors keep
   // every column legible even on cards with very short content.
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-  const wName  = clamp(mxName,  10, 40);
-  const wImage = clamp(mxImage, 12, 50);
-  const wState = clamp(mxState, 10, 28);
-  const wPorts = clamp(mxPorts, 10, 50);
+  const wName    = clamp(mxName,    10, 40);
+  const wService = clamp(mxService,  8, 24);
+  const wImage   = clamp(mxImage,   12, 50);
+  const wState   = clamp(mxState,   10, 28);
+  const wPorts   = clamp(mxPorts,   10, 50);
   // Distribute the fluid width by character weight. The actions column
   // is a fixed 56 px so its two icons never wrap; the browser's
   // table-layout:fixed algorithm subtracts that from total width before
-  // applying the four percentages, so we don't need to math it in here.
-  const totalChars = wName + wImage + wState + wPorts;
+  // applying the five percentages, so we don't need to math it in here.
+  const totalChars = wName + wService + wImage + wState + wPorts;
   const pct = (chars) => ((chars / totalChars) * 100).toFixed(2) + '%';
   return `<colgroup>
     <col style="width:${pct(wName)};">
+    <col style="width:${pct(wService)};">
     <col style="width:${pct(wImage)};">
     <col style="width:${pct(wState)};">
     <col style="width:${pct(wPorts)};">
@@ -34925,8 +35201,11 @@ function _ciRenderDockerGroups(list) {
     }
     html += `</div>`;
     if (collapsed) return;
-    // Body: container table (mirror compose stack)
-    const cellTd = 'padding:2px 8px;font-size:11px;line-height:1.35;';
+    // Body: container table (mirror compose stack). v6.5.26 bumped the
+    // type from 11 → 12.5 px and padding from 2 → 4 px so the rows
+    // read clearly without losing the dense feel — still well under
+    // the 13 px the rest of the cards use.
+    const cellTd = 'padding:4px 8px;font-size:12.5px;line-height:1.4;';
     let rows = '';
     g.containers.forEach((c, ci) => {
       const idx = gi + ':' + ci; // unique per render
@@ -34952,11 +35231,12 @@ function _ciRenderDockerGroups(list) {
       // so a long value can't blow past the column width and re-misalign
       // the table — `table-layout:fixed` honours these widths.
       const truncStyle = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      rows += `<tr>
-        <td style="${cellTd}font-family:monospace;${truncStyle}" title="${esc(c.name)}">${esc(c.name)}</td>
-        <td style="${cellTd}font-family:monospace;color:var(--text-3);${truncStyle}" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
-        <td style="${cellTd}${truncStyle}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${color};">
-          <span style="width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0;"></span>${esc(c.status || c.state)}</span></td>
+      rows += `<tr oncontextmenu="event.preventDefault();_ciDockerRowCtxMenu(event,'${esc(c.id)}','${esc(c.name)}',${running},${c.project ? 'true' : 'false'})">
+        <td class="fb-truncstart" style="${cellTd}font-family:monospace;" title="${esc(c.name)}">${esc(c.name)}</td>
+        <td style="${cellTd}color:var(--text-2);${truncStyle}" title="${esc(c.service || '—')}">${esc(c.service || '—')}</td>
+        <td class="fb-truncstart" style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
+        <td style="${cellTd}${truncStyle}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;color:${color};">
+          <span style="width:7px;height:7px;border-radius:50%;background:${color};flex-shrink:0;"></span>${esc(c.status || c.state)}</span></td>
         <td style="${cellTd}font-family:monospace;color:var(--text-3);${truncStyle}" title="${esc(portsFmt.full || (c.ports || ''))}">${esc(portsFmt.display)}</td>
         <td style="${cellTd}position:relative;text-align:right;white-space:nowrap;">
           <span onclick="_ciDockerTermMenu(event,'${idx}')" title="Terminal" style="cursor:${running?'pointer':'not-allowed'};opacity:${running?'1':'.4'};color:var(--text-2);font-size:13px;padding:0 3px;user-select:none;line-height:1;">🖥️</span>
@@ -34971,18 +35251,139 @@ function _ciRenderDockerGroups(list) {
     // without a visible header the alignment is preserved.
     const thead = gi === 0
       ? `<thead><tr>
-          <th style="padding:3px 8px;font-size:10px;text-align:left;">Container</th>
-          <th style="padding:3px 8px;font-size:10px;text-align:left;">Image</th>
-          <th style="padding:3px 8px;font-size:10px;text-align:left;">State</th>
-          <th style="padding:3px 8px;font-size:10px;text-align:left;">Ports</th>
-          <th style="padding:3px 8px;"></th>
+          <th style="padding:4px 8px;font-size:11px;text-align:left;">Container</th>
+          <th style="padding:4px 8px;font-size:11px;text-align:left;">Service</th>
+          <th style="padding:4px 8px;font-size:11px;text-align:left;">Image</th>
+          <th style="padding:4px 8px;font-size:11px;text-align:left;">State</th>
+          <th style="padding:4px 8px;font-size:11px;text-align:left;">Ports</th>
+          <th style="padding:4px 8px;"></th>
         </tr></thead>`
       : '';
-    html += `<table class="data-table" style="width:100%;table-layout:fixed;font-size:11px;margin-top:4px;">
+    html += `<table class="data-table" style="width:100%;table-layout:fixed;font-size:12.5px;margin-top:6px;">
       ${COLGROUP}${thead}
       <tbody>${rows}</tbody></table>`;
   });
   body.innerHTML = html;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Right-click → combined menu on a docker / compose container row.
+// Builds one fresh `.row-menu-dropdown` at the cursor containing the
+// TERMINAL launchers (the same 3 the 🖥 icon offers) plus the burger's
+// action items, separated by a divider. The terminal items are greyed
+// when the container isn't running — same gate as the 🖥 icon.
+// ────────────────────────────────────────────────────────────────────────────
+function _ciDockerRowCtxMenu(ev, id, name, running, hasProject) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  _ciDockerCloseAllRowMenus();
+  _ciCtxBuild(ev.clientX, ev.clientY, [
+    { kind: 'header', label: 'Terminal' },
+    { kind: 'item', label: '💻 LXD Bottom Terminal',
+      onclick: () => _ciDockerTermBottom(id, name), enabled: running, dis_tip: 'Container must be running' },
+    { kind: 'item', label: '💻 LXD Tab Terminal',
+      onclick: () => _ciDockerTermNewTab(id), enabled: running, dis_tip: 'Container must be running' },
+    { kind: 'item', label: '💻 LXD Window Terminal',
+      onclick: () => _ciDockerTermNewWindow(id), enabled: running, dis_tip: 'Container must be running' },
+    { kind: 'divider' },
+    ...(running
+      ? [
+          { kind: 'item', label: '■ Stop',    onclick: () => _ciDockerContainerAction(id, 'stop') },
+          { kind: 'item', label: '↻ Restart', onclick: () => _ciDockerContainerAction(id, 'restart') },
+        ]
+      : [{ kind: 'item', label: '▶ Start', onclick: () => _ciDockerContainerAction(id, 'start') }]
+    ),
+    ...(hasProject
+      ? [{ kind: 'item', label: '⬆ Update', onclick: () => _ciDockerContainerAction(id, 'update') }]
+      : []),
+    { kind: 'item', label: '📜 Last Outputs', onclick: () => _ciDockerShowLogs(id, name) },
+    { kind: 'item', label: '🔍 Inspect',     onclick: () => _ciDockerShowInspect(id, name) },
+  ]);
+}
+
+function _ciComposeRowCtxMenu(ev, name, service, running) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  _ciComposeCloseAllRowMenus();
+  _ciCtxBuild(ev.clientX, ev.clientY, [
+    { kind: 'header', label: 'Terminal' },
+    { kind: 'item', label: '💻 LXD Bottom Terminal',
+      onclick: () => _ciComposeTermBottom(name), enabled: running, dis_tip: 'Container must be running' },
+    { kind: 'item', label: '💻 LXD Tab Terminal',
+      onclick: () => _ciComposeTermNewTab(name), enabled: running, dis_tip: 'Container must be running' },
+    { kind: 'item', label: '💻 LXD Window Terminal',
+      onclick: () => _ciComposeTermNewWindow(name), enabled: running, dis_tip: 'Container must be running' },
+    { kind: 'divider' },
+    ...(running
+      ? [
+          { kind: 'item', label: '■ Stop',    onclick: () => ciComposeContainerAction(name, service, 'stop') },
+          { kind: 'item', label: '↻ Restart', onclick: () => ciComposeContainerAction(name, service, 'restart') },
+        ]
+      : [{ kind: 'item', label: '▶ Start', onclick: () => ciComposeContainerAction(name, service, 'start') }]
+    ),
+    { kind: 'item', label: '⬆ Update',       onclick: () => ciComposeContainerAction(name, service, 'update') },
+    { kind: 'item', label: '📜 Last Outputs', onclick: () => _ciComposeShowLogs(name) },
+    { kind: 'item', label: '🔍 Inspect',      onclick: () => _ciComposeShowInspect(name) },
+  ]);
+}
+
+// Generic context-menu builder used by the two row functions above.
+// Items are {kind:'header'|'item'|'divider', label, onclick, enabled, dis_tip}.
+// Auto-flips above/left when near the viewport edge; dismisses on
+// click-outside or Esc.
+function _ciCtxBuild(x, y, items) {
+  // Close any other menu first.
+  document.querySelectorAll('.row-menu-dropdown[data-ci-ctx="1"]').forEach(el => el.remove());
+  const dd = document.createElement('div');
+  dd.className = 'row-menu-dropdown';
+  dd.dataset.ciCtx = '1';
+  dd.style.cssText = 'position:fixed;min-width:200px;z-index:9500;';
+  items.forEach(it => {
+    if (it.kind === 'divider') {
+      const hr = document.createElement('hr');
+      hr.className = 'menu-sep';
+      dd.appendChild(hr);
+    } else if (it.kind === 'header') {
+      const h = document.createElement('div');
+      h.style.cssText = 'padding:6px 14px 2px;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;';
+      h.textContent = it.label;
+      dd.appendChild(h);
+    } else {
+      const b = document.createElement('button');
+      b.textContent = it.label;
+      if (it.enabled === false) {
+        b.disabled = true;
+        b.style.opacity = '0.4';
+        b.style.cursor = 'default';
+        if (it.dis_tip) b.title = it.dis_tip;
+      } else {
+        b.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          _ciCtxClose();
+          try { it.onclick(); } catch (_) {}
+        });
+      }
+      dd.appendChild(b);
+    }
+  });
+  document.body.appendChild(dd);
+  // Position; flip if it would clip viewport.
+  dd.style.left = x + 'px';
+  dd.style.top  = y + 'px';
+  const r = dd.getBoundingClientRect();
+  if (r.right  > window.innerWidth)  dd.style.left = Math.max(4, x - r.width)  + 'px';
+  if (r.bottom > window.innerHeight) dd.style.top  = Math.max(4, y - r.height) + 'px';
+  const onOutside = (ev) => { if (!dd.contains(ev.target)) _ciCtxClose(); };
+  const onKey     = (ev) => { if (ev.key === 'Escape') _ciCtxClose(); };
+  function _ciCtxClose() {
+    document.removeEventListener('click', onOutside);
+    document.removeEventListener('keydown', onKey);
+    if (dd.parentNode) dd.parentNode.removeChild(dd);
+  }
+  setTimeout(() => {
+    document.addEventListener('click', onOutside);
+    document.addEventListener('keydown', onKey);
+  }, 0);
 }
 
 function _ciDockerCloseAllRowMenus() {
@@ -35178,6 +35579,15 @@ function _ciDockerTermNewWindow(id) {
 }
 
 // ── Edit compose modal ──────────────────────────────────────────────────────
+// Reuses the same CodeMirror + client-side validation pipeline as the
+// compose-stack creation flow (_mountCMEditor / _composeValidate /
+// _markCMErrors / _showComposeValidate), so the user gets syntax
+// highlighting, line numbers, search, and inline error markers — no
+// duplicate editor implementation.
+let _ciDockerOrigEnv = '';
+let _ciDockerEnvPath = '';
+let _ciDockerEnvMissing = false;
+
 async function dockerEditComposeOpen(projectEnc, pathEnc) {
   _ciDockerCloseAllRowMenus();
   const project = decodeURIComponent(projectEnc);
@@ -35189,8 +35599,11 @@ async function dockerEditComposeOpen(projectEnc, pathEnc) {
   document.getElementById('docker-edit-missing').classList.add('hidden');
   document.getElementById('docker-edit-extra').classList.add('hidden');
   document.getElementById('docker-edit-alert').classList.add('hidden');
-  const ta = document.getElementById('docker-edit-yaml');
+  document.getElementById('docker-edit-env-section').classList.add('hidden');
+  const ta  = document.getElementById('docker-edit-yaml');
+  const eta = document.getElementById('docker-edit-env');
   ta.value = '';
+  eta.value = '';
   ta.disabled = true;
   document.getElementById('modal-docker-edit-compose').classList.remove('hidden');
   // Surface the project's *other* compose files (override / fragment files)
@@ -35210,8 +35623,41 @@ async function dockerEditComposeOpen(projectEnc, pathEnc) {
     ta.value = d.yaml || '';
     _ciDockerOrigYAML = ta.value;
     if (d.missing) document.getElementById('docker-edit-missing').classList.remove('hidden');
+    // The backend tells us whether a sibling .env was found and at
+    // what path. We always show the editor when a path was returned —
+    // either to edit the existing file or to author a new one.
+    eta.value = d.env || '';
+    _ciDockerOrigEnv     = eta.value;
+    _ciDockerEnvPath     = d.env_path || '';
+    _ciDockerEnvMissing  = !!d.env_missing;
+    if (_ciDockerEnvPath) {
+      document.getElementById('docker-edit-env-path').textContent = _ciDockerEnvPath;
+      const missTag = document.getElementById('docker-edit-env-missing');
+      if (_ciDockerEnvMissing) missTag.classList.remove('hidden');
+      else                     missTag.classList.add('hidden');
+      document.getElementById('docker-edit-env-section').classList.remove('hidden');
+    }
     ta.disabled = false;
-    ta.focus();
+    // Mount (or refresh) the CodeMirror editors. _mountCMEditor is
+    // idempotent — reopening the modal just refreshes the existing
+    // instance instead of stacking duplicates.
+    const cmYAML = _mountCMEditor('docker-edit-yaml', 'yaml');
+    const cmEnv  = _ciDockerEnvPath ? _mountCMEditor('docker-edit-env', 'znas-env') : null;
+    if (cmYAML) {
+      // Apply the bigger-modal sizing class. Mount adds znas-cm-yaml by
+      // default; we layer the docker-specific class so the larger
+      // height kicks in.
+      cmYAML.getWrapperElement().classList.add('znas-cm-docker-yaml');
+      cmYAML.setValue(ta.value);
+      setTimeout(() => { cmYAML.refresh(); cmYAML.focus(); }, 0);
+    } else {
+      ta.focus();
+    }
+    if (cmEnv) {
+      cmEnv.getWrapperElement().classList.add('znas-cm-docker-env');
+      cmEnv.setValue(eta.value);
+      setTimeout(() => cmEnv.refresh(), 0);
+    }
   } catch (e) {
     document.getElementById('docker-edit-alert').textContent = 'Failed to load: ' + e.message;
     document.getElementById('docker-edit-alert').classList.remove('hidden');
@@ -35219,8 +35665,13 @@ async function dockerEditComposeOpen(projectEnc, pathEnc) {
 }
 
 function dockerEditComposeCancel() {
-  const ta = document.getElementById('docker-edit-yaml');
-  if (ta && ta.value !== _ciDockerOrigYAML) {
+  _syncCMEditor('docker-edit-yaml');
+  _syncCMEditor('docker-edit-env');
+  const ta  = document.getElementById('docker-edit-yaml');
+  const eta = document.getElementById('docker-edit-env');
+  const dirty = (ta && ta.value !== _ciDockerOrigYAML)
+             || (eta && _ciDockerEnvPath && eta.value !== _ciDockerOrigEnv);
+  if (dirty) {
     const al = document.getElementById('docker-edit-alert');
     if (al.classList.contains('hidden')) {
       al.textContent = 'Unsaved changes — click Cancel again to discard.';
@@ -35232,15 +35683,52 @@ function dockerEditComposeCancel() {
 }
 
 async function dockerEditComposeSave() {
-  const ta = document.getElementById('docker-edit-yaml');
+  // Pull current CM contents back into the underlying textareas first
+  // — the network call only sees `.value`.
+  _syncCMEditor('docker-edit-yaml');
+  _syncCMEditor('docker-edit-env');
+  const ta  = document.getElementById('docker-edit-yaml');
+  const eta = document.getElementById('docker-edit-env');
   const btn = document.getElementById('docker-edit-save-btn');
-  const al = document.getElementById('docker-edit-alert');
+  const al  = document.getElementById('docker-edit-alert');
   al.classList.add('hidden');
+
+  // Client-side validation using the same checker the compose-create
+  // form uses. Errors get painted into the gutter; warnings are
+  // advisory and don't block save.
+  const yamlV = _composeValidate(ta.value || '');
+  const cmYAML = ta._cmInstance;
+  if (cmYAML) _markCMErrors(cmYAML, yamlV.errors);
+  // The .env file is freeform key=value; we don't run a YAML-shaped
+  // validator on it. The backend stores it verbatim.
+  if (!yamlV.ok) {
+    const all = (yamlV.errors||[]).map(e => ({...e, _src:'compose'}));
+    _showComposeValidate(
+      'Compose validation failed',
+      'Fix the errors below and try again. Warnings are advisory — they don\'t block save.',
+      all, '✗');
+    return;
+  }
+
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
+    // Build the body. `env` is included only when the section is
+    // visible AND the user actually changed something. Three cases:
+    //   • .env was missing and user typed content      → send env
+    //     → backend creates the file, then `up -d`
+    //   • .env existed and user blanked it             → send env=""
+    //     → backend removes the file
+    //   • .env was missing and user typed nothing      → omit env
+    //     → backend never touches the .env path so no
+    //       empty file is created on disk
+    //   • .env existed and user didn't touch it        → omit env
+    //     → avoids a no-op re-write
+    const body = { path: _ciDockerPath, yaml: ta.value };
+    if (_ciDockerEnvPath && eta.value !== _ciDockerOrigEnv) body.env = eta.value;
+
     const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/compose-file', {
       method: 'PUT', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ path: _ciDockerPath, yaml: ta.value })
+      body: JSON.stringify(body)
     });
     if (r.status !== 202) throw new Error((await r.json()).error || 'failed');
     const d = await r.json();
@@ -42870,14 +43358,47 @@ function _ctEnvAutoGrow(ta) {
 // Mount a CodeMirror editor on the textarea with the given id. Idempotent
 // — a second call refreshes layout (after a hidden→visible transition)
 // instead of mounting twice.
+// v6.5.26 — pick the CodeMirror theme name that matches the ZFSNAS
+// theme currently applied to <body>. Only the light-family themes
+// (`light` and `dawn`) switch to CM's built-in `default` (light); every
+// dark/coloured theme keeps Dracula, which contrasts well on all of
+// them. `default` is shipped inside codemirror.min.css so no extra
+// vendor asset is needed.
+function _cmThemeForBody() {
+  return (document.body.classList.contains('light') ||
+          document.body.classList.contains('dawn')) ? 'default' : 'dracula';
+}
+
+// _cmInstances tracks every live editor so `applyTheme` can push the
+// new theme across them in-place when the user picks a different
+// ZFSNAS theme while a modal is open. It's stored on `window` rather
+// than as a lexical `const` because the file's boot-time applyTheme()
+// call (near the top of the script) is reached *before* this line in
+// source order — and a lexical `const` would throw a Temporal Dead
+// Zone ReferenceError when the hoisted `_cmRefreshThemeForAllInstances`
+// reached it. Using window.* makes the read a property lookup that
+// safely returns undefined when not yet initialised.
+window._cmInstances = window._cmInstances || new Set();
+function _cmRefreshThemeForAllInstances() {
+  if (!window._cmInstances) return;
+  const next = _cmThemeForBody();
+  window._cmInstances.forEach(cm => {
+    try { cm.setOption('theme', next); } catch (_) { /* instance disposed */ }
+  });
+}
+
 function _mountCMEditor(textareaId, mode) {
   if (typeof CodeMirror === 'undefined') return null; // vendor file missing — fall back to <textarea>
   const ta = document.getElementById(textareaId);
   if (!ta) return null;
-  if (ta._cmInstance) { ta._cmInstance.refresh(); return ta._cmInstance; }
+  if (ta._cmInstance) {
+    ta._cmInstance.setOption('theme', _cmThemeForBody());
+    ta._cmInstance.refresh();
+    return ta._cmInstance;
+  }
   const cm = CodeMirror.fromTextArea(ta, {
     mode: mode || 'yaml',
-    theme: 'dracula',
+    theme: _cmThemeForBody(),
     lineNumbers: true,
     lineWrapping: false,
     indentUnit: 2,
@@ -42899,21 +43420,26 @@ function _mountCMEditor(textareaId, mode) {
     },
   });
   ta._cmInstance = cm;
+  if (!window._cmInstances) window._cmInstances = new Set();
+  window._cmInstances.add(cm);
   // The wrapper element CodeMirror creates is `cm.getWrapperElement()`;
   // we tag it with a class so our CSS sizes it appropriately.
   const wrap = cm.getWrapperElement();
   wrap.classList.add('znas-cm');
   wrap.classList.add(mode === 'znas-env' ? 'znas-cm-env' : 'znas-cm-yaml');
-  // YAML editors get a floating toolbar: font − / + + Find. Ctrl-F /
-  // Cmd-F still work through CodeMirror's search addon, but iPad /
-  // touch users have no keyboard shortcut so the visible buttons are
-  // the only entry point. Font size persists in localStorage so a
-  // user's preferred zoom sticks across modals + reloads.
-  if (mode === 'yaml') {
+  // Every editor (YAML and .env) gets a floating toolbar: font − / +
+  // + Find. Ctrl-F / Cmd-F still work through CodeMirror's search
+  // addon, but iPad / touch users have no keyboard shortcut so the
+  // visible buttons are the only entry point. Font size persists in
+  // localStorage so a user's preferred zoom sticks across modals +
+  // reloads. The toolbar is offset 22 px from the right edge so it
+  // clears CodeMirror's vertical scrollbar — previously at 6 px,
+  // which left it partially obscured on platforms with wider gutters.
+  {
     wrap.style.position = 'relative';
     const bar = document.createElement('div');
     bar.style.cssText =
-      'position:absolute;top:4px;right:6px;z-index:5;display:flex;gap:4px;';
+      'position:absolute;top:4px;right:22px;z-index:5;display:flex;gap:4px;';
     const mkBtn = (label, title, onClick) => {
       const b = document.createElement('button');
       b.type = 'button'; b.title = title; b.innerHTML = label;
@@ -45356,6 +45882,288 @@ async function _executeGenericConfirm() {
   closeGenericConfirm();
 }
 
+// ============================================================================
+// Universal "right-click → row menu" (v6.5.29)
+// ----------------------------------------------------------------------------
+// Every table in ZNAS that has a 3-dot burger (`.row-menu-btn`) on the right
+// of each row now also responds to right-click *anywhere on the row*. The
+// handler:
+//   1. Finds the row's burger button.
+//   2. Collects any other in-row action elements that have an onclick (icons
+//      like 🖥 Terminal that sit next to the burger).
+//   3. Synthesises a click on the burger so the table's existing toggle*
+//      function (toggleDsMenu, toggleShareMenu, toggleLXDBurger, …) builds
+//      its own dropdown — keeps the menu items consistent with the burger
+//      flow and avoids hand-touching 30 separate tables.
+//   4. Prepends "Open / Browse / Terminal / …" entries for the in-row
+//      buttons so every action on the row is reachable from one menu, the
+//      way Windows / GNOME do it.
+//   5. Repositions the resulting dropdown next to the cursor instead of the
+//      burger.
+//
+// Plays nice with the File Browser, Compose, and Docker modals — they
+// already wire their own contextmenu handlers and call preventDefault, so
+// our listener bails on ev.defaultPrevented.
+// ============================================================================
+
+document.addEventListener('contextmenu', _zRowContextMenu, true);
+
+function _zRowContextMenu(ev) {
+  if (ev.defaultPrevented) return;
+  // Let the native menu stand on form inputs + real links (copy/paste etc.).
+  if (ev.target.closest('input, textarea, select, a[href]:not([href="#"]):not([onclick])')) return;
+  // Find a row container. Most ZNAS tables use plain <tr>; a few use
+  // div-based rows that tag themselves with `data-row-context` for this
+  // exact purpose.
+  const row = ev.target.closest('tr, [data-row-context]');
+  if (!row) return;
+  // Find the burger trigger. The codebase uses `.row-menu-btn` for
+  // <button>s and free-standing <span>⋮</span> for inline ones — both
+  // carry an `onclick` attribute.
+  const burger = row.querySelector('.row-menu-btn:not([disabled]), span[onclick][title*="actions" i]');
+  if (!burger) return;
+  // Don't fire when the cursor is over the burger itself; the user
+  // can still left-click it normally.
+  if (ev.target.closest('.row-menu-dropdown')) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  // Collect siblings that look like row actions: clickable, NOT inside
+  // a dropdown, NOT the burger. Things like the 🖥 Terminal icon next
+  // to the burger on the Compute table, the ✏️ Edit on the file
+  // browser legacy list, etc. We later inject these as menu items.
+  const inRowBtns = [...row.querySelectorAll('button[onclick], span[onclick]')]
+    .filter(el => el !== burger
+                  && !el.closest('.row-menu-dropdown')
+                  && !el.closest('input,textarea,select')
+                  && el.offsetParent !== null
+                  && _zCollectableLabel(el).length > 0);
+  // Open the burger's existing menu by clicking it.
+  try { burger.click(); } catch (_) {}
+  // Reposition after the menu paints and prepend the collected items.
+  // Two ticks: one for the click handler to mount the dropdown, one for
+  // its width/height to be measurable.
+  setTimeout(() => {
+    const dd = _zFindOpenRowMenu();
+    if (!dd) return;
+    _zPrependInRowItems(dd, inRowBtns);
+    _zRepositionMenuAtCursor(dd, ev.clientX, ev.clientY);
+  }, 0);
+}
+
+// Pick the best label for a row button. Title attr wins (consistent
+// with what the burger menu's items already use), then trimmed text
+// content. Empty / icon-only buttons whose title is missing get
+// skipped — we don't want a menu item that says "⋮".
+function _zCollectableLabel(el) {
+  const t = (el.title || '').trim();
+  if (t) return t;
+  const txt = (el.textContent || '').trim();
+  // A single emoji / glyph (≤ 2 visible chars) without a title isn't a
+  // useful menu label — skip those.
+  if (txt.length <= 2) return '';
+  return txt;
+}
+
+function _zFindOpenRowMenu() {
+  // The freshly-clicked toggle* function creates the dropdown right
+  // before this point. We pick the last visible `.row-menu-dropdown`
+  // in DOM order; this is the most-recently-shown one. We CAN'T use
+  // `offsetParent !== null` as the visibility check because every
+  // toggle*Menu function sets position:fixed on the dropdown — and
+  // offsetParent is always null for position:fixed elements. Check
+  // dimensions via getBoundingClientRect instead.
+  const all = [...document.querySelectorAll('.row-menu-dropdown')]
+    .filter(el => {
+      if (el.classList.contains('hidden')) return false;
+      if (el.style.display === 'none') return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+  return all.length ? all[all.length - 1] : null;
+}
+
+function _zPrependInRowItems(dd, btns) {
+  if (!btns.length) return;
+  // Skip a button if a same-labeled item already exists in the menu
+  // (the burger menu often duplicates an icon). Compare case-folded.
+  const existing = new Set([...dd.querySelectorAll('button')]
+    .map(b => b.textContent.trim().toLowerCase()));
+  const created = [];
+  btns.forEach(b => {
+    const label = _zCollectableLabel(b);
+    const key = label.toLowerCase();
+    if (!label || existing.has(key)) return;
+    existing.add(key);
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = label;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try { b.click(); } catch (_) {}
+      _zCloseAllRowMenus(dd);
+    });
+    created.push(item);
+  });
+  if (!created.length) return;
+  // Insert a divider after the injected items so they read as a
+  // separate cluster.
+  const div = document.createElement('div');
+  div.style.cssText = 'height:1px;background:var(--border);margin:4px 0;';
+  if (dd.firstChild) dd.insertBefore(div, dd.firstChild);
+  else dd.appendChild(div);
+  // Insert in reverse so the first collected button ends up at the top.
+  for (let i = created.length - 1; i >= 0; i--) {
+    dd.insertBefore(created[i], dd.firstChild);
+  }
+}
+
+function _zCloseAllRowMenus(dd) {
+  // Most table-specific toggle*Menu functions register a global click
+  // listener to close — synthesise one so the menu disappears.
+  if (dd) dd.style.display = 'none';
+  document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+}
+
+// ============================================================================
+// Sidebar nav right-click → action menu (v6.5.30)
+//
+// Reuses the existing `toggleLXDBurger` / `toggleNetBurger` /
+// `toggleDatastoreBurger` per-row functions so the items match what the
+// table-row burger shows. Looks up the extra arguments each burger needs
+// from its respective cache (`_lxdInstancesCache`, `_lxdNetworksCache`,
+// `_lxdStorageCacheDS`). After the burger paints its dropdown, the
+// universal cursor-reposition helper moves it under the mouse.
+// ============================================================================
+function _navContextMenuFor(ev, section, name) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  // Close any other open dropdowns first.
+  if (typeof closeShareMenus === 'function') try { closeShareMenus(); } catch (_) {}
+  if (typeof _closeLXDMenus === 'function') try { _closeLXDMenus(); } catch (_) {}
+  const btn = ev.currentTarget;
+  // Each section maps to a different existing burger + a lookup for its
+  // extra args. The synthetic event we pass to the burger reuses the
+  // nav button as `currentTarget` (so the burger's getBoundingClientRect
+  // anchoring picks a sensible default) plus the right-click's
+  // clientX/Y (so _zRepositionMenuAtCursor lands the menu at the
+  // pointer).
+  let opener = null;
+  switch (section) {
+    case 'compute': {
+      const inst = (typeof _lxdInstancesCache !== 'undefined' ? _lxdInstancesCache : []).find(i => i.name === name);
+      if (!inst) return;
+      if (typeof toggleLXDBurger !== 'function') return;
+      opener = (synthEv) => toggleLXDBurger(synthEv, inst.name, inst.type);
+      break;
+    }
+    case 'networking': {
+      const n = (typeof _lxdNetworksCache !== 'undefined' ? _lxdNetworksCache : []).find(x => x.name === name);
+      if (!n) return;
+      if (typeof toggleNetBurger !== 'function') return;
+      opener = (synthEv) => toggleNetBurger(synthEv, n.name, n.vm_count || 0, n.type || 'bridge', !!n.managed);
+      break;
+    }
+    case 'datastores': {
+      const p = (typeof _lxdStorageCacheDS !== 'undefined' ? _lxdStorageCacheDS : []).find(x => x.name === name);
+      if (!p) return;
+      if (typeof toggleDatastoreBurger !== 'function') return;
+      opener = (synthEv) => toggleDatastoreBurger(synthEv, p.name, p.instance_count || 0);
+      break;
+    }
+    default: return;
+  }
+  // Synthesise an event the burger functions can consume.
+  const synth = {
+    stopPropagation: () => {},
+    preventDefault: () => {},
+    currentTarget: btn,
+    clientX: ev.clientX,
+    clientY: ev.clientY,
+  };
+  try { opener(synth); } catch (e) { return; }
+  // Reposition the freshly-painted dropdown to the cursor on the next
+  // tick (the burger's positionRowMenuDropdown is synchronous; we run
+  // after to override). For Compute items we also inject the terminal
+  // launchers (VGA Console for VMs, plus Bottom / Tab / Window for both)
+  // so the sidebar right-click is a one-stop place for everything you'd
+  // do with the instance — same set the 🖥 icon in the main table opens.
+  setTimeout(() => {
+    const dd = (typeof _zFindOpenRowMenu === 'function') ? _zFindOpenRowMenu() : null;
+    if (!dd) return;
+    if (section === 'compute') {
+      const inst = (typeof _lxdInstancesCache !== 'undefined' ? _lxdInstancesCache : []).find(i => i.name === name);
+      _navInjectTerminalItems(dd, inst);
+    }
+    if (typeof _zRepositionMenuAtCursor === 'function') {
+      _zRepositionMenuAtCursor(dd, ev.clientX, ev.clientY);
+    }
+  }, 0);
+}
+
+// Build the terminal launcher items (VGA for VMs only; LXD Bottom /
+// Tab / Window for everything) and prepend them to `dd` separated by
+// a divider. Items targeting a non-running instance are greyed with a
+// tooltip — same gate as the 🖥 icon in the main VMs & Containers table.
+function _navInjectTerminalItems(dd, inst) {
+  if (!dd || !inst) return;
+  const running = (inst.status || '').toLowerCase() === 'running';
+  const isVM    = inst.type === 'virtual-machine';
+  const name    = inst.name;
+  // Header — same style as menu-sep elsewhere.
+  const heading = document.createElement('div');
+  heading.style.cssText = 'padding:6px 14px 2px;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;';
+  heading.textContent = 'Terminal';
+  const items = [];
+  const mk = (label, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (!running) {
+      b.disabled = true;
+      b.style.opacity = '0.4';
+      b.style.cursor = 'default';
+      b.title = 'Instance must be running';
+    } else {
+      b.addEventListener('click', () => { if (typeof _closeLXDMenus === 'function') _closeLXDMenus(); fn(); });
+    }
+    items.push(b);
+  };
+  if (isVM) {
+    mk('🖥 VGA Console Window', () => window.open(_vgaConsoleURL(name), 'lxdvga_' + name, 'width=1280,height=840,noopener'));
+  }
+  mk('💻 LXD Bottom Terminal', () => {
+    if (_ciTermTabs.has(name)) { _ciTermActivateTab(name); _ciTermEnsureVisible(); return; }
+    _ciTermEnsureVisible();
+    _ciTermOpenTab(name);
+  });
+  mk('💻 LXD Tab Terminal',    () => openLXDConsole(name));
+  mk('💻 LXD Window Terminal', () => window.open('/incus-console/' + encodeURIComponent(name), 'lxdterm_' + name, 'width=1080,height=680,noopener'));
+  // Separator between our injected items and the burger's existing ones.
+  const sep = document.createElement('hr');
+  sep.className = 'menu-sep';
+  // Inject at the top: heading → items → divider → existing items.
+  const first = dd.firstChild;
+  dd.insertBefore(sep, first);
+  for (let i = items.length - 1; i >= 0; i--) dd.insertBefore(items[i], dd.firstChild);
+  dd.insertBefore(heading, dd.firstChild);
+}
+
+function _zRepositionMenuAtCursor(dd, x, y) {
+  // Switch to fixed positioning so the menu floats at the cursor
+  // regardless of where its anchor put it. Reset the conflicting
+  // `right` rule the original anchor positioning may have set.
+  dd.style.position = 'fixed';
+  dd.style.left = x + 'px';
+  dd.style.top  = y + 'px';
+  dd.style.right = 'auto';
+  dd.style.bottom = 'auto';
+  // Flip above / left if we'd clip the viewport.
+  setTimeout(() => {
+    const r = dd.getBoundingClientRect();
+    if (r.right > window.innerWidth)  dd.style.left = Math.max(4, x - r.width)  + 'px';
+    if (r.bottom > window.innerHeight) dd.style.top  = Math.max(4, y - r.height) + 'px';
+  }, 0);
+}
+
 // ===== Global toast =========================================================
 // Usage: showToast(msg, type)  type = 'error' | 'success' | 'info'
 function showToast(msg, type = 'error') {
@@ -45464,31 +46272,96 @@ function showToast(msg, type = 'error') {
   </div>
 </div>
 
-<!-- ── File Browser Modal ─────────────────────────────────────────────────── -->
+<!-- ── File Browser Modal (v6.5.29: full file browser) ────────────────────── -->
 <div class="modal-backdrop hidden" id="modal-file-browser" onclick="if(event.target===this)closeFileBrowser()">
-  <div class="modal" style="max-width:960px;">
-    <div class="modal-header">
-      <h3>📂 Browse Files — <span id="fb-root-label"></span></h3>
-      <button class="modal-close" onclick="closeFileBrowser()">✕</button>
+  <div class="modal fbnew-modal" id="fbnew-modal">
+    <div class="fbnew-modal-header">
+      <span style="font-size:16px;">📂</span>
+      <h3>Browse Files — <span id="fb-root-label" style="color:var(--text-2);font-weight:500;"></span></h3>
+      <span style="flex:1;"></span>
+      <button class="fbnew-iconbtn" id="fbnew-maximize-btn" onclick="fbToggleMaximize()" title="Maximize (F11)">▣</button>
+      <button class="fbnew-iconbtn" onclick="closeFileBrowser()" title="Close">✕</button>
     </div>
-    <div class="modal-body" style="padding:0;">
-      <div id="fb-breadcrumb" class="fb-breadcrumb"></div>
-      <div class="fb-table-wrap">
-        <table class="tbl" id="fb-table">
-          <thead id="fb-thead"><tr>
-            <th>Name</th><th>Size</th><th>Permissions</th>
-            <th>Owner</th><th>Group</th><th>Modified</th>
-            <th class="admin-only"></th>
-          </tr></thead>
-          <tbody id="fb-table-body"></tbody>
-        </table>
+    <div class="fbnew-toolbar">
+      <button class="fbnew-btn" onclick="fbMkdirPrompt()" title="New folder">+ Folder</button>
+      <button class="fbnew-btn" id="fbnew-btn-cut"   onclick="fbCut()"           title="Cut">✂ Cut</button>
+      <button class="fbnew-btn" id="fbnew-btn-copy"  onclick="fbCopyClip()"      title="Copy">📋 Copy</button>
+      <button class="fbnew-btn" id="fbnew-btn-paste" onclick="fbPaste()"         title="Paste">📌 Paste</button>
+      <button class="fbnew-btn" id="fbnew-btn-del"   onclick="fbDelete()"        title="Delete">🗑 Delete</button>
+      <button class="fbnew-btn" id="fbnew-btn-mv"    onclick="fbMoveToDialog()"  title="Move to…">📂 Move…</button>
+      <button class="fbnew-btn" id="fbnew-btn-cpto"  onclick="fbCopyToDialog()"  title="Copy to…">📋 Copy to…</button>
+      <button class="fbnew-btn" id="fbnew-btn-edit"  onclick="fbEditSelection()" title="Edit ownership &amp; permissions">✎ Edit</button>
+      <button class="fbnew-btn" id="fbnew-btn-dl"    onclick="fbDownloadSelection()" title="Download selected files">⬇ Download</button>
+      <span class="fbnew-spacer"></span>
+      <button class="fbnew-btn" id="fbnew-sort-btn" onclick="fbToggleSortMenu(event)" title="Sort">⬇ Sort ▾</button>
+      <button class="fbnew-btn" id="fbnew-view-btn" onclick="fbToggleViewMenu(event)" title="View">▦ View ▾</button>
+    </div>
+    <div class="fbnew-navrow">
+      <button class="fbnew-navbtn" id="fbnew-back"    onclick="fbHistoryBack()"    title="Back (Alt+←)">←</button>
+      <button class="fbnew-navbtn" id="fbnew-forward" onclick="fbHistoryForward()" title="Forward (Alt+→)">→</button>
+      <button class="fbnew-navbtn" id="fbnew-refresh" onclick="fbRefresh()"         title="Refresh (F5)">↻</button>
+      <div class="fbnew-crumb" id="fbnew-crumb"></div>
+      <input type="text" class="fbnew-search" id="fbnew-search" placeholder="Search current folder…"
+        oninput="fbFilterInput(this.value)">
+    </div>
+    <!-- Inline +Folder form, hidden by default -->
+    <div id="fbnew-mkdir-form" style="display:none;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--surface);">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:13px;color:var(--text-2);">📁</span>
+        <input type="text" id="fbnew-mkdir-name" class="input" placeholder="folder name"
+          style="flex:1;max-width:300px;font-size:13px;" oninput="fbMkdirInput()">
+        <button class="fbnew-btn" id="fbnew-mkdir-ok" disabled onclick="fbMkdirSubmit()">Create</button>
+        <button class="fbnew-btn" onclick="fbMkdirCancel()">Cancel</button>
+        <span id="fbnew-mkdir-err" style="color:var(--accent-danger);font-size:11.5px;"></span>
       </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeFileBrowser()">Close</button>
+    <div class="fbnew-body">
+      <div class="fbnew-tree" id="fbnew-tree"></div>
+      <div class="fbnew-listing" id="fbnew-listing" data-view="list"></div>
+    </div>
+    <div class="fbnew-clipboard" id="fbnew-clipboard" style="display:none;">
+      <span id="fbnew-clipboard-text"></span>
+      <span class="fbnew-clip-clear" onclick="fbClearClipboard()">Clear</span>
     </div>
   </div>
 </div>
+
+<!-- ── Image Viewer Modal (v6.5.29) ───────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal-fb-image-viewer" onclick="if(event.target===this)fbCloseImageViewer()">
+  <div class="modal">
+    <div class="iv-header">
+      <button class="iv-nav" onclick="fbImageViewerPrev()" id="iv-prev-hdr">◀</button>
+      <span class="iv-name" id="iv-name"></span>
+      <span class="iv-meta" id="iv-meta"></span>
+      <button class="iv-nav" onclick="fbCloseImageViewer()" title="Close">✕</button>
+    </div>
+    <div class="iv-body" id="iv-body">
+      <img id="iv-img" alt="" />
+    </div>
+    <div class="iv-footer">
+      <button class="iv-nav" onclick="fbImageViewerPrev()" id="iv-prev">←  Prev</button>
+      <span id="iv-counter" style="color:#cdd9e5;font-family:monospace;"></span>
+      <button class="iv-nav" onclick="fbImageViewerNext()" id="iv-next">Next  →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Generic File Viewer Modal (v6.5.29) ────────────────────────────────
+     Opens on double-click for PDFs (browser-native iframe), plain text /
+     source files (pre block), and Markdown (lightweight regex render). -->
+<div class="modal-backdrop hidden" id="modal-fb-file-viewer" onclick="if(event.target===this)fbCloseFileViewer()">
+  <div class="modal">
+    <div class="fv-header">
+      <span class="fv-name" id="fv-name"></span>
+      <span class="fv-meta" id="fv-meta"></span>
+      <button class="iv-nav" onclick="fbCloseFileViewer()" title="Close (Esc)">✕</button>
+    </div>
+    <div class="fv-body" id="fv-body"></div>
+  </div>
+</div>
+
+<!-- ── Right-click Context Menu (v6.5.29) ─────────────────────────────────── -->
+<div id="fb-context-menu" role="menu"></div>
 
 <!-- ── Edit Ownership & Permissions Modal ─────────────────────────────────── -->
 <div class="modal-backdrop hidden" id="modal-fb-edit">
@@ -46012,19 +46885,144 @@ async function saveSysPower() {
   } catch(e) { showToast('Error: ' + e.message, 'error'); }
 }
 
-// ── File Browser ──────────────────────────────────────────────────────────────
+// ── File Browser (v6.5.29 — full file browser) ───────────────────────────────
+//
+// Open the modal from any of the three legacy menus (dataset / SMB / NFS) and
+// you get a two-pane Explorer-style UI: left = lazy folder tree, right =
+// listing in one of 5 view modes (List default, Tiles, Small/Medium/Large
+// icons). Selection is multi (checkbox header + Ctrl/Shift), mutations route
+// through admin-only endpoints (mkdir / delete / move / copy), images render
+// real thumbnails via /api/files/raw, double-click an image to open the full
+// viewer. Drag-drop and right-click context menu both honour the same
+// "effective selection" rule the toolbar buttons do.
+//
+// `fileBrowserState` keeps the legacy field names that openFbEditModal and
+// the chown/chmod paths still depend on (root, rootLabel, subpath,
+// activeEntryIdx, …). Everything else lives on _fbCtx — added v6.5.29.
 
 let fileBrowserState = {
-  root: '',           // base64url token
+  root: '',           // base64url token (legacy field; openFbEditModal reads this)
   rootLabel: '',      // display name (e.g. "tank/media")
   subpath: '',        // current relative path within root
-  entries: [],        // current FileEntry[]
-  currentDirInfo: null, // FileEntry for the directory being listed
+  entries: [],        // FileEntry[] for the current folder (full, pre-sort/filter)
+  currentDirInfo: null,
   usersGroups: null,  // cached { users, groups } from API
-  activeEntryIdx: -1, // entry targeted by sub-modal; -1 = current directory
-  sortCol: 'name',    // active sort column
-  sortDir: 'asc'      // 'asc' | 'desc'
+  activeEntryIdx: -1, // index into entries (or -1 for current dir) targeted by Edit modal
+  sortCol: 'name',    // kept for legacy callers
+  sortDir: 'asc'
 };
+
+// v6.5.29 — new state. Anything that survives a modal open lives in
+// localStorage (`znas.fb.*`); per-session things (selection, clipboard) stay
+// in memory only.
+let _fbCtx = {
+  // v6.5.29 — Multi-root tree. The left pane now shows every knownRoot
+  // (datasets + SMB/NFS share roots), each lazily expandable like a
+  // single root used to be. Navigation, drag-drop, paste, and the
+  // move/copy destination picker all support hopping between roots.
+  allRoots: [],              // [{label, token, abs_path}, …] from /api/files/roots
+  treeOpen: new Set(),       // expanded "<token>::<subpath>" keys
+  treeNodesByRoot: {},       // token → TreeNode (cached lazily)
+  treeNodes: null,           // deprecated alias — kept null so legacy callers no-op
+  selection: new Set(),      // selected entry names (current folder only)
+  lastSelectionIndex: -1,    // anchor for Shift-click range select
+  clipboard: null,           // { mode:'cut'|'copy', root, rootLabel, subpath, items:[names…] }
+  viewMode: localStorage.getItem('znas.fb.view') || 'list',
+  sortKey:  localStorage.getItem('znas.fb.sort')    || 'name',
+  sortDir:  localStorage.getItem('znas.fb.sortdir') || 'asc',
+  maximized: false,
+  // Image viewer carousel (list of image names from the current sorted view).
+  ivImages: [],
+  ivIndex: -1,
+  // v6.5.29 — Explorer-style navigation history. `history[i]` is a
+  // subpath; `historyIndex` points at the current one. Back/Forward
+  // shift the index without mutating the array; a fresh navigation
+  // truncates anything after the current index and appends.
+  history: [],
+  historyIndex: -1,
+  // Live filter applied to the right pane (entry-name substring,
+  // case-insensitive). Cleared on every folder navigation.
+  filter: '',
+};
+
+// Sort key labels — used in the Sort dropdown UI.
+const _FB_SORT_LABELS = [
+  ['name', 'Name'],
+  ['size', 'Size'],
+  ['type', 'File type'],
+  ['modified', 'Modified date'],
+  ['created', 'Created date'],
+  ['accessed', 'Last accessed'],
+  ['owner', 'Owner'],
+  ['group', 'Group'],
+];
+const _FB_VIEW_LABELS = [
+  ['list', 'List'],
+  ['tiles', 'Tiles'],
+  ['small', 'Small icons'],
+  ['medium', 'Medium icons'],
+  ['large', 'Large icons'],
+];
+
+// Map Kind → emoji icon for List / fallback icons. Images use the real
+// thumbnail when the view mode shows one.
+function _fbIcon(e) {
+  if (e.is_dir) return '📁';
+  switch (e.kind) {
+    case 'image':    return '🖼';
+    case 'video':    return '🎬';
+    case 'audio':    return '🎵';
+    case 'archive':  return '🗜';
+    case 'document': return '📄';
+    case 'exec':     return '⚙';
+    case 'link':     return '🔗';
+  }
+  return '📄';
+}
+
+function _fbIsImage(e) { return !e.is_dir && e.kind === 'image'; }
+
+// _FB_TEXT_EXTS — extensions the generic file viewer treats as
+// text/source. Anything not listed (and not a PDF) falls back to the
+// Edit Ownership & Permissions modal on double-click. The list is
+// intentionally generous because the backend MIME allowlist
+// (text/, image/, application/pdf) already gates what we'll actually
+// stream — an extension claiming ".txt" on a binary file still gets
+// refused with HTTP 415 by /api/files/raw.
+const _FB_TEXT_EXTS = new Set([
+  'txt', 'md', 'markdown', 'rst', 'csv', 'tsv', 'json', 'log',
+  'ini', 'conf', 'cfg', 'toml', 'env',
+  'yml', 'yaml',
+  'xml', 'svg', 'html', 'htm',
+  'sh', 'bash', 'zsh', 'fish',
+  'py', 'rb', 'pl', 'lua',
+  'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx',
+  'go', 'rs',
+  'c', 'h', 'cpp', 'hpp', 'cc', 'java', 'kt', 'swift',
+  'css', 'scss', 'sass', 'less',
+  'sql', 'dockerfile', 'service', 'unit',
+  'patch', 'diff',
+]);
+
+function _fbExt(name) {
+  const i = (name || '').lastIndexOf('.');
+  return i >= 0 ? (name.slice(i + 1).toLowerCase()) : '';
+}
+
+function _fbIsPreviewableFile(e) {
+  if (e.is_dir) return false;
+  const ext = _fbExt(e.name);
+  if (ext === 'pdf') return true;
+  return _FB_TEXT_EXTS.has(ext);
+}
+
+function _fbRawURL(root, subpath) {
+  return '/api/files/raw?root=' + encodeURIComponent(root) +
+         '&subpath=' + encodeURIComponent(subpath);
+}
+
+// Collator for natural name comparison ("img2" before "img10").
+const _fbNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 function encodeRootToken(absPath) {
   // base64url encode (no padding)
@@ -46043,7 +47041,11 @@ function formatFileSize(bytes) {
   return (bytes / 1024 / 1024 / 1024 / 1024).toFixed(1) + ' TB';
 }
 
-async function openFileBrowser(sourceType, sourceId) {
+// `subpath` (optional, v6.5.29) is a relative path inside the chosen
+// root the modal should land on instead of the root itself. Used by
+// the Folder TreeMap "📂 Browse Files" verb so the user lands deep in
+// the tree they were already exploring rather than at the dataset root.
+async function openFileBrowser(sourceType, sourceId, subpath) {
   let absPath = '';
   let label = '';
 
@@ -46074,16 +47076,267 @@ async function openFileBrowser(sourceType, sourceId) {
   fileBrowserState.subpath = '';
   fileBrowserState.entries = [];
   fileBrowserState.activeEntryIdx = -1;
-  fileBrowserState.sortCol = 'name';
-  fileBrowserState.sortDir = 'asc';
+  _fbCtx.treeOpen = new Set([fileBrowserState.root + '::']);
+  _fbCtx.treeNodesByRoot = {};
+  _fbCtx.allRoots = [];
+  _fbCtx.selection.clear();
+  _fbCtx.lastSelectionIndex = -1;
+  _fbCtx.history = [];
+  _fbCtx.historyIndex = -1;
+  _fbCtx.filter = '';
+  const searchEl = document.getElementById('fbnew-search');
+  if (searchEl) searchEl.value = '';
 
   document.getElementById('fb-root-label').textContent = label;
+  // Apply persisted modal size + maximized state.
+  fbApplyPersistedSize();
   document.getElementById('modal-file-browser').classList.remove('hidden');
-  await fileBrowserNavigate('');
+  // Fetch the global root list first, then the tree for the opened root
+  // and the listing in parallel.
+  await fbLoadAllRoots();
+  await Promise.all([
+    fbLoadTree(fileBrowserState.root),
+    fileBrowserNavigate(subpath || ''),
+  ]);
+  _fbAttachGlobalHandlers();
 }
 
-async function fileBrowserNavigate(subpath) {
+async function fbLoadAllRoots() {
+  try {
+    const r = await fetch('/api/files/roots');
+    if (!r.ok) return;
+    const d = await r.json();
+    _fbCtx.allRoots = d.roots || [];
+  } catch (_) {}
+}
+
+// _fbAttachGlobalHandlers is idempotent — wires the keyboard, resize
+// snapshot, and click-outside handlers exactly once per page load.
+let _fbHandlersAttached = false;
+function _fbAttachGlobalHandlers() {
+  if (_fbHandlersAttached) return;
+  _fbHandlersAttached = true;
+  document.addEventListener('keydown', _fbOnKeyDown);
+  // Snapshot the modal size on mouseup (after the user drags the corner).
+  document.getElementById('fbnew-modal').addEventListener('mouseup', () => {
+    if (_fbCtx.maximized) return;
+    const m = document.getElementById('fbnew-modal');
+    const r = m.getBoundingClientRect();
+    try {
+      localStorage.setItem('znas.fb.size', JSON.stringify({
+        w: Math.round(r.width), h: Math.round(r.height)
+      }));
+    } catch (_) {}
+  });
+  // Click-outside closes the context menu + open dropdowns.
+  document.addEventListener('click', (ev) => {
+    if (!ev.target.closest('#fb-context-menu')) fbHideContextMenu();
+    if (!ev.target.closest('.fbnew-dropdown') &&
+        !ev.target.closest('#fbnew-view-btn') &&
+        !ev.target.closest('#fbnew-sort-btn')) {
+      _fbCloseAnyDropdown();
+    }
+  });
+}
+
+function fbApplyPersistedSize() {
+  const m = document.getElementById('fbnew-modal');
+  m.classList.remove('maximized');
+  _fbCtx.maximized = false;
+  const btn = document.getElementById('fbnew-maximize-btn');
+  if (btn) btn.textContent = '▣';
+  try {
+    const saved = JSON.parse(localStorage.getItem('znas.fb.size') || 'null');
+    if (saved && saved.w && saved.h) {
+      // Clamp to viewport so a 1900-wide save doesn't open off-screen.
+      const w = Math.min(saved.w, window.innerWidth);
+      const h = Math.min(saved.h, window.innerHeight);
+      m.style.width  = w + 'px';
+      m.style.height = h + 'px';
+    } else {
+      m.style.width  = '';
+      m.style.height = '';
+    }
+  } catch (_) {}
+}
+
+function fbToggleMaximize() {
+  const m = document.getElementById('fbnew-modal');
+  const btn = document.getElementById('fbnew-maximize-btn');
+  _fbCtx.maximized = !_fbCtx.maximized;
+  if (_fbCtx.maximized) {
+    m.classList.add('maximized');
+    m.style.width = '';
+    m.style.height = '';
+    if (btn) btn.textContent = '◱';
+  } else {
+    m.classList.remove('maximized');
+    fbApplyPersistedSize();
+    if (btn) btn.textContent = '▣';
+  }
+}
+
+// fbLoadTree fetches the folder tree for one root. Depth 2 at first
+// open; subsequent expands are lazy via _fbExpandTreeNode. The tree is
+// cached per-root so opening a sibling root doesn't drop the work
+// already done on this one.
+async function fbLoadTree(rootToken) {
+  rootToken = rootToken || fileBrowserState.root;
+  try {
+    const params = new URLSearchParams({ root: rootToken, subpath: '', depth: '2' });
+    const r = await fetch('/api/files/tree?' + params);
+    if (!r.ok) return;
+    const d = await r.json();
+    _fbCtx.treeNodesByRoot[rootToken] = d.tree || { name: '', subpath: '', has_children: false, children: [] };
+    fbRenderTree();
+  } catch (_) {}
+}
+
+function fbRenderTree() {
+  const host = document.getElementById('fbnew-tree');
+  if (!host) return;
+  // Render every knownRoot at the top level. Each root that has been
+  // expanded shows its children below; collapsed roots show just the
+  // header. The currently-active root + subpath is selected.
+  const roots = _fbCtx.allRoots && _fbCtx.allRoots.length ? _fbCtx.allRoots : [
+    // Fallback when /api/files/roots failed: still render at least the
+    // root the modal was opened against.
+    { label: fileBrowserState.rootLabel, token: fileBrowserState.root, abs_path: '' }
+  ];
+  let html = '';
+  roots.forEach(r => {
+    const cached = _fbCtx.treeNodesByRoot[r.token];
+    const headerKey = r.token + '::';
+    const expanded  = _fbCtx.treeOpen.has(headerKey);
+    const hasChildren = cached ? cached.has_children : true; // assume yes until first fetch proves otherwise
+    const isActiveRoot = r.token === fileBrowserState.root && fileBrowserState.subpath === '';
+    const chevron = hasChildren ? (expanded ? '▾' : '▸') : '';
+    const encToken = encodeURIComponent(r.token);
+    html += `<div class="fbnew-tree-node ${isActiveRoot ? 'selected' : ''}"
+       data-root="${esc(r.token)}" data-subpath=""
+       oncontextmenu="event.preventDefault();fbShowTreeContextMenu(event,'${encToken}','')"
+       ondragover="event.preventDefault();this.classList.add('fbnew-droptarget');event.dataTransfer.dropEffect=(event.ctrlKey||event.metaKey)?'copy':'move';"
+       ondragleave="this.classList.remove('fbnew-droptarget')"
+       ondrop="this.classList.remove('fbnew-droptarget');fbHandleDrop(event,'${encToken}','')"
+       onclick="fbTreeClick('${encToken}','')">
+      <span class="fbnew-tree-chevron">${chevron}</span>
+      <span class="fbnew-tree-icon">📂</span>
+      <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;">${esc(r.label)}</span>
+    </div>`;
+    if (expanded && cached && cached.children && cached.children.length) {
+      html += `<div class="fbnew-tree-children">${_fbRenderTreeChildren(cached.children, 1, r.token)}</div>`;
+    }
+  });
+  host.innerHTML = html;
+}
+
+function _fbRenderTreeChildren(nodes, depth, rootToken) {
+  const sorted = [...nodes].sort((a,b) => _fbNameCollator.compare(a.name, b.name));
+  return sorted.map(n => {
+    const key = rootToken + '::' + n.subpath;
+    const open = _fbCtx.treeOpen.has(key);
+    const sel  = rootToken === fileBrowserState.root && n.subpath === fileBrowserState.subpath;
+    let chevron = '';
+    if (n.has_children) chevron = open ? '▾' : '▸';
+    let kids = '';
+    if (open && n.children && n.children.length) {
+      kids = `<div class="fbnew-tree-children">${_fbRenderTreeChildren(n.children, depth+1, rootToken)}</div>`;
+    }
+    const encToken = encodeURIComponent(rootToken);
+    const encSub   = encodeURIComponent(n.subpath);
+    return `<div class="fbnew-tree-node ${sel ? 'selected' : ''}"
+       data-root="${esc(rootToken)}" data-subpath="${esc(n.subpath)}"
+       oncontextmenu="event.preventDefault();fbShowTreeContextMenu(event,'${encToken}','${encSub}')"
+       ondragover="event.preventDefault();this.classList.add('fbnew-droptarget');event.dataTransfer.dropEffect=(event.ctrlKey||event.metaKey)?'copy':'move';"
+       ondragleave="this.classList.remove('fbnew-droptarget')"
+       ondrop="this.classList.remove('fbnew-droptarget');fbHandleDrop(event,'${encToken}','${encSub}')"
+       onclick="fbTreeClick('${encToken}','${encSub}')">
+      <span class="fbnew-tree-chevron">${chevron}</span>
+      <span class="fbnew-tree-icon">📁</span>
+      <span style="overflow:hidden;text-overflow:ellipsis;">${esc(n.name)}</span>
+    </div>${kids}`;
+  }).join('');
+}
+
+function fbTreeClick(encToken, encSubpath) {
+  const rootToken = decodeURIComponent(encToken);
+  const subpath   = decodeURIComponent(encSubpath || '');
+  const key = rootToken + '::' + subpath;
+  // Toggle expand state.
+  if (_fbCtx.treeOpen.has(key)) {
+    _fbCtx.treeOpen.delete(key);
+  } else {
+    _fbCtx.treeOpen.add(key);
+    _fbExpandTreeNode(rootToken, subpath);
+  }
+  // Navigate to that node (cross-root jumps swap fileBrowserState.root).
+  const switchingRoot = rootToken !== fileBrowserState.root;
+  if (switchingRoot) {
+    const r = (_fbCtx.allRoots || []).find(x => x.token === rootToken);
+    fileBrowserState.root      = rootToken;
+    fileBrowserState.rootLabel = r ? r.label : fileBrowserState.rootLabel;
+    // Make sure the new root's tree exists.
+    if (!_fbCtx.treeNodesByRoot[rootToken]) fbLoadTree(rootToken);
+    document.getElementById('fb-root-label').textContent = fileBrowserState.rootLabel;
+  }
+  fileBrowserNavigate(subpath);
+}
+
+async function _fbExpandTreeNode(rootToken, subpath) {
+  const cached = _fbCtx.treeNodesByRoot[rootToken];
+  const node = _fbFindTreeNode(rootToken, subpath);
+  if (!cached || !node || (node.children && node.children.length)) return;
+  if (!node.has_children) return;
+  try {
+    const params = new URLSearchParams({ root: rootToken, subpath, depth: '1' });
+    const r = await fetch('/api/files/tree?' + params);
+    if (!r.ok) return;
+    const d = await r.json();
+    node.children = (d.tree && d.tree.children) || [];
+    fbRenderTree();
+  } catch (_) {}
+}
+
+function _fbFindTreeNode(rootToken, subpath) {
+  const tree = _fbCtx.treeNodesByRoot[rootToken];
+  if (!tree) return null;
+  if (subpath === '') return tree;
+  const queue = [...(tree.children || [])];
+  while (queue.length) {
+    const n = queue.shift();
+    if (n.subpath === subpath) return n;
+    if (n.children) queue.push(...n.children);
+  }
+  return null;
+}
+
+// ── Navigate (load entries) ──────────────────────────────────────────────────
+
+async function fileBrowserNavigate(subpath, opts) {
+  // History entries are {root, rootLabel, subpath} so Back/Forward
+  // round-trip cross-root jumps as well. `opts.skipHistory` is set by
+  // Back/Forward themselves and by Refresh; everyone else pushes.
+  if (!opts || !opts.skipHistory) {
+    const cur = _fbCtx.history[_fbCtx.historyIndex];
+    const same = cur && cur.root === fileBrowserState.root && cur.subpath === subpath;
+    if (!same) {
+      _fbCtx.history = _fbCtx.history.slice(0, _fbCtx.historyIndex + 1);
+      _fbCtx.history.push({
+        root: fileBrowserState.root,
+        rootLabel: fileBrowserState.rootLabel,
+        subpath,
+      });
+      _fbCtx.historyIndex = _fbCtx.history.length - 1;
+    }
+  }
+  // Clear the live filter on every folder change so a stale "video"
+  // search doesn't hide everything in the next folder.
+  _fbCtx.filter = '';
+  const searchEl = document.getElementById('fbnew-search');
+  if (searchEl) searchEl.value = '';
   fileBrowserState.subpath = subpath;
+  _fbCtx.selection.clear();
+  _fbCtx.lastSelectionIndex = -1;
   const params = new URLSearchParams({ root: fileBrowserState.root, subpath });
   try {
     const resp = await fetch('/api/files/list?' + params);
@@ -46095,143 +47348,998 @@ async function fileBrowserNavigate(subpath) {
     const result = await resp.json();
     fileBrowserState.entries = result.entries || [];
     fileBrowserState.currentDirInfo = result.current_dir || null;
-    renderFileBrowserBreadcrumb(subpath);
-    renderFileBrowserTable(fileBrowserState.entries);
+    fbRenderCrumb();
+    fbRenderListing();
+    fbRenderTree(); // update tree-node selection highlight
+    fbUpdateToolbar();
+    fbUpdateNavButtons();
   } catch (e) {
     showToast('Browse error: ' + e.message, 'error');
   }
 }
 
-function renderFileBrowserBreadcrumb(subpath) {
-  const el = document.getElementById('fb-breadcrumb');
-  const parts = subpath ? subpath.split('/').filter(Boolean) : [];
-  let html = '';
+// ── Navigation history (Back / Forward / Refresh) ────────────────────────────
 
-  if (parts.length > 0) {
-    const parentPath = parts.slice(0, -1).join('/');
-    html += `<a onclick="fileBrowserNavigate('${esc(parentPath)}')">← Back</a><span class="sep">|</span>`;
+function fbUpdateNavButtons() {
+  const back = document.getElementById('fbnew-back');
+  const fwd  = document.getElementById('fbnew-forward');
+  if (back) back.disabled = _fbCtx.historyIndex <= 0;
+  if (fwd)  fwd.disabled  = _fbCtx.historyIndex >= _fbCtx.history.length - 1;
+}
+
+function fbHistoryBack() {
+  if (_fbCtx.historyIndex <= 0) return;
+  _fbCtx.historyIndex--;
+  _fbApplyHistoryEntry(_fbCtx.history[_fbCtx.historyIndex]);
+}
+
+function fbHistoryForward() {
+  if (_fbCtx.historyIndex >= _fbCtx.history.length - 1) return;
+  _fbCtx.historyIndex++;
+  _fbApplyHistoryEntry(_fbCtx.history[_fbCtx.historyIndex]);
+}
+
+function _fbApplyHistoryEntry(h) {
+  if (!h) return;
+  if (h.root !== fileBrowserState.root) {
+    fileBrowserState.root      = h.root;
+    fileBrowserState.rootLabel = h.rootLabel;
+    if (!_fbCtx.treeNodesByRoot[h.root]) fbLoadTree(h.root);
+    document.getElementById('fb-root-label').textContent = h.rootLabel;
   }
+  fileBrowserNavigate(h.subpath, { skipHistory: true });
+}
 
-  html += `<a onclick="fileBrowserNavigate('')">/</a>`;
+function fbRefresh() {
+  fileBrowserNavigate(fileBrowserState.subpath, { skipHistory: true });
+  // Refresh all root trees that were already cached — so a copy/move
+  // into another root shows the new entry on next expansion.
+  Object.keys(_fbCtx.treeNodesByRoot).forEach(t => fbLoadTree(t));
+}
+
+// ── Live filter (search box on the right side of the nav row) ────────────────
+// Substring + case-insensitive match against entry names. Folders are NOT
+// pinned to the top when a filter is active — the user is searching for
+// a specific name and the folder/file distinction stops mattering. Empty
+// filter restores the default view.
+function fbFilterInput(s) {
+  _fbCtx.filter = (s || '').trim().toLowerCase();
+  fbRenderListing();
+}
+
+// ── Breadcrumb ───────────────────────────────────────────────────────────────
+
+function fbRenderCrumb() {
+  const el = document.getElementById('fbnew-crumb');
+  if (!el) return;
+  const parts = fileBrowserState.subpath ? fileBrowserState.subpath.split('/').filter(Boolean) : [];
+  let html = `<a onclick="fileBrowserNavigate('')" title="${esc(fileBrowserState.rootLabel)}">${esc(fileBrowserState.rootLabel)}</a>`;
   let built = '';
-  parts.forEach((p, i) => {
+  parts.forEach(p => {
     built = built ? built + '/' + p : p;
-    const path = built;
-    html += `<span class="sep">›</span>`;
-    if (i === parts.length - 1) {
-      html += `<span>${esc(p)}</span>`;
-    } else {
-      html += `<a onclick="fileBrowserNavigate('${esc(path)}')">${esc(p)}</a>`;
-    }
+    html += `<span class="fbnew-crumb-sep">›</span><a onclick="fileBrowserNavigate('${esc(built)}')" title="${esc(p)}">${esc(p)}</a>`;
   });
   el.innerHTML = html;
 }
 
+// ── Sort + Filter ────────────────────────────────────────────────────────────
 
-function sortFileBrowser(col) {
-  if (fileBrowserState.sortCol === col) {
-    fileBrowserState.sortDir = fileBrowserState.sortDir === 'asc' ? 'desc' : 'asc';
-  } else {
-    fileBrowserState.sortCol = col;
-    fileBrowserState.sortDir = 'asc';
+function _fbSortedEntries() {
+  let list = [...fileBrowserState.entries];
+  if (_fbCtx.filter) {
+    const q = _fbCtx.filter;
+    list = list.filter(e => (e.name || '').toLowerCase().includes(q));
   }
-  renderFileBrowserTable(fileBrowserState.entries);
-}
-
-function _fbSortedEntries(entries) {
-  const col = fileBrowserState.sortCol;
-  const dir = fileBrowserState.sortDir === 'asc' ? 1 : -1;
-  return [...entries].sort((a, b) => {
-    // Directories always group before files regardless of sort column.
+  const dir = _fbCtx.sortDir === 'asc' ? 1 : -1;
+  list.sort((a, b) => {
+    // Folders always at the top regardless of sort key.
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     let av, bv;
-    switch (col) {
-      case 'size':        av = a.size_bytes || 0; bv = b.size_bytes || 0; break;
-      case 'permissions': av = a.permissions;     bv = b.permissions;     break;
-      case 'owner':       av = a.owner;           bv = b.owner;           break;
-      case 'group':       av = a.group;           bv = b.group;           break;
-      case 'modified':    av = a.modified_unix;   bv = b.modified_unix;   break;
-      default:            av = a.name.toLowerCase(); bv = b.name.toLowerCase();
+    switch (_fbCtx.sortKey) {
+      case 'size':     av = a.size_bytes || 0; bv = b.size_bytes || 0; break;
+      case 'type':     av = (a.kind || '') + (a.name || '').toLowerCase(); bv = (b.kind || '') + (b.name || '').toLowerCase(); break;
+      case 'modified': av = a.modified_unix || 0; bv = b.modified_unix || 0; break;
+      case 'created':
+        // 0 sinks to the bottom regardless of direction.
+        av = a.created_unix || 0; bv = b.created_unix || 0;
+        if (!av && !bv) return _fbNameCollator.compare(a.name, b.name);
+        if (!av) return 1; if (!bv) return -1;
+        break;
+      case 'accessed': av = a.accessed_unix || 0; bv = b.accessed_unix || 0; break;
+      case 'owner':    return _fbNameCollator.compare(a.owner||'', b.owner||'') * dir;
+      case 'group':    return _fbNameCollator.compare(a.group||'', b.group||'') * dir;
+      default:         return _fbNameCollator.compare(a.name||'', b.name||'') * dir;
     }
     if (av < bv) return -1 * dir;
     if (av > bv) return  1 * dir;
-    return 0;
+    return _fbNameCollator.compare(a.name||'', b.name||'');
+  });
+  return list;
+}
+
+// ── Render listing (view-mode aware) ─────────────────────────────────────────
+
+function fbRenderListing() {
+  const host = document.getElementById('fbnew-listing');
+  if (!host) return;
+  host.dataset.view = _fbCtx.viewMode;
+  const sorted = _fbSortedEntries();
+  // Keep an ordered list of image entries for the viewer carousel.
+  _fbCtx.ivImages = sorted.filter(_fbIsImage).map(e => e.name);
+  // Also expose sorted entries on state so the context menu/drag-drop can map.
+  fileBrowserState.sortedEntries = sorted;
+  if (sorted.length === 0) {
+    host.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text-3);">Empty folder.</div>';
+    return;
+  }
+  if (_fbCtx.viewMode === 'list') {
+    host.innerHTML = _fbRenderListView(sorted);
+  } else if (_fbCtx.viewMode === 'tiles') {
+    host.innerHTML = _fbRenderTilesView(sorted);
+  } else {
+    host.innerHTML = _fbRenderIconsView(sorted, _fbCtx.viewMode);
+  }
+  fbUpdateToolbar();
+}
+
+function _fbFmtDate(unix) {
+  if (!unix) return '—';
+  const d = new Date(unix * 1000);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+function _fbRenderListView(entries) {
+  const head = `<div class="fb-list-head">
+    <span><input type="checkbox" id="fbnew-head-cb" onclick="fbToggleSelectAll(this.checked)"></span>
+    <span>Name</span>
+    <span>Size</span>
+    <span>Permissions</span>
+    <span>Owner</span>
+    <span>Modified</span>
+  </div>`;
+  const rows = entries.map((e, i) => {
+    const sel = _fbCtx.selection.has(e.name);
+    const icon = _fbIsImage(e) && _fbCtx.viewMode !== 'list'
+      ? `<img src="${_fbRawURL(fileBrowserState.root, _fbJoin(fileBrowserState.subpath, e.name))}" loading="lazy">`
+      : `<span class="fb-icon">${_fbIcon(e)}</span>`;
+    const size = e.is_dir ? '—' : formatFileSize(e.size_bytes || 0);
+    return `<div class="fb-list-row ${sel ? 'selected' : ''}" data-idx="${i}"
+        draggable="true"
+        onclick="fbRowClick(event, ${i})"
+        ondblclick="fbRowDblClick(${i})"
+        oncontextmenu="event.preventDefault();fbShowRowContextMenu(event, ${i})"
+        ondragstart="fbDragStart(event, ${i})">
+      <span><input type="checkbox" ${sel ? 'checked' : ''} onclick="event.stopPropagation();fbToggleSelect(${i}, this.checked)"></span>
+      <span class="fb-name">${icon}<span title="${esc(e.name)}">${esc(e.name)}</span></span>
+      <span class="fb-mono">${esc(size)}</span>
+      <span class="fb-mono">${esc(e.permissions)}</span>
+      <span class="fb-mono">${esc(e.owner)}</span>
+      <span class="fb-mono">${esc(_fbFmtDate(e.modified_unix))}</span>
+    </div>`;
+  }).join('');
+  return head + rows;
+}
+
+function _fbRenderTilesView(entries) {
+  return entries.map((e, i) => {
+    const sel = _fbCtx.selection.has(e.name);
+    const thumb = _fbIsImage(e)
+      ? `<img src="${_fbRawURL(fileBrowserState.root, _fbJoin(fileBrowserState.subpath, e.name))}" loading="lazy" alt="">`
+      : `${_fbIcon(e)}`;
+    const sub = e.is_dir ? '' : `${formatFileSize(e.size_bytes||0)}  ·  ${_fbFmtDate(e.modified_unix)}`;
+    return `<div class="fb-tile ${sel ? 'selected' : ''}" data-idx="${i}"
+        draggable="true"
+        onclick="fbRowClick(event, ${i})"
+        ondblclick="fbRowDblClick(${i})"
+        oncontextmenu="event.preventDefault();fbShowRowContextMenu(event, ${i})"
+        ondragstart="fbDragStart(event, ${i})">
+      <div class="fb-thumb">${thumb}</div>
+      <div class="fb-tilemeta">
+        <div class="fb-tilename" title="${esc(e.name)}">${esc(e.name)}</div>
+        <div class="fb-tilesub">${esc(sub)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _fbRenderIconsView(entries, mode) {
+  const sz = mode; // 'small' | 'medium' | 'large'
+  return entries.map((e, i) => {
+    const sel = _fbCtx.selection.has(e.name);
+    const thumb = _fbIsImage(e)
+      ? `<img src="${_fbRawURL(fileBrowserState.root, _fbJoin(fileBrowserState.subpath, e.name))}" loading="lazy" alt="">`
+      : _fbIcon(e);
+    return `<div class="fb-icon-cell ${sel ? 'selected' : ''}" data-idx="${i}" data-size="${sz}"
+        draggable="true"
+        onclick="fbRowClick(event, ${i})"
+        ondblclick="fbRowDblClick(${i})"
+        oncontextmenu="event.preventDefault();fbShowRowContextMenu(event, ${i})"
+        ondragstart="fbDragStart(event, ${i})">
+      <div class="fb-thumb">${thumb}</div>
+      <div class="fb-iconname" title="${esc(e.name)}">${esc(e.name)}</div>
+    </div>`;
+  }).join('');
+}
+
+function _fbJoin(base, name) {
+  if (!base) return name;
+  return base + '/' + name;
+}
+
+// ── Selection helpers ────────────────────────────────────────────────────────
+
+function fbRowClick(ev, idx) {
+  // Don't hijack clicks on the checkbox itself.
+  if (ev.target && ev.target.tagName === 'INPUT') return;
+  const entries = fileBrowserState.sortedEntries || [];
+  const e = entries[idx];
+  if (!e) return;
+  if (ev.shiftKey && _fbCtx.lastSelectionIndex >= 0) {
+    // Range select.
+    const a = Math.min(_fbCtx.lastSelectionIndex, idx);
+    const b = Math.max(_fbCtx.lastSelectionIndex, idx);
+    for (let i = a; i <= b; i++) _fbCtx.selection.add(entries[i].name);
+  } else if (ev.ctrlKey || ev.metaKey) {
+    if (_fbCtx.selection.has(e.name)) _fbCtx.selection.delete(e.name);
+    else _fbCtx.selection.add(e.name);
+    _fbCtx.lastSelectionIndex = idx;
+  } else {
+    _fbCtx.selection.clear();
+    _fbCtx.selection.add(e.name);
+    _fbCtx.lastSelectionIndex = idx;
+  }
+  fbRenderListing();
+}
+
+function fbToggleSelect(idx, on) {
+  const entries = fileBrowserState.sortedEntries || [];
+  const e = entries[idx];
+  if (!e) return;
+  if (on) _fbCtx.selection.add(e.name);
+  else    _fbCtx.selection.delete(e.name);
+  _fbCtx.lastSelectionIndex = idx;
+  fbRenderListing();
+}
+
+function fbToggleSelectAll(on) {
+  const entries = fileBrowserState.sortedEntries || [];
+  if (on) entries.forEach(e => _fbCtx.selection.add(e.name));
+  else    _fbCtx.selection.clear();
+  fbRenderListing();
+}
+
+function fbRowDblClick(idx) {
+  const entries = fileBrowserState.sortedEntries || [];
+  const e = entries[idx];
+  if (!e) return;
+  if (e.is_dir) {
+    const sub = _fbJoin(fileBrowserState.subpath, e.name);
+    fileBrowserNavigate(sub);
+    _fbCtx.treeOpen.add(sub);
+    _fbExpandTreeNode(sub);
+  } else if (_fbIsImage(e)) {
+    fbOpenImageViewer(e.name);
+  } else if (_fbIsPreviewableFile(e)) {
+    fbOpenFileViewer(e);
+  } else {
+    // Anything we can't preview: fall back to the Edit Ownership &
+    // Permissions modal. Index is into the unsorted entries list.
+    const realIdx = fileBrowserState.entries.findIndex(x => x.name === e.name);
+    if (realIdx >= 0) openFbEditModal(realIdx);
+  }
+}
+
+// ── Toolbar enable/disable + clipboard banner ────────────────────────────────
+
+function fbUpdateToolbar() {
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const selCount = _fbCtx.selection.size;
+  const has = (id, enabled, title) => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.disabled = !enabled;
+    if (title) b.title = title;
+  };
+  has('fbnew-btn-cut',  isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
+  has('fbnew-btn-copy', isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
+  has('fbnew-btn-paste', isAdmin && !!_fbCtx.clipboard, _fbCtx.clipboard ? '' : 'Clipboard empty');
+  has('fbnew-btn-del',  isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
+  has('fbnew-btn-mv',   isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
+  has('fbnew-btn-cpto', isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
+  has('fbnew-btn-edit', isAdmin && selCount === 1, selCount === 1 ? '' : 'Pick one entry');
+  // Download is gated by browse_files only — read-only verb, available
+  // to any role that can already see the directory listing. Disabled
+  // when the selection is empty or contains only folders (folder
+  // downloads aren't supported in v1; a follow-up release will add
+  // server-side tar streaming for that).
+  const sortedEntries = fileBrowserState.sortedEntries || [];
+  const selFiles = sortedEntries.filter(e => !e.is_dir && _fbCtx.selection.has(e.name)).length;
+  has('fbnew-btn-dl', selFiles > 0, selFiles > 0 ? '' : 'Select one or more files');
+  // Clipboard banner.
+  const cl = document.getElementById('fbnew-clipboard');
+  const txt = document.getElementById('fbnew-clipboard-text');
+  if (_fbCtx.clipboard) {
+    cl.style.display = '';
+    const verb = _fbCtx.clipboard.mode === 'cut' ? '✂ cut' : '📋 copied';
+    txt.textContent = `${_fbCtx.clipboard.items.length} item(s) ${verb} from ${_fbCtx.clipboard.rootLabel}/${_fbCtx.clipboard.subpath || ''}`;
+  } else {
+    cl.style.display = 'none';
+  }
+}
+
+// ── View + Sort dropdowns ────────────────────────────────────────────────────
+
+let _fbOpenDropdown = null;
+function _fbCloseAnyDropdown() {
+  if (_fbOpenDropdown && _fbOpenDropdown.parentNode) {
+    _fbOpenDropdown.parentNode.removeChild(_fbOpenDropdown);
+  }
+  _fbOpenDropdown = null;
+}
+
+function fbToggleViewMenu(ev) {
+  ev.stopPropagation();
+  if (_fbOpenDropdown && _fbOpenDropdown.dataset.kind === 'view') { _fbCloseAnyDropdown(); return; }
+  _fbCloseAnyDropdown();
+  const dd = document.createElement('div');
+  dd.className = 'fbnew-dropdown';
+  dd.dataset.kind = 'view';
+  dd.innerHTML = _FB_VIEW_LABELS.map(([k, l]) => `
+    <div class="fbnew-dropdown-item" onclick="fbSetView('${k}')">
+      <span class="fbnew-check">${_fbCtx.viewMode === k ? '✓' : ''}</span>
+      <span>${esc(l)}</span>
+    </div>`).join('');
+  document.body.appendChild(dd);
+  const r = ev.currentTarget.getBoundingClientRect();
+  dd.style.top  = (r.bottom + 4) + 'px';
+  dd.style.left = (r.right - dd.offsetWidth) + 'px';
+  _fbOpenDropdown = dd;
+}
+
+function fbToggleSortMenu(ev) {
+  ev.stopPropagation();
+  if (_fbOpenDropdown && _fbOpenDropdown.dataset.kind === 'sort') { _fbCloseAnyDropdown(); return; }
+  _fbCloseAnyDropdown();
+  const dd = document.createElement('div');
+  dd.className = 'fbnew-dropdown';
+  dd.dataset.kind = 'sort';
+  dd.innerHTML =
+    _FB_SORT_LABELS.map(([k, l]) => `
+      <div class="fbnew-dropdown-item" onclick="fbSetSortKey('${k}')">
+        <span class="fbnew-check">${_fbCtx.sortKey === k ? '✓' : ''}</span>
+        <span>${esc(l)}</span>
+      </div>`).join('') +
+    `<div class="fbnew-dropdown-divider"></div>` +
+    [['asc','Ascending'],['desc','Descending']].map(([k,l]) => `
+      <div class="fbnew-dropdown-item" onclick="fbSetSortDir('${k}')">
+        <span class="fbnew-check">${_fbCtx.sortDir === k ? '✓' : ''}</span>
+        <span>${esc(l)}</span>
+      </div>`).join('');
+  document.body.appendChild(dd);
+  const r = ev.currentTarget.getBoundingClientRect();
+  dd.style.top  = (r.bottom + 4) + 'px';
+  dd.style.left = (r.right - dd.offsetWidth) + 'px';
+  _fbOpenDropdown = dd;
+}
+
+function fbSetView(mode) {
+  _fbCtx.viewMode = mode;
+  try { localStorage.setItem('znas.fb.view', mode); } catch(_) {}
+  // Re-render in place — leave the menu open so the user can flip
+  // between modes without clicking the button each time.
+  fbRenderListing();
+  // Re-paint the checkmark in the open menu.
+  if (_fbOpenDropdown && _fbOpenDropdown.dataset.kind === 'view') {
+    _fbOpenDropdown.innerHTML = _FB_VIEW_LABELS.map(([k, l]) => `
+      <div class="fbnew-dropdown-item" onclick="fbSetView('${k}')">
+        <span class="fbnew-check">${_fbCtx.viewMode === k ? '✓' : ''}</span>
+        <span>${esc(l)}</span>
+      </div>`).join('');
+  }
+}
+function fbSetSortKey(k) {
+  _fbCtx.sortKey = k;
+  try { localStorage.setItem('znas.fb.sort', k); } catch(_) {}
+  fbRenderListing();
+  if (_fbOpenDropdown && _fbOpenDropdown.dataset.kind === 'sort') fbToggleSortMenu({ stopPropagation:()=>{}, currentTarget:document.getElementById('fbnew-sort-btn') });
+}
+function fbSetSortDir(d) {
+  _fbCtx.sortDir = d;
+  try { localStorage.setItem('znas.fb.sortdir', d); } catch(_) {}
+  fbRenderListing();
+  if (_fbOpenDropdown && _fbOpenDropdown.dataset.kind === 'sort') fbToggleSortMenu({ stopPropagation:()=>{}, currentTarget:document.getElementById('fbnew-sort-btn') });
+}
+
+// ── +Folder inline form ──────────────────────────────────────────────────────
+
+function fbMkdirPrompt() {
+  const f = document.getElementById('fbnew-mkdir-form');
+  f.style.display = '';
+  const inp = document.getElementById('fbnew-mkdir-name');
+  inp.value = '';
+  document.getElementById('fbnew-mkdir-err').textContent = '';
+  document.getElementById('fbnew-mkdir-ok').disabled = true;
+  setTimeout(() => inp.focus(), 0);
+}
+function fbMkdirCancel() {
+  document.getElementById('fbnew-mkdir-form').style.display = 'none';
+}
+function fbMkdirInput() {
+  const inp = document.getElementById('fbnew-mkdir-name');
+  const err = document.getElementById('fbnew-mkdir-err');
+  const ok  = document.getElementById('fbnew-mkdir-ok');
+  const v = inp.value.trim();
+  let msg = '';
+  if (v === '' || v === '.' || v === '..') msg = '';
+  else if (v.length > 255) msg = 'Name too long (max 255 chars)';
+  else if (v.includes('/')) msg = 'Name cannot contain "/"';
+  err.textContent = msg;
+  ok.disabled = !v || !!msg || v === '.' || v === '..';
+}
+async function fbMkdirSubmit() {
+  const v = document.getElementById('fbnew-mkdir-name').value.trim();
+  if (!v) return;
+  try {
+    const r = await fetch('/api/files/mkdir', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ root: fileBrowserState.root, subpath: fileBrowserState.subpath, name: v }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    fbMkdirCancel();
+    await fileBrowserNavigate(fileBrowserState.subpath);
+    await fbLoadTree();
+  } catch (e) {
+    document.getElementById('fbnew-mkdir-err').textContent = e.message;
+  }
+}
+
+// ── Clipboard (Cut / Copy / Paste) ───────────────────────────────────────────
+
+function _fbSelectedNames() { return Array.from(_fbCtx.selection); }
+
+function fbCut() {
+  if (_fbCtx.selection.size === 0) return;
+  _fbCtx.clipboard = {
+    mode: 'cut',
+    root: fileBrowserState.root,
+    rootLabel: fileBrowserState.rootLabel,
+    subpath: fileBrowserState.subpath,
+    items: _fbSelectedNames(),
+  };
+  fbUpdateToolbar();
+}
+function fbCopyClip() {
+  if (_fbCtx.selection.size === 0) return;
+  _fbCtx.clipboard = {
+    mode: 'copy',
+    root: fileBrowserState.root,
+    rootLabel: fileBrowserState.rootLabel,
+    subpath: fileBrowserState.subpath,
+    items: _fbSelectedNames(),
+  };
+  fbUpdateToolbar();
+}
+function fbClearClipboard() { _fbCtx.clipboard = null; fbUpdateToolbar(); }
+
+async function fbPaste() {
+  const cb = _fbCtx.clipboard;
+  if (!cb) return;
+  const verb = cb.mode === 'cut' ? 'move' : 'copy';
+  await _fbPasteRun(verb, cb, fileBrowserState.root, fileBrowserState.subpath, false);
+}
+
+async function _fbPasteRun(verb, cb, dstRoot, dstSub, overwrite) {
+  const body = {
+    src_root: cb.root,
+    src_subpaths: cb.items.map(n => cb.subpath ? cb.subpath + '/' + n : n),
+    dst_root: dstRoot,
+    dst_subpath: dstSub,
+    overwrite,
+  };
+  try {
+    const r = await fetch('/api/files/' + verb, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = (await r.json()).error || 'failed';
+      // If the error mentions "exists" and we didn't already retry with
+      // overwrite, ask the user.
+      if (!overwrite && /exist/i.test(err)) {
+        showConfirm({
+          title: 'Overwrite existing entries?',
+          body: 'One or more destinations already exist. Overwrite them?',
+          confirmText: 'Overwrite', danger: true,
+          onConfirm: () => _fbPasteRun(verb, cb, dstRoot, dstSub, true),
+        });
+        return;
+      }
+      throw new Error(err);
+    }
+    if (verb === 'move') _fbCtx.clipboard = null;
+    await fileBrowserNavigate(fileBrowserState.subpath);
+    await fbLoadTree();
+  } catch (e) {
+    showToast(verb + ' failed: ' + e.message, 'error');
+  }
+}
+
+// ── Delete ───────────────────────────────────────────────────────────────────
+
+function fbDelete() {
+  if (_fbCtx.selection.size === 0) return;
+  const names = _fbSelectedNames();
+  const list  = names.slice(0, 8).map(n => '<code>' + esc(n) + '</code>').join('<br>') +
+                (names.length > 8 ? `<br>… and ${names.length - 8} more` : '');
+  showConfirm({
+    title: `Delete ${names.length} item(s)?`,
+    body:  `<div style="font-size:12.5px;line-height:1.6;">${list}</div><div style="margin-top:10px;color:var(--text-3);font-size:11.5px;">This cannot be undone.</div>`,
+    confirmText: 'Delete', danger: true,
+    onConfirm: async () => {
+      const sub = fileBrowserState.subpath;
+      const subpaths = names.map(n => sub ? sub + '/' + n : n);
+      try {
+        const r = await fetch('/api/files/delete', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ root: fileBrowserState.root, subpaths, recursive: true }),
+        });
+        if (!r.ok) throw new Error((await r.json()).error || 'failed');
+        await fileBrowserNavigate(fileBrowserState.subpath);
+        await fbLoadTree();
+      } catch (e) { showToast('Delete failed: ' + e.message, 'error'); }
+    }
   });
 }
 
-function _fbRenderThead(isAdmin) {
-  const cols = [
-    { key: 'name',        label: 'Name' },
-    { key: 'size',        label: 'Size' },
-    { key: 'permissions', label: 'Permissions' },
-    { key: 'owner',       label: 'Owner' },
-    { key: 'group',       label: 'Group' },
-    { key: 'modified',    label: 'Modified' },
-  ];
-  const arrow = dir => dir === 'asc' ? ' ▲' : ' ▼';
-  const ths = cols.map(c => {
-    const active = fileBrowserState.sortCol === c.key;
-    const indicator = active ? `<span style="color:var(--accent-2);font-size:.7em;">${arrow(fileBrowserState.sortDir)}</span>` : '';
-    return `<th style="cursor:pointer;user-select:none;white-space:nowrap;" onclick="sortFileBrowser('${c.key}')">${c.label}${indicator}</th>`;
-  }).join('');
-  document.getElementById('fb-thead').innerHTML = `<tr>${ths}${isAdmin ? '<th></th>' : ''}</tr>`;
+// ── Download (multiple files → one browser download per file) ────────────────
+//
+// Browsers happily fire many independent downloads from a single user
+// gesture. We create a hidden <a download> per file, click() it, then
+// move on after a small delay so the browser doesn't batch the
+// notifications into a single "this site is trying to download
+// multiple files" prompt. Folders are skipped (a future release can
+// add server-side tar/zip streaming if a real use case shows up).
+function fbDownloadSelection() {
+  const sortedEntries = fileBrowserState.sortedEntries || [];
+  const sel = sortedEntries.filter(e => !e.is_dir && _fbCtx.selection.has(e.name));
+  if (sel.length === 0) return;
+  let i = 0;
+  function tick() {
+    if (i >= sel.length) return;
+    const e = sel[i++];
+    const sub = _fbJoin(fileBrowserState.subpath, e.name);
+    const a = document.createElement('a');
+    a.href = '/api/files/download?root=' + encodeURIComponent(fileBrowserState.root) +
+             '&subpath=' + encodeURIComponent(sub);
+    a.download = e.name;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // ~120 ms between clicks is enough for Chrome to keep them as
+    // distinct downloads; tighter spacing sometimes collapses them.
+    if (i < sel.length) setTimeout(tick, 120);
+  }
+  tick();
+  if (sel.length > 1) showToast(`Starting ${sel.length} downloads…`, 'success');
 }
 
-function renderFileBrowserTable(entries) {
+// ── Edit (single selection → existing chown/chmod modal) ─────────────────────
+
+function fbEditSelection() {
+  if (_fbCtx.selection.size !== 1) return;
+  const name = _fbSelectedNames()[0];
+  const idx = fileBrowserState.entries.findIndex(e => e.name === name);
+  if (idx >= 0) openFbEditModal(idx);
+}
+
+// ── Move / Copy destination picker (small sub-modal) ─────────────────────────
+
+function fbMoveToDialog() { _fbOpenDestPicker('move'); }
+function fbCopyToDialog() { _fbOpenDestPicker('copy'); }
+
+function _fbOpenDestPicker(verb) {
+  if (_fbCtx.selection.size === 0) return;
+  const names = _fbSelectedNames();
+  // Lightweight overlay — pinned over the modal, picks a tree node.
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9100;display:flex;align-items:center;justify-content:center;';
+  overlay.onclick = (e) => { if (e.target === overlay) document.body.removeChild(overlay); };
+  const box = document.createElement('div');
+  box.style.cssText = 'width:480px;max-height:70vh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;';
+  box.innerHTML = `
+    <div style="padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:13.5px;">
+      ${verb === 'move' ? '📂 Move' : '📋 Copy'} ${names.length} item(s) to…
+    </div>
+    <div id="fb-dest-tree" style="flex:1;overflow:auto;padding:6px 4px;font-size:12.5px;"></div>
+    <div style="padding:8px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;">
+      <span style="color:var(--text-3);font-size:11.5px;flex:1;">Destination:</span>
+      <code id="fb-dest-path" style="color:var(--text-2);font-size:11.5px;flex:1;text-align:right;">/</code>
+      <button class="btn btn-ghost" id="fb-dest-cancel">Cancel</button>
+      <button class="btn btn-primary" id="fb-dest-ok" disabled>${verb === 'move' ? 'Move' : 'Copy'}</button>
+    </div>`;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const dstTreeHost = box.querySelector('#fb-dest-tree');
+  const dstOkBtn    = box.querySelector('#fb-dest-ok');
+  const dstPathEl   = box.querySelector('#fb-dest-path');
+  // Destination defaults to the current folder. Track both root token
+  // and subpath so the user can target any known root.
+  let dstRoot = fileBrowserState.root;
+  let dstRootLabel = fileBrowserState.rootLabel;
+  let dstSub = fileBrowserState.subpath;
+  dstPathEl.textContent = (dstRootLabel || '') + ' / ' + (dstSub || '');
+  // Render every known root, each lazily expandable like the main tree.
+  function repaint() {
+    let html = '';
+    (_fbCtx.allRoots || []).forEach(r => {
+      const tree = _fbCtx.treeNodesByRoot[r.token];
+      const isSelHere = (dstRoot === r.token && dstSub === '');
+      html += `<div class="fbnew-tree-node ${isSelHere ? 'selected' : ''}" data-root="${esc(r.token)}" data-sub="">
+        <span class="fbnew-tree-chevron">${tree ? '▾' : '▸'}</span>
+        <span class="fbnew-tree-icon">📂</span>
+        <span style="font-weight:600;">${esc(r.label)}</span>
+      </div>`;
+      if (tree && tree.children && tree.children.length) {
+        html += children(tree.children, 1, r.token);
+      }
+    });
+    function children(nodes, prefix, rootToken) {
+      const sorted = [...nodes].sort((a,b) => _fbNameCollator.compare(a.name, b.name));
+      return sorted.map(n => {
+        const sel = (dstRoot === rootToken && dstSub === n.subpath);
+        return `<div class="fbnew-tree-node ${sel ? 'selected' : ''}" data-root="${esc(rootToken)}" data-sub="${esc(n.subpath)}" style="padding-left:${prefix*14+6}px;">
+          <span class="fbnew-tree-icon">📁</span>
+          <span>${esc(n.name)}</span>
+        </div>` + (n.children ? children(n.children, prefix+1, rootToken) : '');
+      }).join('');
+    }
+    dstTreeHost.innerHTML = html;
+    dstTreeHost.querySelectorAll('[data-root]').forEach(el => {
+      el.onclick = async () => {
+        dstRoot = el.dataset.root;
+        dstSub  = el.dataset.sub || '';
+        const r = (_fbCtx.allRoots || []).find(x => x.token === dstRoot);
+        dstRootLabel = r ? r.label : dstRoot;
+        dstPathEl.textContent = dstRootLabel + ' / ' + dstSub;
+        dstOkBtn.disabled = false;
+        // Lazy-load if needed.
+        if (!_fbCtx.treeNodesByRoot[dstRoot]) {
+          await fbLoadTree(dstRoot);
+        }
+        repaint();
+      };
+    });
+  }
+  repaint();
+  dstOkBtn.onclick = async () => {
+    const cb = {
+      mode: verb === 'move' ? 'cut' : 'copy',
+      root: fileBrowserState.root,
+      rootLabel: fileBrowserState.rootLabel,
+      subpath: fileBrowserState.subpath,
+      items: names,
+    };
+    document.body.removeChild(overlay);
+    await _fbPasteRun(verb, cb, dstRoot, dstSub, false);
+  };
+  box.querySelector('#fb-dest-cancel').onclick = () => document.body.removeChild(overlay);
+  dstOkBtn.disabled = false; // current folder is a valid default
+}
+
+// ── Keyboard shortcuts ───────────────────────────────────────────────────────
+
+function _fbOnKeyDown(ev) {
+  const modal = document.getElementById('modal-file-browser');
+  if (!modal || modal.classList.contains('hidden')) return;
+  // Don't hijack when typing in an input (mkdir name).
+  if (ev.target && (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA')) return;
+  if (ev.key === 'Escape') {
+    if (_fbOpenDropdown) { _fbCloseAnyDropdown(); ev.preventDefault(); return; }
+    _fbCtx.selection.clear(); fbRenderListing(); return;
+  }
+  if (ev.key === 'F11') {
+    fbToggleMaximize(); ev.preventDefault(); return;
+  }
+  if (ev.key === 'F5') { fbRefresh(); ev.preventDefault(); return; }
+  if (ev.altKey && ev.key === 'ArrowLeft')  { fbHistoryBack();    ev.preventDefault(); return; }
+  if (ev.altKey && ev.key === 'ArrowRight') { fbHistoryForward(); ev.preventDefault(); return; }
+  if (ev.key === 'Delete') { fbDelete(); ev.preventDefault(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a') {
+    fbToggleSelectAll(true); ev.preventDefault(); return;
+  }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'x') { fbCut(); ev.preventDefault(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'c') { fbCopyClip(); ev.preventDefault(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') { fbPaste(); ev.preventDefault(); return; }
+}
+
+// ── Right-click context menu ─────────────────────────────────────────────────
+
+function fbHideContextMenu() {
+  const m = document.getElementById('fb-context-menu');
+  if (m) m.style.display = 'none';
+}
+
+function fbShowRowContextMenu(ev, idx) {
+  ev.preventDefault();
+  const entries = fileBrowserState.sortedEntries || [];
+  const e = entries[idx];
+  if (!e) return;
+  // Effective selection rule: right-clicking an unselected row first
+  // replaces the selection with that one entry, then opens the menu.
+  if (!_fbCtx.selection.has(e.name)) {
+    _fbCtx.selection.clear();
+    _fbCtx.selection.add(e.name);
+    _fbCtx.lastSelectionIndex = idx;
+    fbRenderListing();
+  }
   const isAdmin = currentUser && currentUser.role === 'admin';
-  _fbRenderThead(isAdmin);
-  const tbody = document.getElementById('fb-table-body');
+  const items = [];
+  items.push({ label: 'Open', handler: 'fbRowDblClick('+idx+')' });
+  if (_fbIsImage(e)) items.push({ label: 'Open in image viewer', handler: 'fbOpenImageViewer('+JSON.stringify(e.name)+')' });
+  items.push({ divider: true });
+  items.push({ label: '✂ Cut',  shortcut: 'Ctrl-X', enabled: isAdmin, handler: 'fbCut()' });
+  items.push({ label: '📋 Copy', shortcut: 'Ctrl-C', enabled: isAdmin, handler: 'fbCopyClip()' });
+  items.push({ label: '📌 Paste', shortcut: 'Ctrl-V', enabled: isAdmin && !!_fbCtx.clipboard, handler: 'fbPaste()' });
+  items.push({ divider: true });
+  items.push({ label: '📂 Move to…', enabled: isAdmin, handler: 'fbMoveToDialog()' });
+  items.push({ label: '📋 Copy to…', enabled: isAdmin, handler: 'fbCopyToDialog()' });
+  items.push({ label: '✎ Edit permissions', enabled: isAdmin && _fbCtx.selection.size === 1, handler: 'fbEditSelection()' });
+  items.push({ divider: true });
+  items.push({ label: '⬇ Download', enabled: !e.is_dir, handler: 'fbDownloadSelection()' });
+  items.push({ label: '🗑 Delete', shortcut: 'Del', enabled: isAdmin, handler: 'fbDelete()' });
+  _fbRenderContextMenu(ev, items);
+}
 
-  const dirInfo = fileBrowserState.currentDirInfo;
-  const dotDate = dirInfo ? new Date(dirInfo.modified_unix * 1000) : null;
-  const dotModified = dotDate
-    ? dotDate.getFullYear() + '-' + String(dotDate.getMonth()+1).padStart(2,'0') + '-' + String(dotDate.getDate()).padStart(2,'0')
-    : '—';
-  const dotMenuCell = isAdmin
-    ? `<td style="text-align:right;"><button class="row-menu-btn" onclick="openFbEditModal(-1)" title="Edit ownership &amp; permissions" style="font-size:14px;">✏️</button></td>`
-    : '';
-  const ownerStr  = dirInfo ? `${esc(dirInfo.owner)} (${dirInfo.owner_uid})` : '—';
-  const groupStr  = dirInfo ? `${esc(dirInfo.group)} (${dirInfo.group_gid})` : '—';
-  const dotRow = `<tr style="color:var(--text-2);">
-    <td style="font-family:monospace;font-size:13px;">📁 .</td>
-    <td style="font-family:monospace;font-size:12px;">—</td>
-    <td style="font-family:monospace;font-size:12px;">${dirInfo ? esc(dirInfo.permissions) : '—'}</td>
-    <td style="font-size:12px;">${ownerStr}</td>
-    <td style="font-size:12px;">${groupStr}</td>
-    <td style="font-size:12px;">${dotModified}</td>
-    ${dotMenuCell}
-  </tr>`;
+function fbShowTreeContextMenu(ev, encToken, encSubpath) {
+  ev.preventDefault();
+  const rootToken = decodeURIComponent(encToken);
+  const sub = decodeURIComponent(encSubpath || '');
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const items = [
+    { label: 'Open', handler: `fbTreeClick('${esc(encodeURIComponent(rootToken))}','${esc(encodeURIComponent(sub))}')` },
+    { divider: true },
+    { label: '📌 Paste here', enabled: isAdmin && !!_fbCtx.clipboard, handler: `_fbPasteHere('${esc(encodeURIComponent(rootToken))}','${esc(encodeURIComponent(sub))}')` },
+    { label: '+ New subfolder', enabled: isAdmin, handler: `_fbMkdirIn('${esc(encodeURIComponent(rootToken))}','${esc(encodeURIComponent(sub))}')` },
+  ];
+  _fbRenderContextMenu(ev, items);
+}
 
-  if (!entries || entries.length === 0) {
-    tbody.innerHTML = dotRow;
+function _fbPasteHere(encToken, encSub) {
+  if (!_fbCtx.clipboard) return;
+  const verb = _fbCtx.clipboard.mode === 'cut' ? 'move' : 'copy';
+  _fbPasteRun(verb, _fbCtx.clipboard, decodeURIComponent(encToken), decodeURIComponent(encSub || ''), false);
+}
+async function _fbMkdirIn(encToken, encSub) {
+  // Jump to that root/folder (using the tree-click path so root swap is
+  // handled), then open the inline mkdir prompt.
+  await fbTreeClick(encToken, encSub);
+  fbMkdirPrompt();
+}
+
+function _fbRenderContextMenu(ev, items) {
+  const m = document.getElementById('fb-context-menu');
+  if (!m) return;
+  m.innerHTML = items.map(it => {
+    if (it.divider) return '<div class="fb-ctx-divider"></div>';
+    const dis = it.enabled === false ? 'disabled' : '';
+    const onclick = it.enabled === false ? '' : `onclick="${esc(it.handler)};fbHideContextMenu();"`;
+    return `<div class="fb-ctx-item ${dis}" ${onclick}>
+      <span>${it.label}</span>
+      <span class="fb-ctx-shortcut">${esc(it.shortcut || '')}</span>
+    </div>`;
+  }).join('');
+  m.style.display = 'block';
+  // Position; flip above/left when near the viewport edge.
+  const r = m.getBoundingClientRect();
+  let x = ev.clientX, y = ev.clientY;
+  if (x + r.width  > window.innerWidth)  x = window.innerWidth  - r.width  - 4;
+  if (y + r.height > window.innerHeight) y = window.innerHeight - r.height - 4;
+  m.style.left = x + 'px';
+  m.style.top  = y + 'px';
+}
+
+// ── Drag-and-drop ────────────────────────────────────────────────────────────
+
+let _fbDrag = null; // { mode:'within'|'cross', items:[], srcRoot, srcSub }
+
+function fbDragStart(ev, idx) {
+  const entries = fileBrowserState.sortedEntries || [];
+  const e = entries[idx];
+  if (!e) return;
+  // If the dragged row isn't part of the selection, the selection
+  // is first replaced with that one entry (Windows convention).
+  if (!_fbCtx.selection.has(e.name)) {
+    _fbCtx.selection.clear();
+    _fbCtx.selection.add(e.name);
+    _fbCtx.lastSelectionIndex = idx;
+    fbRenderListing();
+  }
+  const items = _fbSelectedNames();
+  _fbDrag = {
+    items,
+    srcRoot: fileBrowserState.root,
+    srcRootLabel: fileBrowserState.rootLabel,
+    srcSub: fileBrowserState.subpath,
+  };
+  ev.dataTransfer.effectAllowed = 'copyMove';
+  ev.dataTransfer.setData('text/plain', items.join('\n'));
+  // Build a stacked ghost.
+  try {
+    const c = document.createElement('canvas');
+    c.width = 56; c.height = 56;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(10,132,255,0.85)';
+    g.fillRect(8, 8, 40, 40);
+    g.fillStyle = 'rgba(10,132,255,0.55)';
+    g.fillRect(4, 4, 40, 40);
+    g.fillStyle = '#fff';
+    g.font = 'bold 14px sans-serif';
+    g.fillText(String(items.length), 24, 30);
+    ev.dataTransfer.setDragImage(c, 28, 28);
+  } catch (_) {}
+}
+
+function fbHandleDrop(ev, encToken, encSubpath) {
+  ev.preventDefault();
+  if (!_fbDrag) return;
+  // The drop target carries its own root token (multi-root tree). When
+  // the drop and the drag are in the same root, drop-into-self guard
+  // still applies; cross-root drops can never be a self-drop.
+  const dstRoot = decodeURIComponent(encToken);
+  const dstSub  = decodeURIComponent(encSubpath || '');
+  if (dstRoot === _fbDrag.srcRoot) {
+    for (const it of _fbDrag.items) {
+      const srcAbs = (_fbDrag.srcSub ? _fbDrag.srcSub + '/' : '') + it;
+      if (dstSub === srcAbs || dstSub.startsWith(srcAbs + '/')) {
+        showToast('Cannot drop a folder into itself', 'error');
+        _fbDrag = null; return;
+      }
+    }
+  }
+  // Verb: Move within same root by default; Copy across roots (matches
+  // Windows Explorer between drives). Shift forces Move, Ctrl forces Copy.
+  let verb = (dstRoot === _fbDrag.srcRoot) ? 'move' : 'copy';
+  if (ev.shiftKey) verb = 'move';
+  if (ev.ctrlKey || ev.metaKey) verb = 'copy';
+  const cb = {
+    mode: verb === 'move' ? 'cut' : 'copy',
+    root: _fbDrag.srcRoot,
+    rootLabel: _fbDrag.srcRootLabel,
+    subpath: _fbDrag.srcSub,
+    items: _fbDrag.items,
+  };
+  _fbDrag = null;
+  _fbPasteRun(verb, cb, dstRoot, dstSub, false);
+}
+
+// ── Generic file viewer (PDF / text / markdown) ──────────────────────────────
+
+function fbOpenFileViewer(entry) {
+  const name = entry.name;
+  const sub = _fbJoin(fileBrowserState.subpath, name);
+  const url = _fbRawURL(fileBrowserState.root, sub);
+  const ext = _fbExt(name);
+  document.getElementById('fv-name').textContent = name;
+  document.getElementById('fv-meta').textContent =
+    `${formatFileSize(entry.size_bytes || 0)}  ·  ${esc(entry.permissions || '')}`;
+  const body = document.getElementById('fv-body');
+  body.innerHTML = '<div style="padding:24px;color:var(--text-3);">Loading…</div>';
+  document.getElementById('modal-fb-file-viewer').classList.remove('hidden');
+  document.addEventListener('keydown', _fbFvKeyDown);
+
+  if (ext === 'pdf') {
+    // Browser-native PDF viewer.
+    body.innerHTML = `<iframe src="${esc(url)}" title="${esc(name)}"></iframe>`;
     return;
   }
-  const sorted = _fbSortedEntries(entries);
-  tbody.innerHTML = dotRow + sorted.map((e) => {
-    const origIdx = fileBrowserState.entries.indexOf(e);
-    const icon = e.is_dir ? '📁' : '📄';
-    const size = e.is_dir ? '—' : formatFileSize(e.size_bytes);
-    const date = new Date(e.modified_unix * 1000);
-    const modified = date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
-    const subP = esc((fileBrowserState.subpath ? fileBrowserState.subpath + '/' : '') + e.name);
-    const nameCell = e.is_dir
-      ? `<a class="fb-name-link" onclick="fileBrowserNavigate('${subP}')">${icon} ${esc(e.name)}</a>`
-      : `${icon} ${esc(e.name)}`;
-    const menuCell = isAdmin
-      ? `<td style="text-align:right;"><button class="row-menu-btn" onclick="openFbEditModal(${origIdx})" title="Edit ownership &amp; permissions" style="font-size:14px;">✏️</button></td>`
-      : '';
-    const ownerCell = `${esc(e.owner)} (${e.owner_uid})`;
-    const groupCell = `${esc(e.group)} (${e.group_gid})`;
-    return `<tr>
-      <td>${nameCell}</td>
-      <td style="font-family:monospace;font-size:12px;">${esc(size)}</td>
-      <td style="font-family:monospace;font-size:12px;">${esc(e.permissions)}</td>
-      <td style="font-size:12px;">${ownerCell}</td>
-      <td style="font-size:12px;">${groupCell}</td>
-      <td style="font-size:12px;">${esc(modified)}</td>
-      ${menuCell}
-    </tr>`;
-  }).join('');
+  // Text / source / markdown. Fetch and render client-side.
+  fetch(url).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  }).then(txt => {
+    if (ext === 'md' || ext === 'markdown') {
+      body.innerHTML = `<div class="fv-md">${_fbRenderMarkdown(txt)}</div>`;
+    } else {
+      body.innerHTML = `<pre class="fv-text">${esc(txt)}</pre>`;
+    }
+  }).catch(e => {
+    body.innerHTML = `<div style="padding:24px;color:var(--accent-danger);">Failed to load: ${esc(e.message)}</div>`;
+  });
+}
+
+function fbCloseFileViewer() {
+  document.getElementById('modal-fb-file-viewer').classList.add('hidden');
+  document.removeEventListener('keydown', _fbFvKeyDown);
+}
+
+function _fbFvKeyDown(ev) {
+  if (ev.key === 'Escape') { fbCloseFileViewer(); ev.preventDefault(); }
+}
+
+// _fbRenderMarkdown is a deliberately tiny renderer — handles the
+// constructs README.md files actually use (headings, bold/italic,
+// code, code blocks, lists, blockquotes, horizontal rules, links).
+// We escape HTML first so the input can't inject scripts; then apply
+// the patterns. Anything fancier than that (tables, footnotes, etc.)
+// renders as plain text, which is fine for a built-in preview.
+function _fbRenderMarkdown(src) {
+  let s = esc(src);
+  // Fenced code blocks ``` … ``` (must come before inline code).
+  s = s.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code.replace(/^\n/, '')}</code></pre>`);
+  // Headings — process before bold/italic so the # markers don't get eaten.
+  s = s.replace(/^(#{1,6})\s+(.+)$/gm, (_, h, t) => `<h${h.length}>${t}</h${h.length}>`);
+  // Horizontal rule
+  s = s.replace(/^---+\s*$/gm, '<hr>');
+  // Blockquotes (single line for simplicity)
+  s = s.replace(/^&gt;\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+  // Bullet lists
+  s = s.replace(/(^[-*]\s+.+(?:\n[-*]\s+.+)*)/gm, m => {
+    const items = m.split('\n').map(l => l.replace(/^[-*]\s+(.+)/, '<li>$1</li>')).join('');
+    return '<ul>' + items + '</ul>';
+  });
+  // Numbered lists
+  s = s.replace(/(^\d+\.\s+.+(?:\n\d+\.\s+.+)*)/gm, m => {
+    const items = m.split('\n').map(l => l.replace(/^\d+\.\s+(.+)/, '<li>$1</li>')).join('');
+    return '<ol>' + items + '</ol>';
+  });
+  // Inline code `x`
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  // Bold + italic. Bold first so **x** doesn't get eaten by *x*.
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+  // Links [text](url) — only http(s) and relative paths are linked.
+  s = s.replace(/\[([^\]]+)\]\(((?:https?:|\/|\.\/|\.\.\/|#)[^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // Paragraphs: split on blank lines; lines starting with a block tag are left alone.
+  s = s.split(/\n\n+/).map(p => {
+    const t = p.trim();
+    if (!t) return '';
+    if (/^<(h\d|ul|ol|li|pre|hr|blockquote|p)\b/i.test(t)) return p;
+    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+  }).join('\n');
+  return s;
+}
+
+// ── Image viewer ─────────────────────────────────────────────────────────────
+
+function fbOpenImageViewer(name) {
+  const i = _fbCtx.ivImages.indexOf(name);
+  if (i < 0) return;
+  _fbCtx.ivIndex = i;
+  _fbShowCurrentImage();
+  document.getElementById('modal-fb-image-viewer').classList.remove('hidden');
+  document.addEventListener('keydown', _fbIvKeyDown);
+}
+function fbCloseImageViewer() {
+  document.getElementById('modal-fb-image-viewer').classList.add('hidden');
+  document.removeEventListener('keydown', _fbIvKeyDown);
+}
+function fbImageViewerPrev() {
+  if (_fbCtx.ivIndex > 0) { _fbCtx.ivIndex--; _fbShowCurrentImage(); }
+}
+function fbImageViewerNext() {
+  if (_fbCtx.ivIndex < _fbCtx.ivImages.length - 1) { _fbCtx.ivIndex++; _fbShowCurrentImage(); }
+}
+function _fbIvKeyDown(ev) {
+  if (ev.key === 'Escape') { fbCloseImageViewer(); ev.preventDefault(); }
+  if (ev.key === 'ArrowLeft')  { fbImageViewerPrev(); ev.preventDefault(); }
+  if (ev.key === 'ArrowRight') { fbImageViewerNext(); ev.preventDefault(); }
+}
+function _fbShowCurrentImage() {
+  const name = _fbCtx.ivImages[_fbCtx.ivIndex];
+  const sub = _fbJoin(fileBrowserState.subpath, name);
+  const img = document.getElementById('iv-img');
+  img.src = _fbRawURL(fileBrowserState.root, sub);
+  img.onload = () => {
+    document.getElementById('iv-meta').textContent = `${img.naturalWidth}×${img.naturalHeight}`;
+  };
+  document.getElementById('iv-name').textContent = name;
+  document.getElementById('iv-meta').textContent = '';
+  document.getElementById('iv-counter').textContent = `${_fbCtx.ivIndex + 1} / ${_fbCtx.ivImages.length}`;
+  document.getElementById('iv-prev').disabled = _fbCtx.ivIndex <= 0;
+  document.getElementById('iv-prev-hdr').disabled = _fbCtx.ivIndex <= 0;
+  document.getElementById('iv-next').disabled = _fbCtx.ivIndex >= _fbCtx.ivImages.length - 1;
 }
 
 async function openFbEditModal(entryIdx) {
@@ -47040,7 +49148,9 @@ function renderNetworkingNav(nets) {
       ? `<span class="nav-dot" style="background:#3fb950;"></span>`
       : `<span class="nav-dot" style="background:#6e7681;"></span>`;
     const label = n.description || n.name;
-    return `<button class="nav-compute-instance" id="nav-bridge-${esc(n.name)}" title="${esc(n.description ? n.description+' ('+n.name+')' : n.name)}" onclick='openBridgeDetail(${JSON.stringify(n.name)})'>
+    return `<button class="nav-compute-instance" id="nav-bridge-${esc(n.name)}" title="${esc(n.description ? n.description+' ('+n.name+')' : n.name)}"
+        onclick='openBridgeDetail(${JSON.stringify(n.name)})'
+        oncontextmenu='event.preventDefault();_navContextMenuFor(event,"networking",${JSON.stringify(n.name)})'>
       <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75;"><path d="M6 2a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm-1 0a1 1 0 1 0-2 0 1 1 0 0 0 2 0zm9 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm-1 0a1 1 0 1 0-2 0 1 1 0 0 0 2 0zM6 14a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm-1 0a1 1 0 1 0-2 0 1 1 0 0 0 2 0zm4-6a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm-1 0a1 1 0 1 0-2 0 1 1 0 0 0 2 0z"/><path fill-rule="evenodd" d="M3 3.5A.5.5 0 0 1 3.5 3h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 3.5zm-1 5A.5.5 0 0 1 2.5 8h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 2 8.5zm1 5A.5.5 0 0 1 3.5 13h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5z"/></svg>
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${esc(label)}</span>
       ${dot}
@@ -47477,7 +49587,9 @@ function renderDatastoresNav(pools) {
       ? `<span class="nav-dot" style="background:#3fb950;"></span>`
       : `<span class="nav-dot" style="background:#6e7681;"></span>`;
     const label = p.description || p.name;
-    return `<button class="nav-compute-instance" id="nav-ds-${esc(p.name)}" title="${esc(p.description ? p.description+' ('+p.name+')' : p.name)}" onclick='openDatastoreDetail(${JSON.stringify(p.name)})'>
+    return `<button class="nav-compute-instance" id="nav-ds-${esc(p.name)}" title="${esc(p.description ? p.description+' ('+p.name+')' : p.name)}"
+        onclick='openDatastoreDetail(${JSON.stringify(p.name)})'
+        oncontextmenu='event.preventDefault();_navContextMenuFor(event,"datastores",${JSON.stringify(p.name)})'>
       <span style="flex-shrink:0;font-size:15px;line-height:1;width:15px;text-align:center;">🗄️</span>
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${esc(label)}</span>
       ${dot}

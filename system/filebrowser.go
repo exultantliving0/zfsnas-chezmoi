@@ -11,12 +11,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // FileEntry describes one file or directory returned by ListDir.
 type FileEntry struct {
 	Name         string `json:"name"`
 	IsDir        bool   `json:"is_dir"`
+	IsSymlink    bool   `json:"is_symlink,omitempty"`
 	SizeBytes    int64  `json:"size_bytes"`
 	Permissions  string `json:"permissions"`  // e.g. "-rw-r--r--"
 	ModeOctal    string `json:"mode_octal"`   // e.g. "644"
@@ -25,6 +27,16 @@ type FileEntry struct {
 	Group        string `json:"group"`
 	GroupGID     int    `json:"group_gid"`
 	ModifiedUnix int64  `json:"modified_unix"`
+	// v6.5.29 — additional timestamps + a coarse Kind hint so the FE
+	// can sort/filter without re-deriving from the extension on every
+	// view-mode switch. CreatedUnix is 0 when the filesystem doesn't
+	// expose btime (find prints "?" — we coerce to 0). Kind values:
+	// "dir" | "file" | "link" | "image" | "video" | "audio" |
+	// "archive" | "document" | "exec".
+	AccessedUnix int64  `json:"accessed_unix,omitempty"`
+	ChangedUnix  int64  `json:"changed_unix,omitempty"`
+	CreatedUnix  int64  `json:"created_unix,omitempty"`
+	Kind         string `json:"kind,omitempty"`
 }
 
 // FileBrowserResult is returned by the list API.
@@ -126,14 +138,17 @@ func ListDir(root, subpath, rootLabel string) (*FileBrowserResult, error) {
 	ids := buildIDMaps()
 
 	// sudo find <path> -maxdepth 1 -mindepth 1
-	//   -printf '%y\t%s\t%m\t%M\t%U\t%G\t%T@\t%P\n'
-	// Fields: type | size | octal-mode | symbolic-mode | owner | group | mtime-epoch | name
+	//   -printf '%y\t%s\t%m\t%M\t%U\t%G\t%T@\t%A@\t%C@\t%B@\t%P\n'
+	// Fields: type | size | octal-mode | symbolic-mode | owner | group |
+	//         mtime-epoch | atime-epoch | ctime-epoch | btime-epoch | name
 	// %m gives the plain octal permissions (e.g. "755"), %M the symbolic string.
-	// %T@ is mtime as Unix seconds with fractional part.
+	// %T@ / %A@ / %C@ / %B@ are mtime / atime / ctime / btime as Unix
+	// seconds with fractional part. btime ("?" on filesystems without
+	// support — coerced to 0 below).
 	// %P is the filename relative to the starting path (no leading slash).
 	out, err := exec.Command("sudo", "find", absPath,
 		"-maxdepth", "1", "-mindepth", "1",
-		"-printf", "%y\t%s\t%m\t%M\t%U\t%G\t%T@\t%P\n",
+		"-printf", "%y\t%s\t%m\t%M\t%U\t%G\t%T@\t%A@\t%C@\t%B@\t%P\n",
 	).Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list directory: %w", err)
@@ -144,15 +159,19 @@ func ListDir(root, subpath, rootLabel string) (*FileBrowserResult, error) {
 		if line == "" {
 			continue
 		}
-		// SplitN with n=8 so a filename containing tabs ends up as-is in parts[7].
-		parts := strings.SplitN(line, "\t", 8)
-		if len(parts) < 8 {
+		// SplitN with n=11 so a filename containing tabs ends up as-is
+		// in parts[10] (the trailing %P).
+		parts := strings.SplitN(line, "\t", 11)
+		if len(parts) < 11 {
 			continue
 		}
-		ftype, sizeStr, modeOctal, perms, owner, group, mtimeStr, name :=
-			parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]
+		ftype, sizeStr, modeOctal, perms, owner, group :=
+			parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+		mtimeStr, atimeStr, ctimeStr, btimeStr, name :=
+			parts[6], parts[7], parts[8], parts[9], parts[10]
 
 		isDir := ftype == "d"
+		isLink := ftype == "l"
 
 		var size int64
 		if !isDir {
@@ -168,14 +187,20 @@ func ListDir(root, subpath, rootLabel string) (*FileBrowserResult, error) {
 			octal = octal[len(octal)-3:]
 		}
 
-		var mtime float64
-		mtime, _ = strconv.ParseFloat(mtimeStr, 64)
+		mtime, _ := strconv.ParseFloat(mtimeStr, 64)
+		atime, _ := strconv.ParseFloat(atimeStr, 64)
+		ctime, _ := strconv.ParseFloat(ctimeStr, 64)
+		// btime is "?" when the filesystem doesn't track creation
+		// time (e.g. older NFS exports); ParseFloat returns 0 on
+		// failure, which is what we want.
+		btime, _ := strconv.ParseFloat(btimeStr, 64)
 		ownerName, ownerUID := ids.resolveOwner(owner)
 		groupName, groupGID := ids.resolveGroup(group)
 
 		result = append(result, FileEntry{
 			Name:         name,
 			IsDir:        isDir,
+			IsSymlink:    isLink,
 			SizeBytes:    size,
 			Permissions:  perms,
 			ModeOctal:    octal,
@@ -184,6 +209,10 @@ func ListDir(root, subpath, rootLabel string) (*FileBrowserResult, error) {
 			Group:        groupName,
 			GroupGID:     groupGID,
 			ModifiedUnix: int64(mtime),
+			AccessedUnix: int64(atime),
+			ChangedUnix:  int64(ctime),
+			CreatedUnix:  int64(btime),
+			Kind:         deriveKind(isDir, isLink, perms, name),
 		})
 	}
 
@@ -198,9 +227,9 @@ func ListDir(root, subpath, rootLabel string) (*FileBrowserResult, error) {
 	// Stat the current directory itself (for the folder-level edit action).
 	var currentDir *FileEntry
 	if dirOut, err2 := exec.Command("sudo", "find", absPath, "-maxdepth", "0",
-		"-printf", "%y\t%s\t%m\t%M\t%U\t%G\t%T@\t%f\n").Output(); err2 == nil {
+		"-printf", "%y\t%s\t%m\t%M\t%U\t%G\t%T@\t%A@\t%C@\t%B@\t%f\n").Output(); err2 == nil {
 		line := strings.TrimRight(string(dirOut), "\n")
-		if parts := strings.SplitN(line, "\t", 8); len(parts) == 8 {
+		if parts := strings.SplitN(line, "\t", 11); len(parts) == 11 {
 			var sz int64
 			sz, _ = strconv.ParseInt(parts[1], 10, 64)
 			octal := strings.TrimLeft(parts[2], "0")
@@ -210,12 +239,14 @@ func ListDir(root, subpath, rootLabel string) (*FileBrowserResult, error) {
 			if len(octal) > 3 {
 				octal = octal[len(octal)-3:]
 			}
-			var mtime float64
-			mtime, _ = strconv.ParseFloat(parts[6], 64)
+			mtime, _ := strconv.ParseFloat(parts[6], 64)
+			atime, _ := strconv.ParseFloat(parts[7], 64)
+			ctime, _ := strconv.ParseFloat(parts[8], 64)
+			btime, _ := strconv.ParseFloat(parts[9], 64)
 			ownerName, ownerUID := ids.resolveOwner(parts[4])
 			groupName, groupGID := ids.resolveGroup(parts[5])
 			currentDir = &FileEntry{
-				Name:         parts[7],
+				Name:         parts[10],
 				IsDir:        true,
 				SizeBytes:    sz,
 				Permissions:  parts[3],
@@ -225,6 +256,10 @@ func ListDir(root, subpath, rootLabel string) (*FileBrowserResult, error) {
 				Group:        groupName,
 				GroupGID:     groupGID,
 				ModifiedUnix: int64(mtime),
+				AccessedUnix: int64(atime),
+				ChangedUnix:  int64(ctime),
+				CreatedUnix:  int64(btime),
+				Kind:         "dir",
 			}
 		}
 	}
@@ -547,4 +582,392 @@ func SafeJoin(root, subpath string) (string, error) {
 		return "", fmt.Errorf("invalid subpath: escapes root directory")
 	}
 	return joined, nil
+}
+
+// ─── v6.5.29 — full file browser ─────────────────────────────────────────────
+
+// deriveKind classifies one entry into a coarse bucket the FE uses for
+// icons + the File-type sort key. The bucket is derived purely from
+// type + extension; no MIME sniffing (which would require opening every
+// file in a 5,000-entry directory).
+func deriveKind(isDir, isLink bool, perms, name string) string {
+	if isDir {
+		return "dir"
+	}
+	if isLink {
+		return "link"
+	}
+	// `find`'s symbolic perms include the file type char at position 0
+	// ("-" for regular, "d" for dir, "l" for link, …). Anything else
+	// (block device, char device, fifo, socket) is rare in the paths
+	// we browse and gets "file" so we don't pretend to know more.
+	if len(perms) >= 4 {
+		// Executable bit set anywhere → exec bucket. The display still
+		// shows a normal file icon, but sort-by-type groups them.
+		if strings.ContainsAny(perms[1:], "xs") && !isDir {
+			// fall through to extension check first; if no extension
+			// matches we'll come back to "exec" at the bottom.
+		}
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif",
+		".svg", ".heic", ".heif", ".avif", ".ico":
+		return "image"
+	case ".mp4", ".mkv", ".mov", ".avi", ".wmv", ".webm", ".m4v", ".mpg",
+		".mpeg", ".flv", ".3gp", ".ts":
+		return "video"
+	case ".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".opus":
+		return "audio"
+	case ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
+		".7z", ".rar", ".zst", ".zstd":
+		return "archive"
+	case ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+		".odt", ".ods", ".odp", ".epub", ".rtf", ".txt", ".md", ".csv":
+		return "document"
+	}
+	// No extension match. Treat exec bit as the last-chance tiebreaker.
+	if len(perms) >= 4 && strings.ContainsAny(perms[1:4], "xs") {
+		return "exec"
+	}
+	return "file"
+}
+
+// ── Per-root mutex ────────────────────────────────────────────────────────────
+//
+// Two admins simultaneously running mv / cp / rm against the same root
+// can race in unobvious ways (rm racing a move into the same dir, two
+// pastes into the same dir clobbering each other's overwrite prompt).
+// We serialise per absolute-root path. The map is small (one entry per
+// known root) and entries are never deleted, so lock churn is nil.
+var (
+	fbMutexMapMu sync.Mutex
+	fbMutexMap   = map[string]*sync.Mutex{}
+)
+
+func fbRootMutex(absRoot string) *sync.Mutex {
+	fbMutexMapMu.Lock()
+	defer fbMutexMapMu.Unlock()
+	if m, ok := fbMutexMap[absRoot]; ok {
+		return m
+	}
+	m := &sync.Mutex{}
+	fbMutexMap[absRoot] = m
+	return m
+}
+
+// ── Folder name validation ────────────────────────────────────────────────────
+
+// validFolderName matches the same regex the FE enforces: 1..255 chars,
+// no slash, no NUL, no leading/trailing whitespace. "." and ".." are
+// rejected separately.
+var validFolderName = regexp.MustCompile(`^[^/\x00\s][^/\x00]{0,253}[^/\x00\s]$|^[^/\x00\s]$`)
+
+// MakeDir creates `name` inside root/subpath via `sudo mkdir -p`.
+func MakeDir(absRoot, subpath, name string) error {
+	if name == "." || name == ".." {
+		return fmt.Errorf("invalid name: %q", name)
+	}
+	if !validFolderName.MatchString(name) {
+		return fmt.Errorf("invalid name: must be 1..255 chars and contain no slash or NUL")
+	}
+	parent, err := SafeJoin(absRoot, subpath)
+	if err != nil {
+		return err
+	}
+	abs := filepath.Join(parent, name)
+	// SafeJoin would normally reject a path with a slash in subpath,
+	// but the FE may legitimately compose `<existing-sub>/<new-name>` —
+	// re-check the final path is still under root.
+	rootClean := filepath.Clean(absRoot)
+	if !strings.HasPrefix(abs, rootClean+string(filepath.Separator)) {
+		return fmt.Errorf("invalid destination: escapes root")
+	}
+	mu := fbRootMutex(absRoot)
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := os.Stat(abs); err == nil {
+		return fmt.Errorf("a file or folder named %q already exists", name)
+	}
+	out, err := exec.Command("sudo", "mkdir", "-p", abs).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mkdir: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RemovePaths removes a list of subpaths under absRoot. The shell-out
+// is a single invocation: `sudo rm -rf -- <abs1> <abs2> …` (-rf so
+// non-empty dirs are handled and missing entries don't error out).
+func RemovePaths(absRoot string, subpaths []string, recursive bool) error {
+	if len(subpaths) == 0 {
+		return fmt.Errorf("no paths to remove")
+	}
+	abs := make([]string, 0, len(subpaths))
+	for _, sp := range subpaths {
+		if sp == "" || sp == "." || sp == "/" {
+			return fmt.Errorf("invalid subpath: %q", sp)
+		}
+		p, err := SafeJoin(absRoot, sp)
+		if err != nil {
+			return err
+		}
+		// Refuse to remove the root itself.
+		if p == filepath.Clean(absRoot) {
+			return fmt.Errorf("refusing to remove the root path")
+		}
+		abs = append(abs, p)
+	}
+	mu := fbRootMutex(absRoot)
+	mu.Lock()
+	defer mu.Unlock()
+	args := []string{"rm"}
+	if recursive {
+		args = append(args, "-rf")
+	} else {
+		args = append(args, "-f")
+	}
+	args = append(args, "--")
+	args = append(args, abs...)
+	out, err := exec.Command("sudo", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("rm: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// MovePaths / CopyPaths share the same source / destination validation
+// path. dst is `dstAbsRoot/dstSubpath` (a directory); each source is
+// SafeJoin'd against srcAbsRoot. Drop-into-self is refused (a folder
+// cannot be moved into itself or any of its descendants).
+func validateMoveCopy(srcAbsRoot string, srcSubpaths []string, dstAbsRoot, dstSubpath string) ([]string, string, error) {
+	if len(srcSubpaths) == 0 {
+		return nil, "", fmt.Errorf("no sources")
+	}
+	srcs := make([]string, 0, len(srcSubpaths))
+	for _, sp := range srcSubpaths {
+		if sp == "" || sp == "." || sp == "/" {
+			return nil, "", fmt.Errorf("invalid source: %q", sp)
+		}
+		p, err := SafeJoin(srcAbsRoot, sp)
+		if err != nil {
+			return nil, "", err
+		}
+		srcs = append(srcs, p)
+	}
+	dst, err := SafeJoin(dstAbsRoot, dstSubpath)
+	if err != nil {
+		return nil, "", err
+	}
+	// Destination must already exist as a directory. Use sudo stat so
+	// the check still works inside traverse-denied roots (the same
+	// reason the raw / list / chown paths shell through sudo).
+	out, ferr := exec.Command("sudo", "stat", "-c", "%F", dst).Output()
+	if ferr != nil {
+		return nil, "", fmt.Errorf("destination not found: %s", dst)
+	}
+	if !strings.Contains(string(out), "directory") {
+		return nil, "", fmt.Errorf("destination is not a directory: %s", dst)
+	}
+	// Drop-into-self / into-descendant guard.
+	for _, s := range srcs {
+		if dst == s || strings.HasPrefix(dst, s+string(filepath.Separator)) {
+			return nil, "", fmt.Errorf("cannot move/copy %q into itself or a subfolder of itself", s)
+		}
+	}
+	return srcs, dst, nil
+}
+
+// MovePaths runs `sudo mv -n|-f -- <src…> <dst>`.
+func MovePaths(srcAbsRoot string, srcSubpaths []string, dstAbsRoot, dstSubpath string, overwrite bool) error {
+	srcs, dst, err := validateMoveCopy(srcAbsRoot, srcSubpaths, dstAbsRoot, dstSubpath)
+	if err != nil {
+		return err
+	}
+	// Lock both roots in a stable order so concurrent ops on the same
+	// pair can't deadlock.
+	a, b := srcAbsRoot, dstAbsRoot
+	if a > b {
+		a, b = b, a
+	}
+	mu1 := fbRootMutex(a)
+	mu1.Lock()
+	defer mu1.Unlock()
+	if a != b {
+		mu2 := fbRootMutex(b)
+		mu2.Lock()
+		defer mu2.Unlock()
+	}
+	flag := "-n"
+	if overwrite {
+		flag = "-f"
+	}
+	args := []string{"mv", flag, "--"}
+	args = append(args, srcs...)
+	args = append(args, dst)
+	out, err := exec.Command("sudo", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mv: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// CopyPaths runs `sudo cp -a -n|-f -- <src…> <dst>`. -a preserves
+// mode / ownership / timestamps / xattrs and recurses into directories.
+func CopyPaths(srcAbsRoot string, srcSubpaths []string, dstAbsRoot, dstSubpath string, overwrite bool) error {
+	srcs, dst, err := validateMoveCopy(srcAbsRoot, srcSubpaths, dstAbsRoot, dstSubpath)
+	if err != nil {
+		return err
+	}
+	a, b := srcAbsRoot, dstAbsRoot
+	if a > b {
+		a, b = b, a
+	}
+	mu1 := fbRootMutex(a)
+	mu1.Lock()
+	defer mu1.Unlock()
+	if a != b {
+		mu2 := fbRootMutex(b)
+		mu2.Lock()
+		defer mu2.Unlock()
+	}
+	flag := "-n"
+	if overwrite {
+		flag = "-f"
+	}
+	args := []string{"cp", "-a", flag, "--"}
+	args = append(args, srcs...)
+	args = append(args, dst)
+	out, err := exec.Command("sudo", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("cp: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// ── TreeNode + WalkTree ──────────────────────────────────────────────────────
+
+// TreeNode is one folder in the left-pane tree. Children is non-nil
+// exactly when the node has been expanded; nil means "lazy — fetch on
+// click". Files are not surfaced in the tree.
+type TreeNode struct {
+	Name        string     `json:"name"`         // basename ("" for the root itself)
+	Subpath     string     `json:"subpath"`      // relative to root, "" for the root
+	HasChildren bool       `json:"has_children"` // true when this folder has at least one sub-folder
+	Children    []TreeNode `json:"children,omitempty"`
+}
+
+// WalkTree returns the folder tree rooted at absRoot/subpath with the
+// given depth (1 = children only; 0 = the requested node alone).
+func WalkTree(absRoot, subpath string, depth int) (TreeNode, error) {
+	start, err := SafeJoin(absRoot, subpath)
+	if err != nil {
+		return TreeNode{}, err
+	}
+	if depth < 0 {
+		depth = 1
+	}
+	if depth > 4 {
+		depth = 4 // protect against runaway clients
+	}
+	node := TreeNode{
+		Name:    filepath.Base(start),
+		Subpath: subpath,
+	}
+	if subpath == "" {
+		node.Name = ""
+	}
+	if depth == 0 {
+		// Caller just wants to know whether this node has children.
+		node.HasChildren = folderHasSubdir(start)
+		return node, nil
+	}
+	// One find call per level — cheap and avoids spawning N sub-finds
+	// for a folder with hundreds of subdirectories.
+	maxDepth := strconv.Itoa(depth + 1) // +1 so we can detect HasChildren on the leaves
+	out, err := exec.Command("sudo", "find", start,
+		"-mindepth", "1",
+		"-maxdepth", maxDepth,
+		"-type", "d",
+		"-printf", "%p\n",
+	).Output()
+	if err != nil {
+		return node, nil // missing perms / empty — return the bare node
+	}
+	rootClean := filepath.Clean(start)
+	subpathClean := filepath.Clean(subpath)
+	if subpathClean == "." {
+		subpathClean = ""
+	}
+	type k struct{ parent, name string }
+	children := map[string][]TreeNode{} // parent-subpath → child nodes
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		// Translate absolute path → subpath relative to absRoot.
+		rel := strings.TrimPrefix(line, filepath.Clean(absRoot)+string(filepath.Separator))
+		if rel == line {
+			continue // outside the root (shouldn't happen)
+		}
+		parent, name := filepath.Split(rel)
+		parent = strings.TrimSuffix(parent, string(filepath.Separator))
+		// Filter to the depth requested
+		depthFromStart := strings.Count(strings.TrimPrefix(line, rootClean), string(filepath.Separator))
+		if depthFromStart > depth {
+			children[parent] = append(children[parent], TreeNode{
+				Name: name, Subpath: rel, HasChildren: true,
+			})
+		} else {
+			children[parent] = append(children[parent], TreeNode{
+				Name: name, Subpath: rel,
+			})
+		}
+		_ = k{parent, name}
+	}
+	// Stitch the tree top-down from subpathClean.
+	var stitch func(sp string) []TreeNode
+	stitch = func(sp string) []TreeNode {
+		raw := children[sp]
+		if len(raw) == 0 {
+			return nil
+		}
+		sort.Slice(raw, func(i, j int) bool {
+			return strings.ToLower(raw[i].Name) < strings.ToLower(raw[j].Name)
+		})
+		// Deduplicate (the +1 depth produced grand-children entries
+		// for HasChildren detection; we keep the parent node and
+		// drop duplicates).
+		seen := map[string]bool{}
+		out := make([]TreeNode, 0, len(raw))
+		for _, n := range raw {
+			if seen[n.Subpath] {
+				continue
+			}
+			seen[n.Subpath] = true
+			// Expand one more level into Children unless this node
+			// already came from the deepest level (HasChildren=true
+			// without Children).
+			kids := stitch(n.Subpath)
+			if len(kids) > 0 {
+				n.HasChildren = true
+				n.Children = kids
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	node.Children = stitch(subpathClean)
+	node.HasChildren = len(node.Children) > 0
+	return node, nil
+}
+
+// folderHasSubdir returns true when `path` contains at least one
+// sub-directory. Used by the lazy-tree path.
+func folderHasSubdir(path string) bool {
+	out, err := exec.Command("sudo", "find", path, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-printf", ".").Output()
+	if err != nil {
+		return false
+	}
+	return len(out) > 0
 }
