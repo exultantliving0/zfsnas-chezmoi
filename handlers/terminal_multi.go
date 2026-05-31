@@ -424,12 +424,23 @@ function activateTab(i) {
     try { tab.fit && tab.fit.fit(); } catch (_) {}
     try { sendResize(tab); } catch (_) {}
     try { tab.term && tab.term.focus(); } catch (_) {}
+    // If the tab was kicked or its WS is closed, treat the click as a
+    // take-it-back / wake-it-up gesture and reconnect now.
+    if (!tab.closing && (!tab.ws || tab.ws.readyState >= WebSocket.CLOSING)) {
+      tab.kicked = false;
+      tab.reconnectAttempt = 0;
+      attachTab(tab, {reset:false});
+    }
   }));
 }
 
 function closeTab(i) {
   const t = TABS[i];
   if (!t) return;
+  // Flag the tab as closing so any in-flight onclose handler doesn't
+  // schedule another reconnect for the session we're actively killing.
+  t.closing = true;
+  if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
   fetch('/api/terminal-sessions/' + encodeURIComponent(t.id) + '/close', {method:'POST', credentials:'same-origin'})
     .catch(()=>{});
   if (t.ws) try { t.ws.close(); } catch{}
@@ -525,11 +536,19 @@ function attachTab(tab, opts) {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'session' && msg.id) {
           tab.id = msg.id;
+          tab.kicked = false;
+          tab.reconnectAttempt = 0;
           renderTabBar();
+          return;
+        } else if (msg.type === 'kicked') {
+          // Another browser took over this session — stop reconnecting
+          // so we don't ping-pong attaches in a tight loop.
+          tab.kicked = true;
+          return;
         } else if (msg.type === 'error') {
           term.write('\r\n[error: ' + (msg.error||'unknown') + ']\r\n');
+          return;
         }
-        return;
       } catch{}
       term.write(ev.data);
     } else {
@@ -539,12 +558,49 @@ function attachTab(tab, opts) {
   };
   ws.onclose = () => {
     tab.ws = null;
-    // Don't auto-reconnect — surface the disconnect.
+    // v6.5.30 — auto-reconnect. Without this, iPad/iOS backgrounding
+    // (NAT or carrier idle timeout, ~10 min) silently kills the WS;
+    // the user comes back to a "frozen" terminal that's actually just
+    // detached server-side. Scheduling a reconnect re-attaches to the
+    // same session_id and the server replays scrollback.
+    scheduleReconnect(tab);
   };
+  ws.onerror = () => { /* onclose follows — reconnect lives there */ };
   term.onData(d => { if (ws.readyState === 1) ws.send(d); });
   // First resize after open.
   ws.addEventListener('open', () => { sendResize(tab); });
 }
+
+function scheduleReconnect(tab) {
+  if (!tab || tab.closing || tab.kicked) return;
+  const attempt = (tab.reconnectAttempt || 0);
+  if (attempt > 8) {
+    try { tab.term.write('\r\n\x1b[33m[disconnected — click tab to retry]\x1b[0m\r\n'); } catch (_) {}
+    return;
+  }
+  tab.reconnectAttempt = attempt + 1;
+  if (tab.reconnectTimer) clearTimeout(tab.reconnectTimer);
+  const delay = Math.min(8000, 300 * Math.pow(2, attempt));
+  tab.reconnectTimer = setTimeout(() => {
+    if (!tab || tab.closing || tab.kicked) return;
+    tab.reconnectTimer = null;
+    attachTab(tab, {reset:false});
+  }, delay);
+}
+
+// v6.5.30 — proactively reconnect when the user returns to the tab
+// (foreground after iPad sleep, switching back, etc.) so we don't wait
+// for the next backoff tick. Same idea as the bottom terminal.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  TABS.forEach(tab => {
+    if (tab.closing || tab.kicked) return;
+    if (!tab.ws || tab.ws.readyState >= WebSocket.CLOSING) {
+      tab.reconnectAttempt = 0;
+      attachTab(tab, {reset:false});
+    }
+  });
+});
 
 // ── Bootstrap: list existing sessions, build tabs ──────────────────────────
 

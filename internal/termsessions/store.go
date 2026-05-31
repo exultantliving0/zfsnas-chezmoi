@@ -77,11 +77,31 @@ type Session struct {
 	cmd         *exec.Cmd
 	scrollback  *ringBuf
 	attachedWS  *websocket.Conn
+	wsWriteMu   sync.Mutex      // serializes WriteMessage / WriteControl on attachedWS (gorilla/websocket requires this)
 	attachWG    *sync.WaitGroup // signals the current attach loop's goroutines to exit
 	cols, rows  uint16
 	terminated  bool
 	termReason  string
 	evictedTimer *time.Timer
+}
+
+// safeWriteWS performs a serialized write to whichever WS the session
+// is currently attached to. Returns ok=false if there is no attached
+// WS (caller decides whether that's an error). Holding wsWriteMu while
+// briefly capturing attachedWS keeps drainPTY, server pings, kick
+// notices, and Attach's scrollback replay from interleaving on the
+// gorilla/websocket conn (which forbids concurrent writers).
+func (sess *Session) safeWriteWS(messageType int, data []byte) (ok bool) {
+	sess.wsWriteMu.Lock()
+	defer sess.wsWriteMu.Unlock()
+	sess.mu.Lock()
+	ws := sess.attachedWS
+	sess.mu.Unlock()
+	if ws == nil {
+		return false
+	}
+	ws.WriteMessage(messageType, data) //nolint:errcheck
+	return true
 }
 
 // Store is the per-process session registry.
@@ -170,11 +190,8 @@ func (s *Store) drainPTY(sess *Session) {
 			sess.mu.Lock()
 			sess.scrollback.Write(chunk) //nolint:errcheck
 			sess.lastActive = time.Now()
-			ws := sess.attachedWS
 			sess.mu.Unlock()
-			if ws != nil {
-				_ = ws.WriteMessage(websocket.BinaryMessage, chunk)
-			}
+			sess.safeWriteWS(websocket.BinaryMessage, chunk)
 		}
 		if err != nil {
 			s.markTerminated(sess, ReasonProcessExit)
@@ -196,13 +213,13 @@ func (s *Store) markTerminated(sess *Session, reason string) {
 	sess.termReason = reason
 	notice := []byte(fmt.Sprintf("\r\n\x1b[33m[session ended: %s]\x1b[0m\r\n", reason))
 	sess.scrollback.Write(notice) //nolint:errcheck
+	// Don't clear attachedWS yet — safeWriteWS needs it. We'll clear
+	// after the final notice is sent.
 	ws := sess.attachedWS
-	sess.attachedWS = nil
 	if sess.cmd != nil && sess.cmd.Process != nil {
 		sess.cmd.Process.Kill() //nolint:errcheck
 	}
 	sess.ptmx.Close()
-	// Schedule evict after 5 min so a reattach window still sees the notice.
 	if sess.evictedTimer != nil {
 		sess.evictedTimer.Stop()
 	}
@@ -213,7 +230,10 @@ func (s *Store) markTerminated(sess *Session, reason string) {
 	})
 	sess.mu.Unlock()
 	if ws != nil {
-		ws.WriteMessage(websocket.BinaryMessage, notice) //nolint:errcheck
+		sess.safeWriteWS(websocket.BinaryMessage, notice)
+		sess.mu.Lock()
+		sess.attachedWS = nil
+		sess.mu.Unlock()
 		ws.Close()
 	}
 }
@@ -271,6 +291,21 @@ func (s *Store) Get(id string) *Session {
 	return s.sessions[id]
 }
 
+// Keepalive cadence — server-initiated WebSocket pings keep dead TCP
+// connections detectable. Without them, an iPad in the background for
+// 10+ minutes silently has its WS killed by the OS/NAT and neither the
+// browser nor the server notice until the next write fails — which is
+// exactly the "frozen terminal" the user reported. With ping/pong:
+//   • server pings every pingInterval
+//   • browser auto-replies pong (built-in WebSocket behaviour)
+//   • server's read deadline gets extended on each pong via PongHandler
+//   • if pongs stop, read deadline expires → conn errors → onclose fires
+//     on the browser → the client-side auto-reconnect kicks in.
+const (
+	pingInterval = 25 * time.Second
+	readDeadline = 90 * time.Second
+)
+
 // Attach replaces (or sets) the WebSocket attached to sess. The previous
 // WS, if any, is kicked with a notice. The scrollback ring is replayed on
 // the new WS as one binary frame, then this call blocks reading input
@@ -299,11 +334,15 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 			// "another browser took over" and SKIP its auto-reconnect —
 			// otherwise both browsers ping-pong attaches in a tight loop
 			// (each onclose triggers a reconnect, the reconnect kicks
-			// the other browser, etc.).
+			// the other browser, etc.). These two writes go through the
+			// session write-mutex so they can't collide with the ping
+			// goroutine or drainPTY on the conn we're about to close.
+			sess.wsWriteMu.Lock()
 			old.WriteMessage(websocket.TextMessage,
 				[]byte(`{"type":"kicked","reason":"another_browser"}`)) //nolint:errcheck
 			old.WriteMessage(websocket.BinaryMessage,
 				[]byte("\r\n\x1b[33m[disconnected: another browser took over]\x1b[0m\r\n")) //nolint:errcheck
+			sess.wsWriteMu.Unlock()
 			old.Close()
 		}()
 	}
@@ -316,10 +355,43 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 	cur2 := sess.rows
 	sess.mu.Unlock()
 
+	// v6.5.30 — keepalive ping/pong. Set a read deadline; every pong
+	// extends it. The ping ticker fires every pingInterval; if the
+	// network is dead, the next ping write fails AND the read deadline
+	// expires, ws.ReadMessage in the loop below returns an error, we
+	// detach and the client's onclose-driven auto-reconnect re-attaches
+	// to this same session (server replays scrollback).
+	ws.SetReadDeadline(time.Now().Add(readDeadline))
+	ws.SetPongHandler(func(string) error {
+		ws.SetReadDeadline(time.Now().Add(readDeadline))
+		return nil
+	})
+	pingDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(pingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				sess.wsWriteMu.Lock()
+				err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+				sess.wsWriteMu.Unlock()
+				if err != nil {
+					return
+				}
+			case <-pingDone:
+				return
+			}
+		}
+	}()
+	defer close(pingDone)
+
 	// Replay scrollback before any new output races in. The drainPTY
-	// goroutine will write subsequent chunks to this same WS.
+	// goroutine will write subsequent chunks to this same WS. Go through
+	// safeWriteWS so the ping goroutine and any in-flight drainPTY
+	// chunks can't interleave on the same conn.
 	if len(scroll) > 0 {
-		ws.WriteMessage(websocket.BinaryMessage, scroll) //nolint:errcheck
+		sess.safeWriteWS(websocket.BinaryMessage, scroll)
 	}
 	if cur > 0 && cur2 > 0 {
 		pty.Setsize(sess.ptmx, &pty.Winsize{Cols: cur, Rows: cur2}) //nolint:errcheck
