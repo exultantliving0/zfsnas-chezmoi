@@ -36,6 +36,33 @@ type Store struct {
 	// Persistence hook — set by BindPersistence. Nil-safe; nothing happens
 	// before persistence is wired or when a build doesn't enable it.
 	persist *persistConfig
+	// Eviction hooks — fired on Delete and on Get/CleanExpired drop. Used
+	// (today) by the termsessions package to kill PTY-backed terminal
+	// sessions when their owning web session goes away. Hooks run on the
+	// goroutine that triggered the eviction; keep them quick or punt to a
+	// goroutine internally.
+	evictHooks []func(userID, reason string)
+}
+
+// OnEvict registers a callback fired with (userID, reason) every time a
+// session is removed from the store. Reasons used today: "logout",
+// "idle_timeout", "hard_cap", "manual".
+func (s *Store) OnEvict(fn func(userID, reason string)) {
+	s.mu.Lock()
+	s.evictHooks = append(s.evictHooks, fn)
+	s.mu.Unlock()
+}
+
+// notifyEvict runs hooks outside the store lock to avoid deadlocks if a
+// hook calls back into the store. Callers MUST have already removed the
+// session from s.sessions before invoking.
+func (s *Store) notifyEvict(userID, reason string) {
+	s.mu.RLock()
+	hooks := append([]func(string, string){}, s.evictHooks...)
+	s.mu.RUnlock()
+	for _, h := range hooks {
+		h(userID, reason)
+	}
 }
 
 // Default is the shared global session store.
@@ -79,11 +106,11 @@ func (s *Store) Get(token string) (*Session, bool) {
 	}
 	now := time.Now()
 	if now.After(sess.ExpiresAt) {
-		s.Delete(token)
+		s.deleteWithReason(token, "hard_cap")
 		return nil, false
 	}
 	if sess.IdleTimeout > 0 && now.Sub(sess.LastActivityAt) > sess.IdleTimeout {
-		s.Delete(token)
+		s.deleteWithReason(token, "idle_timeout")
 		return nil, false
 	}
 	return sess, true
@@ -100,12 +127,25 @@ func (s *Store) Touch(token string) {
 	s.mu.Unlock()
 }
 
-// Delete removes a session by token.
+// Delete removes a session by token. Used by the logout handler — fires
+// eviction hooks with reason "manual".
 func (s *Store) Delete(token string) {
+	s.deleteWithReason(token, "manual")
+}
+
+// deleteWithReason is the internal Delete variant that lets callers (the
+// eviction paths in Get and CleanExpired) record why a session went away.
+func (s *Store) deleteWithReason(token, reason string) {
 	s.mu.Lock()
-	delete(s.sessions, token)
+	sess, ok := s.sessions[token]
+	if ok {
+		delete(s.sessions, token)
+	}
 	s.mu.Unlock()
 	s.savePersistAsync()
+	if ok {
+		s.notifyEvict(sess.UserID, reason)
+	}
 }
 
 // List returns all non-expired sessions.
@@ -123,23 +163,32 @@ func (s *Store) List() []*Session {
 }
 
 // CleanExpired removes all expired sessions (both hard-cap and idle).
+// Eviction hooks fire for each dropped session with reason "hard_cap" or
+// "idle_timeout".
 func (s *Store) CleanExpired() {
 	s.mu.Lock()
 	now := time.Now()
-	dropped := false
+	type drop struct {
+		userID string
+		reason string
+	}
+	var drops []drop
 	for k, v := range s.sessions {
 		if now.After(v.ExpiresAt) {
+			drops = append(drops, drop{v.UserID, "hard_cap"})
 			delete(s.sessions, k)
-			dropped = true
 			continue
 		}
 		if v.IdleTimeout > 0 && now.Sub(v.LastActivityAt) > v.IdleTimeout {
+			drops = append(drops, drop{v.UserID, "idle_timeout"})
 			delete(s.sessions, k)
-			dropped = true
 		}
 	}
 	s.mu.Unlock()
-	if dropped {
+	if len(drops) > 0 {
 		s.savePersistAsync()
+		for _, d := range drops {
+			s.notifyEvict(d.userID, d.reason)
+		}
 	}
 }

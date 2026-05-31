@@ -915,6 +915,26 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleLXDConsole)))).Methods("GET")
 	r.Handle("/lxd-console/{name}",
 		RequireAuth(http.HandlerFunc(ServeLXDConsolePage))).Methods("GET")
+	// v6.5.30 — persistent terminal sessions + consolidated multi-tab popup.
+	r.Handle("/api/terminal-sessions",
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleListTerminalSessions)))).Methods("GET")
+	r.Handle("/api/terminal-sessions/aggregate",
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleListTerminalSessionsAggregate(appCfg))))).Methods("GET")
+	r.Handle("/api/terminal-sessions/{id}/close",
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleCloseTerminalSession)))).Methods("POST")
+	r.Handle("/terminal-multi",
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(ServeTerminalMultiPage)))).Methods("GET")
+	// Public icon — needs to be reachable by iPadOS before the user has
+	// authenticated (the "Add to Home Screen" flow fetches it through a
+	// background loader that does not carry the session cookie). iOS
+	// requires PNG for apple-touch-icon; SVG is served alongside for
+	// browser-tab favicons where it stays crisp at any size.
+	r.HandleFunc("/icons/z-terminals.png", ServeZTerminalsIcon).Methods("GET")
+	r.HandleFunc("/icons/z-terminals.svg", ServeZTerminalsIconSVG).Methods("GET")
+	r.Handle("/ws/interlink-terminal",
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleInterlinkTerminalProxyWS(appCfg))))).Methods("GET")
+	r.Handle("/api/interlink/terminal-sessions/{server_id}/{id}/close",
+		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleCloseRemoteTerminalSession(appCfg))))).Methods("POST")
 	r.Handle("/ws/compose-logs",
 		RequireAuth(http.HandlerFunc(HandleComposeLogsWS))).Methods("GET")
 	r.Handle("/ws/compose-console",

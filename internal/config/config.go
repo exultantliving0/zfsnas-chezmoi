@@ -398,6 +398,10 @@ type AppConfig struct {
 	// the global fields are kept for back-compat with older configs and
 	// single-pool installs that never opened the new per-pool UI.
 	ScrubPolicies     []PoolScrubPolicy `json:"scrub_policies,omitempty"`
+	// v6.5.30 — persistent terminal sessions
+	TerminalScrollbackKB      int `json:"terminal_scrollback_kb,omitempty"`      // per-session scrollback ring in KB; 0 = default (256)
+	TerminalMaxSessionsPerUser int `json:"terminal_max_sessions_per_user,omitempty"` // cap of live PTYs per web user; 0 = default (20)
+
 	LiveUpdateEnabled      bool               `json:"live_update_enabled,omitempty"`       // enable in-place binary self-update
 	VersionCheckInterval   string             `json:"version_check_interval,omitempty"`    // daily (default) | weekly | monthly | manual
 	VersionCheckCache      *VersionCacheEntry `json:"version_check_cache,omitempty"`       // server-side cache of last GitHub check
@@ -484,6 +488,7 @@ type UserPreferences struct {
 	LandingPage          string              `json:"landing_page,omitempty"`           // page shown after login
 	CapSelectedKeys      map[string][]string `json:"cap_selected_keys,omitempty"`      // capacity trend selection keyed by "local" or relay hostname
 	TreemapSelectedDS    map[string]string   `json:"treemap_selected_ds,omitempty"`    // treemap selected pool/dataset keyed by "local" or relay hostname
+	BottomTerminalHeight int                 `json:"bottom_terminal_height,omitempty"` // remembered pixel height of the bottom terminal panel; 0 = default
 }
 
 // User represents a portal or SMB-only user.

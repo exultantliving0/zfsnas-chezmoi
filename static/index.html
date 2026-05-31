@@ -705,7 +705,7 @@
     <button class="nav-item" onclick="showPage('settings')"  id="nav-settings"> <span class="nav-icon">⚙</span><span class="nav-label"> Settings</span></button>
     <button class="nav-item" onclick="showPage('prereqs')"   id="nav-prereqs">  <span class="nav-icon">🔧</span><span class="nav-label"> Requisites</span><span id="prereq-alert-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:#f0b429;margin-left:auto;flex-shrink:0;box-shadow:0 0 4px rgba(240,180,41,0.6);"></span></button>
     <button class="nav-item" onclick="showPage('updates')"   id="nav-updates">  <span class="nav-icon">⬆</span><span class="nav-label"> Platform</span><span id="nav-updates-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:#f0b429;margin-left:auto;flex-shrink:0;box-shadow:0 0 4px rgba(240,180,41,0.6);"></span></button>
-    <button class="nav-item" onclick="toggleTermPanel()"     id="nav-terminal"> <span class="nav-icon">🖥️</span><span class="nav-label"> Terminal</span></button>
+    <button class="nav-item" onclick="toggleTermPanel()"     id="nav-terminal"> <span class="nav-icon">🖥️</span><span class="nav-label"> Terminal</span><span id="nav-term-badge" style="display:none;margin-left:6px;padding:1px 6px;border-radius:10px;background:#15803d;color:#dcfce7;font-size:10px;font-weight:700;line-height:1;">0</span></button>
     <button class="nav-item" onclick="openAbout()"            id="nav-about">    <span class="nav-icon">ℹ</span><span class="nav-label"> About / Support</span></button>
   </nav>
 
@@ -6215,6 +6215,7 @@ Select the Console tab to load.</pre>
         <!-- Tab bar -->
         <div id="ci-term-tabs" style="display:flex;gap:2px;flex:1;overflow-x:auto;align-items:center;padding:0 4px;min-width:0;"></div>
         <!-- Panel controls -->
+        <span id="ci-term-gear-btn" onclick="event.stopPropagation(); _ciTermGearToggle()" title="Terminal settings" style="font-size:13px;color:var(--text-3);padding:2px 8px;user-select:none;cursor:pointer;flex-shrink:0;">⚙</span>
         <span id="ci-term-minimize-btn" onclick="ciTermToggleMinimize()" style="font-size:11px;color:var(--text-3);padding:2px 8px;user-select:none;cursor:pointer;flex-shrink:0;">▼</span>
         <button class="btn btn-ghost btn-sm" onclick="ciCloseBottomTerminal()" style="padding:2px 10px;font-size:11px;flex-shrink:0;">✕ Close All</button>
       </div>
@@ -11352,6 +11353,31 @@ let _upsPerfCostCents = null;   // electricity cost (¢/kWh) for $/yr in UPS too
       document.getElementById('btn-scan-disks').style.display = 'none';
       document.getElementById('btn-refresh-disks').style.display = 'none';
     }
+    // v6.5.30 — Terminal sidebar badge: show the number of background
+    // terminal sessions the user owns (local + every linked InterLink
+    // peer) as a small green pill next to the Terminal label. Refresh
+    // once on portal load, then every 30 s — local close-tab actions
+    // also call _updateTermBadge() directly for instant feedback.
+    if (hasPerm('terminal')) {
+      _updateTermBadge();
+      setInterval(_updateTermBadge, 30000);
+    }
+
+    // Restore bottom-terminal height from user preferences (v6.5.30 — server
+    // side so it follows the user across browsers/devices). We seed
+    // localStorage so the existing initResizeHandle for ci-term-panel picks
+    // it up on first open, AND apply the height directly to the panel
+    // element so even an open panel reflects the saved size.
+    {
+      const h = currentUser.preferences && currentUser.preferences.bottom_terminal_height;
+      if (h && h > 40) {
+        try { localStorage.setItem('ci-term-panel-height', String(h)); } catch (_) {}
+        const panel = document.getElementById('ci-term-panel');
+        if (panel) panel.style.height = h + 'px';
+        if (typeof _ciTermRestoreH !== 'undefined') _ciTermRestoreH = h;
+      }
+    }
+
     // Restore activity bar state from user preferences.
     {
       const bar = document.getElementById('activity-bar');
@@ -26831,6 +26857,13 @@ function applyUpdates() {
   // actually too tall, instead of trying to predict it from heights alone.
   function clampToViewport(target, opts) {
     if (!opts.viewportClamp) return;
+    // Hidden targets measure as 0×0; if we let the clamp run on them it
+    // computes `cur - overflow = -overflow`, snaps to `opts.min`, and
+    // *writes* that tiny height back to style.height — clobbering the
+    // value initResizeHandle just restored from localStorage. Visible
+    // check is done via getClientRects() because position:fixed elements
+    // have offsetParent === null even when shown.
+    if (target.classList.contains('hidden') || target.getClientRects().length === 0) return;
     const ab = document.getElementById('activity-bar');
     if (!ab) return;
     const overflow = Math.ceil(ab.getBoundingClientRect().bottom - window.innerHeight + TERM_BOTTOM_RESERVE_PX);
@@ -26939,8 +26972,39 @@ function applyUpdates() {
   initResizeHandle('ci-term-resize-handle', 'ci-term-panel', {
     min: TERM_MIN, max: 1400, maxFn: termViewportMax, key: 'ci-term-panel-height',
     viewportClamp: true,
-    onDrag: () => { if (_ciTermFit) _ciTermFit.fit(); },
-    onDone: h => { localStorage.setItem('ci-term-panel-height', h); if (_ciTermFit) _ciTermFit.fit(); },
+    // Re-fit every open tab on drag — `_ciTermTabs` is the authoritative
+    // tab registry; `_ciTermFit` is a stale identifier left over from a
+    // single-tab era and trying to read it throws ReferenceError which
+    // used to silently swallow everything after (notably the prefs PUT
+    // for the new server-side height persistence).
+    onDrag: () => {
+      try {
+        if (typeof _ciTermTabs !== 'undefined') {
+          _ciTermTabs.forEach(t => { try { t.fit && t.fit.fit(); } catch (_) {} });
+        }
+      } catch (_) {}
+    },
+    onDone: h => {
+      const px = parseInt(h, 10);
+      try { localStorage.setItem('ci-term-panel-height', String(px)); } catch (_) {}
+      try {
+        if (typeof _ciTermTabs !== 'undefined') {
+          _ciTermTabs.forEach(t => { try { t.fit && t.fit.fit(); } catch (_) {} });
+        }
+      } catch (_) {}
+      // v6.5.30 — persist per-user (server side) so size follows them.
+      try {
+        fetch('/api/prefs', {
+          method:'PUT', credentials:'same-origin',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({bottom_terminal_height: px}),
+        }).catch(()=>{});
+      } catch (_) {}
+      if (typeof currentUser !== 'undefined' && currentUser) {
+        currentUser.preferences = currentUser.preferences || {};
+        currentUser.preferences.bottom_terminal_height = px;
+      }
+    },
   });
 
   // Activity bar resize.
@@ -26989,7 +27053,7 @@ let _termFit = null;
 let _termResizeObs = null;
 let _termOpen = false;
 
-function toggleTermPanel() {
+async function toggleTermPanel() {
   // Use the *effective* server name at click time so each tab is keyed by
   // the server its websocket actually streams from. In relay mode the
   // bridge is established at handshake time and stays bound to the relay
@@ -26999,13 +27063,142 @@ function toggleTermPanel() {
                    ? _relayHostname
                    : (window._serverHostname || 'Host');
   const key = '__host__' + hostname;
+  const panel = document.getElementById('ci-term-panel');
+  const wasHidden = panel.classList.contains('hidden');
+
+  if (wasHidden) {
+    // v6.5.30 — when the user clicks Terminal with background sessions
+    // already alive, show a choose-where menu instead of auto-restoring
+    // into the bottom panel. The badge already tells the user how many
+    // background sessions exist; this menu lets them pick: bottom, new
+    // tab, new window, or just a fresh host shell.
+    const bgCount = await _ciTermFetchBackgroundCount();
+    if (bgCount > 0) {
+      _showTermResumeMenu(bgCount);
+      return;
+    }
+    // No background sessions — treat as a fresh open.
+  }
+
   if (_ciTermTabs.has(key)) {
-    // If tab already open, just activate and show it.
     _ciTermActivateTab(key);
     _ciTermEnsureVisible();
   } else {
     _ciTermEnsureVisible();
     _ciTermOpenCustomTab(key, '🖥 ' + hostname, '/ws/terminal');
+  }
+  _updateTermBadge();
+}
+
+// v6.5.30 — Resume menu shown when the user clicks Terminal with one or
+// more background sessions alive. Anchored to the Terminal nav button.
+function _showTermResumeMenu(bgCount) {
+  // Remove any prior instance.
+  const prior = document.getElementById('nav-term-resume-menu');
+  if (prior) prior.remove();
+
+  const navBtn = document.getElementById('nav-terminal');
+  const rect = navBtn.getBoundingClientRect();
+
+  const menu = document.createElement('div');
+  menu.id = 'nav-term-resume-menu';
+  // Initial position aligned with the top of the nav button. After
+  // append we measure and flip upward if the menu would overflow the
+  // viewport bottom — the Terminal button sits near the bottom of the
+  // sidebar so this is the common case, not the exception.
+  menu.style.cssText =
+    'position:fixed; z-index:1000;'
+    + 'left:' + (rect.right + 6) + 'px;'
+    + 'top:' + rect.top + 'px;'
+    + 'background:var(--surface); border:1px solid var(--border);'
+    + 'border-radius:8px; padding:6px; min-width:260px;'
+    + 'box-shadow:0 8px 24px rgba(0,0,0,.5);'
+    + 'visibility:hidden;'; // hide until we've measured + repositioned
+
+  // Small header showing the count so it's obvious WHY this menu appeared.
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'padding:6px 12px 8px; font-size:11px; color:var(--text-3); text-transform:uppercase; letter-spacing:.08em; border-bottom:1px solid var(--border); margin-bottom:4px;';
+  hdr.textContent = bgCount + ' background terminal' + (bgCount === 1 ? '' : 's');
+  menu.appendChild(hdr);
+
+  const items = [
+    {icon:'🖥', label:'New Host Terminal',           fn:() => _termResumeAction('new')},
+    {icon:'⬇', label:'Resume All in Bottom Terminal', fn:() => _termResumeAction('bottom')},
+    {icon:'↗', label:'Resume All in New Tab',         fn:() => _termResumeAction('tab')},
+    {icon:'🪟', label:'Resume All in New Window',     fn:() => _termResumeAction('window')},
+  ];
+  items.forEach(it => {
+    const el = document.createElement('div');
+    el.style.cssText = 'padding:8px 12px; cursor:pointer; border-radius:4px; font-size:13px; color:var(--text-1); display:flex; align-items:center; gap:10px;';
+    el.innerHTML = '<span style="width:20px;text-align:center;">' + it.icon + '</span><span>' + it.label + '</span>';
+    el.addEventListener('mouseenter', () => { el.style.background = 'var(--surface2)'; });
+    el.addEventListener('mouseleave', () => { el.style.background = ''; });
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.remove();
+      it.fn();
+    });
+    menu.appendChild(el);
+  });
+
+  document.body.appendChild(menu);
+
+  // Reposition if we'd overflow the viewport bottom — anchor menu bottom
+  // to the nav button bottom instead. 8 px margin from the actual edge.
+  const mh = menu.getBoundingClientRect().height;
+  if (rect.top + mh + 8 > window.innerHeight) {
+    const newTop = Math.max(8, rect.bottom - mh);
+    menu.style.top = newTop + 'px';
+  }
+  menu.style.visibility = '';
+
+  // Close on outside click / Esc.
+  const outside = (e) => {
+    if (!menu.contains(e.target) && e.target.id !== 'nav-terminal') {
+      menu.remove();
+      document.removeEventListener('mousedown', outside, true);
+      document.removeEventListener('keydown', escHandler, true);
+    }
+  };
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      menu.remove();
+      document.removeEventListener('mousedown', outside, true);
+      document.removeEventListener('keydown', escHandler, true);
+    }
+  };
+  // Use capture phase so the outside-handler runs before the menu's own
+  // onclick can re-trigger the toggleTermPanel button if user clicks it
+  // again while the menu is open.
+  setTimeout(() => {
+    document.addEventListener('mousedown', outside, true);
+    document.addEventListener('keydown', escHandler, true);
+  }, 0);
+}
+
+function _termResumeAction(kind) {
+  const hostname = (typeof _relayActive !== 'undefined' && _relayActive && _relayHostname)
+                   ? _relayHostname
+                   : (window._serverHostname || 'Host');
+  if (kind === 'new') {
+    // Fresh host shell — explicitly do NOT rehydrate; the existing
+    // background sessions remain alive on the server, the badge still
+    // counts them, the user can resume later.
+    _ciTermEnsureVisible();
+    const key = '__host__' + hostname;
+    if (_ciTermTabs.has(key)) _ciTermActivateTab(key);
+    else _ciTermOpenCustomTab(key, '🖥 ' + hostname, '/ws/terminal');
+  } else if (kind === 'bottom') {
+    // The previous default: open the bottom panel and restore every
+    // background session into it.
+    _ciTermEnsureVisible();
+    _ciTermFetchAndRestoreBackground();
+  } else if (kind === 'tab') {
+    // /terminal-multi auto-restores on load via its loadExistingSessions
+    // path, so just open the consolidated popup page.
+    window.open('/terminal-multi', 'znas-term-tab');
+  } else if (kind === 'window') {
+    window.open('/terminal-multi', 'znas-term-window', 'popup,width=1100,height=700');
   }
 }
 
@@ -35141,14 +35334,11 @@ function _ciComposeTermBottom(container) {
 }
 function _ciComposeTermNewTab(container) {
   _ciComposeCloseAllRowMenus();
-  const stack = _ciCurrentName;
-  window.open('/compose-console/' + encodeURIComponent(stack) + '/' + encodeURIComponent(container), '_blank');
+  openTermTab('compose:' + _ciCurrentName + ':' + container);
 }
 function _ciComposeTermNewWindow(container) {
   _ciComposeCloseAllRowMenus();
-  const stack = _ciCurrentName;
-  window.open('/compose-console/' + encodeURIComponent(stack) + '/' + encodeURIComponent(container),
-    'composeterm_' + stack + '_' + container, 'width=1080,height=680,noopener');
+  openTermWindow('compose:' + _ciCurrentName + ':' + container);
 }
 
 // ============================================================================
@@ -35727,12 +35917,11 @@ function _ciDockerTermBottom(id, name) {
 }
 function _ciDockerTermNewTab(id) {
   _ciDockerCloseAllRowMenus();
-  window.open('/docker-console/' + encodeURIComponent(_ciCurrentName) + '/' + encodeURIComponent(id), '_blank');
+  openTermTab('docker:' + _ciCurrentName + ':' + id);
 }
 function _ciDockerTermNewWindow(id) {
   _ciDockerCloseAllRowMenus();
-  window.open('/docker-console/' + encodeURIComponent(_ciCurrentName) + '/' + encodeURIComponent(id),
-    'dockerterm_' + _ciCurrentName + '_' + id, 'width=1080,height=680,noopener');
+  openTermWindow('docker:' + _ciCurrentName + ':' + id);
 }
 
 // ── Edit compose modal ──────────────────────────────────────────────────────
@@ -38214,7 +38403,7 @@ function ciToggleTermMenu(e) {
 function _ciCloseTermMenu() { document.getElementById('ci-term-menu').classList.add('hidden'); }
 
 function ciTerminalNewTab()    { _ciCloseTermMenu(); if (_ciCurrentName) openLXDConsole(_ciCurrentName); }
-function ciTerminalNewWindow() { _ciCloseTermMenu(); if (_ciCurrentName) window.open('/incus-console/' + encodeURIComponent(_ciCurrentName), 'lxdterm_' + _ciCurrentName, 'width=1080,height=680,noopener'); }
+function ciTerminalNewWindow() { _ciCloseTermMenu(); if (_ciCurrentName) openTermWindow('lxd:' + _ciCurrentName); }
 // Always open on the LOCAL origin — the SPICE viewer's relative API/WS
 // calls (`/api/incus/instances/<name>/status`, `/ws/lxd-vga?name=<name>`)
 // are forwarded to the relayed peer transparently by RelayMiddleware /
@@ -38257,15 +38446,455 @@ function _ciTermEnsureVisible() {
     document.getElementById('ci-term-resize-handle').style.pointerEvents = '';
     document.getElementById('ci-term-minimize-btn').textContent = '▼';
   }
+  // Note: background-session rehydration is NOT done here. That's the
+  // job of toggleTermPanel() so it can race-free decide whether to also
+  // spawn a fresh host shell (only when no background sessions exist).
+  // Other openers (VM/container "open in bottom terminal" menu items)
+  // intentionally open just their own target without resurrecting
+  // background tabs.
+}
+
+// Rehydrate background sessions into the bottom-terminal tab strip. Always
+// safe to call — existing tabs are skipped, only missing background
+// sessions are appended. Returns the number of background sessions the
+// server reported (for callers that need to branch on "is the user
+// returning to terminals?").
+async function _ciTermFetchAndRestoreBackground() {
+  let count = 0;
+  // Track the "best tab to focus" after restore — preferring the user's
+  // last-used tab (persisted per browser) and falling back to whichever
+  // server-side session has the most-recent `last_active` timestamp so
+  // the user lands on the shell they were actually using before close.
+  const seenKeys = [];
+  let mostRecentTs  = '';
+  let mostRecentKey = '';
+  try {
+    // v6.5.30 — aggregate endpoint pulls local sessions PLUS every
+    // linked InterLink peer's sessions for the same user. Remote
+    // entries carry server_id/server_hostname so we can route their WS
+    // through the local /ws/interlink-terminal proxy.
+    const r = await fetch('/api/terminal-sessions/aggregate', {credentials:'same-origin'});
+    if (r.ok) {
+      const list = await r.json();
+      (list || []).forEach(s => {
+        if (s.terminated) return;
+        count++;
+        const key = (s.is_local ? 'sess:' : 'rsess:' + s.server_id + ':') + s.id;
+        seenKeys.push(key);
+        // ISO-8601 strings compare correctly lexically, so a plain
+        // `>` does the right thing here.
+        if (s.last_active && s.last_active > mostRecentTs) {
+          mostRecentTs  = s.last_active;
+          mostRecentKey = key;
+        }
+        if (_ciTermTabs.has(key)) return;
+        const wsPath = _termWSPathForSession(s);
+        const label  = s.is_local ? (s.title || s.target || s.kind)
+                                  : ((s.server_hostname || 'remote') + ': ' + (s.title || s.target || s.kind));
+        _ciTermOpenCustomTab(key, label, wsPath, {sessionId: s.id, serverId: s.server_id || ''});
+      });
+    }
+  } catch (e) {}
+  _updateTermBadge(count);
+
+  // Activate the right tab. Priority:
+  //   1. Browser-stored "last user-clicked tab" if its key is still live
+  //   2. The session the server says was most-recently active
+  //   3. Whatever _ciTermOpenCustomTab activated as a side-effect (no-op)
+  let pick = '';
+  try {
+    const stored = localStorage.getItem('ci-term-last-active-key');
+    if (stored && _ciTermTabs.has(stored)) pick = stored;
+  } catch (_) {}
+  if (!pick && mostRecentKey && _ciTermTabs.has(mostRecentKey)) pick = mostRecentKey;
+  if (pick) _ciTermActivateTab(pick);
+  return count;
+}
+
+// Lightweight count-only fetch used by the badge poller — does NOT mutate
+// the tab strip. Returns the integer count (0 on any error).
+async function _ciTermFetchBackgroundCount() {
+  try {
+    const r = await fetch('/api/terminal-sessions/aggregate', {credentials:'same-origin'});
+    if (!r.ok) return 0;
+    const list = await r.json();
+    return (list || []).filter(s => !s.terminated).length;
+  } catch (_) { return 0; }
+}
+
+// Update the green pill on the Terminal sidebar button. Pass an explicit
+// count when you already have it; otherwise the function fetches. When
+// multiple updates race (e.g. spawning a tab while a poll is in flight),
+// only the most-recently-started fetch is allowed to write the badge —
+// older fetches that finish later are discarded so the count never goes
+// backwards transiently.
+let _termBadgeSeq = 0;
+async function _updateTermBadge(countMaybe) {
+  const badge = document.getElementById('nav-term-badge');
+  if (!badge) return;
+  if (typeof countMaybe === 'number') {
+    _termBadgeSeq++; // suppress any in-flight fetches
+    _paintTermBadge(badge, countMaybe);
+    return;
+  }
+  const my = ++_termBadgeSeq;
+  const count = await _ciTermFetchBackgroundCount();
+  if (my !== _termBadgeSeq) return; // a newer caller superseded us
+  _paintTermBadge(badge, count);
+}
+function _paintTermBadge(badge, count) {
+  if (count > 0) {
+    badge.textContent = String(count);
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// Build the right WS path for an aggregate-list entry. Local entries hit
+// the per-kind WS directly; remote entries go through
+// /ws/interlink-terminal which the local server bridges to the peer with
+// HMAC relay headers.
+function _termWSPathForSession(s) {
+  if (!s.is_local && s.server_id) {
+    let p = '/ws/interlink-terminal?server_id=' + encodeURIComponent(s.server_id)
+          + '&kind=' + encodeURIComponent(s.kind)
+          + '&target=' + encodeURIComponent(s.target || '');
+    if (s.id) p += '&session_id=' + encodeURIComponent(s.id);
+    return p;
+  }
+  let p;
+  switch (s.kind) {
+    case 'host':    p = '/ws/terminal?_=1'; break;
+    case 'lxd':     p = '/ws/lxd-console?name=' + encodeURIComponent(s.target); break;
+    case 'compose': {
+      const [stack, container] = (s.target||'').split(':');
+      p = '/ws/compose-console?stack=' + encodeURIComponent(stack) + '&container=' + encodeURIComponent(container);
+      break;
+    }
+    case 'docker': {
+      const [inst, container] = (s.target||'').split(':');
+      p = '/ws/docker-console?instance=' + encodeURIComponent(inst) + '&container=' + encodeURIComponent(container);
+      break;
+    }
+    default: p = '/ws/terminal?_=1';
+  }
+  if (s.id) p += (p.includes('?') ? '&' : '?') + 'session_id=' + encodeURIComponent(s.id);
+  return p;
+}
+
+// v6.5.30 — single-window guarantee for "New Tab Terminal" / "New Window
+// Terminal" launchers. Both targets fan into the consolidated
+// /terminal-multi page via a fixed window name, so repeated clicks reuse
+// the existing tab/window. A BroadcastChannel signals already-open pages
+// to add the new spec without a reload.
+const _znasTermBC = ('BroadcastChannel' in window) ? new BroadcastChannel('znas-terminal') : null;
+
+function _znasTermOpen(spec, mode) {
+  const name = mode === 'window' ? 'znas-term-window' : 'znas-term-tab';
+  const features = mode === 'window' ? 'popup,width=1100,height=700' : '';
+  // Use a hash so an already-open page picks the spec up via hashchange
+  // without a full reload. A fresh tab/window reads it via URL on boot.
+  const url = '/terminal-multi#add=' + encodeURIComponent(spec);
+  const win = window.open(url, name, features);
+  if (win) { try { win.focus(); } catch (_) {} }
+  if (_znasTermBC) { try { _znasTermBC.postMessage({type:'add', spec}); } catch (_) {} }
+}
+
+function openTermTab(spec)    { _znasTermOpen(spec, 'tab'); }
+function openTermWindow(spec) { _znasTermOpen(spec, 'window'); }
+
+// v6.5.30 — bottom-terminal gear menu (font size + theme). Shared
+// localStorage keys with the /terminal-multi popup page so a change in
+// either place is reflected the next time the other one opens a tab.
+const _ZNAS_TERM_FONT_KEY = 'znas-term-font-size';
+const _ZNAS_TERM_FONT_MIN = 9, _ZNAS_TERM_FONT_MAX = 28, _ZNAS_TERM_FONT_DEFAULT = 14;
+const _ZNAS_TERM_THEME_KEY = 'znas-term-theme';
+
+// Built-in themes. Same shape used by xterm.js's term.options.theme.
+const _ZNAS_TERM_THEMES = {
+  'znas-dark': { label: 'ZNAS Dark', theme: {
+    background:'#0d0d0f', foreground:'#e2e2e6', cursor:'#7c7cff',
+    selectionBackground:'rgba(124,124,255,0.3)',
+    black:'#1a1a1f', red:'#ff5f57', green:'#28ca42', yellow:'#ffbe2e',
+    blue:'#7c7cff', magenta:'#bf5af2', cyan:'#5ac8fa', white:'#e2e2e6',
+    brightBlack:'#6e6e80', brightRed:'#ff6b6b', brightGreen:'#5cffa3',
+    brightYellow:'#ffd60a', brightBlue:'#9595ff', brightMagenta:'#da8fff',
+    brightCyan:'#70d7ff', brightWhite:'#ffffff',
+  }},
+  'tron': { label: 'Tron', theme: {
+    background:'#000810', foreground:'#7df9ff', cursor:'#00f0ff',
+    selectionBackground:'rgba(0,240,255,0.25)',
+    black:'#000810', red:'#ff4b8a', green:'#39ff14', yellow:'#ffd700',
+    blue:'#0066ff', magenta:'#ff00ff', cyan:'#00f0ff', white:'#7df9ff',
+    brightBlack:'#0a2a4a', brightRed:'#ff80b0', brightGreen:'#70ff60',
+    brightYellow:'#ffe066', brightBlue:'#4d99ff', brightMagenta:'#ff80ff',
+    brightCyan:'#80f8ff', brightWhite:'#ccffff',
+  }},
+  'solarized-dark': { label: 'Solarized Dark', theme: {
+    background:'#002b36', foreground:'#839496', cursor:'#93a1a1',
+    selectionBackground:'rgba(131,148,150,0.25)',
+    black:'#073642', red:'#dc322f', green:'#859900', yellow:'#b58900',
+    blue:'#268bd2', magenta:'#d33682', cyan:'#2aa198', white:'#eee8d5',
+    brightBlack:'#586e75', brightRed:'#cb4b16', brightGreen:'#586e75',
+    brightYellow:'#657b83', brightBlue:'#839496', brightMagenta:'#6c71c4',
+    brightCyan:'#93a1a1', brightWhite:'#fdf6e3',
+  }},
+  'dracula': { label: 'Dracula', theme: {
+    background:'#282a36', foreground:'#f8f8f2', cursor:'#bd93f9',
+    selectionBackground:'rgba(189,147,249,0.3)',
+    black:'#21222c', red:'#ff5555', green:'#50fa7b', yellow:'#f1fa8c',
+    blue:'#bd93f9', magenta:'#ff79c6', cyan:'#8be9fd', white:'#f8f8f2',
+    brightBlack:'#6272a4', brightRed:'#ff6e6e', brightGreen:'#69ff94',
+    brightYellow:'#ffffa5', brightBlue:'#d6acff', brightMagenta:'#ff92df',
+    brightCyan:'#a4ffff', brightWhite:'#ffffff',
+  }},
+  'matrix': { label: 'Matrix', theme: {
+    background:'#0d0208', foreground:'#00ff41', cursor:'#00ff41',
+    selectionBackground:'rgba(0,255,65,0.25)',
+    black:'#0d0208', red:'#a30000', green:'#008f11', yellow:'#557a47',
+    blue:'#073642', magenta:'#5e35b1', cyan:'#00bcd4', white:'#00ff41',
+    brightBlack:'#1e6f1e', brightRed:'#ff6b6b', brightGreen:'#00ff41',
+    brightYellow:'#aaff66', brightBlue:'#268bd2', brightMagenta:'#9a55c4',
+    brightCyan:'#33ffff', brightWhite:'#ccffaa',
+  }},
+  'light': { label: 'Light', theme: {
+    background:'#fafafa', foreground:'#1a1a1f', cursor:'#0066ff',
+    selectionBackground:'rgba(0,102,255,0.18)',
+    black:'#000000', red:'#c91b00', green:'#00c200', yellow:'#c7c400',
+    blue:'#0037da', magenta:'#c930c7', cyan:'#00c5c7', white:'#c7c7c7',
+    brightBlack:'#676767', brightRed:'#ff6d67', brightGreen:'#5ff967',
+    brightYellow:'#fefb67', brightBlue:'#6871ff', brightMagenta:'#ff76ff',
+    brightCyan:'#5ffdff', brightWhite:'#feffff',
+  }},
+};
+
+function _ciTermGetThemeKey() {
+  const k = localStorage.getItem(_ZNAS_TERM_THEME_KEY) || '';
+  return _ZNAS_TERM_THEMES[k] ? k : 'znas-dark';
+}
+function _ciTermGetTheme() { return _ZNAS_TERM_THEMES[_ciTermGetThemeKey()].theme; }
+function _ciTermSetTheme(key) {
+  if (!_ZNAS_TERM_THEMES[key]) return;
+  try { localStorage.setItem(_ZNAS_TERM_THEME_KEY, key); } catch (_) {}
+  const theme = _ZNAS_TERM_THEMES[key].theme;
+  if (typeof _ciTermTabs !== 'undefined') {
+    _ciTermTabs.forEach(t => {
+      try { t.term.options.theme = theme; } catch (_) {}
+    });
+  }
+}
+
+function _ciTermGetFont() {
+  const v = parseInt(localStorage.getItem(_ZNAS_TERM_FONT_KEY) || '', 10);
+  return (v >= _ZNAS_TERM_FONT_MIN && v <= _ZNAS_TERM_FONT_MAX) ? v : _ZNAS_TERM_FONT_DEFAULT;
+}
+function _ciTermSetFont(px) {
+  px = Math.max(_ZNAS_TERM_FONT_MIN, Math.min(_ZNAS_TERM_FONT_MAX, px|0));
+  try { localStorage.setItem(_ZNAS_TERM_FONT_KEY, String(px)); } catch (_) {}
+  if (typeof _ciTermTabs !== 'undefined') {
+    _ciTermTabs.forEach(t => {
+      try { t.term.options.fontSize = px; } catch (_) {}
+    });
+    // xterm's renderer recomputes cell metrics asynchronously after the
+    // fontSize change. fit() in the same tick measures against the old
+    // cell size and produces wrong cols/rows. Wait two animation frames,
+    // force a layout read, then re-fit AND send the new dims to the
+    // server PTY (shells need TIOCSWINSZ, not just visual cell math).
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      _ciTermTabs.forEach(t => {
+        try { if (t.el) void t.el.offsetHeight; } catch (_) {}
+        try { t.fit && t.fit.fit(); } catch (_) {}
+        try {
+          if (t.ws && t.ws.readyState === WebSocket.OPEN) {
+            t.ws.send(JSON.stringify({type:'resize', cols:t.term.cols, rows:t.term.rows}));
+          }
+        } catch (_) {}
+      });
+    }));
+  }
+  const cur = document.getElementById('ci-term-font-current');
+  if (cur) cur.textContent = px + ' px';
+}
+function _ciTermFontDelta(d) { _ciTermSetFont(_ciTermGetFont() + d); }
+
+function _ciTermGearToggle() {
+  const existing = document.getElementById('ci-term-gear-menu');
+  if (existing) { existing.remove(); return; }
+
+  const btn = document.getElementById('ci-term-gear-btn');
+  const rect = btn.getBoundingClientRect();
+  const menu = document.createElement('div');
+  menu.id = 'ci-term-gear-menu';
+  menu.style.cssText =
+    'position:fixed; z-index:1000;'
+    + 'background:var(--surface); border:1px solid var(--border);'
+    + 'border-radius:8px; padding:6px; min-width:240px;'
+    + 'box-shadow:0 8px 24px rgba(0,0,0,.5);'
+    + 'visibility:hidden;'; // measure first, then position
+
+  // Font size row.
+  const fontRow = document.createElement('div');
+  fontRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:14px;padding:6px 10px;font-size:12px;color:var(--text-3);';
+  fontRow.innerHTML =
+    '<span>Font size</span>'
+    + '<span style="display:inline-flex;gap:2px;align-items:center;border:1px solid var(--border);border-radius:6px;overflow:hidden;">'
+    + '  <button data-act="-" style="background:var(--surface2);color:var(--text-1);border:0;cursor:pointer;padding:4px 8px;line-height:1;font-weight:600;font-size:10px;">A</button>'
+    + '  <button data-act="+" style="background:var(--surface2);color:var(--text-1);border:0;cursor:pointer;padding:4px 8px;line-height:1;font-weight:600;font-size:16px;">A</button>'
+    + '  <span id="ci-term-font-current" style="font-family:monospace;color:var(--text-3);padding:0 8px;font-size:11px;"></span>'
+    + '</span>';
+  fontRow.querySelector('[data-act="-"]').onclick = (e) => { e.stopPropagation(); _ciTermFontDelta(-1); };
+  fontRow.querySelector('[data-act="+"]').onclick = (e) => { e.stopPropagation(); _ciTermFontDelta(+1); };
+  menu.appendChild(fontRow);
+
+  // Divider.
+  const div = document.createElement('div');
+  div.style.cssText = 'height:1px;background:var(--border);margin:4px 6px;';
+  menu.appendChild(div);
+
+  // Theme picker.
+  const themeHdr = document.createElement('div');
+  themeHdr.style.cssText = 'padding:4px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);';
+  themeHdr.textContent = 'Theme';
+  menu.appendChild(themeHdr);
+
+  const currentKey = _ciTermGetThemeKey();
+  Object.keys(_ZNAS_TERM_THEMES).forEach(key => {
+    const t = _ZNAS_TERM_THEMES[key];
+    const row = document.createElement('div');
+    const isActive = key === currentKey;
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:13px;color:var(--text-1);cursor:pointer;border-radius:4px;'
+                      + (isActive ? 'background:var(--surface2);' : '');
+    // swatch — background + foreground stripe
+    const sw = document.createElement('span');
+    sw.style.cssText = 'display:inline-block;width:24px;height:14px;border-radius:3px;border:1px solid var(--border);position:relative;flex-shrink:0;'
+                     + 'background:' + t.theme.background + ';';
+    const fg = document.createElement('span');
+    fg.style.cssText = 'position:absolute;left:3px;top:3px;width:10px;height:1.5px;background:' + t.theme.foreground + ';box-shadow:0 4px 0 0 ' + t.theme.foreground + ';';
+    sw.appendChild(fg);
+    row.appendChild(sw);
+    const lbl = document.createElement('span');
+    lbl.textContent = t.label;
+    row.appendChild(lbl);
+    if (isActive) {
+      const check = document.createElement('span');
+      check.textContent = '✓';
+      check.style.cssText = 'margin-left:auto;color:var(--accent);';
+      row.appendChild(check);
+    }
+    row.addEventListener('mouseenter', () => { if (!isActive) row.style.background = 'var(--surface2)'; });
+    row.addEventListener('mouseleave', () => { if (!isActive) row.style.background = ''; });
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _ciTermSetTheme(key);
+      menu.remove();
+    });
+    menu.appendChild(row);
+  });
+
+  document.body.appendChild(menu);
+
+  // Position: align menu's right edge with the gear button's right edge,
+  // open upward so it stays inside the bottom panel area.
+  const mw = menu.getBoundingClientRect().width;
+  const mh = menu.getBoundingClientRect().height;
+  let left = rect.right - mw;
+  if (left < 8) left = 8;
+  let top = rect.top - mh - 6;
+  if (top < 8) top = rect.bottom + 6; // not enough room above → drop below
+  menu.style.left = left + 'px';
+  menu.style.top  = top + 'px';
+  menu.style.visibility = '';
+
+  // Set current font display.
+  const cur = menu.querySelector('#ci-term-font-current');
+  if (cur) cur.textContent = _ciTermGetFont() + ' px';
+
+  // Outside-click + Esc to close.
+  const close = () => {
+    menu.remove();
+    document.removeEventListener('mousedown', outside, true);
+    document.removeEventListener('keydown', esc, true);
+  };
+  const outside = (e) => { if (!menu.contains(e.target) && e.target.id !== 'ci-term-gear-btn') close(); };
+  const esc = (e) => { if (e.key === 'Escape') close(); };
+  setTimeout(() => {
+    document.addEventListener('mousedown', outside, true);
+    document.addEventListener('keydown', esc, true);
+  }, 0);
 }
 
 function _ciTermOpenTab(name) {
   _ciTermOpenCustomTab(name, name, '/ws/incus-console?name=' + encodeURIComponent(name));
 }
 
+// v6.5.30 — auto-reconnect for the bottom-terminal tabs. On iPad/laptop
+// suspend or any network blip the WS gets torn down; we want the tab to
+// quietly reattach to the same server-side PTY (the wsPath already has
+// session_id once the envelope arrived) instead of stranding the user on
+// a "[press Enter to reconnect]" prompt. Backoff is bounded so a truly
+// dead session doesn't reconnect in a loop forever.
+function _ciTermScheduleReconnect(key) {
+  const tab = _ciTermTabs.get(key);
+  if (!tab || tab.closing) return;
+  // If we just got kicked by another browser, don't ping-pong — leave
+  // the session attached to whoever has it. The user can take it back
+  // by clicking the tab or refreshing.
+  if (tab.kicked) {
+    try { tab.term.write('\r\n\x1b[33m[another browser is using this terminal — click tab to take over]\x1b[0m\r\n'); } catch (_) {}
+    return;
+  }
+  const attempt = (tab.reconnectAttempt || 0);
+  if (attempt > 8) {
+    try { tab.term.write('\r\n\x1b[33m[disconnected — type any key to retry]\x1b[0m\r\n'); } catch (_) {}
+    return;
+  }
+  tab.reconnectAttempt = attempt + 1;
+  if (tab.reconnectTimer) clearTimeout(tab.reconnectTimer);
+  const delay = Math.min(8000, 300 * Math.pow(2, attempt)); // 300,600,1.2k,2.4k,4.8k,8k…
+  tab.reconnectTimer = setTimeout(() => _ciTermReconnect(key), delay);
+}
+
+function _ciTermReconnect(key) {
+  const tab = _ciTermTabs.get(key);
+  if (!tab || tab.closing) return;
+  tab.reconnectTimer = null;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  let path = tab.wsPath;
+  // Defence: if for some reason session_id never got baked in (very early
+  // close), include it now from the captured sessionId.
+  if (tab.sessionId && !/[?&]session_id=/.test(path)) {
+    path += (path.includes('?') ? '&' : '?') + 'session_id=' + encodeURIComponent(tab.sessionId);
+  }
+  let ws;
+  try { ws = new WebSocket(proto + '//' + location.host + path); }
+  catch (e) { _ciTermScheduleReconnect(key); return; }
+  ws.binaryType = 'arraybuffer';
+  _ciTermBindWS(key, ws);
+}
+
+// v6.5.30 — Page-visibility hook: when the user returns to the tab
+// (foreground after iPad sleep, switching back to the browser, etc.)
+// proactively kick any tab whose WS is closed/closing so they don't have
+// to wait for the backoff timer. This is what makes "come back the next
+// day" feel instant on mobile.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (typeof _ciTermTabs === 'undefined') return;
+  _ciTermTabs.forEach((tab, key) => {
+    if (!tab.closing && (!tab.ws || tab.ws.readyState >= WebSocket.CLOSING)) {
+      tab.reconnectAttempt = 0; // reset backoff on user-driven return
+      _ciTermReconnect(key);
+    }
+  });
+});
+
 // Generic tab opener — wsPath is the full WS path (e.g. '/ws/terminal' or '/ws/incus-console?name=foo').
-// label is the human-readable tab title.
-function _ciTermOpenCustomTab(key, label, wsPath) {
+// label is the human-readable tab title. opts.sessionId pre-seeds the
+// session ID for tabs spawned from a rehydrate fetch; otherwise the ID is
+// captured from the server's first text envelope frame.
+function _ciTermOpenCustomTab(key, label, wsPath, opts) {
+  opts = opts || {};
   const containers = document.getElementById('ci-term-containers');
   // Hide every existing tab BEFORE creating the new one, then mount the
   // new tab's element already visible. Reason: xterm.js measures its
@@ -38284,16 +38913,11 @@ function _ciTermOpenCustomTab(key, label, wsPath) {
   containers.appendChild(el);
 
   const term = new Terminal({
-    cursorBlink: true, fontSize: 14,
+    cursorBlink: true,
+    fontSize: (typeof _ciTermGetFont === 'function') ? _ciTermGetFont() : 14,
     fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-    theme: {
-      background: '#0d0d0f', foreground: '#e2e2e6', cursor: '#7c7cff',
-      selectionBackground: 'rgba(124,124,255,0.3)',
-      black:'#1a1a1f', red:'#ff5f57', green:'#28ca42', yellow:'#ffbe2e',
-      blue:'#7c7cff', magenta:'#bf5af2', cyan:'#5ac8fa', white:'#e2e2e6',
-      brightBlack:'#6e6e80', brightRed:'#ff6b6b', brightGreen:'#5cffa3',
-      brightYellow:'#ffd60a', brightBlue:'#9595ff', brightMagenta:'#da8fff',
-      brightCyan:'#70d7ff', brightWhite:'#ffffff',
+    theme: (typeof _ciTermGetTheme === 'function') ? _ciTermGetTheme() : {
+      background: '#0d0d0f', foreground: '#e2e2e6',
     },
     scrollback: 5000,
   });
@@ -38304,6 +38928,25 @@ function _ciTermOpenCustomTab(key, label, wsPath) {
   // panel's actual layout. fit() is wrapped in try/catch because xterm
   // throws if the element is somehow still 0-sized (browser quirk).
   try { fit.fit(); } catch (_) {}
+
+  // v6.5.30 — Ctrl+C always forwards SIGINT to the PTY, even when a
+  // selection exists. xterm.js's default handler treats Ctrl+C as "copy
+  // selection" whenever there's an active selection — and because we
+  // auto-copy on selectionchange below, a selection is almost always
+  // present after the user clicks anywhere, which silently swallows
+  // Ctrl+C. Use Ctrl+Shift+C (or right-click → Copy in most browsers)
+  // to copy instead.
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type === 'keydown' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey
+        && (ev.key === 'c' || ev.key === 'C')) {
+      const t = _ciTermTabs.get(key);
+      if (t && t.ws && t.ws.readyState === WebSocket.OPEN) {
+        t.ws.send('\x03');
+      }
+      return false; // tell xterm not to also handle (would copy)
+    }
+    return true;
+  });
 
   const resizeObs = new ResizeObserver(() => { try { fit.fit(); } catch (_) {} });
   resizeObs.observe(el);
@@ -38319,14 +38962,58 @@ function _ciTermOpenCustomTab(key, label, wsPath) {
     try { fit.fit(); } catch (_) {}
     ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
   };
-  ws.onmessage = e => term.write(e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data);
-  ws.onclose   = () => { term.write('\r\n\x1b[31m[connection closed]\x1b[0m\r\n\x1b[33m[press Enter to reconnect]\x1b[0m\r\n'); _ciTermRenderTabs(); };
-  ws.onerror   = () => term.write('\r\n\x1b[31m[connection error]\x1b[0m\r\n\x1b[33m[press Enter to reconnect]\x1b[0m\r\n');
+  ws.onmessage = e => {
+    if (typeof e.data === 'string') {
+      // First text frame from server is a JSON envelope with the
+      // session ID — capture so the X button can terminate the
+      // server-side PTY (not just detach).
+      try {
+        const m = JSON.parse(e.data);
+        if (m && m.type === 'session' && m.id) {
+          const cur = _ciTermTabs.get(key);
+          if (cur) {
+            cur.sessionId = m.id;
+            // Bake session_id into wsPath so future auto-reconnects
+            // (e.g. iPad waking from sleep) reattach the same PTY
+            // instead of spawning a fresh shell every time.
+            if (cur.wsPath && !cur.wsPath.includes('session_id=')) {
+              cur.wsPath += (cur.wsPath.includes('?') ? '&' : '?') + 'session_id=' + encodeURIComponent(m.id);
+            }
+            // Successful attach — clear any prior kick state so the user
+            // can take over again later if they want.
+            cur.kicked = false;
+            cur.reconnectAttempt = 0;
+          }
+          // Server has now registered the new PTY; refresh the badge so
+          // the count includes it immediately rather than waiting for
+          // the 30 s poll.
+          try { _updateTermBadge(); } catch (_) {}
+          return;
+        }
+        if (m && m.type === 'kicked') {
+          // Another browser/tab took over this session. Stop the
+          // reconnect loop so we don't ping-pong with the other side.
+          const cur = _ciTermTabs.get(key);
+          if (cur) cur.kicked = true;
+          return;
+        }
+        if (m && m.type === 'error') {
+          term.write('\r\n\x1b[31m[error: ' + (m.error||'unknown') + ']\x1b[0m\r\n');
+          return;
+        }
+      } catch (_) {}
+      term.write(e.data);
+      return;
+    }
+    term.write(e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data);
+  };
+  ws.onclose   = () => { _ciTermScheduleReconnect(key); _ciTermRenderTabs(); };
+  ws.onerror   = () => { /* onclose will fire too — auto-reconnect is owned there */ };
   term.onSelectionChange(() => {
     const sel = term.getSelection();
     if (sel) navigator.clipboard.writeText(sel).catch(() => {});
   });
-  const tab = { term, ws, fit, resizeObs, el, onDataDisp: null, onResizeDisp: null, wsPath, label };
+  const tab = { term, ws, fit, resizeObs, el, onDataDisp: null, onResizeDisp: null, wsPath, label, sessionId: opts.sessionId || '', serverId: opts.serverId || '' };
   _ciTermTabs.set(key, tab);
   _ciTermBindWS(key, ws);
   _ciTermRenderTabs();
@@ -38339,13 +39026,47 @@ function _ciTermActivateTab(name) {
   _ciTermRenderTabs();
   const tab = _ciTermTabs.get(name);
   if (tab) {
-    requestAnimationFrame(() => { tab.fit.fit(); tab.term.focus(); });
+    // v6.5.30 — if this tab was kicked by another browser, treat the
+    // click as an explicit "take it back" gesture and reconnect now.
+    if (tab.kicked && (!tab.ws || tab.ws.readyState >= WebSocket.CLOSING)) {
+      tab.kicked = false;
+      tab.reconnectAttempt = 0;
+      _ciTermReconnect(name);
+    }
+    // Re-fit AND push the new dimensions to the server PTY. Without the
+    // sendResize, a tab that was mounted hidden during rehydrate sticks
+    // at xterm's 80×24 default — the user sees only 24 rows of output
+    // until they explicitly resize the panel. Double-rAF: a single rAF
+    // fires before the browser has committed layout for the
+    // display→visible transition, so fit() would read stale dims.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (tab.el) void tab.el.offsetHeight; // force layout
+      try { tab.fit.fit(); } catch (_) {}
+      try {
+        if (tab.ws && tab.ws.readyState === WebSocket.OPEN) {
+          tab.ws.send(JSON.stringify({type:'resize', cols:tab.term.cols, rows:tab.term.rows}));
+        }
+      } catch (_) {}
+      try { tab.term.focus(); } catch (_) {}
+    }));
   }
 }
 
 function _ciTermCloseTab(name) {
   const tab = _ciTermTabs.get(name);
   if (!tab) return;
+  // Mark closing so the WS onclose handler doesn't schedule a reconnect.
+  tab.closing = true;
+  if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }
+  // v6.5.30 — explicit X click means "end this session", not just detach.
+  // Fire-and-forget; route to peer if the tab came from an InterLink server.
+  if (tab.sessionId) {
+    const url = tab.serverId
+      ? ('/api/interlink/terminal-sessions/' + encodeURIComponent(tab.serverId) + '/' + encodeURIComponent(tab.sessionId) + '/close')
+      : ('/api/terminal-sessions/' + encodeURIComponent(tab.sessionId) + '/close');
+    fetch(url, {method:'POST', credentials:'same-origin'})
+      .finally(() => { try { _updateTermBadge(); } catch(_){} });
+  }
   tab.resizeObs.disconnect();
   tab.ws.close();
   tab.term.dispose();
@@ -38373,7 +39094,12 @@ function _ciTermRenderTabs() {
     btn.style.cssText = `display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;flex-shrink:0;background:${isActive ? 'rgba(255,255,255,0.08)' : 'transparent'};color:${isActive ? 'var(--text-1)' : 'var(--text-3)'};`;
     const lbl = document.createElement('span');
     lbl.textContent = displayLabel;
-    lbl.onclick = () => _ciTermActivateTab(key);
+    lbl.onclick = () => {
+      // Remember the user-clicked tab so a future "click Terminal to
+      // restore" lands them back on this one.
+      try { localStorage.setItem('ci-term-last-active-key', key); } catch (_) {}
+      _ciTermActivateTab(key);
+    };
     const x = document.createElement('span');
     x.textContent = '×';
     x.style.cssText = 'font-size:14px;line-height:1;opacity:0.6;';
@@ -38411,6 +39137,10 @@ function ciTermToggleMinimize() {
 
 function ciCloseBottomTerminal() {
   _ciTermTabs.forEach(tab => {
+    // Mark closing so the WS onclose handler doesn't schedule a reconnect
+    // for a tab the user is intentionally detaching.
+    tab.closing = true;
+    if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }
     tab.resizeObs.disconnect();
     tab.ws.close();
     tab.term.dispose();
@@ -38424,6 +39154,10 @@ function ciCloseBottomTerminal() {
   document.getElementById('ci-term-resize-handle').style.pointerEvents = '';
   document.getElementById('ci-term-minimize-btn').textContent = '▼';
   document.getElementById('ci-term-tabs').innerHTML = '';
+  // The Close-All button only DETACHES — the sessions stay alive on the
+  // server. Refresh the badge so the count (now == # of background
+  // sessions) becomes visible immediately.
+  try { _updateTermBadge(); } catch(_) {}
 }
 
 function _ciTermBindWS(name, ws) {
@@ -38441,9 +39175,35 @@ function _ciTermBindWS(name, ws) {
     try { if (tab.fit) tab.fit.fit(); } catch (_) {}
     ws.send(JSON.stringify({ type: 'resize', cols: tab.term.cols, rows: tab.term.rows }));
   };
-  ws.onmessage = e => tab.term.write(e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data);
-  ws.onclose   = () => { tab.term.write('\r\n\x1b[31m[connection closed]\x1b[0m\r\n\x1b[33m[press Enter to reconnect]\x1b[0m\r\n'); _ciTermRenderTabs(); };
-  ws.onerror   = () => tab.term.write('\r\n\x1b[31m[connection error]\x1b[0m\r\n\x1b[33m[press Enter to reconnect]\x1b[0m\r\n');
+  ws.onmessage = e => {
+    if (typeof e.data === 'string') {
+      try {
+        const m = JSON.parse(e.data);
+        if (m && m.type === 'session' && m.id) {
+          tab.sessionId = m.id;
+          if (tab.wsPath && !tab.wsPath.includes('session_id=')) {
+            tab.wsPath += (tab.wsPath.includes('?') ? '&' : '?') + 'session_id=' + encodeURIComponent(m.id);
+          }
+          // Successful (re)attach — clear the backoff counter and any
+          // prior kick state.
+          tab.reconnectAttempt = 0;
+          tab.kicked = false;
+          return;
+        }
+        if (m && m.type === 'kicked') {
+          // Another browser took over — stop the reconnect ping-pong.
+          tab.kicked = true;
+          return;
+        }
+        if (m && m.type === 'error') { tab.term.write('\r\n\x1b[31m[error: ' + (m.error||'unknown') + ']\x1b[0m\r\n'); return; }
+      } catch (_) {}
+      tab.term.write(e.data);
+      return;
+    }
+    tab.term.write(e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data);
+  };
+  ws.onclose   = () => { _ciTermScheduleReconnect(name); _ciTermRenderTabs(); };
+  ws.onerror   = () => { /* onclose will fire too — auto-reconnect is owned there */ };
   tab.onDataDisp   = tab.term.onData(data => {
     if (ws.readyState === WebSocket.OPEN) { ws.send(data); }
     // After a timeout/disconnect, the closed-state hint says "[press
@@ -39266,7 +40026,7 @@ function toggleLXDTermMenu(e, name, type) {
     _ciTermOpenTab(name);
   });
   mkItem('LXD Tab Terminal',    () => openLXDConsole(name));
-  mkItem('LXD Window Terminal', () => window.open('/incus-console/' + encodeURIComponent(name), 'lxdterm_' + name, 'width=1080,height=680,noopener'));
+  mkItem('LXD Window Terminal', () => openTermWindow('lxd:' + name));
   document.body.appendChild(dd);
   const rect = btn.getBoundingClientRect();
   dd.style.position = 'fixed';
@@ -41448,7 +42208,7 @@ async function submitLXDDelete() {
 }
 
 function openLXDConsole(name) {
-  window.open('/incus-console/' + encodeURIComponent(name), '_blank');
+  openTermTab('lxd:' + name);
 }
 
 // Returns the next available label like "vm-1", "vm-2", ... — picks the
@@ -46293,7 +47053,7 @@ function _navInjectTerminalItems(dd, inst) {
     _ciTermOpenTab(name);
   });
   mk('💻 LXD Tab Terminal',    () => openLXDConsole(name));
-  mk('💻 LXD Window Terminal', () => window.open('/incus-console/' + encodeURIComponent(name), 'lxdterm_' + name, 'width=1080,height=680,noopener'));
+  mk('💻 LXD Window Terminal', () => openTermWindow('lxd:' + name));
   // Separator between our injected items and the burger's existing ones.
   const sep = document.createElement('hr');
   sep.className = 'menu-sep';

@@ -276,6 +276,39 @@ func DockerDeleteFile(instance, path string) error {
 	return nil
 }
 
+// DockerComposeHasDependsOn reports whether the compose YAML for (instance,path)
+// declares any service-level `depends_on:` key. Used to pre-empt the Podman
+// "container has dependent containers which must be removed before it" failure
+// during `up -d` of an existing stack: when depends_on is present we run a
+// `down` first so neither parent nor dependent carries a stale reference.
+//
+// Detection is text-level on purpose — full YAML parsing would force a new
+// dependency for a single boolean. We look for any non-comment, non-indented
+// service-level line that ends with `depends_on:` (with optional trailing
+// whitespace). Both list-style and short-form depends_on match.
+func DockerComposeHasDependsOn(instance, configFile string) (bool, error) {
+	content, err := DockerReadComposeFile(instance, configFile)
+	if err != nil {
+		return false, err
+	}
+	for _, raw := range strings.Split(content, "\n") {
+		line := raw
+		// Strip trailing comment.
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		line = strings.TrimRight(line, " \t\r")
+		// `depends_on:` is always indented (it's a service-level key).
+		// Both block form (`depends_on:` then list below) and short
+		// flow form (`depends_on: [svcA, svcB]`) start the same way.
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "depends_on:") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // DockerComposeAction runs `docker compose <verb…>` for the project at
 // configFile. `verb` is the *full* sub-command — caller passes
 // {"up","-d"} or {"pull"} or {"down","-t","10"} etc.

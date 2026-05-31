@@ -23,6 +23,7 @@ import (
 	"zfsnas/internal/keystore"
 	"zfsnas/internal/scheduler"
 	"zfsnas/internal/session"
+	"zfsnas/internal/termsessions"
 	"zfsnas/internal/version"
 	"zfsnas/system"
 )
@@ -102,6 +103,12 @@ func main() {
 	} else if loaded > 0 {
 		log.Printf("[sessions] restored %d session(s) from disk", loaded)
 	}
+
+	// Terminal sessions die when their owning web session does.
+	termsessions.Default.Configure(appCfg.TerminalScrollbackKB, appCfg.TerminalMaxSessionsPerUser)
+	session.Default.OnEvict(func(userID, reason string) {
+		termsessions.Default.TerminateUser(userID, termsessions.ReasonSessionExpire)
+	})
 
 	// ===== --set-https-port override =====
 	if *setHTTPSPort != 0 {

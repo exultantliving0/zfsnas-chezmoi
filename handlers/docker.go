@@ -18,10 +18,10 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/mux"
-	"github.com/gorilla/websocket"
 
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
+	"zfsnas/internal/termsessions"
 	"zfsnas/system"
 )
 
@@ -342,6 +342,12 @@ func HandleDockerComposeAction(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 		// Map the user-facing action to one or two compose subcommands.
+		// For "update" we also detect depends_on in the YAML — Podman's
+		// `up -d` recreate flow deadlocks when a parent container is
+		// referenced by a dependent that hasn't been removed yet
+		// ("container … has dependent containers which must be removed
+		// before it"). A `down` before `up -d` clears both sides so the
+		// recreate can proceed.
 		var stages [][]string
 		switch req.Action {
 		case "start":
@@ -352,6 +358,9 @@ func HandleDockerComposeAction(appCfg *config.AppConfig) http.HandlerFunc {
 			stages = [][]string{{"restart"}}
 		case "update":
 			stages = [][]string{{"pull"}, {"up", "-d"}}
+			if hasDeps, err := system.DockerComposeHasDependsOn(name, req.Path); err == nil && hasDeps {
+				stages = [][]string{{"pull"}, {"down"}, {"up", "-d"}}
+			}
 		default:
 			jsonErr(w, http.StatusBadRequest, "action must be start|stop|restart|update")
 			return
@@ -529,10 +538,10 @@ func HandleDockerContainerInspect(appCfg *config.AppConfig) http.HandlerFunc {
 	}
 }
 
-// HandleDockerConsoleWS opens a PTY into one docker container inside an
-// instance via `incus exec <inst> -- docker exec -it <container> sh`.
-// Mirrors HandleComposeConsoleWS — same xterm.js wire shape.
-// WS /ws/docker-console?instance=<i>&container=<c>
+// HandleDockerConsoleWS attaches to a persistent terminal session for one
+// docker container running inside a user VM/CT. PTY survives WS
+// disconnect — see termsessions.Default for lifetime.
+// WS /ws/docker-console?instance=<i>&container=<c>[&session_id=<id>]
 func HandleDockerConsoleWS(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		instance := r.URL.Query().Get("instance")
@@ -551,63 +560,21 @@ func HandleDockerConsoleWS(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		defer conn.Close()
 
-		// Prefer bash when available, fall back to sh — same probe the
-		// compose console uses.
-		shell := "/bin/sh"
-		if exec.Command("incus", "exec", instance, "--",
-			"docker", "exec", container, "which", "bash").Run() == nil {
-			shell = "/bin/bash"
-		}
-		cmd := exec.Command("incus", "exec", instance, "--",
-			"docker", "exec", "-it", container, shell)
-		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-
-		ptmx, err := pty.Start(cmd)
-		if err != nil {
-			conn.WriteMessage(websocket.TextMessage, []byte("Failed to start console: "+err.Error()+"\r\n"))
-			return
-		}
-		defer func() {
-			cmd.Process.Kill()
-			ptmx.Close()
-		}()
-
-		var once sync.Once
-		done := make(chan struct{})
-
-		go func() {
-			buf := make([]byte, 4096)
-			for {
-				n, err := ptmx.Read(buf)
-				if n > 0 {
-					conn.WriteMessage(websocket.BinaryMessage, buf[:n])
-				}
-				if err != nil {
-					once.Do(func() { close(done) })
-					return
-				}
+		sess := MustSession(r)
+		target := instance + ":" + container
+		title := container + " — " + instance
+		wsAttachOrCreate(conn, r, sess.UserID, termsessions.KindDocker, target, title, func() (*exec.Cmd, *os.File, error) {
+			shell := "/bin/sh"
+			if exec.Command("incus", "exec", instance, "--",
+				"docker", "exec", container, "which", "bash").Run() == nil {
+				shell = "/bin/bash"
 			}
-		}()
-
-		go func() {
-			for {
-				mt, data, err := conn.ReadMessage()
-				if err != nil {
-					once.Do(func() { close(done) })
-					return
-				}
-				if mt == websocket.TextMessage {
-					var msg composeTermMsg
-					if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
-						pty.Setsize(ptmx, &pty.Winsize{Cols: msg.Cols, Rows: msg.Rows})
-						continue
-					}
-				}
-				ptmx.Write(data)
-			}
-		}()
-
-		<-done
+			cmd := exec.Command("incus", "exec", instance, "--",
+				"docker", "exec", "-it", container, shell)
+			cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+			ptmx, err := pty.Start(cmd)
+			return cmd, ptmx, err
+		})
 	}
 }
 

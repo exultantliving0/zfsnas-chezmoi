@@ -1180,10 +1180,16 @@ func GetRemoteLXDBridges(remoteURL, sharedSecret, tlsFP string) ([]LXDNetworkInf
 
 // ── Remote instance list ───────────────────────────────────────────────────────
 
-// LXDInstanceSummary is a minimal instance record used for push-target validation.
+// LXDInstanceSummary is a minimal instance record used for push-target
+// validation AND (v6.5.30+) by the consolidated terminal-multi page to
+// list all reachable VMs / containers across linked peers. Type + State
+// were added so callers can filter to running instances and label each
+// row with the right icon.
 type LXDInstanceSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Type        string `json:"type,omitempty"`   // "virtual-machine" | "container"
+	State       string `json:"state,omitempty"`  // "Running" | "Stopped" | "Frozen" | ...
 }
 
 // LXDInstancesHMAC signs a request to list remote LXD instances.
@@ -1204,7 +1210,10 @@ type LXDInstancesRequest struct {
 	HMAC      string `json:"hmac"`
 }
 
-// LXDListInstanceSummaries returns name+description for every local LXD instance.
+// LXDListInstanceSummaries returns name+description+type+state for every
+// local LXD instance. Type + State are needed by the terminal-multi page
+// so it can filter peers' instance lists to "Running" and pick the right
+// icon (VM vs CT) per row.
 func LXDListInstanceSummaries() ([]LXDInstanceSummary, error) {
 	out, err := exec.Command("incus", "list", "--format", "json").Output()
 	if err != nil {
@@ -1213,13 +1222,18 @@ func LXDListInstanceSummaries() ([]LXDInstanceSummary, error) {
 	var raw []struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		Type        string `json:"type"`
+		Status      string `json:"status"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, err
 	}
 	result := make([]LXDInstanceSummary, len(raw))
 	for i, r := range raw {
-		result[i] = LXDInstanceSummary{Name: r.Name, Description: r.Description}
+		result[i] = LXDInstanceSummary{
+			Name: r.Name, Description: r.Description,
+			Type: r.Type, State: r.Status,
+		}
 	}
 	return result, nil
 }

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"zfsnas/internal/termsessions"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/mux"
@@ -653,11 +654,10 @@ func HandleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleComposeConsoleWS opens a PTY into one podman container inside a
-// stack via `incus exec <stack> -- podman exec -it <container> <shell>`.
-// Mirrors HandleLXDConsole — same xterm.js wire shape (binary frames, JSON
-// resize messages).
-// WS /ws/compose-console?stack=<stack>&container=<container>
+// HandleComposeConsoleWS attaches to a persistent terminal session for one
+// podman container inside a compose stack. The PTY survives WS disconnect
+// — see termsessions.Default for lifetime.
+// WS /ws/compose-console?stack=<stack>&container=<container>[&session_id=<id>]
 func HandleComposeConsoleWS(w http.ResponseWriter, r *http.Request) {
 	stack := r.URL.Query().Get("stack")
 	container := r.URL.Query().Get("container")
@@ -675,64 +675,22 @@ func HandleComposeConsoleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Try bash first — most service images ship with it; fall back to /bin/sh
-	// (Alpine, distroless-ish bases). Probe with `which` so the failing case
-	// surfaces fast instead of after a slow PTY allocate.
-	shell := "/bin/sh"
-	if exec.Command("incus", "exec", stack, "--",
-		"podman", "exec", container, "which", "bash").Run() == nil {
-		shell = "/bin/bash"
-	}
-	cmd := exec.Command("incus", "exec", stack, "--",
-		"podman", "exec", "-it", container, shell)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte("Failed to start console: "+err.Error()+"\r\n"))
-		return
-	}
-	defer func() {
-		cmd.Process.Kill()
-		ptmx.Close()
-	}()
-
-	var once sync.Once
-	done := make(chan struct{})
-
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := ptmx.Read(buf)
-			if n > 0 {
-				conn.WriteMessage(websocket.BinaryMessage, buf[:n])
-			}
-			if err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
+	sess := MustSession(r)
+	target := stack + ":" + container
+	title := container + " — " + stack
+	wsAttachOrCreate(conn, r, sess.UserID, termsessions.KindCompose, target, title, func() (*exec.Cmd, *os.File, error) {
+		// Probe for bash; fall back to /bin/sh.
+		shell := "/bin/sh"
+		if exec.Command("incus", "exec", stack, "--",
+			"podman", "exec", container, "which", "bash").Run() == nil {
+			shell = "/bin/bash"
 		}
-	}()
-
-	go func() {
-		for {
-			mt, data, err := conn.ReadMessage()
-			if err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
-			if mt == websocket.TextMessage {
-				var msg composeTermMsg
-				if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
-					pty.Setsize(ptmx, &pty.Winsize{Cols: msg.Cols, Rows: msg.Rows})
-					continue
-				}
-			}
-			ptmx.Write(data)
-		}
-	}()
-
-	<-done
+		cmd := exec.Command("incus", "exec", stack, "--",
+			"podman", "exec", "-it", container, shell)
+		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		ptmx, err := pty.Start(cmd)
+		return cmd, ptmx, err
+	})
 }
 
 // ServeComposeConsolePage serves a full-page xterm.js console targeting one

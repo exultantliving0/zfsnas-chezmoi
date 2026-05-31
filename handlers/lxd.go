@@ -15,6 +15,7 @@ import (
 	"time"
 	"zfsnas/internal/audit"
 	"zfsnas/internal/config"
+	"zfsnas/internal/termsessions"
 	"zfsnas/system"
 
 	"github.com/creack/pty"
@@ -963,8 +964,10 @@ var lxdConsoleUpgrader = websocket.Upgrader{
 	},
 }
 
-// HandleLXDConsole opens a WebSocket PTY to an LXD instance via `lxc exec`.
-// WS /ws/lxd-console?name=<name>
+// HandleLXDConsole opens a WebSocket attached to a persistent terminal
+// session targeting an LXD/Incus instance. Same attach/detach contract as
+// HandleTerminal — see handlers/terminal.go for the session lifecycle.
+// WS /ws/lxd-console?name=<name>[&session_id=<id>]
 func HandleLXDConsole(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	if name == "" {
@@ -978,66 +981,22 @@ func HandleLXDConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// If root has a real password, require login authentication.
-	// Otherwise drop straight to a shell (default open-access behaviour).
-	var cmd *exec.Cmd
-	if lxcRootHasPassword(name) {
-		cmd = exec.Command("incus", "exec", name, "--", "login")
-	} else {
-		shell := "bash"
-		if exec.Command("incus", "exec", name, "--", "which", "bash").Run() != nil {
-			shell = "sh"
+	sess := MustSession(r)
+	wsAttachOrCreate(conn, r, sess.UserID, termsessions.KindLXD, name, name, func() (*exec.Cmd, *os.File, error) {
+		var cmd *exec.Cmd
+		if lxcRootHasPassword(name) {
+			cmd = exec.Command("incus", "exec", name, "--", "login")
+		} else {
+			shell := "bash"
+			if exec.Command("incus", "exec", name, "--", "which", "bash").Run() != nil {
+				shell = "sh"
+			}
+			cmd = exec.Command("incus", "exec", name, "--", shell)
 		}
-		cmd = exec.Command("incus", "exec", name, "--", shell)
-	}
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		conn.WriteMessage(websocket.TextMessage, []byte("Failed to start console: "+err.Error()+"\r\n"))
-		return
-	}
-	defer func() {
-		cmd.Process.Kill()
-		ptmx.Close()
-	}()
-
-	var once sync.Once
-	done := make(chan struct{})
-
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := ptmx.Read(buf)
-			if n > 0 {
-				conn.WriteMessage(websocket.BinaryMessage, buf[:n])
-			}
-			if err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			mt, data, err := conn.ReadMessage()
-			if err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
-			if mt == websocket.TextMessage {
-				var msg termMsg
-				if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
-					pty.Setsize(ptmx, &pty.Winsize{Cols: msg.Cols, Rows: msg.Rows})
-					continue
-				}
-			}
-			io.Copy(ptmx, newBytesReader(data))
-		}
-	}()
-
-	<-done
+		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		ptmx, err := pty.Start(cmd)
+		return cmd, ptmx, err
+	})
 }
 
 // ServeLXDConsolePage serves the full-page xterm.js console for an LXD instance.
