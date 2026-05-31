@@ -83,8 +83,13 @@ const terminalMultiPageHTML = `<!DOCTYPE html>
   #tabs .addbtn:hover { color:var(--text); background:var(--bg-2); }
   #tabs-spacer { flex:1 1 auto; }
   #tabs .gearbtn {
-    padding:6px 12px; cursor:pointer; color:var(--muted); font-size:14px; line-height:1;
-    border-left:1px solid var(--bd); position:relative;
+    /* Flex-center the ⚙ glyph inside the stretched tab-bar cell — without
+       this the icon hugs the top edge because #tabs uses align-items:stretch.
+       No left border: the gear sits alone on the right with whitespace as
+       its visual separator. */
+    padding:0 14px; cursor:pointer; color:var(--muted); font-size:15px; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    position:relative;
   }
   #tabs .gearbtn:hover { color:var(--text); background:var(--bg-2); }
   .gear-menu {
