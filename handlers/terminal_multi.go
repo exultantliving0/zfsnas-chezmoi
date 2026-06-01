@@ -460,6 +460,69 @@ function closeTab(i) {
 
 // ── WebSocket attach for one tab ───────────────────────────────────────────
 
+// Right-click menu (Copy / Paste / Select All). Overriding the native menu
+// lets Copy fire from this click gesture, which is what makes the clipboard
+// write succeed on Safari (Mac/iPad).
+function showTermCtxMenu(ev, term, wsSend) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const old = document.getElementById('term-ctx-menu');
+  if (old) old.remove();
+
+  const menu = document.createElement('div');
+  menu.id = 'term-ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:99999;min-width:150px;background:var(--bg-1,#1a1a1f);'
+    + 'border:1px solid var(--border,#333);border-radius:8px;padding:4px;'
+    + 'box-shadow:0 8px 24px rgba(0,0,0,.5);font-size:13px;user-select:none;';
+
+  let hasSel = false;
+  try { hasSel = term.hasSelection(); } catch (e) {}
+
+  const close = () => {
+    menu.remove();
+    document.removeEventListener('click', close, true);
+    document.removeEventListener('contextmenu', close, true);
+  };
+  const addItem = (label, enabled, onClick) => {
+    const it = document.createElement('div');
+    it.textContent = label;
+    it.style.cssText = 'padding:6px 12px;border-radius:5px;white-space:nowrap;'
+      + 'cursor:' + (enabled ? 'pointer' : 'default') + ';'
+      + 'color:' + (enabled ? 'var(--text,#e2e2e6)' : 'var(--text-dim,#6e6e80)') + ';';
+    if (enabled) {
+      it.onmouseenter = () => { it.style.background = 'rgba(124,124,255,0.18)'; };
+      it.onmouseleave = () => { it.style.background = 'transparent'; };
+      it.onmousedown  = (e) => { e.preventDefault(); };
+      it.onclick      = () => { close(); try { onClick(); } catch (e) {} };
+    }
+    menu.appendChild(it);
+  };
+
+  addItem('⧉ Copy', hasSel, () => {
+    let sel = ''; try { sel = term.getSelection() || ''; } catch (e) {}
+    if (sel) { try { navigator.clipboard.writeText(sel).catch(()=>{}); } catch (e) {} }
+  });
+  if (wsSend) {
+    addItem('⮃ Paste', true, async () => {
+      try { const t = await navigator.clipboard.readText(); if (t) wsSend(t); } catch (e) {}
+    });
+  }
+  addItem('☰ Select All', true, () => { try { term.selectAll(); } catch (e) {} });
+
+  document.body.appendChild(menu);
+  let x = ev.clientX, y = ev.clientY;
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  if (x + w > window.innerWidth)  x = Math.max(6, window.innerWidth  - w - 6);
+  if (y + h > window.innerHeight) y = Math.max(6, window.innerHeight - h - 6);
+  menu.style.left = x + 'px';
+  menu.style.top  = y + 'px';
+
+  setTimeout(() => {
+    document.addEventListener('click', close, true);
+    document.addEventListener('contextmenu', close, true);
+  }, 0);
+}
+
 function buildPane(tab) {
   const pane = document.createElement('div');
   pane.className = 'pane';
@@ -482,6 +545,28 @@ function buildPane(tab) {
   try { fit.fit(); } catch{}
   tab.term = term;
   tab.fit  = fit;
+
+  // Cmd+C (Mac/iPad) / Ctrl+Shift+C: copy the selection. Driven straight off
+  // the keydown gesture so Safari permits navigator.clipboard.writeText (it
+  // blocks clipboard writes that aren't tied to a real user gesture). Without
+  // this the user had to right-click → Copy on macOS/iPadOS.
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== 'keydown' || (ev.key !== 'c' && ev.key !== 'C')) return true;
+    const meta  = ev.metaKey && !ev.ctrlKey && !ev.altKey;
+    const ctrlS = ev.ctrlKey && ev.shiftKey && !ev.metaKey && !ev.altKey;
+    if (!meta && !ctrlS) return true;
+    let sel = ''; try { sel = term.getSelection() || ''; } catch{}
+    if (!sel) return true;
+    try { navigator.clipboard.writeText(sel).catch(()=>{}); } catch{}
+    return false; // don't let xterm also act on the key
+  });
+
+  // Right-click → Copy / Paste / Select All.
+  xt.addEventListener('contextmenu', (ev) => {
+    showTermCtxMenu(ev, term, (t) => {
+      if (tab.ws && tab.ws.readyState === 1) tab.ws.send(t);
+    });
+  });
 
   window.addEventListener('resize', () => { try { fit.fit(); sendResize(tab); } catch{} });
 }

@@ -27202,6 +27202,126 @@ function _termResumeAction(kind) {
   }
 }
 
+// Build clean clipboard text from the current xterm selection. xterm's
+// getSelection() drops a line break at every *visual* wrap, so a single long
+// command/output line that wrapped across the panel comes back chopped into
+// pieces — and pasting that into a single-line field turns each break into a
+// stray space. Walk the buffer instead: stitch soft-wrapped rows (isWrapped)
+// back into one continuous line, and only emit a newline at a real line end,
+// trimming the right-edge padding there.
+function _termCleanSelection(term) {
+  let text = '';
+  try { text = term.getSelection() || ''; } catch (_) { return ''; }
+  if (!text) return text;
+  try {
+    const pos = term.getSelectionPosition();
+    const buf = term.buffer && term.buffer.active;
+    if (!pos || !buf) return text;
+    let out = '';
+    for (let y = pos.start.y; y <= pos.end.y; y++) {
+      const line = buf.getLine(y);
+      if (!line) continue;
+      const startCol = (y === pos.start.y) ? pos.start.x : 0;
+      const endCol   = (y === pos.end.y)   ? pos.end.x   : undefined;
+      const next = buf.getLine(y + 1);
+      const nextWrapped = (y < pos.end.y) && next && next.isWrapped;
+      // Soft-wrapped row: keep the full row untrimmed so the join is seamless.
+      // Real line end: trim the right-edge padding and add a newline.
+      out += line.translateToString(!nextWrapped, startCol, endCol);
+      if (!nextWrapped && y < pos.end.y) out += '\n';
+    }
+    if (out) text = out;
+  } catch (_) { /* fall back to raw getSelection */ }
+  return text;
+}
+
+// Copy the current xterm selection to the clipboard. Returns true if there
+// was a selection worth copying. Safari (macOS / iPadOS) blocks
+// navigator.clipboard.writeText from our auto-copy-on-selectionchange handler
+// because a selectionchange isn't a qualifying user gesture — so Cmd+C used to
+// silently do nothing and the user had to right-click → Copy. Calling this
+// straight from a keydown handler (a real user gesture) makes the write stick.
+function _termCopySelection(term) {
+  const sel = _termCleanSelection(term);
+  if (!sel) return false;
+  try { navigator.clipboard.writeText(sel).catch(() => {}); } catch (_) {}
+  return true;
+}
+
+// True for the platform "copy" chord with a selection present:
+//   - Cmd+C on macOS / iPadOS (metaKey)
+//   - Ctrl+Shift+C on Linux/Windows (Ctrl+C alone must stay SIGINT)
+function _termIsCopyChord(ev, term) {
+  if (ev.type !== 'keydown') return false;
+  if (ev.key !== 'c' && ev.key !== 'C') return false;
+  const meta  = ev.metaKey && !ev.ctrlKey && !ev.altKey;            // Cmd+C
+  const ctrlS = ev.ctrlKey && ev.shiftKey && !ev.metaKey && !ev.altKey; // Ctrl+Shift+C
+  if (!meta && !ctrlS) return false;
+  try { return term.hasSelection(); } catch (_) { return false; }
+}
+
+// Lightweight right-click menu for the terminals — Copy / Paste / Select All.
+// We override the browser's native menu so Copy fires straight from this click
+// gesture, which is what lets the clipboard write succeed on Safari
+// (Mac/iPad). `wsSend(text)` injects pasted text into the PTY; pass null to
+// drop the Paste item (e.g. a read-only/disconnected pane).
+function _termShowContextMenu(ev, term, wsSend) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const old = document.getElementById('term-ctx-menu');
+  if (old) old.remove();
+
+  const menu = document.createElement('div');
+  menu.id = 'term-ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:99999;min-width:150px;background:var(--surface,#1a1a1f);'
+    + 'border:1px solid var(--border,#333);border-radius:8px;padding:4px;'
+    + 'box-shadow:0 8px 24px rgba(0,0,0,.5);font-size:13px;user-select:none;';
+
+  let hasSel = false;
+  try { hasSel = term.hasSelection(); } catch (_) {}
+
+  const close = () => {
+    menu.remove();
+    document.removeEventListener('click', close, true);
+    document.removeEventListener('contextmenu', close, true);
+  };
+  const addItem = (label, enabled, onClick) => {
+    const it = document.createElement('div');
+    it.textContent = label;
+    it.style.cssText = 'padding:6px 12px;border-radius:5px;white-space:nowrap;'
+      + 'cursor:' + (enabled ? 'pointer' : 'default') + ';'
+      + 'color:' + (enabled ? 'var(--text-1,#e2e2e6)' : 'var(--text-3,#6e6e80)') + ';';
+    if (enabled) {
+      it.onmouseenter = () => { it.style.background = 'rgba(124,124,255,0.18)'; };
+      it.onmouseleave = () => { it.style.background = 'transparent'; };
+      it.onmousedown  = (e) => { e.preventDefault(); }; // keep terminal selection alive
+      it.onclick      = () => { close(); try { onClick(); } catch (_) {} };
+    }
+    menu.appendChild(it);
+  };
+
+  addItem('⧉ Copy', hasSel, () => { _termCopySelection(term); });
+  if (wsSend) {
+    addItem('⮃ Paste', true, async () => {
+      try { const t = await navigator.clipboard.readText(); if (t) wsSend(t); } catch (_) {}
+    });
+  }
+  addItem('☰ Select All', true, () => { try { term.selectAll(); } catch (_) {} });
+
+  document.body.appendChild(menu);
+  let x = ev.clientX, y = ev.clientY;
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  if (x + w > window.innerWidth)  x = Math.max(6, window.innerWidth  - w - 6);
+  if (y + h > window.innerHeight) y = Math.max(6, window.innerHeight - h - 6);
+  menu.style.left = x + 'px';
+  menu.style.top  = y + 'px';
+
+  setTimeout(() => {
+    document.addEventListener('click', close, true);
+    document.addEventListener('contextmenu', close, true);
+  }, 0);
+}
+
 function initTerminal() {
   const container = document.getElementById('terminal-container');
   if (_termWs && _termWs.readyState === WebSocket.OPEN) return;
@@ -27232,6 +27352,28 @@ function initTerminal() {
   _term.loadAddon(_termFit);
   _term.open(container);
   _termFit.fit();
+
+  // Cmd+C (Mac/iPad) — and Ctrl+Shift+C elsewhere — explicitly copy the
+  // selection. Done from the keydown gesture so Safari actually allows the
+  // clipboard write (the auto-copy on selectionchange below is silently
+  // blocked there). Returning false stops xterm from also acting on the key.
+  _term.attachCustomKeyEventHandler((ev) => {
+    if (_termIsCopyChord(ev, _term)) { _termCopySelection(_term); return false; }
+    return true;
+  });
+
+  // Right-click → Copy / Paste / Select All. Bound once on the persistent
+  // container (initTerminal can re-run on reconnect); the handler reads the
+  // live _term / _termWs globals so it stays valid across reconnects.
+  if (!container.dataset.ctxBound) {
+    container.dataset.ctxBound = '1';
+    container.addEventListener('contextmenu', (ev) => {
+      if (!_term) return;
+      _termShowContextMenu(ev, _term, (t) => {
+        if (_termWs && _termWs.readyState === WebSocket.OPEN) _termWs.send(t);
+      });
+    });
+  }
   // Auto-focus so the user can type immediately without clicking.
   requestAnimationFrame(() => _term.focus());
 
@@ -27269,7 +27411,7 @@ function initTerminal() {
   });
 
   _term.onSelectionChange(() => {
-    const sel = _term.getSelection();
+    const sel = _termCleanSelection(_term);
     if (sel) navigator.clipboard.writeText(sel).catch(() => {});
   });
 
@@ -38937,6 +39079,10 @@ function _ciTermOpenCustomTab(key, label, wsPath, opts) {
   // Ctrl+C. Use Ctrl+Shift+C (or right-click → Copy in most browsers)
   // to copy instead.
   term.attachCustomKeyEventHandler((ev) => {
+    // Cmd+C (Mac/iPad) / Ctrl+Shift+C: copy the selection. Driven off the
+    // keydown gesture so Safari permits the clipboard write — auto-copy on
+    // selectionchange is silently blocked there.
+    if (_termIsCopyChord(ev, term)) { _termCopySelection(term); return false; }
     if (ev.type === 'keydown' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey
         && (ev.key === 'c' || ev.key === 'C')) {
       const t = _ciTermTabs.get(key);
@@ -38946,6 +39092,14 @@ function _ciTermOpenCustomTab(key, label, wsPath, opts) {
       return false; // tell xterm not to also handle (would copy)
     }
     return true;
+  });
+
+  // Right-click → Copy / Paste / Select All for this tab's pane.
+  el.addEventListener('contextmenu', (ev) => {
+    _termShowContextMenu(ev, term, (t) => {
+      const tt = _ciTermTabs.get(key);
+      if (tt && tt.ws && tt.ws.readyState === WebSocket.OPEN) tt.ws.send(t);
+    });
   });
 
   const resizeObs = new ResizeObserver(() => { try { fit.fit(); } catch (_) {} });
@@ -39010,7 +39164,7 @@ function _ciTermOpenCustomTab(key, label, wsPath, opts) {
   ws.onclose   = () => { _ciTermScheduleReconnect(key); _ciTermRenderTabs(); };
   ws.onerror   = () => { /* onclose will fire too — auto-reconnect is owned there */ };
   term.onSelectionChange(() => {
-    const sel = term.getSelection();
+    const sel = _termCleanSelection(term);
     if (sel) navigator.clipboard.writeText(sel).catch(() => {});
   });
   const tab = { term, ws, fit, resizeObs, el, onDataDisp: null, onResizeDisp: null, wsPath, label, sessionId: opts.sessionId || '', serverId: opts.serverId || '' };
