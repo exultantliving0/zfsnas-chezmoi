@@ -705,7 +705,7 @@
     <button class="nav-item" onclick="showPage('settings')"  id="nav-settings"> <span class="nav-icon">⚙</span><span class="nav-label"> Settings</span></button>
     <button class="nav-item" onclick="showPage('prereqs')"   id="nav-prereqs">  <span class="nav-icon">🔧</span><span class="nav-label"> Requisites</span><span id="prereq-alert-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:#f0b429;margin-left:auto;flex-shrink:0;box-shadow:0 0 4px rgba(240,180,41,0.6);"></span></button>
     <button class="nav-item" onclick="showPage('updates')"   id="nav-updates">  <span class="nav-icon">⬆</span><span class="nav-label"> Platform</span><span id="nav-updates-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:#f0b429;margin-left:auto;flex-shrink:0;box-shadow:0 0 4px rgba(240,180,41,0.6);"></span></button>
-    <button class="nav-item" onclick="toggleTermPanel()"     id="nav-terminal"> <span class="nav-icon">🖥️</span><span class="nav-label"> Terminal</span><span id="nav-term-badge" style="display:none;margin-left:6px;padding:1px 6px;border-radius:10px;background:#15803d;color:#dcfce7;font-size:10px;font-weight:700;line-height:1;">0</span></button>
+    <button class="nav-item" onclick="toggleTermPanel()" oncontextmenu="_showNavTermModeMenu(event); return false;" title="Click to open · right-click to choose where" id="nav-terminal"> <span class="nav-icon">🖥️</span><span class="nav-label"> Terminal</span><span id="nav-term-badge" style="display:none;margin-left:6px;padding:1px 6px;border-radius:10px;background:#15803d;color:#dcfce7;font-size:10px;font-weight:700;line-height:1;">0</span></button>
     <button class="nav-item" onclick="openAbout()"            id="nav-about">    <span class="nav-icon">ℹ</span><span class="nav-label"> About / Support</span></button>
   </nav>
 
@@ -10796,7 +10796,6 @@ Select the Console tab to load.</pre>
             onchange="setGlobalRelayMode(this.checked)"
             style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer;">
           <span style="color:var(--text-2);">Relay mode</span>
-          <span style="font-size:10px;font-weight:700;background:#f5a623;color:#000;border-radius:4px;padding:1px 6px;letter-spacing:.04em;">BETA</span>
           <i class="info-tip" data-tip="When enabled, switching to a linked server keeps your browser on this portal — all management API calls are securely proxied through this server to the remote. The remote does not need to be directly reachable from your browser, improving security and allowing management of servers behind a firewall."></i>
         </label>
       </div>
@@ -27202,6 +27201,96 @@ function _termResumeAction(kind) {
   }
 }
 
+// Open the host shell directly in the bottom panel, skipping the
+// background-sessions resume menu that the left-click path may show. Used by
+// the right-click "Bottom Terminal" picker so the choice is honoured verbatim.
+function _navOpenHostBottom() {
+  const hostname = (typeof _relayActive !== 'undefined' && _relayActive && _relayHostname)
+                   ? _relayHostname
+                   : (window._serverHostname || 'Host');
+  const key = '__host__' + hostname;
+  _ciTermEnsureVisible();
+  if (_ciTermTabs.has(key)) _ciTermActivateTab(key);
+  else _ciTermOpenCustomTab(key, '🖥 ' + hostname, '/ws/terminal');
+  _updateTermBadge();
+}
+
+// v6.6.1 — right-click the Terminal nav button to choose where the host
+// shell opens: the bottom panel, a consolidated tab, or a popup window.
+// Mirrors _showTermResumeMenu's anchoring (the button sits low in the
+// sidebar, so we flip the menu upward when it would overflow).
+function _showNavTermModeMenu(ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const prior = document.getElementById('nav-term-mode-menu');
+  if (prior) { prior.remove(); return; } // second right-click toggles it off
+
+  const navBtn = document.getElementById('nav-terminal');
+  const rect = navBtn.getBoundingClientRect();
+
+  const menu = document.createElement('div');
+  menu.id = 'nav-term-mode-menu';
+  menu.style.cssText =
+    'position:fixed; z-index:1000;'
+    + 'left:' + (rect.right + 6) + 'px;'
+    + 'top:' + rect.top + 'px;'
+    + 'background:var(--surface); border:1px solid var(--border);'
+    + 'border-radius:8px; padding:6px; min-width:220px;'
+    + 'box-shadow:0 8px 24px rgba(0,0,0,.5);'
+    + 'visibility:hidden;';
+
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'padding:6px 12px 8px; font-size:11px; color:var(--text-3); text-transform:uppercase; letter-spacing:.08em; border-bottom:1px solid var(--border); margin-bottom:4px;';
+  hdr.textContent = 'Open host terminal in…';
+  menu.appendChild(hdr);
+
+  const items = [
+    {icon:'⬇', label:'Bottom Terminal', fn:() => _navOpenHostBottom()},
+    {icon:'↗', label:'Tab Terminal',    fn:() => openTermTab('host')},
+    {icon:'🪟', label:'Window Terminal', fn:() => openTermWindow('host')},
+  ];
+  items.forEach(it => {
+    const el = document.createElement('div');
+    el.style.cssText = 'padding:8px 12px; cursor:pointer; border-radius:4px; font-size:13px; color:var(--text-1); display:flex; align-items:center; gap:10px;';
+    el.innerHTML = '<span style="width:20px;text-align:center;">' + it.icon + '</span><span>' + it.label + '</span>';
+    el.addEventListener('mouseenter', () => { el.style.background = 'var(--surface2)'; });
+    el.addEventListener('mouseleave', () => { el.style.background = ''; });
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.remove();
+      it.fn();
+    });
+    menu.appendChild(el);
+  });
+
+  document.body.appendChild(menu);
+
+  // Flip upward if the menu would overflow the viewport bottom.
+  const mh = menu.getBoundingClientRect().height;
+  if (rect.top + mh + 8 > window.innerHeight) {
+    menu.style.top = Math.max(8, rect.bottom - mh) + 'px';
+  }
+  menu.style.visibility = '';
+
+  const outside = (e) => {
+    if (!menu.contains(e.target) && e.target.id !== 'nav-terminal') {
+      menu.remove();
+      document.removeEventListener('mousedown', outside, true);
+      document.removeEventListener('keydown', escHandler, true);
+    }
+  };
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      menu.remove();
+      document.removeEventListener('mousedown', outside, true);
+      document.removeEventListener('keydown', escHandler, true);
+    }
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', outside, true);
+    document.addEventListener('keydown', escHandler, true);
+  }, 0);
+}
+
 // Build clean clipboard text from the current xterm selection. xterm's
 // getSelection() drops a line break at every *visual* wrap, so a single long
 // command/output line that wrapped across the panel comes back chopped into
@@ -30986,9 +31075,20 @@ function applyBinaryUpdate(tag = null) {
 }
 
 
+// Track where the mouse was pressed so a backdrop dismissal only counts when
+// the press AND the release both land on the same backdrop. Without this, a
+// custom dropdown that overhangs the dialog (e.g. the VM-push remote-network
+// picker) closes the modal: selecting an option hides the menu on mousedown,
+// and the following click then resolves onto the backdrop newly exposed under
+// the cursor. It also prevents an accidental close when a text selection drag
+// happens to end on the backdrop.
+let _modalBackdropMouseDownTarget = null;
+document.addEventListener('mousedown', function(e) { _modalBackdropMouseDownTarget = e.target; }, true);
+
 // Close any modal by clicking its backdrop (outside the dialog box).
 document.addEventListener('click', function(e) {
   if (!e.target.classList.contains('modal-backdrop')) return;
+  if (_modalBackdropMouseDownTarget !== e.target) return; // press began elsewhere — not a genuine backdrop click
   const closeFns = {
     'modal-pool-settings':    closePoolSettingsModal,
     'modal-add-disks':        closeAddDisksModal,
@@ -35963,10 +36063,17 @@ async function _ciDockerStackAction(gi, action) {
     });
     if (r.status === 202) {
       const d = await r.json();
-      openLXDProgressModal('Docker ' + action + ' · ' + g.project + '…', d.job_id, { kind: 'docker-action' });
+      openLXDProgressModal('Docker ' + action + ' · ' + g.project + '…', d.job_id, { kind: 'docker-action', noAutoClose: true });
       _ciDockerPollUntilIdle(d.job_id);
     } else if (!r.ok) {
-      throw new Error((await r.json()).error || 'failed');
+      // Read the body as text first: a non-JSON error page (proxy/relay,
+      // 404, empty body) would otherwise make r.json() throw an opaque
+      // "did not match the expected pattern" in Safari instead of the
+      // real failure.
+      const body = await r.text();
+      let msg = body;
+      try { msg = JSON.parse(body).error || body; } catch (_) {}
+      throw new Error(msg || ('HTTP ' + r.status));
     } else {
       ciLoadDockerContainers();
     }
@@ -39277,11 +39384,23 @@ function ciTermToggleMinimize() {
 }
 
 function ciCloseBottomTerminal() {
+  // "Close All" terminates every session — it does NOT leave them alive in
+  // the background. Each tab with a server-side session fires the same
+  // /close endpoint the per-tab × uses, routed to the peer when the tab came
+  // from an InterLink server. Detaching (keep-alive) is what page navigation
+  // and the minimize button do; this button is the explicit "kill them all".
+  const closes = [];
   _ciTermTabs.forEach(tab => {
     // Mark closing so the WS onclose handler doesn't schedule a reconnect
-    // for a tab the user is intentionally detaching.
+    // for a tab the user is intentionally terminating.
     tab.closing = true;
     if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }
+    if (tab.sessionId) {
+      const url = tab.serverId
+        ? ('/api/interlink/terminal-sessions/' + encodeURIComponent(tab.serverId) + '/' + encodeURIComponent(tab.sessionId) + '/close')
+        : ('/api/terminal-sessions/' + encodeURIComponent(tab.sessionId) + '/close');
+      closes.push(fetch(url, {method:'POST', credentials:'same-origin'}).catch(() => {}));
+    }
     tab.resizeObs.disconnect();
     tab.ws.close();
     tab.term.dispose();
@@ -39295,10 +39414,12 @@ function ciCloseBottomTerminal() {
   document.getElementById('ci-term-resize-handle').style.pointerEvents = '';
   document.getElementById('ci-term-minimize-btn').textContent = '▼';
   document.getElementById('ci-term-tabs').innerHTML = '';
-  // The Close-All button only DETACHES — the sessions stay alive on the
-  // server. Refresh the badge so the count (now == # of background
-  // sessions) becomes visible immediately.
-  try { _updateTermBadge(); } catch(_) {}
+  // Refresh the badge once the terminations have settled so the count drops
+  // to its true value (0 background sessions) rather than showing a stale
+  // count from before the close calls completed.
+  const refresh = () => { try { _updateTermBadge(); } catch(_) {} };
+  refresh();
+  if (closes.length) Promise.allSettled(closes).then(refresh);
 }
 
 function _ciTermBindWS(name, ws) {
@@ -39382,9 +39503,37 @@ function ciConfirmDelete() {
   confirmLXDDelete(_ciCurrentName);
 }
 
+// Show/disable the "⬆ Push InterLink" burger item from the current state of
+// the interlink-peer cache. Factored out so it can re-run after an async
+// cache fill (the cache is otherwise only warmed by the instances list view,
+// so opening a VM and clicking the burger before that finished previously
+// hid the item until the user left and came back).
+function _ciUpdateBurgerPushVisibility() {
+  const pushBtn = document.getElementById('ci-push-interlink-btn');
+  if (!pushBtn) return;
+  const hasLXDPeers = (_interlinkServersCache || []).some(s => s.lxd_enabled);
+  const isVM = _ciCurrentType === 'virtual-machine';
+  const badge = document.getElementById('ci-status-badge');
+  const isStopped = badge && badge.dataset.status && badge.dataset.status.toLowerCase() === 'stopped';
+  pushBtn.style.display = (isVM && hasLXDPeers) ? 'block' : 'none';
+  if (isVM && hasLXDPeers) {
+    if (isStopped) { pushBtn.disabled = false; pushBtn.style.opacity = ''; pushBtn.style.cursor = 'pointer'; pushBtn.title = ''; }
+    else { pushBtn.disabled = true; pushBtn.style.opacity = '0.4'; pushBtn.style.cursor = 'default'; pushBtn.title = 'VM must be stopped before pushing'; }
+  }
+}
+
 function ciToggleBurger(e) {
   e.stopPropagation();
   const menu = document.getElementById('ci-burger-menu');
+  // If the interlink-peer cache hasn't loaded yet, fetch it now and refresh
+  // the Push InterLink item in-place — so it appears without the user having
+  // to switch screens and come back to trigger the list-view warm-up.
+  if (!Array.isArray(_interlinkServersCache) || _interlinkServersCache.length === 0) {
+    fetch('/api/interlink/servers/fast', {credentials:'same-origin'})
+      .then(r => r.ok ? r.json() : [])
+      .then(servers => { _interlinkServersCache = servers || []; _ciUpdateBurgerPushVisibility(); })
+      .catch(() => {});
+  }
   const hasLXDPeers = (_interlinkServersCache || []).some(s => s.lxd_enabled);
   const isVM = _ciCurrentType === 'virtual-machine';
   const badge = document.getElementById('ci-status-badge');
@@ -41781,12 +41930,17 @@ async function openVMPushModal(name) {
   document.getElementById('vmpush-dest-desc-err').style.display = 'none';
 
   // Populate server dropdown (online + lxd_enabled peers only).
-  // Refresh interlink list with live status to get lxd_enabled field.
+  // Use the /api/incus/ (relay-aware) interlink list so the targets come from
+  // the server that will actually run the push — i.e. the VM's host. In relay
+  // mode that's the remote we're viewing (its peers, its server IDs); with
+  // relay off it's the local server, identical to the old /api/interlink form.
   const serverSel = document.getElementById('vmpush-server-sel');
   serverSel.innerHTML = '<option value="">Loading servers…</option>';
   try {
-    const servers = await _apiFetch('/api/interlink/servers');
-    _interlinkServersCache = servers || [];
+    const servers = await _apiFetch('/api/incus/interlink/servers');
+    // Don't clobber the home server's cached peer list while relayed — other
+    // UI (LXD-peer hints, dropdowns) relies on it reflecting the local server.
+    if (!_relayActive) _interlinkServersCache = servers || [];
     const peers = servers.filter(s => s.online && s.lxd_enabled);
     if (!peers.length) {
       serverSel.innerHTML = '<option value="">No online InterLink servers with LXD</option>';
@@ -41837,11 +41991,14 @@ async function _vmpushLoadRemote(serverID) {
 
   try {
     // Load pools, bridges, trust status, and remote instances in parallel.
+    // All via /api/incus/ so that — like the push itself — they execute on the
+    // VM's host server (the relay target in relay mode), resolving serverID
+    // against that server's interlink config rather than the local one.
     const [poolsRes, bridgesRes, statusRes, instancesRes] = await Promise.all([
-      _apiFetch('/api/interlink/remote-lxd-storage/' + encodeURIComponent(serverID)),
-      _apiFetch('/api/interlink/remote-lxd-bridges/' + encodeURIComponent(serverID)),
+      _apiFetch('/api/incus/interlink/remote-lxd-storage/' + encodeURIComponent(serverID)),
+      _apiFetch('/api/incus/interlink/remote-lxd-bridges/' + encodeURIComponent(serverID)),
       _apiFetch('/api/incus/interlink-lxd-status'),
-      _apiFetch('/api/interlink/remote-lxd-instances/' + encodeURIComponent(serverID)).catch(() => null),
+      _apiFetch('/api/incus/interlink/remote-lxd-instances/' + encodeURIComponent(serverID)).catch(() => null),
     ]);
 
     const pools = poolsRes.pools || [];
@@ -45843,6 +46000,9 @@ function _bgPollLXDJob(jobId, label) {
 // start a new poll or just unhide the modal (which the live poll is already
 // writing into).
 const _lxdActivePollIds = new Set();
+// Job IDs whose progress modal should stay open after success (no 1.5s
+// auto-dismiss) so the user can read the full log and close it themselves.
+const _lxdNoAutoCloseJobs = new Set();
 
 function openLXDProgressModal(title, jobId, opts) {
   document.getElementById('lxd-progress-title').textContent = title;
@@ -45850,6 +46010,7 @@ function openLXDProgressModal(title, jobId, opts) {
   document.getElementById('lxd-progress-footer').style.display = 'none';
   document.getElementById('lxd-progress-bg-hint').style.display = '';
   document.getElementById('modal-lxd-progress').classList.remove('hidden');
+  if (opts && opts.noAutoClose) _lxdNoAutoCloseJobs.add(String(jobId));
   // Every progress job becomes reopenable from the Activity panel: clicking
   // the row calls _reopenLXDProgress(jobId, title). Callers can pile extra
   // metadata (kind, stack) via opts — used by ciComposeUpdateNow to find an
@@ -45909,6 +46070,12 @@ async function pollLXDProgress(jobId, seenLines) {
       document.getElementById('lxd-progress-footer').style.display = '';
       _lxdActivePollIds.delete(String(jobId));
       removeActiveJob('lxd-create-' + jobId);
+      // Some jobs (e.g. Docker compose update) opt out of auto-dismiss so the
+      // user can read the full log and close the modal with the ✕ themselves.
+      if (_lxdNoAutoCloseJobs.has(String(jobId))) {
+        _lxdNoAutoCloseJobs.delete(String(jobId));
+        return;
+      }
       // Auto-dismiss the progress modal on success after a short delay so
       // the click-blocking backdrop doesn't trap subsequent interactions.
       setTimeout(() => {
@@ -45925,6 +46092,7 @@ async function pollLXDProgress(jobId, seenLines) {
       logEl.scrollTop = logEl.scrollHeight;
       document.getElementById('lxd-progress-footer').style.display = '';
       _lxdActivePollIds.delete(String(jobId));
+      _lxdNoAutoCloseJobs.delete(String(jobId));
       removeActiveJob('lxd-create-' + jobId);
       return;
     }

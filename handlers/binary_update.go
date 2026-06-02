@@ -86,10 +86,18 @@ func HandleCheckBinaryUpdate(appCfg *config.AppConfig) http.HandlerFunc {
 
 		// Return cached result if still fresh and not forced.
 		if !force && cached != nil && (now-cached.CheckedAt) < int64(ttl.Seconds()) {
+			// Recompute update_available against the *live* running version
+			// rather than trusting the boolean stored at cache time. After an
+			// Instant Update the process restarts on the new version, so the
+			// stored flag (computed against the old version) would otherwise
+			// keep claiming an update is available — latest == current — until
+			// the cache expires or the user forces a re-check. The expensive
+			// GitHub lookup stays cached; only the cheap comparison is redone.
+			updateAvailable := semverGreater(cached.Latest, version.Version)
 			jsonOK(w, map[string]interface{}{
 				"current":           version.Version,
 				"latest":            cached.Latest,
-				"update_available":  cached.UpdateAvailable,
+				"update_available":  updateAvailable,
 				"download_url":      cached.DownloadURL,
 				"sig_valid":         cached.SigValid,
 				"sig_error":         cached.SigError,

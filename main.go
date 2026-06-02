@@ -60,6 +60,11 @@ func main() {
 		log.Println("Debug mode enabled — verbose logging active")
 	}
 
+	// Keep RSS close to the real working set: return the large one-shot slack
+	// left by parsing all RRD JSON at startup, and keep steady-state heap
+	// slack modest. No feature impact; tunable via GOGC env.
+	startMemoryGovernor()
+
 	// ===== Config directory =====
 	absConfig, err := filepath.Abs(*configDir)
 	if err != nil {

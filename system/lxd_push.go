@@ -629,15 +629,34 @@ func LXDPushVM(ctx context.Context, req LXDPushVMRequest, job *pushinterlink.Job
 	remoteName := "znas-" + req.ServerID
 	destRef := remoteName + ":" + req.DestName
 
-	// Pre-flight: check lxc remote exists, try sync if missing.
-	remoteOut, _ := exec.Command("incus", "remote", "list", "--format", "json").Output()
-	var rawRemotes map[string]interface{}
-	json.Unmarshal(remoteOut, &rawRemotes) //nolint:errcheck
-	if rawRemotes == nil || rawRemotes[remoteName] == nil {
+	remoteExists := func() bool {
+		out, _ := exec.Command("incus", "remote", "list", "--format", "json").Output()
+		var m map[string]interface{}
+		json.Unmarshal(out, &m) //nolint:errcheck
+		return m != nil && m[remoteName] != nil
+	}
+
+	// Pre-flight, part 1: make sure the lxc remote exists. The full bidirectional
+	// sync also handles the CLI-cert exchange the first time around.
+	if !remoteExists() {
 		if syncErr := LXDSyncInterlinkTrustForPeer(ls, ls.ID); syncErr != nil {
 			pushinterlink.Default.Finish(job.ID, fmt.Errorf("LXD peer trust not configured and auto-sync failed: %v", syncErr))
 			return
 		}
+	}
+
+	// Pre-flight, part 2: ALWAYS refresh the pinned destination server cert.
+	// This is the step that prevents the recurring
+	//   "x509: certificate signed by unknown authority … candidate authority <peer>"
+	// failure that happens when the destination's Incus daemon cert was
+	// regenerated (cert SAN self-heal, reinstall, …) after this remote was first
+	// added. We call the standalone re-pin rather than the full sync because the
+	// full sync can error on its HMAC/CLI-cert steps and return BEFORE reaching
+	// its own pin — which is exactly why the stale cert kept slipping through.
+	// Best-effort: if the destination is unreachable the copy will fail anyway,
+	// and the TLS-error retry below gives a second chance.
+	if repinErr := LXDRepinPeerServerCert(ls); repinErr != nil {
+		fmt.Printf("lxd push: re-pin %s server cert warned (continuing): %v\n", ls.Hostname, repinErr)
 	}
 
 	pushinterlink.Default.SetRunning(job.ID, 0)
@@ -666,6 +685,18 @@ func LXDPushVM(ctx context.Context, req LXDPushVMRequest, job *pushinterlink.Job
 	disconnNICs := lxdGetDisconnectedNICConfigs(req.VMName)
 
 	copyErr := lxdCopyWithCompatStrip(ctx, req.VMName, destRef, req.StoragePool)
+	// Auto-recover from a stale destination server cert: if the copy failed TLS
+	// verification, re-pin the peer's current cert and retry once. The pre-sync
+	// above normally prevents this, but the cert could rotate between sync and
+	// copy, or a partial pin could leave the old cert in place.
+	if copyErr != nil && ctx.Err() == nil && isLXDTLSTrustError(copyErr) {
+		fmt.Printf("lxd push: copy hit a TLS trust error, re-pinning %s server cert and retrying: %v\n", ls.Hostname, copyErr)
+		if repinErr := LXDRepinPeerServerCert(ls); repinErr != nil {
+			fmt.Printf("lxd push: re-pin failed: %v\n", repinErr)
+		} else {
+			copyErr = lxdCopyWithCompatStrip(ctx, req.VMName, destRef, req.StoragePool)
+		}
+	}
 	stopOnce.Do(func() { close(stopCh) })
 	if copyErr != nil {
 		if ctx.Err() != nil {
@@ -730,6 +761,46 @@ func LXDPushVM(ctx context.Context, req LXDPushVMRequest, job *pushinterlink.Job
 	exec.CommandContext(ctx, "incus", "config", "set", destRef, "description", desc).Run() //nolint:errcheck
 
 	pushinterlink.Default.Finish(job.ID, nil)
+}
+
+// LXDRepinPeerServerCert fetches the peer's CURRENT LXD/Incus server cert over
+// a fresh TLS handshake and overwrites the pinned servercerts/<remote>.crt that
+// the local `incus` CLI checks the destination against. This is deliberately
+// standalone — unlike LXDSyncInterlinkTrustForPeer it does NOT depend on the
+// HMAC portal round-trips or the CLI-cert exchange, which can fail and abort
+// that function before it ever reaches its pin step (leaving a stale cert in
+// place). Healing the pin here is what fixes the recurring
+//   "x509: certificate signed by unknown authority … candidate authority <peer>"
+// copy failure after the destination's daemon cert rotates.
+func LXDRepinPeerServerCert(ls config.LinkedServer) error {
+	peerIP := extractHost(ls.URL)
+	cert, err := LXDFetchPeerServerCert(peerIP)
+	if err != nil {
+		return fmt.Errorf("fetch peer server cert: %w", err)
+	}
+	if err := LXDPinPeerServerCert("znas-"+ls.ID, cert); err != nil {
+		return err
+	}
+	// Best-effort: also (re)register in the local trust store for the
+	// daemon-to-daemon transfer leg. De-dupes by fingerprint, tolerates re-runs.
+	if regErr := LXDRegisterPeerCert(cert, ls.ID+"-server"); regErr != nil {
+		fmt.Printf("lxd push: register peer server cert in trust: %v\n", regErr)
+	}
+	return nil
+}
+
+// isLXDTLSTrustError reports whether an lxc copy error is a destination-cert
+// trust failure — the signature of a stale pinned server cert that a trust
+// re-sync can heal. Matched on the daemon's error text since the copy runs as
+// an external `incus`/`lxc` process and only surfaces a string.
+func isLXDTLSTrustError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "certificate signed by unknown authority") ||
+		strings.Contains(s, "tls: failed to verify certificate") ||
+		strings.Contains(s, "x509:")
 }
 
 // lxdCopyWithCompatStrip runs lxc copy and retries automatically when LXD

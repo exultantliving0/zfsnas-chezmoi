@@ -341,13 +341,20 @@ func HandleDockerComposeAction(appCfg *config.AppConfig) http.HandlerFunc {
 			jsonErr(w, http.StatusBadRequest, "path is not a known compose file for this instance")
 			return
 		}
-		// Map the user-facing action to one or two compose subcommands.
-		// For "update" we also detect depends_on in the YAML — Podman's
-		// `up -d` recreate flow deadlocks when a parent container is
-		// referenced by a dependent that hasn't been removed yet
-		// ("container … has dependent containers which must be removed
-		// before it"). A `down` before `up -d` clears both sides so the
-		// recreate can proceed.
+		// Map the user-facing action to one or more compose subcommands.
+		// For "update" we always tear the project down before bringing it
+		// back up. An in-place `up -d` recreate fails on two recurring
+		// topologies:
+		//   - explicit `container_name:` services → "container name … is
+		//     already in use" because the new container collides with the
+		//     still-present old one;
+		//   - `depends_on` chains on Podman → "container … has dependent
+		//     containers which must be removed before it".
+		// A `down` first clears both. Since an update recreates every
+		// service anyway (to land the freshly pulled image), the extra
+		// downtime is the downtime the user already expects; named volumes
+		// survive `down`, so data is preserved. --remove-orphans also
+		// sweeps containers dropped from the compose file between updates.
 		var stages [][]string
 		switch req.Action {
 		case "start":
@@ -357,10 +364,7 @@ func HandleDockerComposeAction(appCfg *config.AppConfig) http.HandlerFunc {
 		case "restart":
 			stages = [][]string{{"restart"}}
 		case "update":
-			stages = [][]string{{"pull"}, {"up", "-d"}}
-			if hasDeps, err := system.DockerComposeHasDependsOn(name, req.Path); err == nil && hasDeps {
-				stages = [][]string{{"pull"}, {"down"}, {"up", "-d"}}
-			}
+			stages = [][]string{{"pull"}, {"down", "-t", "10", "--remove-orphans"}, {"up", "-d"}}
 		default:
 			jsonErr(w, http.StatusBadRequest, "action must be start|stop|restart|update")
 			return

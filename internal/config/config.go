@@ -673,6 +673,11 @@ func LoadAppConfig() (*AppConfig, error) {
 	if cfg.InterLink == nil {
 		cfg.InterLink = []LinkedServer{}
 	}
+	if fresh {
+		// Fresh install: relay mode on by default (proxy API calls through
+		// the local server so remote portals need not be browser-reachable).
+		cfg.InterlinkRelayMode = true
+	}
 	if cfg.MinIO.Port == 0 {
 		cfg.MinIO.Port = 9000
 	}

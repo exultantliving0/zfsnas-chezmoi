@@ -1016,6 +1016,21 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDInterlinkSyncTrust(appCfg))))).Methods("POST")
 	r.Handle("/api/lxd/interlink-lxd-status",
 		RequireAuth(http.HandlerFunc(HandleLXDInterlinkStatus(appCfg)))).Methods("GET")
+	// Relay-aware mirrors of the interlink push-target lookups. The VM Push
+	// modal calls these via /api/incus/… so that — unlike the bypassed
+	// /api/interlink/* forms — they are forwarded to the relay target when
+	// relay mode is active. That makes the modal's server list, storage,
+	// bridges and instance lookups come from the SAME server that runs the
+	// push (the one hosting the VM), using that server's interlink IDs.
+	// Served locally with an identical result when relay is off.
+	r.Handle("/api/lxd/interlink/servers",
+		RequireAuth(http.HandlerFunc(HandleInterlinkList(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/interlink/remote-lxd-storage/{server_id}",
+		RequireAuth(http.HandlerFunc(HandleInterlinkRemoteLXDStorage(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/interlink/remote-lxd-bridges/{server_id}",
+		RequireAuth(http.HandlerFunc(HandleInterlinkRemoteLXDBridges(appCfg)))).Methods("GET")
+	r.Handle("/api/lxd/interlink/remote-lxd-instances/{server_id}",
+		RequireAuth(http.HandlerFunc(HandleInterlinkRemoteLXDInstances(appCfg)))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/nics",
 		RequireAuth(http.HandlerFunc(HandleLXDGetVMNICs))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/reset-nvram",

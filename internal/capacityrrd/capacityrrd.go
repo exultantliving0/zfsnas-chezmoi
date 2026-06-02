@@ -44,33 +44,109 @@ type capSeries struct {
 }
 
 func newCapSeries(slots int) *capSeries {
+	// Buf grows lazily up to Slots instead of pre-allocating the full tier.
+	// Most series — every daily/5-year tier especially — sit far below their
+	// capacity, so reserving all slots up front wasted hundreds of MB of
+	// resident heap holding empty samples. The small initial capacity avoids
+	// reallocation churn for the first handful of pushes.
 	return &capSeries{
-		Buf:   make([]CapSample, slots),
+		Buf:   make([]CapSample, 0, 16),
 		Slots: slots,
 	}
 }
 
 func (s *capSeries) push(sample CapSample) {
+	if s.Slots <= 0 {
+		s.Slots = len(s.Buf) // defensive: should never happen post-load
+	}
+	if len(s.Buf) < s.Slots {
+		// Growth phase: append until the ring reaches full size. Samples sit
+		// chronologically in Buf[0..len). Head marks the next write slot, and
+		// becomes 0 (oldest) the moment the ring fills.
+		s.Buf = append(s.Buf, sample)
+		s.Count = len(s.Buf)
+		if len(s.Buf) >= s.Slots {
+			s.Head = 0
+		} else {
+			s.Head = len(s.Buf)
+		}
+		return
+	}
+	// Full ring: overwrite the oldest slot.
 	s.Buf[s.Head] = sample
 	s.Head = (s.Head + 1) % s.Slots
-	if s.Count < s.Slots {
-		s.Count++
-	}
+	s.Count = s.Slots
 }
 
 func (s *capSeries) all() []CapSample {
-	if s.Count == 0 {
+	n := len(s.Buf)
+	if n == 0 {
 		return nil
 	}
-	result := make([]CapSample, s.Count)
-	if s.Count < s.Slots {
-		copy(result, s.Buf[:s.Count])
-	} else {
-		n := s.Slots - s.Head
-		copy(result, s.Buf[s.Head:])
-		copy(result[n:], s.Buf[:s.Head])
+	if n < s.Slots {
+		// Growth phase: already chronological.
+		result := make([]CapSample, n)
+		copy(result, s.Buf)
+		return result
 	}
+	// Full ring: unwrap starting at Head (oldest).
+	h := s.Head
+	if h < 0 || h >= n {
+		h = 0
+	}
+	result := make([]CapSample, n)
+	k := n - h
+	copy(result, s.Buf[h:])
+	copy(result[k:], s.Buf[:h])
 	return result
+}
+
+// legacyAll extracts the logical sample sequence from a series as it was just
+// loaded from disk, honouring the OLD head/count/full-buffer semantics (where
+// Buf was always Slots long and Count tracked how many slots were populated).
+// Used only during load migration; works for both legacy full-length buffers
+// and already-compact buffers written by the current code.
+func (s *capSeries) legacyAll() []CapSample {
+	cnt := s.Count
+	if cnt > len(s.Buf) {
+		cnt = len(s.Buf)
+	}
+	if cnt <= 0 {
+		return nil
+	}
+	if cnt < s.Slots {
+		out := make([]CapSample, cnt)
+		copy(out, s.Buf[:cnt])
+		return out
+	}
+	h := s.Head
+	if h < 0 || h >= len(s.Buf) {
+		h = 0
+	}
+	out := make([]CapSample, len(s.Buf))
+	k := len(s.Buf) - h
+	copy(out, s.Buf[h:])
+	copy(out[k:], s.Buf[:h])
+	return out
+}
+
+// compactForSlots rebuilds the series from its loaded form into the compact
+// growth/ring representation: Buf holds only real samples (len ≤ Slots) instead
+// of a full pre-allocated tier. Idempotent across reloads.
+func (s *capSeries) compactForSlots(slots int) {
+	s.Slots = slots
+	logical := s.legacyAll()
+	if len(logical) > slots {
+		// Tier shrank (shouldn't happen with fixed constants) — keep newest.
+		logical = logical[len(logical)-slots:]
+	}
+	s.Buf = logical
+	s.Count = len(logical)
+	if len(logical) >= slots {
+		s.Head = 0
+	} else {
+		s.Head = len(logical)
+	}
 }
 
 // tierStore holds all series for one resolution tier.
@@ -144,33 +220,21 @@ func Open(path string) (*DB, error) {
 			Tier2: newTierStore(Tier2Slots),
 		}
 	}
-	// Ensure Slots fields are correct after load (they may differ if we added tiers).
+	// Ensure Slots fields are correct after load (they may differ if we added
+	// tiers), and compact each series so empty pre-allocated slots from older
+	// on-disk files (or older builds) aren't kept resident. New series grow
+	// lazily from here on.
 	db.data.Tier0.Slots = Tier0Slots
 	db.data.Tier1.Slots = Tier1Slots
 	db.data.Tier2.Slots = Tier2Slots
 	for _, s := range db.data.Tier0.Series {
-		s.Slots = Tier0Slots
-		if len(s.Buf) != Tier0Slots {
-			buf := make([]CapSample, Tier0Slots)
-			copy(buf, s.Buf)
-			s.Buf = buf
-		}
+		s.compactForSlots(Tier0Slots)
 	}
 	for _, s := range db.data.Tier1.Series {
-		s.Slots = Tier1Slots
-		if len(s.Buf) != Tier1Slots {
-			buf := make([]CapSample, Tier1Slots)
-			copy(buf, s.Buf)
-			s.Buf = buf
-		}
+		s.compactForSlots(Tier1Slots)
 	}
 	for _, s := range db.data.Tier2.Series {
-		s.Slots = Tier2Slots
-		if len(s.Buf) != Tier2Slots {
-			buf := make([]CapSample, Tier2Slots)
-			copy(buf, s.Buf)
-			s.Buf = buf
-		}
+		s.compactForSlots(Tier2Slots)
 	}
 	return db, nil
 }

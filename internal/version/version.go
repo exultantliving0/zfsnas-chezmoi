@@ -2,7 +2,14 @@ package version
 
 import "time"
 
-const Version = "6.6.1"
+// Version is the running build's version. It defaults to the value below for
+// local/dev builds, and is overridden at release time by the linker via
+//   -ldflags "-X zfsnas/internal/version.Version=<tag>"
+// (see .github/workflows/release.yml). It MUST be a var, not a const — the
+// linker's -X can only set variables — and must carry NO leading "v" so it
+// compares cleanly against GitHub release tags (which are trimmed of "v").
+var Version = "6.6.2"
+
 const ReleasesURL = "https://github.com/macgaver/zfsnas-chezmoi/releases"
 
 var experimentalMode bool

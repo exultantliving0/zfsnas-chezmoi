@@ -18,15 +18,65 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install latest Go
+        run: |
+          set -euo pipefail
+          # Resolve the newest stable Go from the authoritative endpoint the Go
+          # toolchain itself uses (returns e.g. "go1.26.3" on the first line).
+          resp="$(curl -fsSL 'https://go.dev/VERSION?m=text')"
+          latest="${resp%%$'\n'*}"
+          echo "Latest stable Go: ${latest}"
+
+          # Skip the download when /usr/local/go is already that version.
+          if command -v go >/dev/null 2>&1 && [ "$(go version | awk '{print $3}')" = "${latest}" ]; then
+            echo "Runner already has ${latest}; nothing to do."
+            exit 0
+          fi
+
+          # Toolchain must match the RUNNER's architecture (it has to run here);
+          # the build step still cross-targets linux/amd64 regardless.
+          case "$(uname -m)" in
+            x86_64)         goarch=amd64 ;;
+            aarch64|arm64)  goarch=arm64 ;;
+            *) echo "unsupported runner arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "${tmp}/go.tar.gz" "https://go.dev/dl/${latest}.linux-${goarch}.tar.gz"
+
+          # Replace /usr/local/go in place — it is already first on PATH (see the
+          # job-level env above), so no PATH juggling is needed. Use sudo only if
+          # /usr/local isn't directly writable by the runner user.
+          sudo_cmd=""
+          [ -w /usr/local ] || sudo_cmd="sudo"
+          ${sudo_cmd} rm -rf /usr/local/go
+          ${sudo_cmd} tar -C /usr/local -xzf "${tmp}/go.tar.gz"
+          rm -rf "${tmp}"
+
       - name: Verify Go version
         run: go version
 
       - name: Build Linux binary
         run: |
           mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -v \
-            -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
+          # Strip the leading "v" from the tag (v6.6.2 -> 6.6.2) so the baked
+          # version compares cleanly against GitHub release tags.
+          VERSION="${GITHUB_REF_NAME#v}"
+          # CGO_ENABLED=0  -> fully static binary (no libc dependency), so a
+          #                  release built on the runner runs on any target host
+          #                  regardless of its glibc version. The app's os/user
+          #                  and net lookups fall back to pure-Go (local
+          #                  /etc/passwd + Go resolver), which is what this NAS
+          #                  uses.
+          # -trimpath      -> reproducible builds; no runner filesystem paths
+          #                  leaked into the binary.
+          # -X internal/version.Version -> actually inject the version (the old
+          #                  -X main.version was a no-op: there is no
+          #                  main.version, and version.Version was a const).
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -trimpath \
+            -ldflags="-s -w -X zfsnas/internal/version.Version=${VERSION}" \
             -o dist/zfsnas-chezmoi .
+          echo "Built version: ${VERSION}"
 
       - name: Run tests
         run: go test ./...

@@ -6535,6 +6535,19 @@ func ComposeStackUpdate(stack string, logCh chan<- string) error {
 	if err := runIncusComposeStreamed(stack, []string{"pull"}, logCh); err != nil {
 		return err
 	}
+	// Always tear the stack down before bringing it back up. An in-place
+	// `up -d` recreate fails on two recurring topologies: Podman refuses to
+	// recreate a container that still has live dependents ("container … has
+	// dependent containers which must be removed before it"), and services
+	// pinned with `container_name:` collide with their still-present old
+	// container ("name … is already in use"). A `down` first clears both.
+	// An update recreates every service anyway (to land the freshly pulled
+	// image), so the extra downtime is the downtime the user already expects;
+	// named volumes survive `down`, so data is preserved.
+	log("Bringing the stack down first (docker-compose down)…")
+	if err := runIncusComposeStreamed(stack, []string{"down", "-t", "10", "--remove-orphans"}, logCh); err != nil {
+		return err
+	}
 	log("Re-applying the stack (docker-compose up -d)…")
 	if err := runIncusComposeStreamed(stack, []string{"up", "-d"}, logCh); err != nil {
 		return err
