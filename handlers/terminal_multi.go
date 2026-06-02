@@ -124,6 +124,7 @@ const terminalMultiPageHTML = `<!DOCTYPE html>
   .pane { position:absolute; inset:0; display:none; }
   .pane.active { display:block; }
   .pane .xt { position:absolute; inset:0; padding:6px; }
+  .pane .vga-frame { position:absolute; inset:0; width:100%; height:100%; border:0; display:block; background:#000; }
   .empty {
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     color:var(--muted); font-size:14px; text-align:center; padding:20px;
@@ -152,6 +153,16 @@ const terminalMultiPageHTML = `<!DOCTYPE html>
   }
   #add-menu .item:hover { background:var(--bg-2); }
   #add-menu .item .ic { width:20px; text-align:center; opacity:.8; }
+  #add-menu .add-tabs {
+    display:flex; gap:4px; margin-bottom:6px; padding-bottom:6px;
+    border-bottom:1px solid var(--bd);
+  }
+  #add-menu .add-tab {
+    flex:1; text-align:center; padding:6px 8px; font-size:12px; cursor:pointer;
+    border-radius:4px; color:var(--muted); user-select:none;
+  }
+  #add-menu .add-tab:hover { background:var(--bg-2); }
+  #add-menu .add-tab.active { background:var(--accent); color:#fff; }
 </style>
 </head>
 <body>
@@ -179,6 +190,14 @@ const panesEl = document.getElementById('panes');
 const emptyEl = document.getElementById('empty-state');
 const addBtn  = document.getElementById('add-btn');
 const addMenu = document.getElementById('add-menu');
+
+// Which sub-list the + menu shows: 'lxd' (text consoles) or 'vga' (graphical).
+let addMenuTab = 'lxd';
+// Cached fetch results so switching tabs re-renders instantly without refetching.
+let _addMenuData = null;
+// Keep clicks inside the menu from bubbling to the document handler that closes
+// it — so tab switches don't dismiss the menu. Item clicks close it themselves.
+addMenu.addEventListener('click', e => e.stopPropagation());
 
 addBtn.addEventListener('click', e => {
   e.stopPropagation();
@@ -335,6 +354,15 @@ function openGearMenu() {
     menu.appendChild(row);
   });
 
+  // Close Window — terminate every tab/session, then close this page.
+  const cwDiv = document.createElement('div'); cwDiv.className = 'divider'; menu.appendChild(cwDiv);
+  const cw = document.createElement('div');
+  cw.className = 'theme-row';
+  cw.style.color = '#ff6b6b';
+  cw.innerHTML = '<span style="width:24px;text-align:center;">✕</span><span>Close Window</span>';
+  cw.addEventListener('click', (e) => { e.stopPropagation(); menu.remove(); closeAllAndWindow(); });
+  menu.appendChild(cw);
+
   document.body.appendChild(menu);
 
   // Position — align right edge with the gear button, drop below.
@@ -362,6 +390,15 @@ function openGearMenu() {
   }, 0);
 }
 gearBtn.addEventListener('click', (e) => { e.stopPropagation(); openGearMenu(); });
+
+// Close every tab from the end (so indices stay valid) — this terminates each
+// server-side PTY session and drops VGA consoles rather than leaving them
+// persistent — then close the window. window.close() works because this page
+// is always opened via window.open() from the portal.
+function closeAllAndWindow() {
+  for (let i = TABS.length - 1; i >= 0; i--) { try { closeTab(i); } catch (_) {} }
+  try { window.close(); } catch (_) {}
+}
 
 function esc(s){ return String(s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -400,6 +437,7 @@ function kindIcon(k) {
     case 'compose': return '📦';
     case 'docker':  return '🐳';
     case 'host':    return '🖥';
+    case 'vga':     return '🖼';
   }
   return '⌨';
 }
@@ -424,6 +462,12 @@ function activateTab(i) {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const tab = TABS[i];
     if (!tab) return;
+    // VGA tabs are a self-contained iframe — no fit/resize/reconnect; just
+    // hand keyboard focus to the embedded console.
+    if (tab.kind === 'vga') {
+      try { tab.iframeEl && tab.iframeEl.focus(); } catch (_) {}
+      return;
+    }
     // Force a synchronous layout read so xterm renderer sees real dims.
     if (tab.paneEl) void tab.paneEl.offsetHeight;
     try { tab.fit && tab.fit.fit(); } catch (_) {}
@@ -446,10 +490,15 @@ function closeTab(i) {
   // schedule another reconnect for the session we're actively killing.
   t.closing = true;
   if (t.reconnectTimer) { clearTimeout(t.reconnectTimer); t.reconnectTimer = null; }
-  fetch('/api/terminal-sessions/' + encodeURIComponent(t.id) + '/close', {method:'POST', credentials:'same-origin'})
-    .catch(()=>{});
-  if (t.ws) try { t.ws.close(); } catch{}
-  if (t.term) try { t.term.dispose(); } catch{}
+  // VGA tabs aren't terminal sessions — just drop the iframe. Removing the
+  // pane unloads it, which closes /ws/lxd-vga; the server's grace timer then
+  // releases the SPICE op. Non-vga tabs close their server-side PTY session.
+  if (t.kind !== 'vga') {
+    fetch('/api/terminal-sessions/' + encodeURIComponent(t.id) + '/close', {method:'POST', credentials:'same-origin'})
+      .catch(()=>{});
+    if (t.ws) try { t.ws.close(); } catch{}
+    if (t.term) try { t.term.dispose(); } catch{}
+  }
   if (t.paneEl) t.paneEl.remove();
   TABS.splice(i, 1);
   if (activeIdx >= TABS.length) activeIdx = TABS.length - 1;
@@ -526,6 +575,27 @@ function showTermCtxMenu(ev, term, wsSend) {
 function buildPane(tab) {
   const pane = document.createElement('div');
   pane.className = 'pane';
+
+  // VGA/SPICE console tabs embed the existing console page (toolbar pinned to
+  // the bottom via ?embed=1). The page self-manages its own WebSocket +
+  // reconnect, so there's no xterm or attach machinery here. Peer VMs carry
+  // server_id so the embedded page's API + SPICE calls route through the
+  // per-peer relay (/interlink-relay/<id>/...).
+  if (tab.kind === 'vga') {
+    const frame = document.createElement('iframe');
+    frame.className = 'vga-frame';
+    let src = '/lxd-vga-console/' + encodeURIComponent(tab.target) + '?embed=1';
+    if (tab.serverId) src += '&server_id=' + encodeURIComponent(tab.serverId);
+    frame.src = src;
+    frame.setAttribute('allow', 'fullscreen; clipboard-read; clipboard-write');
+    frame.setAttribute('allowfullscreen', '');
+    pane.appendChild(frame);
+    panesEl.appendChild(pane);
+    tab.paneEl = pane;
+    tab.iframeEl = frame;
+    return;
+  }
+
   const xt = document.createElement('div');
   xt.className = 'xt';
   pane.appendChild(xt);
@@ -584,6 +654,9 @@ function sendResize(tab) {
 function attachTab(tab, opts) {
   opts = opts || {};
   if (!tab.paneEl) buildPane(tab);
+  // VGA tabs have no PTY WebSocket to attach — the embedded iframe owns its
+  // own SPICE connection and reconnect loop.
+  if (tab.kind === 'vga') return;
   const term = tab.term;
   if (opts.reset) { term.reset(); term.write('\r\n[connecting…]\r\n'); }
 
@@ -852,50 +925,80 @@ async function buildAddMenu() {
         .catch(() => ({serverId: p.id, hostname: p.hostname, instances: []}))
     );
   }
-  const results = await Promise.all(promises);
+  _addMenuData = await Promise.all(promises);
+  renderAddMenu();
+}
 
+// Render the + menu from cached data for the currently-selected tab. The two
+// tabs at the top split text consoles (LXD-Terminal) from graphical consoles
+// (VGA/VNC); switching tabs re-renders from cache without a refetch.
+function renderAddMenu() {
+  if (!_addMenuData) return;
   addMenu.innerHTML = '';
-  results.forEach(srv => {
-    // Header for this server.
+
+  // Tab switcher.
+  const tabsRow = document.createElement('div');
+  tabsRow.className = 'add-tabs';
+  [['lxd', 'LXD-Terminal'], ['vga', 'VGA/VNC']].forEach(([key, label]) => {
+    const t = document.createElement('div');
+    t.className = 'add-tab' + (addMenuTab === key ? ' active' : '');
+    t.textContent = label;
+    t.addEventListener('click', () => { addMenuTab = key; renderAddMenu(); });
+    tabsRow.appendChild(t);
+  });
+  addMenu.appendChild(tabsRow);
+
+  _addMenuData.forEach(srv => {
+    const hostnamePrefix = srv.serverId ? (srv.hostname + ': ') : '';
+    // Running only — opening a console against a stopped instance would error.
+    const running = (srv.instances || []).filter(i => (i.state || '').toLowerCase() === 'running');
+    running.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    // Per-server header.
     const lbl = document.createElement('div');
     lbl.className = 'group-label';
     lbl.textContent = (srv.serverId ? '🔗 ' : '🖥 ') + (srv.hostname || 'server');
     addMenu.appendChild(lbl);
-    const hostnamePrefix = srv.serverId ? (srv.hostname + ': ') : '';
-    // Host shell on this server.
-    const specHost = srv.serverId ? ('peer:' + srv.serverId + ':host') : 'host';
-    addMenu.appendChild(_mkAddMenuItem('🖥', 'Host shell', specHost, hostnamePrefix + 'Host shell'));
-    // Running instances. Filter to Running so we don't try to open WS
-    // against a stopped container — incus exec would just error.
-    const running = (srv.instances || []).filter(i => (i.state || '').toLowerCase() === 'running');
-    running.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    running.forEach(inst => {
-      const icon = inst.type === 'virtual-machine' ? '💻' : '📦';
-      const spec = srv.serverId
-        ? ('peer:' + srv.serverId + ':lxd:' + inst.name)
-        : ('lxd:' + inst.name);
-      addMenu.appendChild(_mkAddMenuItem(icon, inst.name, spec, hostnamePrefix + inst.name));
-    });
-    if (running.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'item';
-      empty.style.opacity = '0.5';
-      empty.style.fontStyle = 'italic';
-      empty.style.cursor = 'default';
-      empty.textContent = 'no running VMs/containers';
-      addMenu.appendChild(empty);
+
+    if (addMenuTab === 'lxd') {
+      // Host shell + every running instance's text console.
+      const specHost = srv.serverId ? ('peer:' + srv.serverId + ':host') : 'host';
+      addMenu.appendChild(_mkAddMenuItem('Host shell', specHost, hostnamePrefix + 'Host shell'));
+      running.forEach(inst => {
+        const spec = srv.serverId ? ('peer:' + srv.serverId + ':lxd:' + inst.name) : ('lxd:' + inst.name);
+        addMenu.appendChild(_mkAddMenuItem(inst.name, spec, hostnamePrefix + inst.name));
+      });
+      if (running.length === 0) addMenu.appendChild(_emptyAddItem('no running VMs/containers'));
+    } else {
+      // Graphical console — VMs only.
+      const vms = running.filter(i => i.type === 'virtual-machine');
+      vms.forEach(inst => {
+        const vgaSpec = srv.serverId ? ('peer:' + srv.serverId + ':vga:' + inst.name) : ('vga:' + inst.name);
+        addMenu.appendChild(_mkAddMenuItem(inst.name, vgaSpec, hostnamePrefix + inst.name + ' (VGA)'));
+      });
+      if (vms.length === 0) addMenu.appendChild(_emptyAddItem('no running VMs'));
     }
   });
 }
 
-function _mkAddMenuItem(icon, label, spec, tabTitle) {
+function _mkAddMenuItem(label, spec, tabTitle) {
   const el = document.createElement('div');
   el.className = 'item';
-  el.innerHTML = '<span class="ic">' + (icon || '⌨') + '</span><span>' + esc(label) + '</span>';
+  el.textContent = label;
   el.addEventListener('click', () => {
     addMenu.classList.remove('show');
     addTabFromSpec(spec, tabTitle);
   });
+  return el;
+}
+
+function _emptyAddItem(text) {
+  const el = document.createElement('div');
+  el.className = 'item';
+  el.style.opacity = '0.5';
+  el.style.fontStyle = 'italic';
+  el.style.cursor = 'default';
+  el.textContent = text;
   return el;
 }
 
@@ -913,6 +1016,17 @@ if (bc) {
     }
   };
 }
+
+// A child VGA console iframe asks us to close its tab (its ✕ button). Match
+// the embedded console by VM name and close the owning vga tab.
+window.addEventListener('message', (ev) => {
+  if (ev.origin !== location.origin) return;
+  const m = ev.data || {};
+  if (m && m.type === 'znas-vga-close' && m.name) {
+    const i = TABS.findIndex(t => t.kind === 'vga' && t.target === m.name);
+    if (i >= 0) closeTab(i);
+  }
+});
 
 // On load: query string ?add=spec adds one immediately; hash variant
 // #add=spec also supported (used by the main portal so a reload isn't

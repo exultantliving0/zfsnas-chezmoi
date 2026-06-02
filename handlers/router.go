@@ -966,6 +966,13 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleLXDVGAConsole))).Methods("GET")
 	r.Handle("/lxd-vga-console/{name}",
 		RequireAuth(http.HandlerFunc(ServeLXDVGAPage))).Methods("GET")
+	// Generic per-peer forwarder: everything after /interlink-relay/<id> is
+	// proxied (HTTP) or bridged (WS) to that linked server. Used by embedded
+	// peer VGA console tabs so their API + SPICE calls reach the peer without
+	// entering global relay mode. PathPrefix (no Methods) so it also catches
+	// the /ws/ upgrade and POST power/CD-ROM actions.
+	r.PathPrefix("/interlink-relay/{server_id}/").Handler(
+		RequireAuth(http.HandlerFunc(HandleInterlinkRelay(appCfg))))
 	r.Handle("/api/lxd/proxmox-import/tools-status",
 		RequireAuth(http.HandlerFunc(HandleProxmoxImportToolsStatus))).Methods("GET")
 	r.Handle("/api/lxd/proxmox-import/list",

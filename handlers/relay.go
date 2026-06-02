@@ -118,11 +118,7 @@ func RelayMiddleware(appCfg *config.AppConfig, next http.Handler) http.Handler {
 		}
 
 		// Build HMAC-signed relay identity headers.
-		nonce := make([]byte, 8)
-		rand.Read(nonce) //nolint:errcheck
-		ts := time.Now().Unix()
-		nonceHex := hex.EncodeToString(nonce)
-		sig := system.RelayForwardHMAC(ls.SharedSecret, sess.Username, ts, nonceHex)
+		ts, nonceHex, sig := relayIdentityHeaders(ls, sess.Username)
 
 		// WebSocket upgrade — bridge bidirectionally instead of HTTP proxy.
 		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
@@ -130,52 +126,72 @@ func RelayMiddleware(appCfg *config.AppConfig, next http.Handler) http.Handler {
 			return
 		}
 
-		// Build the proxied request.
-		targetURL := ls.URL + r.URL.RequestURI()
-		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
-		if err != nil {
-			jsonErr(w, http.StatusBadGateway, "relay: failed to build proxy request")
-			return
-		}
-		// Forward headers except Cookie (local session must never reach the remote) and
-		// Origin (browser sends Origin: https://server-a which would fail EnforceOrigin
-		// on Server B whose Host is server-b — strip it so Server B treats the request
-		// as a trusted server-to-server call, which it is).
-		for k, vv := range r.Header {
-			if strings.EqualFold(k, "Cookie") || strings.EqualFold(k, "Origin") {
-				continue
-			}
-			for _, v := range vv {
-				proxyReq.Header.Add(k, v)
-			}
-		}
-		// Inject relay identity headers.
-		proxyReq.Header.Set("X-Interlink-Relay-User", sess.Username)
-		proxyReq.Header.Set("X-Interlink-Relay-TS", strconv.FormatInt(ts, 10))
-		proxyReq.Header.Set("X-Interlink-Relay-Nonce", nonceHex)
-		proxyReq.Header.Set("X-Interlink-Relay-HMAC", sig)
-
-		// Execute via the TLS-pinned interlink transport.
-		client := system.InterlinkClientForRelay(ls.TLSFingerprint)
-		resp, err := client.Do(proxyReq)
-		if err != nil {
-			jsonErr(w, http.StatusBadGateway, "relay: remote unreachable: "+err.Error())
-			return
-		}
-		defer resp.Body.Close()
-
-		// Copy response (skip Set-Cookie — remote must not set cookies on the browser).
-		for k, vv := range resp.Header {
-			if strings.EqualFold(k, "Set-Cookie") {
-				continue
-			}
-			for _, v := range vv {
-				w.Header().Add(k, v)
-			}
-		}
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body) //nolint:errcheck
+		// HTTP — proxy the request (URI forwarded verbatim) to the peer.
+		proxyHTTPToPeer(w, r, ls, r.URL.RequestURI(), sess.Username, ts, nonceHex, sig)
 	})
+}
+
+// relayIdentityHeaders mints the per-request HMAC identity (timestamp, nonce,
+// signature) that Server B validates in RelayAuthMiddleware. Shared by the
+// global RelayMiddleware and the per-peer HandleInterlinkRelay forwarder.
+func relayIdentityHeaders(ls *config.LinkedServer, username string) (ts int64, nonceHex, sig string) {
+	nonce := make([]byte, 8)
+	rand.Read(nonce) //nolint:errcheck
+	nonceHex = hex.EncodeToString(nonce)
+	ts = time.Now().Unix()
+	sig = system.RelayForwardHMAC(ls.SharedSecret, username, ts, nonceHex)
+	return
+}
+
+// proxyHTTPToPeer forwards a single HTTP request to a linked peer at
+// ls.URL+requestURI with the given relay identity headers, streaming the
+// response back to the browser. Cookie/Origin are stripped on the way out and
+// Set-Cookie on the way back so neither side's session crosses the boundary.
+func proxyHTTPToPeer(w http.ResponseWriter, r *http.Request, ls *config.LinkedServer, requestURI, username string, ts int64, nonceHex, sig string) {
+	targetURL := ls.URL + requestURI
+	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
+	if err != nil {
+		jsonErr(w, http.StatusBadGateway, "relay: failed to build proxy request")
+		return
+	}
+	// Forward headers except Cookie (local session must never reach the remote) and
+	// Origin (browser sends Origin: https://server-a which would fail EnforceOrigin
+	// on Server B whose Host is server-b — strip it so Server B treats the request
+	// as a trusted server-to-server call, which it is).
+	for k, vv := range r.Header {
+		if strings.EqualFold(k, "Cookie") || strings.EqualFold(k, "Origin") {
+			continue
+		}
+		for _, v := range vv {
+			proxyReq.Header.Add(k, v)
+		}
+	}
+	// Inject relay identity headers.
+	proxyReq.Header.Set("X-Interlink-Relay-User", username)
+	proxyReq.Header.Set("X-Interlink-Relay-TS", strconv.FormatInt(ts, 10))
+	proxyReq.Header.Set("X-Interlink-Relay-Nonce", nonceHex)
+	proxyReq.Header.Set("X-Interlink-Relay-HMAC", sig)
+
+	// Execute via the TLS-pinned interlink transport.
+	client := system.InterlinkClientForRelay(ls.TLSFingerprint)
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		jsonErr(w, http.StatusBadGateway, "relay: remote unreachable: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response (skip Set-Cookie — remote must not set cookies on the browser).
+	for k, vv := range resp.Header {
+		if strings.EqualFold(k, "Set-Cookie") {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body) //nolint:errcheck
 }
 
 // relayWebSocket bridges a browser WebSocket connection to the remote server.

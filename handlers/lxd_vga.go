@@ -453,11 +453,24 @@ func ServeLXDVGAPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	// embed=1 renders the page for use inside a multi-terminal tab (toolbar
+	// pinned to the bottom, ✕ closes the tab instead of the window).
+	// server_id, when set, makes every API + SPICE call route through the
+	// per-peer relay so a peer VM's console works from the home portal.
+	embed := r.URL.Query().Get("embed") == "1"
+	serverID := r.URL.Query().Get("server_id")
+	// SecurityHeaders middleware sets X-Frame-Options: DENY on every response.
+	// In embed mode this page is rendered inside the same-origin multi-terminal
+	// iframe, so DENY would leave the tab blank — relax to SAMEORIGIN (still
+	// blocks cross-origin framing). Mirrors the file-browser preview override.
+	if embed {
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
-	fmt.Fprintf(w, lxdVGAPageHTML, name, name, name)
+	fmt.Fprintf(w, lxdVGAPageHTML, name, name, name, serverID, embed)
 }
 
 const lxdVGAPageHTML = `<!DOCTYPE html>
@@ -553,6 +566,16 @@ html, body { width:100%%; height:100%%; background:#000; overflow:hidden; displa
 #cdrom-menu .kbd-item.muted:hover { background:#2a2a2a; color:#666; }
 #cdrom-menu .kbd-sub { padding:6px 14px; font-size:11px; color:#8a8a8a; border-top:1px solid #3a3a3a; }
 #cdrom-btn.has-disc { color:#9be39b; }
+/* Embedded-in-a-tab mode: the button bar lives at the BOTTOM of the pane,
+   so flip the body's column flow and move the toolbar's border + all of its
+   dropdown menus to open upward (!important beats the inline top: on the
+   cdrom/cursor menus). */
+body[data-embed] { flex-direction:column-reverse; }
+body[data-embed] #toolbar { border-bottom:none; border-top:1px solid #2a2a2a; }
+body[data-embed] #kbd-menu,
+body[data-embed] #pwr-menu,
+body[data-embed] #cdrom-menu,
+body[data-embed] #cur-menu { top:auto !important; bottom:calc(100%% + 4px) !important; }
 </style>
 </head>
 <body>
@@ -606,7 +629,7 @@ html, body { width:100%%; height:100%%; background:#000; overflow:hidden; displa
   </div>
   <button onclick="document.getElementById('spice-area').requestFullscreen()">Fullscreen</button>
   <span id="status">Connecting…</span>
-  <button id="close-btn" onclick="window.close()" title="Close console window">✕</button>
+  <button id="close-btn" onclick="closeConsole()" title="Close console">✕</button>
 </div>
 <div id="spice-area">
   <span id="notice">Connecting to VGA console…</span>
@@ -614,7 +637,22 @@ html, body { width:100%%; height:100%%; background:#000; overflow:hidden; displa
 <script src="/static/vendor/spice-html5.js?v=6.5.30-letterbox"></script>
 <script>
 const name = %q;
+const serverId = %q;
+const embedded = %t;
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+// When this console targets a peer VM (serverId set), route every API + WS
+// call through the generic per-peer relay so they reach the peer instead of
+// this home server. Local consoles return the path unchanged.
+function apiURL(p) { return serverId ? ('/interlink-relay/' + encodeURIComponent(serverId) + p) : p; }
+function wsURL(p)  { return apiURL(p); }
+// ✕ in embed mode can't close an iframe — ask the parent tab to close us.
+function closeConsole() {
+  if (embedded) {
+    try { window.parent.postMessage({ type:'znas-vga-close', name: name }, location.origin); } catch(e) {}
+  } else {
+    window.close();
+  }
+}
 let sc;
 // Connection state machine drives the top-right badge and the auto-reconnect
 // loop. Values: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'vm-offline'
@@ -674,7 +712,7 @@ async function _probeAndReconnect() {
   let vmStatus = '';
   let probeFailed = false;
   try {
-    const r = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/status', { cache: 'no-store' });
+    const r = await fetch(apiURL('/api/lxd/instances/' + encodeURIComponent(name) + '/status'), { cache: 'no-store' });
     if (r.ok) {
       const d = await r.json();
       vmStatus = (d && d.status) || '';
@@ -718,7 +756,7 @@ function _scheduleReconnect(firstDelayMs) {
 
 function connect() {
   _userInitiatedReconnect = false;
-  const wsUrl = proto + '://' + location.host + '/ws/lxd-vga?name=' + encodeURIComponent(name);
+  const wsUrl = proto + '://' + location.host + wsURL('/ws/lxd-vga?name=' + encodeURIComponent(name));
   try {
     sc = new SpiceMainConn({
       uri: wsUrl,
@@ -868,7 +906,7 @@ let _cdromState = { configured: [], available: [], pool: '', running: false };
 
 async function refreshCDROMState() {
   try {
-    const r = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/cdroms', { cache:'no-store' });
+    const r = await fetch(apiURL('/api/lxd/instances/' + encodeURIComponent(name) + '/cdroms'), { cache:'no-store' });
     if (!r.ok) { document.getElementById('cdrom-wrap').style.display = 'none'; return; }
     _cdromState = await r.json();
   } catch(_) { document.getElementById('cdrom-wrap').style.display = 'none'; return; }
@@ -978,7 +1016,7 @@ function toggleCDROMMenu(e) {
 async function swapCDROM(filename, pool) {
   document.getElementById('cdrom-menu').style.display = 'none';
   try {
-    const r = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/cdroms/swap', {
+    const r = await fetch(apiURL('/api/lxd/instances/' + encodeURIComponent(name) + '/cdroms/swap'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename: filename, pool: pool || '' })
@@ -1028,7 +1066,7 @@ function pwrAction(action) {
   const run = async () => {
     setStatus(meta.verbing + '…', 'warn');
     try {
-      const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/' + action, {
+      const r = await fetch(apiURL('/api/incus/instances/' + encodeURIComponent(name) + '/' + action), {
         method: 'POST', credentials: 'same-origin',
       });
       if (!r.ok) {
@@ -1069,7 +1107,7 @@ let _pwrStatusTimer = null;
 async function refreshVMStatus() {
   let status = 'Unknown';
   try {
-    const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/status', { cache:'no-store' });
+    const r = await fetch(apiURL('/api/incus/instances/' + encodeURIComponent(name) + '/status'), { cache:'no-store' });
     if (r.ok) {
       const j = await r.json();
       if (j && typeof j.status === 'string' && j.status) status = j.status;
@@ -1174,6 +1212,7 @@ function setCursor(name) {
 }
 
 window.addEventListener('load', function() {
+  if (embedded) document.body.setAttribute('data-embed', '');
   _applyCursor(_readSavedCursor());
   refreshCDROMState();
   connect();

@@ -4377,7 +4377,7 @@
               <span style="font-size:16px;">🖥️</span>
             </span>
             <div id="ci-term-menu" class="hidden" style="position:absolute;right:0;top:110%;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);min-width:170px;z-index:200;overflow:hidden;">
-              <button id="ci-vga-btn" onclick="ciVGAConsole()" style="display:block;width:100%;text-align:left;padding:9px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text-1);">VGA Console Window</button>
+              <button id="ci-vga-btn" onclick="ciVGAConsole()" style="display:block;width:100%;text-align:left;padding:9px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text-1);">VGA Console</button>
               <hr id="ci-vga-sep" class="menu-sep">
               <button onclick="ciTerminalBottom()" style="display:block;width:100%;text-align:left;padding:9px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text-1);">LXD Bottom Terminal</button>
               <button onclick="ciTerminalNewTab()" style="display:block;width:100%;text-align:left;padding:9px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text-1);">LXD Tab Terminal</button>
@@ -38546,24 +38546,11 @@ function _ciCloseTermMenu() { document.getElementById('ci-term-menu').classList.
 
 function ciTerminalNewTab()    { _ciCloseTermMenu(); if (_ciCurrentName) openLXDConsole(_ciCurrentName); }
 function ciTerminalNewWindow() { _ciCloseTermMenu(); if (_ciCurrentName) openTermWindow('lxd:' + _ciCurrentName); }
-// Always open on the LOCAL origin — the SPICE viewer's relative API/WS
-// calls (`/api/incus/instances/<name>/status`, `/ws/lxd-vga?name=<name>`)
-// are forwarded to the relayed peer transparently by RelayMiddleware /
-// relayWebSocket (see handlers/relay.go: relayWSForwardPaths includes
-// "/ws/lxd-vga"). Pointing the popup at the remote origin would force
-// the user to re-authenticate over there — which is what we want to
-// avoid. The local /incus-vga-console/<name> handler just emits a
-// static HTML template; it doesn't touch the local incus socket itself.
-function _vgaConsoleURL(name) {
-  return '/incus-vga-console/' + encodeURIComponent(name);
-}
-// Window dimensions sized so the SPICE canvas area (everything below the
-// toolbar) gets ~800px of usable height — matches the historical "800
-// tall" intent. The toolbar (~40px: 6px padding + ~22px content + 6px
-// padding + 1px border, rounded up to absorb browser font/zoom variance)
-// is added on top, so the OS-level frame opens at 840 inner pixels. Same
-// number used in the burger-menu launcher in modal-lxd-instances.
-function ciVGAConsole()       { _ciCloseTermMenu(); if (_ciCurrentName) window.open(_vgaConsoleURL(_ciCurrentName), 'lxdvga_' + _ciCurrentName, 'width=1280,height=840,noopener'); }
+// VGA console now opens as a tab inside the consolidated /terminal-multi
+// window (spec "vga:<name>"), with the SPICE button bar pinned to the bottom
+// of the tab. See handlers/terminal_multi.go (buildPane vga branch) and the
+// embed mode in handlers/lxd_vga.go.
+function ciVGAConsole()       { _ciCloseTermMenu(); if (_ciCurrentName) openTermTab('vga:' + _ciCurrentName); }
 
 function ciTerminalBottom() {
   _ciCloseTermMenu();
@@ -40171,7 +40158,7 @@ function toggleLXDTermMenu(e, name, type) {
   };
   const isVM = type === 'virtual-machine';
   if (isVM) {
-    mkItem('VGA Console Window', () => window.open(_vgaConsoleURL(name), 'lxdvga_' + name, 'width=1280,height=840,noopener'));
+    mkItem('VGA Console', () => openTermTab('vga:' + name));
     const sep = document.createElement('hr'); sep.className = 'menu-sep'; dd.appendChild(sep);
   }
   mkItem('LXD Bottom Terminal', () => {
@@ -47199,7 +47186,7 @@ function _navInjectTerminalItems(dd, inst) {
     items.push(b);
   };
   if (isVM) {
-    mk('🖥 VGA Console Window', () => window.open(_vgaConsoleURL(name), 'lxdvga_' + name, 'width=1280,height=840,noopener'));
+    mk('🖥 VGA Console', () => openTermTab('vga:' + name));
   }
   mk('💻 LXD Bottom Terminal', () => {
     if (_ciTermTabs.has(name)) { _ciTermActivateTab(name); _ciTermEnsureVisible(); return; }
