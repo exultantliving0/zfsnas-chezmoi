@@ -438,6 +438,11 @@
     /* Clipboard banner */
     .fbnew-clipboard { padding:6px 12px;border-top:1px solid var(--border);background:var(--surface);font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:10px; }
     .fbnew-clipboard .fbnew-clip-clear { color:var(--accent);cursor:pointer;text-decoration:underline;font-size:11.5px; }
+    .fbnew-upload-bar { padding:6px 12px;border-top:1px solid var(--border);background:var(--surface);font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:12px; }
+    .fbnew-upload-track { width:180px;height:8px;border-radius:4px;background:var(--surface2);overflow:hidden;flex-shrink:0; }
+    .fbnew-upload-fill { height:100%;width:0%;background:var(--accent);transition:width .15s ease; }
+    /* External-file drag-over highlight on the listing pane. */
+    .fbnew-listing.fb-dragover { outline:2px dashed var(--accent);outline-offset:-6px;background:rgba(10,132,255,0.06); }
     /* Dropdowns (View / Sort) */
     .fbnew-dropdown { position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.4);padding:4px 0;font-size:12.5px;z-index:1000;min-width:200px; }
     .fbnew-dropdown-item { padding:6px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none; }
@@ -27847,9 +27852,43 @@ const CPU_CAT_COLORS = { smb:'#fb923c', nfs:'#60a5fa', zfs:'#a78bfa', minio:'#f5
 let _globalMouseX = -1, _globalMouseY = -1;
 document.addEventListener('mousemove', (e) => {
   _globalMouseX = e.clientX; _globalMouseY = e.clientY;
+  // When a modal (File Browser, etc.) is open it sits over the dashboard,
+  // but the CPU/MEM/SWAP gauge tooltips have a higher z-index and float
+  // above it. The refresh path re-asserts a tooltip purely from cursor
+  // coordinates, so moving the mouse into the top-left of an open modal —
+  // which overlaps the gauge panels' screen rect — would keep popping the
+  // tooltip up and it never dismissed until the modal closed. Hide them
+  // the instant the mouse moves while a modal is open. Cheap: the modal
+  // lookup only runs when a gauge currently thinks it's hovered.
+  if ((_cpuGaugeHovered || _memGaugeHovered || _swapGaugeHovered) && _anyModalOpen()) {
+    _hideAllGaugeTooltips();
+  }
 }, { passive: true });
 
+// _anyModalOpen reports whether at least one modal backdrop is visible.
+function _anyModalOpen() {
+  return !!document.querySelector('.modal-backdrop:not(.hidden)');
+}
+
+// _hideAllGaugeTooltips force-dismisses the three process-gauge tooltips
+// and clears their hover/leave state so a stale popup can't linger over
+// an open modal.
+function _hideAllGaugeTooltips() {
+  ['cpu-gauge-tooltip', 'mem-gauge-tooltip', 'swap-gauge-tooltip'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  _cpuGaugeHovered = false; _memGaugeHovered = false; _swapGaugeHovered = false;
+  if (_cpuLeaveTimer)  { clearTimeout(_cpuLeaveTimer);  _cpuLeaveTimer  = null; }
+  if (_memLeaveTimer)  { clearTimeout(_memLeaveTimer);  _memLeaveTimer  = null; }
+  if (_swapLeaveTimer) { clearTimeout(_swapLeaveTimer); _swapLeaveTimer = null; }
+}
+
 function _pointerOverGauge(panelId) {
+  // A gauge can never be "hovered" while a modal covers the page — the
+  // backdrop intercepts the real pointer events, and re-showing the
+  // tooltip from raw cursor coordinates would float it over the modal.
+  if (_anyModalOpen()) return false;
   const p = document.getElementById(panelId);
   if (!p || p.offsetParent === null) return false; // missing or display:none
   const r = p.getBoundingClientRect();
@@ -27970,6 +28009,7 @@ function _buildCpuTooltipHTML() {
 function _renderCpuTooltip() {
   const tt = document.getElementById('cpu-gauge-tooltip');
   if (!tt) return;
+  if (_anyModalOpen()) { tt.style.display = 'none'; return; }
   tt.innerHTML = _buildCpuTooltipHTML();
   tt.style.display = 'block';
   const tw = tt.offsetWidth || 440;
@@ -28181,6 +28221,7 @@ function _buildSwapTooltipHTML() {
 function _renderSwapTooltip() {
   const tt = document.getElementById('swap-gauge-tooltip');
   if (!tt) return;
+  if (_anyModalOpen()) { tt.style.display = 'none'; return; }
   tt.innerHTML = _buildSwapTooltipHTML();
   tt.style.display = 'block';
   const tw = tt.offsetWidth || 440;
@@ -28381,6 +28422,7 @@ function _buildMemTooltipHTML() {
 function _renderMemTooltip() {
   const tt = document.getElementById('mem-gauge-tooltip');
   if (!tt) return;
+  if (_anyModalOpen()) { tt.style.display = 'none'; return; }
   tt.innerHTML = _buildMemTooltipHTML();
   tt.style.display = 'block';
   const tw = tt.offsetWidth || 440;
@@ -47510,6 +47552,7 @@ function showToast(msg, type = 'error') {
     </div>
     <div class="fbnew-toolbar">
       <button class="fbnew-btn" onclick="fbMkdirPrompt()" title="New folder">+ Folder</button>
+      <button class="fbnew-btn" id="fbnew-btn-upload" onclick="fbUploadPrompt()" title="Upload files from your computer">⬆ Upload</button>
       <button class="fbnew-btn" id="fbnew-btn-cut"   onclick="fbCut()"           title="Cut">✂ Cut</button>
       <button class="fbnew-btn" id="fbnew-btn-copy"  onclick="fbCopyClip()"      title="Copy">📋 Copy</button>
       <button class="fbnew-btn" id="fbnew-btn-paste" onclick="fbPaste()"         title="Paste">📌 Paste</button>
@@ -47548,6 +47591,10 @@ function showToast(msg, type = 'error') {
     <div class="fbnew-clipboard" id="fbnew-clipboard" style="display:none;">
       <span id="fbnew-clipboard-text"></span>
       <span class="fbnew-clip-clear" onclick="fbClearClipboard()">Clear</span>
+    </div>
+    <div class="fbnew-upload-bar" id="fbnew-upload-bar" style="display:none;">
+      <span id="fbnew-upload-label" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+      <div class="fbnew-upload-track"><div class="fbnew-upload-fill" id="fbnew-upload-fill"></div></div>
     </div>
   </div>
 </div>
@@ -48363,6 +48410,55 @@ function _fbAttachGlobalHandlers() {
       _fbCloseAnyDropdown();
     }
   });
+
+  // ── External-file drag-and-drop upload + background context menu ──────────
+  const listing = document.getElementById('fbnew-listing');
+  if (listing) {
+    listing.addEventListener('dragover', (ev) => {
+      if (!_fbDragHasFiles(ev)) return; // internal entry drags are handled by the tree
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.dataTransfer.dropEffect = 'copy';
+      listing.classList.add('fb-dragover');
+    });
+    listing.addEventListener('dragleave', (ev) => {
+      // Only clear when the pointer actually leaves the pane — moving
+      // between child rows keeps relatedTarget inside the listing.
+      if (!listing.contains(ev.relatedTarget)) listing.classList.remove('fb-dragover');
+    });
+    listing.addEventListener('drop', (ev) => {
+      if (!_fbDragHasFiles(ev)) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      listing.classList.remove('fb-dragover');
+      fbHandleExternalDrop(ev);
+    });
+    // Right-click on the empty background → folder-level context menu.
+    // Row/tile/cell right-clicks have their own menu (and call
+    // preventDefault) but still bubble here, so ignore those.
+    listing.addEventListener('contextmenu', (ev) => {
+      if (ev.target.closest('.fb-list-row, .fb-tile, .fb-icon-cell, .fb-list-head')) return;
+      ev.preventDefault();
+      fbShowBackgroundContextMenu(ev);
+    });
+  }
+  // Safety net: swallow file drags that land elsewhere in the modal so a
+  // near-miss doesn't make the browser navigate to the dropped file. The
+  // tree pane keeps its own internal-move handlers (no 'Files' type).
+  const modal = document.getElementById('fbnew-modal');
+  if (modal) {
+    modal.addEventListener('dragover', (ev) => { if (_fbDragHasFiles(ev)) ev.preventDefault(); });
+    modal.addEventListener('drop', (ev) => {
+      if (_fbDragHasFiles(ev) && !ev.target.closest('#fbnew-listing')) ev.preventDefault();
+    });
+  }
+}
+
+// _fbDragHasFiles returns true when the drag carries OS files (an upload),
+// as opposed to an internal entry move (which carries only text/plain).
+function _fbDragHasFiles(ev) {
+  const t = ev.dataTransfer && ev.dataTransfer.types;
+  return !!t && Array.prototype.indexOf.call(t, 'Files') !== -1;
 }
 
 function fbApplyPersistedSize() {
@@ -48866,6 +48962,7 @@ function fbUpdateToolbar() {
     b.disabled = !enabled;
     if (title) b.title = title;
   };
+  has('fbnew-btn-upload', isAdmin, isAdmin ? 'Upload files from your computer' : 'Admin only');
   has('fbnew-btn-cut',  isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
   has('fbnew-btn-copy', isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
   has('fbnew-btn-paste', isAdmin && !!_fbCtx.clipboard, _fbCtx.clipboard ? '' : 'Clipboard empty');
@@ -49437,6 +49534,194 @@ function fbHandleDrop(ev, encToken, encSubpath) {
   };
   _fbDrag = null;
   _fbPasteRun(verb, cb, dstRoot, dstSub, false);
+}
+
+// ── Upload (drag files from the PC + toolbar/context-menu picker) ─────────────
+
+// fbShowBackgroundContextMenu — right-click on the empty listing background.
+function fbShowBackgroundContextMenu(ev) {
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const items = [
+    { label: '📁 Create folder',  enabled: isAdmin, handler: 'fbMkdirPrompt()' },
+    { label: '⬆ Upload files…',   enabled: isAdmin, handler: 'fbUploadPrompt()' },
+    { divider: true },
+    { label: '📌 Paste', shortcut: 'Ctrl-V', enabled: isAdmin && !!_fbCtx.clipboard, handler: 'fbPaste()' },
+    { label: '↻ Refresh', shortcut: 'F5', handler: 'fbRefresh()' },
+  ];
+  _fbRenderContextMenu(ev, items);
+}
+
+// fbUploadPrompt opens a hidden multi-file picker (the toolbar button +
+// the background context-menu entry both call this). Selected files
+// upload into the current folder.
+function fbUploadPrompt() {
+  if (!(currentUser && currentUser.role === 'admin')) { showToast('Uploading requires an admin account', 'error'); return; }
+  let inp = document.getElementById('fbnew-upload-input');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.type = 'file';
+    inp.multiple = true;
+    inp.id = 'fbnew-upload-input';
+    inp.style.display = 'none';
+    inp.addEventListener('change', () => {
+      const files = Array.from(inp.files || []).map(f => ({ file: f, relpath: f.name }));
+      inp.value = ''; // allow re-selecting the same file later
+      if (files.length) fbUploadFiles(files);
+    });
+    document.body.appendChild(inp);
+  }
+  inp.click();
+}
+
+// fbHandleExternalDrop walks the dropped DataTransfer, expanding any
+// dropped folders into their files (so folder drops recreate the tree),
+// then uploads everything into the current folder.
+async function fbHandleExternalDrop(ev) {
+  if (!(currentUser && currentUser.role === 'admin')) { showToast('Uploading requires an admin account', 'error'); return; }
+  const dt = ev.dataTransfer;
+  const files = []; // { file, relpath }
+  const items = dt.items;
+  // webkitGetAsEntry lets us recurse into dropped directories. Snapshot
+  // the entries synchronously (the items list is invalidated once the
+  // event handler returns) before the async walk.
+  if (items && items.length && items[0].webkitGetAsEntry) {
+    const entries = [];
+    for (const it of items) {
+      const e = it.webkitGetAsEntry && it.webkitGetAsEntry();
+      if (e) entries.push(e);
+    }
+    for (const e of entries) await _fbCollectEntry(e, '', files);
+  } else if (dt.files && dt.files.length) {
+    for (const f of dt.files) files.push({ file: f, relpath: f.name });
+  }
+  if (!files.length) return;
+  await fbUploadFiles(files);
+}
+
+// _fbCollectEntry recurses a FileSystemEntry, pushing { file, relpath }
+// for every contained file. prefix carries the path built so far.
+function _fbCollectEntry(entry, prefix, out) {
+  return new Promise((resolve) => {
+    if (entry.isFile) {
+      entry.file(
+        (f) => { out.push({ file: f, relpath: prefix + f.name }); resolve(); },
+        () => resolve()
+      );
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const all = [];
+      // readEntries returns at most ~100 entries per call — loop until empty.
+      const readBatch = () => reader.readEntries(async (batch) => {
+        if (!batch.length) {
+          for (const c of all) await _fbCollectEntry(c, prefix + entry.name + '/', out);
+          resolve();
+        } else {
+          all.push(...batch);
+          readBatch();
+        }
+      }, () => resolve());
+      readBatch();
+    } else {
+      resolve();
+    }
+  });
+}
+
+// _fbShowUploadBar returns a tiny controller over the progress bar at the
+// bottom of the modal.
+function _fbShowUploadBar() {
+  const bar   = document.getElementById('fbnew-upload-bar');
+  const label = document.getElementById('fbnew-upload-label');
+  const fill  = document.getElementById('fbnew-upload-fill');
+  if (bar) bar.style.display = 'flex';
+  return {
+    set(idx, total, name, pct) {
+      if (label) label.textContent = `Uploading ${idx}/${total}: ${name}`;
+      if (fill)  fill.style.width = (pct || 0) + '%';
+    },
+    hide() {
+      if (bar) bar.style.display = 'none';
+      if (fill) fill.style.width = '0%';
+    },
+  };
+}
+
+// _fbUploadOne POSTs a single file via XHR so we get upload progress
+// events. The text fields are appended before the file part because the
+// server reads the multipart stream in order.
+function _fbUploadOne(root, subpath, item, overwrite, onProgress) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append('root', root);
+    fd.append('subpath', subpath);
+    fd.append('relpath', item.relpath);
+    fd.append('overwrite', overwrite ? 'true' : 'false');
+    fd.append('file', item.file, item.file.name);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/files/upload');
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100)); };
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { resolve(); return; }
+      let msg = 'failed (HTTP ' + xhr.status + ')';
+      try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {}
+      reject(new Error(msg));
+    };
+    xhr.onerror = () => reject(new Error('network error'));
+    xhr.send(fd);
+  });
+}
+
+// fbUploadFiles uploads a list of { file, relpath } sequentially, then
+// offers a single overwrite prompt for any names that already existed.
+async function fbUploadFiles(files) {
+  if (!(currentUser && currentUser.role === 'admin')) { showToast('Uploading requires an admin account', 'error'); return; }
+  const root = fileBrowserState.root;
+  const subpath = fileBrowserState.subpath;
+  const bar = _fbShowUploadBar();
+  let done = 0, failed = 0;
+  const conflicts = [];
+  for (let i = 0; i < files.length; i++) {
+    const item = files[i];
+    bar.set(i + 1, files.length, item.relpath, 0);
+    try {
+      await _fbUploadOne(root, subpath, item, false, (p) => bar.set(i + 1, files.length, item.relpath, p));
+      done++;
+    } catch (e) {
+      if (/exist/i.test(e.message)) conflicts.push(item);
+      else { failed++; showToast('Upload failed: ' + item.relpath + ' — ' + e.message, 'error'); }
+    }
+  }
+  bar.hide();
+  await fileBrowserNavigate(subpath);
+  await fbLoadTree();
+
+  if (conflicts.length) {
+    const list = conflicts.slice(0, 8).map(c => '<code>' + esc(c.relpath) + '</code>').join('<br>') +
+                 (conflicts.length > 8 ? `<br>… and ${conflicts.length - 8} more` : '');
+    showConfirm({
+      title: `Overwrite ${conflicts.length} existing file(s)?`,
+      body: `<div style="font-size:12.5px;line-height:1.6;">${list}</div>`,
+      confirmText: 'Overwrite', danger: true,
+      onConfirm: async () => {
+        const bar2 = _fbShowUploadBar();
+        let d2 = 0, f2 = 0;
+        for (let i = 0; i < conflicts.length; i++) {
+          const item = conflicts[i];
+          bar2.set(i + 1, conflicts.length, item.relpath, 0);
+          try { await _fbUploadOne(root, subpath, item, true, (p) => bar2.set(i + 1, conflicts.length, item.relpath, p)); d2++; }
+          catch (e) { f2++; showToast('Upload failed: ' + item.relpath + ' — ' + e.message, 'error'); }
+        }
+        bar2.hide();
+        await fileBrowserNavigate(subpath);
+        await fbLoadTree();
+        showToast(`Uploaded ${d2} file(s)` + (f2 ? `, ${f2} failed` : ''), f2 ? 'error' : 'success');
+      },
+    });
+  } else if (done > 0 || failed > 0) {
+    showToast(`Uploaded ${done} file(s)` + (failed ? `, ${failed} failed` : ''), failed ? 'error' : 'success');
+  }
 }
 
 // ── Generic file viewer (PDF / text / markdown) ──────────────────────────────

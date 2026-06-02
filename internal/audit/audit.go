@@ -128,6 +128,7 @@ const (
 	ActionFileBrowserDelete = "filebrowser_delete"
 	ActionFileBrowserMove   = "filebrowser_move"
 	ActionFileBrowserCopy   = "filebrowser_copy"
+	ActionFileBrowserUpload = "filebrowser_upload"
 	// Dataset encryption actions.
 	ActionLockDataset     = "lock_dataset"
 	ActionUnlockDataset   = "unlock_dataset"

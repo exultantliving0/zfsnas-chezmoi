@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,8 +21,8 @@ type FileEntry struct {
 	IsDir        bool   `json:"is_dir"`
 	IsSymlink    bool   `json:"is_symlink,omitempty"`
 	SizeBytes    int64  `json:"size_bytes"`
-	Permissions  string `json:"permissions"`  // e.g. "-rw-r--r--"
-	ModeOctal    string `json:"mode_octal"`   // e.g. "644"
+	Permissions  string `json:"permissions"` // e.g. "-rw-r--r--"
+	ModeOctal    string `json:"mode_octal"`  // e.g. "644"
 	Owner        string `json:"owner"`
 	OwnerUID     int    `json:"owner_uid"`
 	Group        string `json:"group"`
@@ -396,7 +397,6 @@ func getAllSystemUsersGroupsWithIDs() (users []UserEntry, groups []GroupEntry, e
 	return users, groups, nil
 }
 
-
 // ── userGroupExists ───────────────────────────────────────────────────────────
 
 // numericIDRe matches a bare unsigned integer up to 10 digits — wide enough
@@ -692,6 +692,95 @@ func MakeDir(absRoot, subpath, name string) error {
 	out, err := exec.Command("sudo", "mkdir", "-p", abs).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mkdir: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// UploadFile streams an uploaded file into root/subpath. relName is the
+// file's name relative to subpath; for a folder drop it may contain
+// "/"-separated path segments (intermediate directories are created with
+// `sudo mkdir -p`). Every segment is validated with the same rule MakeDir
+// uses. The bytes are first written to a temp file owned by the service
+// account (the dataset roots are typically root:root mode 0770, so the
+// service user can't write into them directly), then `sudo mv`'d into
+// place and chowned to match the destination directory's owner/group so
+// the new file behaves like its siblings over SMB/NFS.
+//
+// When overwrite is false and the destination already exists the error
+// message contains "exists" so the FE can offer an overwrite prompt —
+// mirroring the move/copy flow.
+func UploadFile(absRoot, subpath, relName string, overwrite bool, src io.Reader) error {
+	relName = strings.ReplaceAll(relName, `\`, "/") // tolerate Windows separators
+	segs := strings.Split(relName, "/")
+	for _, s := range segs {
+		if s == "" || s == "." || s == ".." {
+			return fmt.Errorf("invalid file name: %q", relName)
+		}
+		if !validFolderName.MatchString(s) {
+			return fmt.Errorf("invalid file name segment %q: must be 1..255 chars and contain no slash or NUL", s)
+		}
+	}
+	parentDir, err := SafeJoin(absRoot, subpath)
+	if err != nil {
+		return err
+	}
+	abs := filepath.Join(parentDir, filepath.FromSlash(relName))
+	// SafeJoin only validated subpath; re-check the composed destination
+	// (relName may add nested segments) is still under the root.
+	rootClean := filepath.Clean(absRoot)
+	if abs != rootClean && !strings.HasPrefix(abs, rootClean+string(filepath.Separator)) {
+		return fmt.Errorf("invalid destination: escapes root")
+	}
+
+	mu := fbRootMutex(absRoot)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Existence check (sudo stat works inside traverse-denied roots).
+	if _, err := exec.Command("sudo", "stat", "-c", "%F", abs).Output(); err == nil {
+		if !overwrite {
+			return fmt.Errorf("a file or folder named %q already exists", filepath.Base(abs))
+		}
+	}
+
+	// Make sure the (possibly nested) destination directory exists.
+	destDir := filepath.Dir(abs)
+	if out, err := exec.Command("sudo", "mkdir", "-p", destDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mkdir: %s", strings.TrimSpace(string(out)))
+	}
+
+	// Stream the upload to a temp file owned by the service account.
+	tmp, err := os.CreateTemp("", "znas-upload-*")
+	if err != nil {
+		return fmt.Errorf("temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the mv succeeds
+	if _, err := io.Copy(tmp, src); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write upload: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("write upload: %w", err)
+	}
+	// 0644 so the file is readable after the cross-device mv preserves
+	// the temp's mode.
+	_ = os.Chmod(tmpName, 0o644)
+
+	// Move into place (mv -f: we've already enforced the overwrite policy
+	// above). `--` guards against a destination beginning with '-'.
+	if out, err := exec.Command("sudo", "mv", "-f", "--", tmpName, abs).CombinedOutput(); err != nil {
+		return fmt.Errorf("mv: %s", strings.TrimSpace(string(out)))
+	}
+
+	// Match the destination directory's owner/group so the upload looks
+	// like a native file in that share. Best-effort — a failure here
+	// leaves the file owned by the service account, which is harmless.
+	if out, err := exec.Command("sudo", "stat", "-c", "%u %g", destDir).Output(); err == nil {
+		ug := strings.Fields(strings.TrimSpace(string(out)))
+		if len(ug) == 2 {
+			exec.Command("sudo", "chown", ug[0]+":"+ug[1], abs).Run() //nolint:errcheck
+		}
 	}
 	return nil
 }

@@ -717,6 +717,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("browse_files")(http.HandlerFunc(HandleFileBrowserDownload)))).Methods("GET")
 	r.Handle("/api/files/mkdir",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserMkdir)))).Methods("POST")
+	r.Handle("/api/files/upload",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserUpload)))).Methods("POST")
 	r.Handle("/api/files/delete",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserDelete)))).Methods("POST")
 	r.Handle("/api/files/move",

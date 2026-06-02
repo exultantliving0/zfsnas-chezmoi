@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -220,9 +221,9 @@ func HandleFileBrowserRoots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type rootEntry struct {
-		Label    string `json:"label"`
-		Token    string `json:"token"`
-		AbsPath  string `json:"abs_path"`
+		Label   string `json:"label"`
+		Token   string `json:"token"`
+		AbsPath string `json:"abs_path"`
 	}
 	out := make([]rootEntry, 0, len(known))
 	for abs, label := range known {
@@ -297,6 +298,77 @@ func HandleFileBrowserMkdir(w http.ResponseWriter, r *http.Request) {
 		Details: "mkdir " + req.Name,
 	})
 	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// HandleFileBrowserUpload streams an uploaded file into root/subpath.
+// It uses a streaming multipart reader (flat memory regardless of file
+// size) so the leading text fields — root, subpath, relpath, overwrite —
+// MUST be appended to the FormData before the file part. Exactly one
+// file part is expected per request; the FE uploads one file at a time
+// so it can pair each file with its own relpath (folder drops) and
+// surface per-file overwrite prompts.
+// POST /api/files/upload  (multipart/form-data)
+func HandleFileBrowserUpload(w http.ResponseWriter, r *http.Request) {
+	mr, err := r.MultipartReader()
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "expected multipart/form-data")
+		return
+	}
+	fields := map[string]string{}
+	uploaded := 0
+	var lastAbs string
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, "read upload: "+err.Error())
+			return
+		}
+		// Text fields (no filename) carry the upload parameters; cap the
+		// read so a malformed client can't stream an unbounded "field".
+		if part.FileName() == "" {
+			buf, _ := io.ReadAll(io.LimitReader(part, 1<<20))
+			fields[part.FormName()] = string(buf)
+			part.Close()
+			continue
+		}
+		absRoot, _, ok := fbResolveRoot(w, fields["root"])
+		if !ok {
+			return
+		}
+		name := fields["relpath"]
+		if name == "" {
+			name = part.FileName()
+		}
+		overwrite := fields["overwrite"] == "true"
+		if err := system.UploadFile(absRoot, fields["subpath"], name, overwrite, part); err != nil {
+			part.Close()
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		part.Close()
+		uploaded++
+		lastAbs = filepath.Join(absRoot, fields["subpath"], filepath.FromSlash(name))
+	}
+	if uploaded == 0 {
+		jsonErr(w, http.StatusBadRequest, "no file in upload")
+		return
+	}
+	sess, _ := SessionFromRequest(r)
+	user := ""
+	if sess != nil {
+		user = sess.Username
+	}
+	audit.Log(audit.Entry{
+		User:    user,
+		Action:  audit.ActionFileBrowserUpload,
+		Target:  lastAbs,
+		Result:  audit.ResultOK,
+		Details: "upload " + filepath.Base(lastAbs),
+	})
+	jsonOK(w, map[string]interface{}{"ok": true, "uploaded": uploaded})
 }
 
 // HandleFileBrowserDelete removes one or more entries.
