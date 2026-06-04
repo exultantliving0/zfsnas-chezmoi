@@ -1259,8 +1259,9 @@ func GetRemoteLXDBridges(remoteURL, sharedSecret, tlsFP string) ([]LXDNetworkInf
 type LXDInstanceSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Type        string `json:"type,omitempty"`   // "virtual-machine" | "container"
-	State       string `json:"state,omitempty"`  // "Running" | "Stopped" | "Frozen" | ...
+	Type        string `json:"type,omitempty"`  // "virtual-machine" | "container"
+	State       string `json:"state,omitempty"` // "Running" | "Stopped" | "Frozen" | ...
+	IPv4        string `json:"ipv4,omitempty"`  // best global IPv4 of the guest, when running
 }
 
 // LXDInstancesHMAC signs a request to list remote LXD instances.
@@ -1291,19 +1292,28 @@ func LXDListInstanceSummaries() ([]LXDInstanceSummary, error) {
 		return nil, err
 	}
 	var raw []struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Type        string `json:"type"`
-		Status      string `json:"status"`
+		Name            string                       `json:"name"`
+		Description     string                       `json:"description"`
+		Type            string                       `json:"type"`
+		Status          string                       `json:"status"`
+		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+		ExpandedConfig  map[string]string            `json:"expanded_config"`
+		State           *struct {
+			Network map[string]lxdStateNetwork `json:"network"`
+		} `json:"state"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, err
 	}
 	result := make([]LXDInstanceSummary, len(raw))
 	for i, r := range raw {
+		ip := ""
+		if r.State != nil {
+			ip = lxdPickBestIP(r.ExpandedDevices, r.ExpandedConfig, r.State.Network)
+		}
 		result[i] = LXDInstanceSummary{
 			Name: r.Name, Description: r.Description,
-			Type: r.Type, State: r.Status,
+			Type: r.Type, State: r.Status, IPv4: ip,
 		}
 	}
 	return result, nil

@@ -574,6 +574,14 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/capacity/oldest",
 		RequireAuth(http.HandlerFunc(HandleCapacityOldest))).Methods("GET")
 
+	// --- Live Storage Map (topology) ---
+	r.Handle("/api/map/topology",
+		RequireAuth(http.HandlerFunc(HandleMapTopology(appCfg)))).Methods("GET")
+	r.Handle("/api/map/instance-metrics",
+		RequireAuth(http.HandlerFunc(HandleMapInstanceMetrics))).Methods("GET")
+	r.Handle("/ws/zpool-iostat",
+		RequireAuth(http.HandlerFunc(HandleZpoolIostatWS))).Methods("GET")
+
 	// --- Folder Usage (Dataset Tree) ---
 	r.Handle("/api/capacity/folder-usage",
 		RequireAuth(http.HandlerFunc(HandleGetFolderUsage(appCfg)))).Methods("GET")

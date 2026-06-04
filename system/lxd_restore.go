@@ -138,8 +138,10 @@ func instantRestoreFromWorkload(zfsPool, kind, vmID, newName string) error {
 		destroyDatasetSnapshots(dstBlock, nil)
 	}
 
-	// Rewrite backup.yaml inside the renamed root-fs dataset.
-	if err := LXDRewriteBackupYAMLForRestore(dstRoot, incusPool, incusSource, vmID, newName); err != nil {
+	// Rewrite backup.yaml inside the renamed root-fs dataset. This path only
+	// restores the root (+.block), so any attached custom-volume disk is not
+	// present — pass an empty captured-set to strip those devices.
+	if err := LXDRewriteBackupYAMLForRestore(dstRoot, incusPool, incusSource, vmID, newName, map[string]string{}); err != nil {
 		// non-fatal — recover will still attempt
 	}
 
@@ -226,6 +228,27 @@ func LXDCloneRestoreLocal(ctx context.Context, vmID, srcDatastore, dstDatastore,
 		return fmt.Errorf("locate backup instance: %w", err)
 	}
 
+	// Map each captured custom volume's original name → the name it's restored
+	// under. Same on recovery (cloneName==vmID); on clone-to-new-name we make
+	// it unique so it can't collide with the still-running source's volume.
+	// Attached disk devices whose volume ISN'T captured get stripped.
+	volRemap := map[string]string{}
+	for _, pt := range parts {
+		if pt.Kind != "custom" {
+			continue
+		}
+		origVol := strings.TrimPrefix(pt.DstBaseName, backupName+".")
+		newVol := origVol
+		if cloneName != vmID {
+			if strings.Contains(origVol, vmID) {
+				newVol = strings.Replace(origVol, vmID, cloneName, 1)
+			} else {
+				newVol = cloneName + "-" + origVol
+			}
+		}
+		volRemap[origVol] = newVol
+	}
+
 	// Ensure parent destination datasets exist.
 	dstParent := dstSource + "/" + kind
 	_ = exec.Command("sudo", "zfs", "create", "-p", dstParent).Run()
@@ -241,11 +264,14 @@ func LXDCloneRestoreLocal(ctx context.Context, vmID, srcDatastore, dstDatastore,
 		// rules: the .block sibling and custom volumes must share the
 		// instance name).
 		finalBase := strings.Replace(part.DstBaseName, LXDBackupPrefix+vmID, cloneName, 1)
-		landingBase := "incoming-restore-" + finalBase
 		parent := dstParent
 		if part.Kind == "custom" {
+			// Incus custom volumes are datasets named "<src>/custom/<project>_<vol>".
 			parent = dstSource + "/custom"
+			origVol := strings.TrimPrefix(part.DstBaseName, backupName+".")
+			finalBase = "default_" + volRemap[origVol]
 		}
+		landingBase := "incoming-restore-" + finalBase
 		landingDataset := parent + "/" + landingBase
 		finalDataset := parent + "/" + finalBase
 
@@ -295,7 +321,7 @@ func LXDCloneRestoreLocal(ctx context.Context, vmID, srcDatastore, dstDatastore,
 			if logFn != nil {
 				logFn(fmt.Sprintf("Rewriting backup.yaml: pool→%s, name %s→%s, snapshots→[]", dstDatastore, vmID, cloneName))
 			}
-			if err := LXDRewriteBackupYAMLForRestore(finalDataset, dstDatastore, dstSource, vmID, cloneName); err != nil {
+			if err := LXDRewriteBackupYAMLForRestore(finalDataset, dstDatastore, dstSource, vmID, cloneName, volRemap); err != nil {
 				if logFn != nil {
 					logFn("rewrite backup.yaml: " + err.Error())
 				}
@@ -518,7 +544,9 @@ func LXDCloneRestoreRemote(ctx context.Context, srcHost, srcUser, srcDataset, ds
 			if logFn != nil {
 				logFn(fmt.Sprintf("Rewriting backup.yaml: pool→%s, name %s→%s, snapshots→[]", dstDatastore, vmID, cloneName))
 			}
-			if err := LXDRewriteBackupYAMLForRestore(finalDataset, dstDatastore, dstSource, vmID, cloneName); err != nil {
+			// Remote clone-restore moves only the root (+.block); strip any
+			// attached custom-volume disk device that isn't present.
+			if err := LXDRewriteBackupYAMLForRestore(finalDataset, dstDatastore, dstSource, vmID, cloneName, map[string]string{}); err != nil {
 				if logFn != nil {
 					logFn("rewrite backup.yaml: " + err.Error())
 				}

@@ -95,6 +95,148 @@ func LXDInstanceRootPool(name string) string {
 	return ""
 }
 
+// LXDAllInstanceRootPools returns instanceName → root-disk storage-pool name
+// for every instance, resolved from a single batched query (recursion=2 so the
+// expanded_devices are included). Used by the storage Map to link each VM /
+// container to the pool its disk actually lives on, rather than guessing.
+func LXDAllInstanceRootPools() map[string]string {
+	result := map[string]string{}
+	out, err := exec.Command("incus", "query", "/1.0/instances?recursion=2").Output()
+	if err != nil {
+		return result
+	}
+	var arr []struct {
+		Name            string                       `json:"name"`
+		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+	}
+	if json.Unmarshal(out, &arr) != nil {
+		return result
+	}
+	for _, in := range arr {
+		for _, dev := range in.ExpandedDevices {
+			if dev["type"] == "disk" && dev["path"] == "/" {
+				result[in.Name] = dev["pool"]
+				break
+			}
+		}
+	}
+	return result
+}
+
+// LXDInstanceDisk is one disk device attached to an instance (from its
+// expanded_devices), used by the Map to resolve each virtual disk to its zvol.
+type LXDInstanceDisk struct {
+	Device string `json:"device"`
+	Pool   string `json:"pool"`
+	Source string `json:"source"`
+	Path   string `json:"path"`
+}
+
+// LXDAllInstanceDisks returns instanceName → its disk devices, from a single
+// batched query (recursion=2).
+func LXDAllInstanceDisks() map[string][]LXDInstanceDisk {
+	res := map[string][]LXDInstanceDisk{}
+	out, err := exec.Command("incus", "query", "/1.0/instances?recursion=2").Output()
+	if err != nil {
+		return res
+	}
+	var arr []struct {
+		Name            string                       `json:"name"`
+		ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+	}
+	if json.Unmarshal(out, &arr) != nil {
+		return res
+	}
+	for _, in := range arr {
+		for dev, d := range in.ExpandedDevices {
+			if d["type"] == "disk" {
+				res[in.Name] = append(res[in.Name], LXDInstanceDisk{
+					Device: dev, Pool: d["pool"], Source: d["source"], Path: d["path"],
+				})
+			}
+		}
+	}
+	return res
+}
+
+// LXDDiskUsage is the used/total of one filesystem inside an instance.
+type LXDDiskUsage struct {
+	Name  string `json:"name"`
+	Usage uint64 `json:"usage"`
+	Total uint64 `json:"total"`
+}
+
+// LXDInstanceMetrics holds live resource usage for one instance, used by the
+// storage Map's hover popup.
+type LXDInstanceMetrics struct {
+	Name      string         `json:"name"`
+	Running   bool           `json:"running"`
+	CPUPct    float64        `json:"cpu_pct"`    // core-equivalent % (100 = one core)
+	MemUsage  uint64         `json:"mem_usage"`
+	MemTotal  uint64         `json:"mem_total"`
+	Processes int            `json:"processes"`
+	Disks     []LXDDiskUsage `json:"disks"`
+}
+
+type lxdInstState struct {
+	Status string `json:"status"`
+	CPU    struct {
+		Usage int64 `json:"usage"`
+	} `json:"cpu"`
+	Memory struct {
+		Usage uint64 `json:"usage"`
+		Total uint64 `json:"total"`
+	} `json:"memory"`
+	Processes int `json:"processes"`
+	Disk      map[string]struct {
+		Usage uint64 `json:"usage"`
+		Total uint64 `json:"total"`
+	} `json:"disk"`
+}
+
+func lxdReadInstanceState(name string) (*lxdInstState, error) {
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+name+"/state").Output()
+	if err != nil {
+		return nil, err
+	}
+	var s lxdInstState
+	if err := json.Unmarshal(out, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// LXDInstanceLiveMetrics samples the instance state twice (a short interval
+// apart) so CPU usage can be turned into a live percentage; memory and
+// per-filesystem usage are read from the second sample.
+func LXDInstanceLiveMetrics(name string) (*LXDInstanceMetrics, error) {
+	s1, err := lxdReadInstanceState(name)
+	if err != nil {
+		return nil, err
+	}
+	t0 := time.Now()
+	time.Sleep(450 * time.Millisecond)
+	s2, err := lxdReadInstanceState(name)
+	if err != nil {
+		return nil, err
+	}
+	m := &LXDInstanceMetrics{
+		Name:      name,
+		Running:   s2.Status == "Running",
+		MemUsage:  s2.Memory.Usage,
+		MemTotal:  s2.Memory.Total,
+		Processes: s2.Processes,
+	}
+	if dt := time.Since(t0).Seconds(); dt > 0 && s2.CPU.Usage >= s1.CPU.Usage {
+		m.CPUPct = float64(s2.CPU.Usage-s1.CPU.Usage) / 1e9 / dt * 100
+	}
+	for dev, du := range s2.Disk {
+		m.Disks = append(m.Disks, LXDDiskUsage{Name: dev, Usage: du.Usage, Total: du.Total})
+	}
+	sort.Slice(m.Disks, func(i, j int) bool { return m.Disks[i].Name < m.Disks[j].Name })
+	return m, nil
+}
+
 // LXDInstanceDataset returns the ZFS dataset path backing the instance's
 // root filesystem on this host, or "" when it cannot be resolved (pool
 // missing, non-zfs backend, etc.).
@@ -203,14 +345,15 @@ func LXDInstanceBackupDatasets(name string) ([]LXDInstanceDiskPart, error) {
 		if cpoolSource == "" {
 			continue
 		}
-		fullSrc := cpoolSource + "/custom/" + c.Volume
-		if seen[fullSrc] {
+		// Incus stores custom volumes as "<src>/custom/<project>_<volume>", so
+		// resolve the real dataset — the old "<src>/custom/<volume>" guess
+		// silently missed every volume in the (default) project, leaving
+		// attached disks out of the backup entirely.
+		fullSrc := resolveCustomVolDataset(cpoolSource, c.Volume)
+		if fullSrc == "" || seen[fullSrc] {
 			continue
 		}
 		seen[fullSrc] = true
-		if !datasetExists(fullSrc) {
-			continue
-		}
 		parts = append(parts, LXDInstanceDiskPart{
 			SrcDataset:  fullSrc,
 			DstBaseName: LXDBackupPrefix + name + "." + c.Volume,
@@ -262,6 +405,28 @@ func instanceCustomDiskSources(name string) ([]instanceCustomDiskSource, error) 
 
 func datasetExists(ds string) bool {
 	return exec.Command("zfs", "list", "-H", "-o", "name", ds).Run() == nil
+}
+
+// resolveCustomVolDataset finds the actual ZFS dataset backing an Incus custom
+// volume named `vol` on zfs source `src`. Incus names it
+// "<src>/custom/<project>_<vol>" (project prefix), so try the exact path first
+// then match a "<project>_<vol>" leaf under <src>/custom. Returns "" if none.
+func resolveCustomVolDataset(src, vol string) string {
+	if exact := src + "/custom/" + vol; datasetExists(exact) {
+		return exact // some layouts have no project prefix
+	}
+	out, err := exec.Command("zfs", "list", "-Hp", "-t", "filesystem,volume", "-o", "name", "-r", src+"/custom").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name := strings.TrimSpace(line)
+		base := name[strings.LastIndex(name, "/")+1:]
+		if base == vol || strings.HasSuffix(base, "_"+vol) {
+			return name
+		}
+	}
+	return ""
 }
 
 // datasetUsedBytes returns the ZFS `used` property of one dataset in bytes.
@@ -491,7 +656,68 @@ func LXDRewriteBackupYAML(dataset, srcPool, dstPool, dstZFSSource, srcInstance, 
 // `name:` of the source pool become `name: <dstPool>` (the embedded pool
 // block inside backup.yaml). `srcInstance` is the original VM name the
 // user is restoring (matches the `name:` field as the backup was saved).
-func LXDRewriteBackupYAMLForRestore(dataset, dstPool, dstZFSSource, srcInstance, dstInstance string) error {
+// bkupDiskDevice is a disk device parsed from backup.yaml's device maps.
+type bkupDiskDevice struct{ Name, Source, Path, Type string }
+
+// backupYAMLDiskDevices extracts disk devices from the top-level devices:/
+// expanded_devices: maps of a backup.yaml (used to decide which to strip).
+func backupYAMLDiskDevices(content string) []bkupDiskDevice {
+	var devs []bkupDiskDevice
+	seen := map[string]bool{}
+	inDevices := false
+	devIndent := -1
+	var cur *bkupDiskDevice
+	flush := func() {
+		if cur != nil && cur.Type == "disk" && !seen[cur.Name] {
+			seen[cur.Name] = true
+			devs = append(devs, *cur)
+		}
+		cur = nil
+	}
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		ind := len(line) - len(strings.TrimLeft(line, " "))
+		if trimmed == "devices:" || trimmed == "expanded_devices:" {
+			flush()
+			inDevices = true
+			devIndent = ind
+			continue
+		}
+		if !inDevices {
+			continue
+		}
+		if trimmed != "" && ind <= devIndent {
+			flush()
+			inDevices = false
+			continue
+		}
+		if ind == devIndent+2 && strings.HasSuffix(trimmed, ":") {
+			flush()
+			cur = &bkupDiskDevice{Name: strings.TrimSuffix(trimmed, ":")}
+			continue
+		}
+		if cur != nil {
+			switch {
+			case strings.HasPrefix(trimmed, "type:"):
+				cur.Type = strings.TrimSpace(trimmed[len("type:"):])
+			case strings.HasPrefix(trimmed, "source:"):
+				cur.Source = strings.TrimSpace(trimmed[len("source:"):])
+			case strings.HasPrefix(trimmed, "path:"):
+				cur.Path = strings.TrimSpace(trimmed[len("path:"):])
+			}
+		}
+	}
+	flush()
+	return devs
+}
+
+// LXDRewriteBackupYAMLForRestore rewrites backup.yaml in place for restore.
+// volRemap maps each captured custom-volume's original name → the name it was
+// restored under (equal for same-name recovery; different on clone-to-new-
+// name). Any attached disk device whose volume is NOT a key in volRemap is
+// removed so recover doesn't fail on a volume that wasn't captured; kept
+// devices have their source remapped. Pass nil to disable both.
+func LXDRewriteBackupYAMLForRestore(dataset, dstPool, dstZFSSource, srcInstance, dstInstance string, volRemap map[string]string) error {
 	tmpDir := "/tmp/znas-bkup-mount-" + strings.ReplaceAll(strings.ReplaceAll(dataset, "/", "_"), "@", "_")
 	_ = exec.Command("sudo", "umount", tmpDir).Run()
 	_ = exec.Command("sudo", "rmdir", tmpDir).Run()
@@ -513,7 +739,21 @@ func LXDRewriteBackupYAMLForRestore(dataset, dstPool, dstZFSSource, srcInstance,
 		return nil // no backup.yaml — nothing to fix
 	}
 	content := string(rawOut)
-	replaced := rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, dstInstance)
+	// Attached disk devices whose custom volume wasn't captured → strip them
+	// so recover succeeds (root disks and host-path passthroughs are never
+	// stripped). Captured volumes are kept and source-remapped by the rewriter.
+	stripDevs := map[string]bool{}
+	if volRemap != nil {
+		for _, dv := range backupYAMLDiskDevices(content) {
+			if dv.Path == "/" || dv.Source == "" || strings.HasPrefix(dv.Source, "/") {
+				continue
+			}
+			if _, ok := volRemap[dv.Source]; !ok {
+				stripDevs[dv.Name] = true
+			}
+		}
+	}
+	replaced := rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, dstInstance, stripDevs, volRemap)
 	if replaced == content {
 		return nil
 	}
@@ -550,10 +790,13 @@ var unknownVolatileKeysToStrip = map[string]bool{
 //     stores the storage-pool descriptor) is rewritten to dstPool so the
 //     embedded pool descriptor matches the destination pool. Without
 //     this, recover fails with "pool name mismatch in its backup file".
-func rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, dstInstance string) string {
+func rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, dstInstance string, stripDevs map[string]bool, volRemap map[string]string) string {
 	out := []string{}
 	inSnapshots := false
 	inPoolBlock := false
+	inDevices := false // inside a top-level devices:/expanded_devices: mapping
+	devIndent := -1
+	skipDev := false
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		indent := line[:len(line)-len(trimmed)]
@@ -561,6 +804,7 @@ func rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, ds
 		// Top-level snapshots: …block → snapshots: []
 		if line == "snapshots:" {
 			inSnapshots = true
+			inDevices = false
 			out = append(out, "snapshots: []")
 			continue
 		}
@@ -573,6 +817,47 @@ func rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, ds
 				// fall through
 			} else {
 				continue
+			}
+		}
+
+		// Drop disk devices listed in stripDevs (their backing custom volume
+		// isn't part of the restore) so `incus admin recover` doesn't fail
+		// with "Storage volume not found". Operates on the top-level
+		// devices:/expanded_devices: maps only (snapshots are emptied above).
+		if (len(stripDevs) > 0 || len(volRemap) > 0) && !inSnapshots {
+			if trimmed == "devices:" || trimmed == "expanded_devices:" {
+				inDevices = true
+				devIndent = len(indent)
+				skipDev = false
+				out = append(out, line)
+				continue
+			}
+			if inDevices {
+				ind := len(indent)
+				if trimmed != "" && ind <= devIndent {
+					inDevices = false
+					skipDev = false
+					// fall through to normal handling of this line
+				} else {
+					if ind == devIndent+2 && strings.HasSuffix(trimmed, ":") {
+						skipDev = stripDevs[strings.TrimSuffix(trimmed, ":")]
+					}
+					if skipDev {
+						continue
+					}
+					// Remap a kept custom-disk device's source to the volume
+					// name it was restored under (differs only on clone-to-
+					// new-name).
+					if len(volRemap) > 0 && strings.HasPrefix(trimmed, "source:") {
+						v := strings.TrimSpace(trimmed[len("source:"):])
+						if nv, ok := volRemap[v]; ok && nv != v {
+							out = append(out, indent+"source: "+nv)
+							continue
+						}
+					}
+					out = append(out, line)
+					continue
+				}
 			}
 		}
 

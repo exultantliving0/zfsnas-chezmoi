@@ -1432,27 +1432,92 @@ func lxdPickBestIP(
 		}
 	}
 
-	// Pass 3: fallback — any global IPv4 from a non-loopback, non-virtual interface.
-	// Exclude known internal/virtual bridge prefixes to avoid picking the wrong IP.
-	internalPrefixes := []string{"lo", "lxdbr", "docker", "virbr", "veth", "br-lxc"}
-	for ifName, iface := range network {
-		isInternal := false
-		for _, pfx := range internalPrefixes {
-			if strings.HasPrefix(ifName, pfx) {
-				isInternal = true
-				break
-			}
-		}
-		if isInternal {
-			continue
-		}
+	// Pass 3: fallback — any global IPv4 from a real (non-virtual) interface.
+	// VMs frequently run Docker/Podman, libvirt, k8s CNIs, VPNs, etc. inside the
+	// guest, each of which adds its own bridge/veth/tunnel interface with a
+	// private IP (e.g. Docker's 172.17.0.1). Those must never be surfaced as the
+	// VM's address, so we skip any interface whose name matches a known
+	// virtual/bridge/app prefix. We try canonical ethernet names first (eth*,
+	// en*) so the guest's primary NIC wins even if map iteration is unordered.
+	firstGlobalIP := func(iface lxdStateNetwork) string {
 		for _, a := range iface.Addresses {
 			if a.Family == "inet" && a.Scope == "global" {
 				return a.Address
 			}
 		}
+		return ""
+	}
+
+	// Pass 3a: prefer a canonical physical-NIC name.
+	for ifName, iface := range network {
+		if isEthernetIfaceName(ifName) {
+			if ip := firstGlobalIP(iface); ip != "" {
+				return ip
+			}
+		}
+	}
+
+	// Pass 3b: any remaining non-virtual interface.
+	for ifName, iface := range network {
+		if isVirtualIfaceName(ifName) {
+			continue
+		}
+		if ip := firstGlobalIP(iface); ip != "" {
+			return ip
+		}
 	}
 	return ""
+}
+
+// isEthernetIfaceName reports whether ifName looks like a guest's primary
+// physical/predictable NIC (eth0, ens3, enp1s0, eno1, …) rather than a
+// virtual, bridge, or app-managed interface.
+func isEthernetIfaceName(ifName string) bool {
+	if isVirtualIfaceName(ifName) {
+		return false
+	}
+	// "en" covers predictable names (ens/enp/eno/enx); "eth" covers classic.
+	return strings.HasPrefix(ifName, "eth") || strings.HasPrefix(ifName, "en")
+}
+
+// isVirtualIfaceName reports whether ifName belongs to a loopback, bridge,
+// tunnel, VPN, or container/VM-runtime interface that should not be treated as
+// the instance's externally reachable address.
+func isVirtualIfaceName(ifName string) bool {
+	// Strip any "@parent" suffix Linux uses for veth/vlan peers.
+	if i := strings.IndexByte(ifName, '@'); i >= 0 {
+		ifName = ifName[:i]
+	}
+	virtualPrefixes := []string{
+		"lo",        // loopback
+		"docker",    // Docker default bridge (docker0)
+		"br-",       // Docker user-defined networks (br-<hash>) + generic bridges
+		"lxdbr",     // LXD bridge
+		"incusbr",   // Incus bridge
+		"virbr",     // libvirt bridge
+		"veth",      // virtual ethernet peer
+		"vnet",      // libvirt/QEMU tap
+		"tap",       // tap device
+		"tun",       // tun device
+		"macvtap",   // macvlan tap
+		"wg",        // WireGuard
+		"tailscale", // Tailscale
+		"zt",        // ZeroTier
+		"cni",       // generic CNI
+		"flannel",   // k8s Flannel
+		"cali",      // k8s Calico
+		"cilium",    // k8s Cilium
+		"kube",      // k8s
+		"weave",     // k8s Weave
+		"fwbr",      // libvirt firewall bridge
+		"ovs",       // Open vSwitch
+	}
+	for _, pfx := range virtualPrefixes {
+		if strings.HasPrefix(ifName, pfx) {
+			return true
+		}
+	}
+	return false
 }
 
 // ListLXDInstances returns user-visible LXD instances (VMs + containers).

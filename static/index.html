@@ -1219,6 +1219,7 @@
         <div style="display:flex;gap:2px;margin-bottom:20px;border-bottom:1px solid var(--border);margin-left:-32px;margin-right:-32px;padding:0 32px;">
           <button class="cap-tab active" data-tab="trending" onclick="switchCapTab('trending')">Capacity Trending</button>
           <button class="cap-tab"        data-tab="tree"     onclick="switchCapTab('tree')">Folders TreeMap</button>
+          <button class="cap-tab"        data-tab="map"      onclick="switchCapTab('map')">Topology</button>
         </div>
 
         <!-- TAB: Datasets Trending -->
@@ -1358,6 +1359,28 @@
             <p style="margin:0;">This may take a while for large datasets. Check the activity bar below.</p>
           </div>
         </div><!-- end cap-tab-tree -->
+
+        <!-- TAB: Live Storage Map -->
+        <div id="cap-tab-map" class="hidden">
+          <div class="map-toolbar">
+            <div class="map-legend">
+              <span class="map-legend-item" data-layer="remote"><i></i>Remotes</span>
+              <span class="map-legend-item" data-layer="consumer"><i></i>Shares</span>
+              <span class="map-legend-item" data-layer="vm"><i></i>VMs / CT</span>
+              <span class="map-legend-item" data-layer="dataset"><i></i>Datasets / ZVols</span>
+              <span class="map-legend-item" data-layer="pool"><i></i>Pool</span>
+              <span class="map-legend-item" data-layer="disk"><i></i>Disks</span>
+            </div>
+            <div class="map-toolbar-right">
+              <span id="map-status" class="map-status"></span>
+              <button id="map-style-toggle" class="map-style-toggle" onclick="toggleMapStyle()">HUD</button>
+            </div>
+          </div>
+          <div id="map-viewport" class="map-viewport map-hud">
+            <svg id="map-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"></svg>
+            <div id="map-empty" class="map-empty hidden">No pools detected on this server.</div>
+          </div>
+        </div><!-- end cap-tab-map -->
       </div>
 
       <!-- PREREQUISITES -->
@@ -4406,6 +4429,7 @@
         <!-- Tab bar -->
         <div style="display:flex;gap:2px;margin:12px -32px 0;border-bottom:1px solid var(--border);padding:0 32px;">
           <button class="cap-tab active" id="ci-tab-summary" onclick="_ciSwitchTab('summary')">Summary</button>
+          <button class="cap-tab" id="ci-tab-topology" onclick="_ciSwitchTab('topology')">Topology</button>
           <button class="cap-tab" id="ci-tab-monitor" onclick="_ciSwitchTab('monitor')" style="display:none;">Monitor</button>
           <button class="cap-tab" id="ci-tab-logs" onclick="_ciSwitchTab('logs')">Logs</button>
           <button class="cap-tab" id="ci-tab-console" onclick="_ciSwitchTab('console')" style="display:none;">Output</button>
@@ -4556,7 +4580,7 @@
                             box-shadow:0 6px 20px rgba(0,0,0,.35);">
                 </div>
               </div>
-              <button id="ci-mon-rt-pause" class="btn btn-sm" onclick="_ciMonTogglePause()" style="font-size:11px;padding:3px 10px;">⏸ Pause</button>
+              <button id="ci-mon-rt-pause" class="ci-iconbtn" onclick="_ciMonTogglePause()" title="Pause live updates">⏸</button>
             </div>
           </div>
 
@@ -4688,6 +4712,29 @@
 Select the Console tab to load.</pre>
         </div><!-- /ci-tab-content-console -->
 
+        <!-- Topology tab content — same engine as Capacity → Topology, filtered
+             to just this instance's storage chain (disks → pool → datasets → VM)
+             plus any other VM/CT it shares an SMB/NFS mount with. -->
+        <div id="ci-tab-content-topology" style="padding:20px 0;display:none;">
+          <div class="map-toolbar">
+            <div class="map-legend">
+              <span class="map-legend-item" data-layer="remote"><i></i>Remotes</span>
+              <span class="map-legend-item" data-layer="consumer"><i></i>Shares</span>
+              <span class="map-legend-item" data-layer="vm"><i></i>VMs / CT</span>
+              <span class="map-legend-item" data-layer="dataset"><i></i>Datasets / ZVols</span>
+              <span class="map-legend-item" data-layer="pool"><i></i>Pool</span>
+              <span class="map-legend-item" data-layer="disk"><i></i>Disks</span>
+            </div>
+            <div class="map-toolbar-right">
+              <span id="vmtopo-status" class="map-status"></span>
+              <button id="vmtopo-style-toggle" class="map-style-toggle" onclick="toggleMapStyle()">HUD</button>
+            </div>
+          </div>
+          <div id="vmtopo-viewport" class="map-viewport map-hud">
+            <svg id="vmtopo-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"></svg>
+            <div id="vmtopo-empty" class="map-empty hidden">No related storage found for this instance.</div>
+          </div>
+        </div><!-- /ci-tab-content-topology -->
 
       </div>
 
@@ -32700,7 +32747,7 @@ function runReplicationTask(id, name) {
       b.classList.toggle('active', b.dataset.tab === tab);
     });
     // Show/hide tab panels (pattern: id="cap-tab-<name>")
-    ['trending', 'tree'].forEach(name => {
+    ['trending', 'tree', 'map'].forEach(name => {
       const el = document.getElementById('cap-tab-' + name);
       if (el) el.classList.toggle('hidden', name !== tab);
     });
@@ -32708,7 +32755,923 @@ function runReplicationTask(id, name) {
     const pc = document.querySelector('.pages-container');
     if (pc) pc.scrollTop = 0;
     if (tab === 'tree') capTreeOnSwitch();
+    if (tab === 'map'){ _capTopoPinned = null; setMapCtx(_MAP_CTX_CAP); startMapPoll(); } else stopMapPoll();
   };
+
+  /* ───────────────────────── Live Storage Map (v6.6.3) ───────────────────────── */
+  // Polls /api/map/topology and renders an animated SVG HUD: disks → pool →
+  // datasets/zvols → shares/VMs → remote systems. Links are strictly orthogonal
+  // and animate bottom-to-top by default (direction-of-traffic when known).
+
+  let _mapTimer = null;
+  let _mapSig   = '';   // topology signature; full relayout only when this changes
+  let _mapData  = null; // last topology, for click dispatch
+  const MAP = { NODE_W:122, COL_GAP:18, GROUP_GAP:48,
+                ROW_GAP:46, PAD:28, HEADER:54, MIN_W:58, MAX_W:180 };
+
+  // The same renderer drives two surfaces: the full Capacity → Topology tab and
+  // the per-instance Topology tab on a VM/CT page. _mapCtx names the DOM ids in
+  // play and an optional filter that narrows the fetched topology before render.
+  // The full map is pinned the same way as the per-instance view: its object set
+  // is frozen the first time the tab paints so connecting/disconnecting SMB/NFS
+  // clients (and other live churn) can't reshuffle the map on every poll. Metrics
+  // still refresh. Reset whenever the user (re)opens the Topology tab.
+  let _capTopoPinned = null;
+  function pinFullTopology(data){
+    if (!_capTopoPinned){
+      if (data && data.pools && data.pools.length) _capTopoPinned = data;
+      return data;
+    }
+    return projectPinnedMetrics(_capTopoPinned, data);
+  }
+  const _MAP_CTX_CAP = { svg:'map-svg', viewport:'map-viewport', styleBtn:'map-style-toggle',
+                         empty:'map-empty', status:'map-status', panel:'cap-tab-map', filter:pinFullTopology };
+  let _mapCtx = _MAP_CTX_CAP;
+  function setMapCtx(ctx){ if(ctx!==_mapCtx){ _mapCtx=ctx; _mapSig=''; } }
+
+  function startMapPoll(){ stopMapPoll(); mapWireClicks(); pollMap(); _mapTimer = setInterval(pollMap, 3000); }
+  function stopMapPoll(){ if (_mapTimer){ clearInterval(_mapTimer); _mapTimer = null; } mapHoverHide(); }
+
+  // Delegated click handling on the persistent <svg> (innerHTML is replaced each
+  // render, but the element — and this listener — stays). Dataset/zvol → detail
+  // popup (same as the capacity bar); share → its edit modal; VM/CT → its view.
+  function mapWireClicks(){
+    const svg = document.getElementById(_mapCtx.svg);
+    if (!svg || svg.__wired) return;
+    svg.__wired = true;
+    svg.addEventListener('click', e=>{
+      const g = e.target.closest && e.target.closest('.map-node');
+      if (g) mapNodeClick(g.getAttribute('data-id'));
+    });
+    // Hover hovercard (delegated; SVG element persists across re-renders).
+    svg.addEventListener('mouseover', e=>{
+      const g = e.target.closest && e.target.closest('.map-node');
+      if (g){ mapHoverShow(g.getAttribute('data-id'), g); mapHighlightRelated(g.getAttribute('data-id')); }
+    });
+    svg.addEventListener('mouseout', e=>{
+      const g = e.target.closest && e.target.closest('.map-node'); if(!g) return;
+      if (e.relatedTarget && g.contains(e.relatedTarget)) return; // moving within same node
+      mapHoverHide(); mapClearHighlight();
+    });
+    // Re-measure & relayout when the theme (body class) changes — a different
+    // font family (e.g. tron-legacy's wide Orbitron) needs new box sizes.
+    const relayout = ()=>{ if(!_mapData) return;
+      const panel=document.getElementById(_mapCtx.panel);
+      if(panel && panel.offsetParent!==null){ _mapSig=''; renderMap(_mapData); } };
+    new MutationObserver(relayout).observe(document.body, {attributes:true, attributeFilter:['class']});
+    // Web fonts load async; relayout once they're ready so widths are correct.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(relayout);
+  }
+
+  // ---- hover: highlight the full chain through the hovered object ----
+  // While the mouse is over a node we trace the whole vertical path it belongs
+  // to: upward (lower→upper) all the way to the client(s) on top, and downward
+  // (upper→lower) all the way to the related disk(s) at the bottom — branching
+  // wherever a node fans out to several parents/children. Every link + node on
+  // those paths gets .map-hl; everything else is dimmed via .map-focusing.
+  function mapHighlightRelated(id){
+    const svg=document.getElementById(_mapCtx.svg); if(!svg||!id) return;
+    mapClearHighlight();
+    const linkEls=Array.from(svg.querySelectorAll('.map-linkg'));
+    const hlLinks=new Set();           // link <g> elements on the path
+    const hlNodes=new Set([id]);       // node ids on the path
+
+    // dir 'up'   → follow data-lower===cur to its data-upper (toward clients)
+    // dir 'down' → follow data-upper===cur to its data-lower (toward disks)
+    const walk=(startId, dir)=>{
+      const stack=[startId], seen=new Set([startId]);
+      while(stack.length){
+        const cur=stack.pop();
+        linkEls.forEach(lk=>{
+          const lo=lk.getAttribute('data-lower'), up=lk.getAttribute('data-upper');
+          const next = (dir==='up' && lo===cur) ? up
+                     : (dir==='down' && up===cur) ? lo : null;
+          if(next==null) return;
+          hlLinks.add(lk); hlNodes.add(next);
+          if(!seen.has(next)){ seen.add(next); stack.push(next); }
+        });
+      }
+    };
+    walk(id,'up'); walk(id,'down');
+
+    hlLinks.forEach(lk=>lk.classList.add('map-hl'));
+    svg.querySelectorAll('.map-node').forEach(nd=>{
+      if(hlNodes.has(nd.getAttribute('data-id'))) nd.classList.add('map-hl');
+    });
+    svg.classList.add('map-focusing');
+  }
+  function mapClearHighlight(){
+    const svg=document.getElementById(_mapCtx.svg); if(!svg) return;
+    svg.classList.remove('map-focusing');
+    svg.querySelectorAll('.map-hl').forEach(el=>el.classList.remove('map-hl'));
+  }
+
+  // ---- hover hovercard: hightech info + live metrics ----
+  let _mapHoverId = null, _mapHoverEl = null;
+  const _mapVmMetrics = {}; // instance name → live metrics (CPU/mem/fs)
+  function _mapCardEl(){
+    let c=document.getElementById('map-hovercard');
+    if(!c){ c=document.createElement('div'); c.id='map-hovercard'; c.className='map-hovercard hidden'; document.body.appendChild(c); }
+    return c;
+  }
+  function mapHoverHide(){ _mapStopIo(); _mapHoverId=null; _mapHoverEl=null; const c=document.getElementById('map-hovercard'); if(c) c.classList.add('hidden'); }
+  function _mapPositionCard(c, g){
+    const r=g.getBoundingClientRect();
+    c.classList.remove('hidden'); c.style.visibility='hidden';
+    const cw=c.offsetWidth, ch=c.offsetHeight;
+    let left=r.left + r.width/2 - cw/2;
+    let top = r.top - ch - 12;
+    if(top<8) top=r.bottom+12;
+    left=Math.max(8, Math.min(left, window.innerWidth-cw-8));
+    top =Math.max(8, Math.min(top,  window.innerHeight-ch-8));
+    c.style.left=left+'px'; c.style.top=top+'px'; c.style.visibility='';
+  }
+  function mapHoverShow(id, g){
+    if(id===_mapHoverId) return;          // already showing this node
+    _mapStopIo();                         // tear down any previous live iostat stream
+    const html=mapHoverHTML(id);
+    if(!html){ mapHoverHide(); return; }
+    _mapHoverId=id; _mapHoverEl=g;
+    const c=_mapCardEl(); c.innerHTML=html;
+    _mapPositionCard(c, g);
+    _mapMaybeFetchVm(id);
+    _mapStartIoFor(id);                   // pool/dataset → live zpool iostat charts
+  }
+  // Rebuild the open card from latest data (called on each poll) without moving
+  // to a different node. Skipped for objects showing live iostat charts, so the
+  // canvases + websocket survive between polls.
+  function mapHoverRender(){
+    if(!_mapHoverId || !_mapHoverEl) return;
+    if(_mapIo && _mapIo.active) return;
+    const c=document.getElementById('map-hovercard'); if(!c || c.classList.contains('hidden')) return;
+    const html=mapHoverHTML(_mapHoverId); if(!html) return;
+    c.innerHTML=html; _mapPositionCard(c, _mapHoverEl);
+  }
+  function _mapMaybeFetchVm(id){
+    const c=_mapData && (_mapData.consumers||[]).find(x=>x.id===id);
+    if(c && (c.type==='vm'||c.type==='container')) mapFetchVmMetrics(c.name);
+  }
+
+  // ---- live zpool iostat charts (pool / dataset / zvol hovercards) ----
+  let _mapIo = null;
+  function _mapNodePoolName(id){
+    const d=_mapData; if(!d) return null;
+    const p=(d.pools||[]).find(x=>x.id===id); if(p) return p.name;
+    const ds=(d.datasets||[]).find(x=>x.id===id); if(ds) return (ds.pool_id||'').replace(/^pool:/,'')||null;
+    return null; // disks/consumers/remotes → no zpool iostat chart
+  }
+  function _mapIoSection(pool){
+    return `<div class="mhc-io">`
+      + `<div class="mhc-io-h">live zpool iostat · ${mapEsc(pool)}</div>`
+      + `<div class="mhc-io-c"><div class="mhc-io-t">Bandwidth</div><canvas class="mhc-io-cv" data-io="bw" width="252" height="44"></canvas><div class="mhc-io-leg" data-leg="bw">…</div></div>`
+      + `<div class="mhc-io-c"><div class="mhc-io-t">Operations</div><canvas class="mhc-io-cv" data-io="ops" width="252" height="44"></canvas><div class="mhc-io-leg" data-leg="ops">…</div></div>`
+      + `</div>`;
+  }
+  function _mapStopIo(){ if(_mapIo){ try{ _mapIo.ws && _mapIo.ws.close(); }catch(e){} _mapIo.active=false; } _mapIo=null; }
+  function _mapStartIoFor(id){
+    const pool=_mapNodePoolName(id); if(!pool) return;
+    const st={ active:true, pool, ws:null, n:0, max:60, bw:{r:[],w:[]}, ops:{r:[],w:[]} };
+    _mapIo=st;
+    const proto=location.protocol==='https:'?'wss':'ws';
+    let ws; try{ ws=new WebSocket(proto+'://'+location.host+'/ws/zpool-iostat?pool='+encodeURIComponent(pool)); }catch(e){ return; }
+    st.ws=ws;
+    ws.onmessage=(ev)=>{
+      if(_mapIo!==st) return;
+      let m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
+      st.n++; if(st.n===1) return;          // first line = since-boot average, skip
+      const push=(buf,v)=>{ buf.push(v); if(buf.length>st.max) buf.shift(); };
+      push(st.bw.r,+m.r_bw||0); push(st.bw.w,+m.w_bw||0);
+      push(st.ops.r,+m.r_ops||0); push(st.ops.w,+m.w_ops||0);
+      _mapIoDraw(st);
+    };
+  }
+  function _mapIoDraw(st){
+    const card=document.getElementById('map-hovercard'); if(!card||card.classList.contains('hidden')) return;
+    _mapIoDrawOne(card.querySelector('[data-io="bw"]'),  st.bw);
+    _mapIoDrawOne(card.querySelector('[data-io="ops"]'), st.ops);
+    const last=a=>a.length?a[a.length-1]:0;
+    const lb=card.querySelector('[data-leg="bw"]');
+    if(lb) lb.innerHTML=`<span style="color:#22d3ee">▼ ${mapRate(last(st.bw.r)/1024)}</span>&nbsp;&nbsp;<span style="color:#f59e0b">▲ ${mapRate(last(st.bw.w)/1024)}</span>`;
+    const lo=card.querySelector('[data-leg="ops"]');
+    if(lo) lo.innerHTML=`<span style="color:#22d3ee">▼ ${Math.round(last(st.ops.r))}/s</span>&nbsp;&nbsp;<span style="color:#f59e0b">▲ ${Math.round(last(st.ops.w))}/s</span>`;
+  }
+  function _mapIoDrawOne(cv, series){
+    if(!cv) return;
+    const ctx=cv.getContext('2d'), W=cv.width, H=cv.height, pad=3, maxPts=60;
+    ctx.clearRect(0,0,W,H);
+    const peak=Math.max(1, ...series.r, ...series.w);
+    const plot=(arr,color)=>{
+      const len=arr.length; if(!len) return;
+      const dx=W/(maxPts-1);
+      ctx.beginPath();
+      for(let i=0;i<len;i++){
+        const x=W-(len-1-i)*dx;
+        const y=H-pad-(arr[i]/peak)*(H-2*pad);
+        i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      }
+      ctx.strokeStyle=color; ctx.lineWidth=1.6; ctx.shadowColor=color; ctx.shadowBlur=4; ctx.stroke(); ctx.shadowBlur=0;
+    };
+    plot(series.r,'#22d3ee'); // read
+    plot(series.w,'#f59e0b'); // write
+  }
+  async function mapFetchVmMetrics(name){
+    try{
+      const r=await fetch('/api/map/instance-metrics?name='+encodeURIComponent(name),{credentials:'same-origin'});
+      if(!r.ok) return;
+      _mapVmMetrics[name]=await r.json();
+      const c=_mapData && (_mapData.consumers||[]).find(x=>x.id===_mapHoverId);
+      if(c && c.name===name) mapHoverRender();
+    }catch(e){}
+  }
+
+  const _mhcRow    = (l,v)=> `<div class="mhc-row"><span>${mapEsc(l)}</span><b>${mapEsc(v)}</b></div>`;
+  const _mhcMetric = (l,v)=> `<div class="mhc-metric"><span>${mapEsc(l)}</span><b>${mapEsc(v)}</b></div>`;
+  const _mhcBar    = (l,pct,unit='%')=>{ pct=Math.max(0,Math.min(100,Number(pct)||0));
+    return `<div class="mhc-bar"><div class="mhc-bar-top"><span>${mapEsc(l)}</span><span>${pct.toFixed(pct<10?1:0)}${unit}</span></div>`
+         + `<div class="mhc-track"><div class="mhc-fill" style="width:${pct}%"></div></div></div>`; };
+  // bar with a "used / total" byte label (fill clamped, label shows real values)
+  const _mhcUsage  = (l,used,total)=>{ const pct = total ? Math.min(100, used/total*100) : 0;
+    return `<div class="mhc-bar"><div class="mhc-bar-top"><span>${mapEsc(l)}</span><span>${mapBytes(used)}${total?' / '+mapBytes(total):''}</span></div>`
+         + `<div class="mhc-track"><div class="mhc-fill" style="width:${pct}%"></div></div></div>`; };
+  // CPU bar: shows the real % (may exceed 100 on multi-core) but clamps the fill.
+  const _mhcCpu    = (pct)=>{ pct=Number(pct)||0;
+    return `<div class="mhc-bar"><div class="mhc-bar-top"><span>CPU</span><span>${pct.toFixed(pct<10?1:0)}%</span></div>`
+         + `<div class="mhc-track"><div class="mhc-fill" style="width:${Math.min(100,pct)}%"></div></div></div>`; };
+  function _mhc(type, icon, title, hue, info, metrics, extra){
+    return `<div class="mhc" style="--hue:${hue}">`
+      + `<div class="mhc-head"><span class="mhc-ic">${icon}</span><span class="mhc-ti">${mapEsc(title)}</span><span class="mhc-tp">${mapEsc(type)}</span></div>`
+      + `<div class="mhc-scan"></div>`
+      + (info.filter(Boolean).length?`<div class="mhc-info">${info.filter(Boolean).join('')}</div>`:'')
+      + (metrics.filter(Boolean).length?`<div class="mhc-metrics">${metrics.filter(Boolean).join('')}</div>`:'')
+      + (extra||'')
+      + `</div>`;
+  }
+  function mapHoverHTML(id){
+    const d=_mapData; if(!d) return '';
+    const disk=(d.disks||[]).find(x=>x.id===id);
+    if(disk) return _mhc('disk','🖴', disk.dev, '#22d3ee',
+      [ _mhcRow('Model', (disk.model||'').trim()||'—'), _mhcRow('Serial', disk.serial||'—'),
+        _mhcRow('Size', disk.size_str||'—'), _mhcRow('Class', disk.disk_type||'—'),
+        disk.role?_mhcRow('Role', disk.role):'', _mhcRow('Status', (disk.present===false?'MISSING':disk.status)||'—') ],
+      [ _mhcMetric('▼ Read', mapRate(disk.read_kbps)), _mhcMetric('▲ Write', mapRate(disk.write_kbps)), _mhcBar('Busy', disk.busy_pct) ]);
+    const pool=(d.pools||[]).find(x=>x.id===id);
+    if(pool){ const pct=pool.usable?pool.used/pool.usable*100:0;
+      return _mhc('pool','🛢', pool.name, '#a855f7',
+        [ _mhcRow('Health', pool.state||'—'), _mhcRow('Capacity', `${mapBytes(pool.used)} / ${mapBytes(pool.usable)}`) ],
+        [ _mhcBar('Used', pct), _mhcBar('ARC hit RAM', pool.arc_pct) ],
+        _mapIoSection(pool.name)); }
+    const ds=(d.datasets||[]).find(x=>x.id===id);
+    if(ds){ const tot=(Number(ds.used)||0)+(Number(ds.avail)||0); const pct=tot?ds.used/tot*100:0;
+      return _mhc(ds.kind==='zvol'?'zvol':'dataset', mapIcon(ds), mapLeaf(ds.name), '#2dd4bf',
+        [ _mhcRow('Path', ds.name), _mhcRow('Encrypted', ds.encrypted?'Yes 🔒':'No'),
+          _mhcRow('Used', mapBytes(ds.used)), ds.kind!=='zvol'?_mhcRow('Available', mapBytes(ds.avail)):'' ],
+        [ ds.kind!=='zvol'?_mhcBar('Used', pct):'' ],
+        _mapIoSection((ds.pool_id||'').replace(/^pool:/,''))); }
+    const c=(d.consumers||[]).find(x=>x.id===id);
+    if(c){ const dsNames=(c.dataset_ids||[]).map(did=>{const x=(d.datasets||[]).find(y=>y.id===did);return x?mapLeaf(x.name):null;}).filter(Boolean);
+      if(c.type==='vm'||c.type==='container'){
+        const info=[ _mhcRow('State', c.state||'—'), _mhcRow(dsNames.length>1?'Disks':'Storage', dsNames.join(', ')||'—') ];
+        const m=_mapVmMetrics[c.name];
+        let metrics;
+        if(m){
+          metrics=[ _mhcCpu(m.cpu_pct), _mhcUsage('Memory', m.mem_usage, m.mem_total) ];
+          (m.disks||[]).forEach(dk=> metrics.push(_mhcUsage(dk.name==='root'?'Filesystem':('FS · '+dk.name), dk.usage, dk.total)));
+          if(m.processes) info.push(_mhcRow('Processes', String(m.processes)));
+        } else {
+          metrics=[ `<div class="mhc-load">reading live metrics…</div>` ];
+        }
+        return _mhc(c.type==='vm'?'virtual machine':'container', mapIcon(c), c.name, '#ec4899', info, metrics);
+      }
+      const tl={smb:'SMB share',nfs:'NFS export',iscsi:'iSCSI target',s3:'S3 bucket'}[c.type]||c.type;
+      return _mhc(tl, mapIcon(c), mapLeaf(c.name), '#f59e0b',
+        [ _mhcRow('Backing', dsNames.join(', ')||'—') ],
+        [ _mhcMetric('Connected', `${c.clients||0} client${(c.clients||0)===1?'':'s'}`) ]); }
+    const r=(d.remotes||[]).find(x=>x.id===id);
+    if(r){ const names=(r.consumer_ids||[]).map(cid=>{const cc=(d.consumers||[]).find(x=>x.id===cid);return cc?mapLeaf(cc.name):cid;});
+      return _mhc(r.kind==='peer'?'linked server':'client', mapIcon(r), r.label, '#38bdf8',
+        [ (r.ip&&r.ip!==r.label)?_mhcRow('IP', r.ip):'', _mhcRow('Uses', `${names.length} share${names.length===1?'':'s'}`) ], [],
+        names.length?`<div class="mhc-chips">${names.map(n=>`<span>${mapEsc(n)}</span>`).join('')}</div>`:''); }
+    return '';
+  }
+
+  async function mapNodeClick(id){
+    const d = _mapData; if (!d || !id) return;
+    const ds = (d.datasets||[]).find(x=>x.id===id);
+    if (ds){ ds.kind==='zvol' ? openZVolDetail(ds.name) : openDatasetDetail(ds.name); return; }
+    const c = (d.consumers||[]).find(x=>x.id===id);
+    if (!c) return;
+    const rid = id.substring(id.indexOf(':')+1); // raw share id (nfs/iscsi)
+    try {
+      if (c.type==='smb')  return openEditShare(c.name);
+      if (c.type==='s3'){   if (typeof loadS3Buckets==='function')  await loadS3Buckets();   return openEditS3BucketModal(c.name); }
+      if (c.type==='iscsi'){ if (typeof loadISCSIShares==='function') await loadISCSIShares(); return openEditISCSIShareModal(rid); }
+      if (c.type==='nfs'){  if (typeof loadNFSShares==='function')  await loadNFSShares();
+        const i=(_nfsSharesCache||[]).findIndex(s=>String(s.id)===rid);
+        if (i>=0) openEditNFSShare(i); return; }
+      if (c.type==='vm' || c.type==='container')
+        return openComputeInstance(c.name, c.type==='vm' ? 'virtual-machine' : 'container');
+    } catch(e){ /* best-effort: ignore loader/edit errors */ }
+  }
+
+  // Global so the inline onclick on the toolbar button resolves (this script
+  // block runs inside a closure; only window.* leaks to inline handlers).
+  window.toggleMapStyle = function(){
+    const vp = document.getElementById(_mapCtx.viewport);
+    const btn = document.getElementById(_mapCtx.styleBtn);
+    if (!vp) return;
+    const hud = vp.classList.toggle('map-hud');
+    vp.classList.toggle('map-flat', !hud);
+    if (btn) btn.textContent = hud ? 'HUD' : 'Flat';
+  };
+
+  async function pollMap(){
+    // offsetParent is null when the panel itself (display:none) or any ancestor
+    // page is hidden — covers both the .hidden capacity tab and the display:none
+    // CI tab without each surface needing its own visibility convention.
+    const panel = document.getElementById(_mapCtx.panel);
+    if (!panel || panel.offsetParent === null){ stopMapPoll(); return; }
+    let data;
+    try {
+      const r = await fetch('/api/map/topology', { credentials:'same-origin' });
+      if (!r.ok) return;
+      data = await r.json();
+    } catch(e){ return; }
+    if (_mapCtx.filter){ data = _mapCtx.filter(data); }
+    renderMap(data);
+  }
+
+  // ---- per-instance Topology (VM/CT page) ----
+  // Renders the same HUD into the CI page's #vmtopo-svg, filtered to just the
+  // instance's own storage chain plus any peer VM/CT it shares an SMB/NFS mount
+  // with. instId is "vm:<name>" or "container:<name>".
+  // Structure (which nodes + their relationships) is frozen the first time the
+  // tab paints, so live SMB/NFS sessions connecting/disconnecting can't shuffle
+  // unrelated objects in and out on every poll. Metrics still refresh — only the
+  // membership/links are pinned. Reset on (re)entry so a different instance or a
+  // re-open recomputes the set.
+  let _vmTopoPinned = null;
+  window.startVmTopology = function(instId){
+    _vmTopoPinned = null;
+    setMapCtx({ svg:'vmtopo-svg', viewport:'vmtopo-viewport', styleBtn:'vmtopo-style-toggle',
+                empty:'vmtopo-empty', status:'vmtopo-status', panel:'ci-tab-content-topology',
+                filter:(d)=>{
+                  if (!_vmTopoPinned){
+                    const f = filterTopologyForInstance(d, instId);
+                    // Pin once the instance actually shows up (its own consumer is
+                    // always present then); until then keep retrying each poll.
+                    if (f.consumers && f.consumers.length) _vmTopoPinned = f;
+                    return f;
+                  }
+                  return projectPinnedMetrics(_vmTopoPinned, d);
+                } });
+    startMapPoll();
+  };
+  window.stopVmTopology = function(){ stopMapPoll(); };
+
+  // Overlay fresh live values (capacity, I/O, state, client counts, header CPU/
+  // mem/net) onto the pinned structure without touching membership or links, so
+  // the rendered signature stays constant (no relayout) while numbers update.
+  function projectPinnedMetrics(pinned, fresh){
+    const byId = {};
+    ['pools','disks','datasets','consumers','remotes'].forEach(k=>
+      (fresh[k]||[]).forEach(n=>{ byId[n.id]=n; }));
+    const merge = (arr, fields)=> (arr||[]).map(p=>{
+      const f = byId[p.id];
+      if (!f) return p;                 // node gone from fresh → keep last-known
+      const out = Object.assign({}, p); // preserve pinned structural arrays
+      fields.forEach(k=>{ if (k in f) out[k]=f[k]; });
+      return out;
+    });
+    return {
+      server:    fresh.server || pinned.server,
+      pools:     merge(pinned.pools,    ['state','used','usable','arc_pct','read_kbps','write_kbps']),
+      disks:     merge(pinned.disks,    ['status','present','read_kbps','write_kbps','busy_pct']),
+      datasets:  merge(pinned.datasets, ['used','avail','encrypted']),
+      consumers: merge(pinned.consumers,['state','clients','rate_kbps']),
+      remotes:   pinned.remotes,        // remotes carry no live metrics here
+      ts:        fresh.ts,
+    };
+  }
+
+  // Narrow the full topology to the strict downward cone of one instance: the VM/
+  // CT itself plus only the objects it consumes and their children — its disks →
+  // pool → datasets → the VM, and likewise the backing storage of any SMB/NFS
+  // share it mounts. Fellow consumers of those shares (other VMs/CTs or remote
+  // machines) are NOT included. Everything else on the server is dropped.
+  function filterTopologyForInstance(data, instId){
+    const empty = { server:(data&&data.server)||{}, pools:[], disks:[], datasets:[],
+                    consumers:[], remotes:[], ts:(data&&data.ts)||0 };
+    if (!data || !instId) return empty;
+    const consById={}, dsById={};
+    (data.consumers||[]).forEach(c=>consById[c.id]=c);
+    (data.datasets||[]).forEach(d=>dsById[d.id]=d);
+    const vm = consById[instId];
+    if (!vm) return empty;
+
+    const keepC=new Set(), keepDs=new Set(), keepPool=new Set();
+    // Keep a consumer and walk DOWN to its datasets + their pools — never up to
+    // sibling consumers. This is a strict downward cone: only what the instance
+    // consumes and the children of those objects.
+    const addChain = (c)=>{
+      if (!c || keepC.has(c.id)) return;
+      keepC.add(c.id);
+      (c.dataset_ids||[]).forEach(did=>{ const ds=dsById[did];
+        if (ds){ keepDs.add(ds.id); keepPool.add(ds.pool_id); } });
+    };
+    addChain(vm);
+    // Shares this instance MOUNTS are objects it consumes → keep each share and
+    // its own children (backing dataset → pool → disks). Deliberately NOT the
+    // share's other clients (peer VMs/CTs or remote machines) — those are fellow
+    // consumers, not children.
+    (vm.client_of||[]).forEach(sid=> addChain(consById[sid]));
+    const keepDisk=new Set();
+    (data.disks||[]).forEach(d=>{ if(keepPool.has(d.pool_id)) keepDisk.add(d.id); });
+
+    return {
+      server:   data.server,
+      pools:    (data.pools||[]).filter(p=>keepPool.has(p.id)),
+      disks:    (data.disks||[]).filter(d=>keepDisk.has(d.id)),
+      datasets: (data.datasets||[]).filter(d=>keepDs.has(d.id)),
+      consumers:(data.consumers||[]).filter(c=>keepC.has(c.id)),
+      remotes:  [], // fellow consumers of a shared mount are intentionally excluded
+      ts:       data.ts,
+    };
+  }
+
+  // ---- small formatters ----
+  function mapEsc(s){ return String(s==null?'':s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  function mapBytes(n){
+    n = Number(n)||0;
+    const u=['B','KB','MB','GB','TB','PB']; let i=0;
+    while (n>=1024 && i<u.length-1){ n/=1024; i++; }
+    return (n>=100||i===0?Math.round(n):n.toFixed(1))+' '+u[i];
+  }
+  function mapRate(kbps){ // input KB/s
+    kbps = Number(kbps)||0;
+    if (kbps>=1024) return (kbps/1024).toFixed(1)+' MB/s';
+    return Math.round(kbps)+' KB/s';
+  }
+  function mapLeaf(name){ const i=String(name).lastIndexOf('/'); return i<0?name:name.slice(i+1); }
+  function mapTrunc(s,n){ s=String(s==null?'':s); return s.length>n ? s.slice(0,n-1)+'…' : s; }
+  // Single source of truth for a node's visible text — used both to size the
+  // box (measure) and to fill it (mapUpdateDynamic), so width always matches.
+  // Returns the box content split into {icon, name, sub, sub2}. The name is
+  // wrapped onto multiple lines (below) so boxes stay narrow.
+  function mapNodeText(n, layer){
+    if (layer===4) return {icon:'🖴', name:n.dev,
+      sub:[n.size_str,n.disk_type].filter(Boolean).join(' '),
+      sub2:`↓${mapRate(n.read_kbps)} ↑${mapRate(n.write_kbps)}`};
+    if (layer===3) return {icon:'🛢', name:n.name,
+      sub:`↓${mapRate(n.read_kbps)} ↑${mapRate(n.write_kbps)}`,
+      sub2:`${mapBytes(n.used)} / ${mapBytes(n.usable)}`};
+    if (layer===2) return {icon:mapIcon(n), name:mapLeaf(n.name)+(n.encrypted?' 🔒':''),
+      sub:mapBytes(n.used), sub2:''};
+    if (layer===0){ const showIp = n.ip && n.ip !== n.label; // hostname on top, IP on its own row
+      return {icon:mapIcon(n), name:n.label, sub: showIp ? n.ip : '', sub2:''}; }
+    let sub='';
+    if (n.type==='vm'||n.type==='container') sub=n.state||'';
+    else if (n.clients) sub=`${n.clients} client${n.clients>1?'s':''}`;
+    return {icon:mapIcon(n), name:mapLeaf(n.name), sub, sub2:''};
+  }
+  // Wrap a name onto balanced lines of ≤10 chars (breaking after separators when
+  // possible) once it exceeds 10 chars — trades horizontal space for vertical.
+  function wrapName(name){
+    name=String(name);
+    if(name.length<=10) return [name];
+    const n=Math.ceil(name.length/10), target=Math.ceil(name.length/n), out=[]; let i=0;
+    for(let l=0;l<n && i<name.length;l++){
+      let end=Math.min(name.length, i+target);
+      if(l<n-1 && end<name.length){
+        let brk=-1; const lo=Math.max(i+2,end-3), hi=Math.min(name.length-1,end+3);
+        for(let j=lo;j<=hi;j++){ if(/[-_/.]/.test(name[j])) brk=j+1; }
+        if(brk>i) end=brk;
+      }
+      out.push(name.slice(i,end)); i=end;
+    }
+    if(i<name.length) out[out.length-1]+=name.slice(i);
+    return out;
+  }
+  // Text measurement uses the *theme's* font family (e.g. tron-legacy uses the
+  // wide Orbitron font) so box widths fit whatever is actually rendered.
+  let _mapFontFamily = 'system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif';
+  const _mapMeasure = (()=>{ const c=document.createElement('canvas'); return c.getContext('2d'); })();
+  function _tw(s,px,bold){ _mapMeasure.font=`${bold?'600 ':''}${px}px ${_mapFontFamily}`; return _mapMeasure.measureText(s||'').width; }
+  // Full text layout for a node: wrapped title lines, dynamic width, row count.
+  const MAP_LINE = 14, MAP_BASE = 16, MAP_BOT = 9;
+  function mapNodeLayout(n, layer){
+    const t = mapNodeText(n, layer);
+    const titleLines = wrapName(t.name);
+    let w = 0;
+    titleLines.forEach((ln,i)=> w = Math.max(w, _tw((i===0?t.icon+' ':'')+ln, 11, true)));
+    w = Math.max(w, _tw(t.sub,9.5,false), _tw(t.sub2,9.5,false));
+    const rows = titleLines.length + (t.sub?1:0) + (t.sub2?1:0);
+    return {
+      txt: { icon:t.icon, titleLines, sub:t.sub, sub2:t.sub2 },
+      w: Math.round(Math.max(MAP.MIN_W, Math.min(MAP.MAX_W, w + 18))),
+      rows,
+      needH: MAP_BASE + (rows-1)*MAP_LINE + MAP_BOT,
+    };
+  }
+
+  // The node type is conveyed by this icon (top-left of the box) — no type word.
+  // Field-based (not __layer) so it works on metric-only polls too: consumers
+  // carry .type, datasets/remotes carry distinct .kind values.
+  function mapIcon(n){
+    if (n.type) return {smb:'🗂',nfs:'📡',iscsi:'💽',s3:'🪣',vm:'🖥',container:'📦'}[n.type] || '•';
+    switch (n.kind){
+      case 'zvol':       return '🧱';
+      case 'filesystem': return '🗄';
+      case 'peer':       return '🔗';
+      case 'client':     return '🌐';
+    }
+    return '•';
+  }
+
+  // ---- layout + render ----
+  function renderMap(data){
+    _mapData = data; // for click dispatch
+    const svg   = document.getElementById(_mapCtx.svg);
+    const empty = document.getElementById(_mapCtx.empty);
+    const status= document.getElementById(_mapCtx.status);
+    if (!svg) return;
+
+    if (!data.pools || data.pools.length === 0){
+      if (empty) empty.classList.remove('hidden');
+      svg.innerHTML = '';
+      _mapSig = '';
+      if (status) status.textContent = '';
+      return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    // Signature of the *set* of nodes — relayout only when it changes.
+    const sig = [
+      data.pools.map(p=>p.id),
+      data.disks.map(d=>d.id+':'+d.pool_id),
+      data.datasets.map(d=>d.id+':'+d.pool_id),
+      data.consumers.map(c=>c.id+':'+(c.dataset_ids||[]).join('+')+'>'+(c.client_of||[]).join('+')),
+      data.remotes.map(r=>r.id+':'+(r.consumer_ids||[]).join('+'))
+    ].map(a=>a.join(',')).join('|');
+
+    if (sig !== _mapSig){
+      _mapSig = sig;
+      mapFullRender(svg, data);
+    } else {
+      mapUpdateDynamic(svg, data);
+    }
+    if (status){
+      const ts = new Date((data.ts||0)*1000);
+      status.textContent = 'live · ' + ts.toLocaleTimeString();
+    }
+  }
+
+  // Resolve each consumer/remote to the pool group it belongs to.
+  function mapResolveGroups(data){
+    const dsPool = {}; data.datasets.forEach(d => dsPool[d.id] = d.pool_id);
+    data.consumers.forEach(c => { const did=c.dataset_ids&&c.dataset_ids[0]; c.__pool = did ? (dsPool[did]||'') : ''; });
+  }
+
+  function mapFullRender(svg, data){
+    mapResolveGroups(data);
+
+    // Measure with the live theme font (tron-legacy → wide Orbitron, etc.).
+    _mapFontFamily = getComputedStyle(document.body).fontFamily || _mapFontFamily;
+
+    const byId = {};
+    // Per-node text layout: wrapped title lines, dynamic width, needed height.
+    const place = (n,layer)=>{ n.__layer=layer; const lo=mapNodeLayout(n,layer);
+      n.__txt=lo.txt; n.__w=lo.w; n.__needH=lo.needH; byId[n.id]=n; };
+    data.remotes.forEach(n=>place(n,0));
+    data.consumers.forEach(n=>place(n,1));
+    data.datasets.forEach(n=>place(n,2));
+    data.pools.forEach(n=>place(n,3));
+    data.disks.forEach(n=>place(n,4));
+
+    // Uniform box height per layer = tallest node in it (plenty of vertical room),
+    // so a 2-line name doesn't make a ragged row.
+    const layerArr=[data.remotes,data.consumers,data.datasets,data.pools,data.disks];
+    const layerH=layerArr.map(a=> a.reduce((m,n)=>Math.max(m,n.__needH), MAP_BASE+MAP_BOT));
+    layerArr.forEach((a,l)=> a.forEach(n=> n.__h=layerH[l]));
+    const nodeH = l => layerH[l];
+
+    // Groups = pools (in order) + a trailing "misc" bucket for unmapped nodes.
+    const groupOrder = data.pools.map(p=>p.id);
+    const hasMisc = data.consumers.some(c=>!c.__pool);
+    if (hasMisc) groupOrder.push('__misc');
+
+    // Bucket nodes into [group][layer]. Remotes (clients) are NOT grouped — they
+    // go in a single global top row (built after groups) so a client connected
+    // to shares in different pools stays one box with a link to each.
+    const rows = {}; groupOrder.forEach(g=>rows[g]=[[],[],[],[],[]]);
+    const pushRow = (g,layer,n)=>{ if(rows[g]) rows[g][layer].push(n); };
+    data.disks.forEach(n=>pushRow(n.pool_id,4,n));
+    data.pools.forEach(n=>pushRow(n.id,3,n));
+    data.datasets.forEach(n=>pushRow(n.pool_id,2,n));
+    data.consumers.forEach(n=>pushRow(n.__pool||'__misc',1,n));
+
+    // Order each layer so children line up under their parent → links stay near
+    // vertical and don't cross each other.
+    const idxOf = (arr)=>{ const m={}; arr.forEach((n,i)=>m[n.id]=i); return m; };
+    groupOrder.forEach(g=>{
+      rows[g][2].sort((a,b)=> (a.name||'').localeCompare(b.name||''));      // datasets
+      const dsIx = idxOf(rows[g][2]);
+      const cdi=(c)=>{ const id=c.dataset_ids&&c.dataset_ids[0]; return (id && id in dsIx)?dsIx[id]:1e9; };
+      rows[g][1].sort((a,b)=> cdi(a)-cdi(b) || (a.name||'').localeCompare(b.name||''));   // consumers
+    });
+
+    // # consumers per dataset → a dataset used by exactly one share is "1:1"
+    // and that share is placed directly above it (short straight link).
+    const dsConsumers = {};
+    data.consumers.forEach(c=> (c.dataset_ids||[]).forEach(id=> dsConsumers[id]=(dsConsumers[id]||0)+1));
+
+    const layerTop = []; { let y = MAP.PAD + MAP.HEADER;
+      for (let l=0;l<5;l++){ layerTop[l]=y; y += nodeH(l) + MAP.ROW_GAP; } }
+    const rowWidth = (arr)=> arr.length ? arr.reduce((s,n)=>s+n.__w,0) + (arr.length-1)*MAP.COL_GAP : 0;
+
+    let cursor = MAP.PAD;
+    groupOrder.forEach(g=>{
+      let gw = MAP.NODE_W;
+      for (let l=1;l<5;l++) gw = Math.max(gw, rowWidth(rows[g][l]));
+      const gx = cursor;
+      // Place disks → pool → datasets first (centered), then align consumers.
+      [4,3,2].forEach(l=>{
+        const arr = rows[g][l]; if (!arr.length) return;
+        let x = gx + (gw - rowWidth(arr))/2;
+        arr.forEach(n=>{ n.__x=x; n.__y=layerTop[l]; n.__cx=x+n.__w/2; x += n.__w + MAP.COL_GAP; });
+      });
+      let groupRight = gx + gw;
+      { // consumers (layer 1): snap 1:1 shares above their dataset
+        const arr = rows[g][1];
+        const dsCx = {}; rows[g][2].forEach(d=> dsCx[d.id]=d.__cx);
+        let runX = Math.max(gx, gx + (gw - rowWidth(arr))/2);
+        arr.forEach(n=>{
+          let target = runX;
+          const only = (n.dataset_ids&&n.dataset_ids.length===1)?n.dataset_ids[0]:null;
+          if (only && dsCx[only]!=null && dsConsumers[only]===1)
+            target = dsCx[only] - n.__w/2;
+          const x = Math.max(runX, target);
+          n.__x=x; n.__y=layerTop[1]; n.__cx=x+n.__w/2; runX = x + n.__w + MAP.COL_GAP;
+        });
+        if (arr.length) groupRight = Math.max(groupRight, runX - MAP.COL_GAP);
+      }
+      cursor = groupRight + MAP.GROUP_GAP;
+    });
+
+    let W = Math.max(cursor - MAP.GROUP_GAP + MAP.PAD, 480);
+    const H = layerTop[4] + nodeH(4) + MAP.PAD;
+
+    // Global remotes row: one box per client, sorted by the average x of the
+    // shares it links to, centered across the map width.
+    const clientRemotes = data.remotes.filter(r => r.consumer_ids && r.consumer_ids.length);
+    clientRemotes.forEach(r=>{
+      const xs = r.consumer_ids.map(id=>byId[id] && byId[id].__cx).filter(v=>v!=null);
+      r.__tx = xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : MAP.PAD;
+    });
+    clientRemotes.sort((a,b)=> a.__tx - b.__tx);
+    const remW = rowWidth(clientRemotes);
+    W = Math.max(W, remW + 2*MAP.PAD);
+    { let x = (W - remW)/2;
+      clientRemotes.forEach(r=>{ r.__y=layerTop[0]; r.__x=x; r.__cx=x+r.__w/2; x += r.__w + MAP.COL_GAP; }); }
+
+    // ---- links ----
+    const links = [];
+    const link = (lower, upper, meta) => {
+      if (!lower || !upper || lower.__x==null || upper.__x==null) return;
+      links.push(Object.assign({ id:'lk:'+lower.id+'>'+upper.id, lower, upper }, meta));
+    };
+    data.disks.forEach(d => link(d, byId[d.pool_id], mapDiskFlow(d)));
+    data.datasets.forEach(ds => link(byId[ds.pool_id], ds, {dir:'up'}));               // pool → dataset
+    data.consumers.forEach(c => (c.dataset_ids||[]).forEach(did=>{ if(byId[did]) link(byId[did], c, mapNodeFlow(c)); }));
+    clientRemotes.forEach(r => (r.consumer_ids||[]).forEach(cid => {
+      if (byId[cid]) link(byId[cid], r, {dir:r.dir||'unknown', rate:null});
+    }));
+
+    // Stagger the horizontal jog of each link within its gap band so parallel
+    // conduits sit at slightly different heights instead of overlapping. Links
+    // whose endpoints are nearly aligned (1:1) get jogFrac≈0.5 → a near-straight
+    // short line; only fan-out links spread out.
+    const bands = {};
+    links.forEach(l => (bands[l.lower.__layer] ||= []).push(l));
+    Object.values(bands).forEach(arr=>{
+      arr.sort((a,b)=> a.lower.__cx - b.lower.__cx);
+      const levels = Math.min(7, Math.max(1, arr.length));
+      arr.forEach((l,i)=>{
+        const straight = Math.abs(l.lower.__cx - l.upper.__cx) < 6;
+        l.__jogFrac = straight ? 0.5 : (0.28 + 0.44*((i % levels)/Math.max(1,levels-1)));
+      });
+    });
+
+    // VM self-mount links: a VM/CT whose guest IP mounts one of our own shares
+    // is drawn as a lateral conduit between the two consumer boxes (up out of the
+    // share's top edge, across, back down into the VM) — no duplicate client box.
+    const peerLinks = [];
+    data.consumers.forEach(vm => (vm.client_of||[]).forEach(shareId=>{
+      const share = byId[shareId];
+      if (share && share.__x!=null && vm.__x!=null)
+        peerLinks.push({ id:'pk:'+shareId+'>'+vm.id, share, vm });
+    }));
+
+    const linkSvg = links.map(mapLinkMarkup).join('')
+                  + peerLinks.map((pl,i)=>mapPeerLinkMarkup(pl,i)).join('');
+    const nodeSvg = [].concat(
+      data.disks, data.pools, data.datasets, data.consumers,
+      data.remotes.filter(r=>r.__x!=null)
+    ).map(mapNodeMarkup).join('');
+
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    // Render at natural size and let the viewport scroll, so nodes stay legible
+    // on large topologies rather than shrinking to fit the panel width.
+    svg.setAttribute('width', W);
+    svg.setAttribute('height', H);
+    svg.innerHTML =
+      mapDefs() +
+      mapHeaderMarkup(data, W) +
+      `<g class="map-links">${linkSvg}</g>` +
+      `<g class="map-nodes">${nodeSvg}</g>`;
+    mapUpdateDynamic(svg, data); // set live text/classes immediately
+  }
+
+  function mapDefs(){
+    return `<defs>
+      <radialGradient id="mapBg" cx="50%" cy="0%" r="120%">
+        <stop offset="0%" stop-color="#0c1426"/><stop offset="100%" stop-color="#05070f"/>
+      </radialGradient>
+      <filter id="mapGlow" x="-40%" y="-40%" width="180%" height="180%">
+        <feGaussianBlur stdDeviation="2.4" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>`;
+  }
+
+  function mapHeaderMarkup(data, W){
+    const s = data.server || {};
+    const peers = (data.remotes||[]).filter(r=>r.kind==='peer');
+    const peerTxt = peers.length ? ('⇄ ' + peers.map(p=>mapEsc(p.label)).join('  ·  ')) : '';
+    return `<g class="map-header">
+      <text class="map-host" x="22" y="34">${mapEsc(s.hostname||'server')}</text>
+      <text class="map-host-stats" data-role="hdr" x="22" y="50"></text>
+      <text class="map-peers" x="${W-22}" y="34" text-anchor="end">${peerTxt}</text>
+    </g>`;
+  }
+
+  function mapDiskFlow(d){
+    const rate = (Number(d.read_kbps)||0) + (Number(d.write_kbps)||0);
+    return { dir: (Number(d.write_kbps)||0) > (Number(d.read_kbps)||0) ? 'down' : 'up', rate };
+  }
+  function mapNodeFlow(c){ return { dir:'up', rate: (c.rate_kbps==null?null:c.rate_kbps) }; }
+
+  function mapLinkMarkup(l){
+    const lx=l.lower.__cx, ly=l.lower.__y;                  // lower node top edge
+    const ux=l.upper.__cx, uy=l.upper.__y + l.upper.__h;    // upper node bottom edge
+    const jogY = uy + (ly - uy) * (l.__jogFrac ?? 0.5);     // staggered within gap band
+    const d = `M ${lx} ${ly} V ${jogY.toFixed(1)} H ${ux} V ${uy}`;
+    const layer = 'l'+l.lower.__layer;
+    return `<g class="map-linkg" data-id="${l.id}" data-lower="${mapEsc(l.lower.id)}" data-upper="${mapEsc(l.upper.id)}">`
+         + `<path class="map-link-rail" d="${d}"/>`
+         + `<path class="map-link ${layer}" data-role="flow" d="${d}"/>`
+         + `<text class="map-link-label" data-role="rate" x="${ux}" y="${(jogY-5).toFixed(1)}" text-anchor="middle"></text>`
+         + `</g>`;
+  }
+
+  // A VM-self-mount conduit: both endpoints are consumer boxes on the same row,
+  // so the path leaves the share's TOP edge, runs through the band just above the
+  // consumer row, and drops back down into the VM's TOP edge. data-lower/-upper
+  // (share→vm) let the hover-highlight walk treat it like any other link.
+  function mapPeerLinkMarkup(pl, i){
+    const sx=pl.share.__cx, sy=pl.share.__y;   // share top edge
+    const vx=pl.vm.__cx,    vy=pl.vm.__y;       // vm top edge
+    const top = Math.min(sy,vy) - (14 + (i%5)*7); // staggered so parallels don't overlap
+    const d = `M ${sx} ${sy} V ${top.toFixed(1)} H ${vx} V ${vy}`;
+    return `<g class="map-linkg map-peerg" data-id="${pl.id}" data-lower="${mapEsc(pl.share.id)}" data-upper="${mapEsc(pl.vm.id)}">`
+         + `<path class="map-link-rail" d="${d}"/>`
+         + `<path class="map-link map-peerlink" data-role="flow" d="${d}"/>`
+         + `</g>`;
+  }
+
+  function mapNodeMarkup(n){
+    const cls = mapNodeClass(n), t = n.__txt;
+    const tl = (t && t.titleLines) || [''];
+    // Title: icon + name on line 1, name continuation on further lines.
+    let title = `<text class="map-node-title">`;
+    tl.forEach((ln,i)=>{
+      const txt = (i===0 ? (t.icon?t.icon+' ':'') : '') + ln;
+      title += `<tspan x="9" ${i===0 ? `y="${MAP_BASE}"` : `dy="${MAP_LINE}"`}>${mapEsc(txt)}</tspan>`;
+    });
+    title += `</text>`;
+    const subY  = MAP_BASE + tl.length*MAP_LINE;
+    const sub2Y = subY + MAP_LINE;
+    return `<g class="map-node ${cls}" data-id="${n.id}" transform="translate(${n.__x.toFixed(1)},${n.__y.toFixed(1)})">`
+      + `<rect class="map-node-base" width="${n.__w}" height="${n.__h}" rx="9"/>`
+      + `<rect class="map-node-bg"   width="${n.__w}" height="${n.__h}" rx="9"/>`
+      + `<rect class="map-node-scan" width="${n.__w}" height="3" rx="2"/>`
+      + title
+      + `<text class="map-node-sub"   x="9" y="${subY}"  data-role="sub"></text>`
+      + `<text class="map-node-sub2"  x="9" y="${sub2Y}" data-role="sub2"></text>`
+      + `</g>`;
+  }
+
+  function mapNodeClass(n){
+    if (n.__layer===4) return 'map-node--disk';
+    if (n.__layer===3) return 'map-node--pool';
+    if (n.__layer===2) return 'map-node--dataset';
+    if (n.__layer===0) return 'map-node--remote';
+    // consumers: split share types vs vm/ct for colour
+    if (n.type==='vm' || n.type==='container') return 'map-node--vm';
+    return 'map-node--consumer';
+  }
+
+  // Per-poll dynamic update: text, state classes, link rate/direction/speed.
+  function mapUpdateDynamic(svg, data){
+    mapResolveGroups(data);
+    const set = (g,role,txt)=>{ const e=g&&g.querySelector(`[data-role="${role}"]`); if(e) e.textContent=txt; };
+
+    // header
+    const s = data.server||{};
+    const hdr = svg.querySelector('.map-header [data-role="hdr"]');
+    if (hdr) hdr.textContent =
+      `CPU ${Math.round(s.cpu_pct||0)}%  ·  RAM ${Math.round(s.mem_pct||0)}%  ·  `
+      + `↓${(s.net_rx_mbps||0).toFixed(1)} ↑${(s.net_tx_mbps||0).toFixed(1)} Mb/s`;
+
+    const node = id => svg.querySelector(`.map-node[data-id="${cssEsc(id)}"]`);
+
+    // Title (wrapped name) is static in the markup; only the live sub-lines
+    // (rates, client counts, state) are refreshed each poll.
+    const fill = (g, t)=>{ set(g,'sub',t.sub); set(g,'sub2',t.sub2); };
+    // (Rich info now lives in the hover hovercard, so no native <title> tooltip.)
+    data.disks.forEach(d=>{
+      const g=node(d.id); if(!g) return;
+      fill(g, mapNodeText(d,4));
+      g.style.setProperty('--busy', Math.max(0,Math.min(100,Number(d.busy_pct)||0)));
+      mapSetState(g, d.present===false ? 'missing' : d.status);
+    });
+    data.pools.forEach(p=>{
+      const g=node(p.id); if(!g) return;
+      fill(g, mapNodeText(p,3));
+      mapSetState(g, p.state);
+    });
+    data.datasets.forEach(d=>{
+      const g=node(d.id); if(!g) return;
+      fill(g, mapNodeText(d,2));
+    });
+    data.consumers.forEach(c=>{
+      const g=node(c.id); if(!g) return;
+      fill(g, mapNodeText(c,1));
+      mapSetState(g, (c.state==='Running'||c.clients>0)?'active':'');
+    });
+    data.remotes.filter(r=>r.consumer_ids && r.consumer_ids.length).forEach(r=>{
+      const g=node(r.id); if(!g) return;
+      fill(g, mapNodeText(r,0));
+    });
+
+    // links
+    mapUpdateLinks(svg, data);
+
+    // keep the open hovercard's live metrics fresh between polls
+    if (_mapHoverId){ mapHoverRender(); _mapMaybeFetchVm(_mapHoverId); }
+  }
+
+  function mapUpdateLinks(svg, data){
+    const dsPool={}; data.datasets.forEach(d=>dsPool[d.id]=d.pool_id);
+    const apply = (id, dir, rate) => {
+      const g = svg.querySelector(`.map-linkg[data-id="${cssEsc(id)}"]`); if(!g) return;
+      const flow = g.querySelector('[data-role="flow"]');
+      const lbl  = g.querySelector('[data-role="rate"]');
+      const known = rate!=null;
+      const idle  = known && rate < 1;
+      flow.classList.toggle('up',   dir!=='down');
+      flow.classList.toggle('down', dir==='down');
+      flow.classList.toggle('idle', idle);
+      // faster traffic → shorter dash cycle (0.4s … 2.2s); unknown → 1.4s
+      let dur = 1.4;
+      if (known && !idle){ dur = Math.max(0.4, Math.min(2.2, 2.2 - Math.log10(1+rate)*0.5)); }
+      flow.style.animationDuration = dur.toFixed(2)+'s';
+      lbl.textContent = (known && !idle) ? mapRate(rate) : '';
+    };
+    data.disks.forEach(d=>{ const f=mapDiskFlow(d); apply('lk:'+d.id+'>'+d.pool_id, f.dir, f.rate); });
+    data.datasets.forEach(ds=> apply('lk:'+ds.pool_id+'>'+ds.id, 'up', null));
+    data.consumers.forEach(c=> (c.dataset_ids||[]).forEach(did=> apply('lk:'+did+'>'+c.id, 'up', c.rate_kbps)));
+    data.remotes.forEach(r=>{ (r.consumer_ids||[]).forEach(cid=> apply('lk:'+cid+'>'+r.id, r.dir||'unknown', null)); });
+  }
+
+  function mapSetState(g, state){
+    g.classList.remove('st-online','st-degraded','st-faulted','st-missing','st-active');
+    const s = String(state||'').toUpperCase();
+    if (state==='active') g.classList.add('st-active');
+    else if (s==='ONLINE'||s==='AVAIL') g.classList.add('st-online');
+    else if (s==='DEGRADED') g.classList.add('st-degraded');
+    else if (s==='MISSING') g.classList.add('st-missing');
+    else if (s) g.classList.add('st-faulted');
+  }
+
+  function ensureTitle(g, txt){
+    if (!txt) return;
+    let t = g.querySelector('title');
+    if (!t){ t = document.createElementNS('http://www.w3.org/2000/svg','title'); g.appendChild(t); }
+    t.textContent = txt;
+  }
+
+  // CSS.escape fallback for attribute selectors built from ids.
+  function cssEsc(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^\w-]/g,'\\$&'); }
 
   function capTierForRange(range) {
     if (range === '4h' || range === 'day' || range === 'week') return 0;
@@ -34569,8 +35532,10 @@ function _startPushJobsPolling() {
 let _sidebarMode = 'storage';
 let _lxdInstancesCache = [];
 let _interlinkServersCache = []; // cached from /api/interlink/servers for VM push
-let _lxdSortCol = null;
+let _lxdSortCol = 'name'; // default: sort the VMs/Containers table by name
 let _lxdSortDir = 1; // 1 = asc, -1 = desc
+// Sort comparator for VM/container tables by instance name.
+function _byInstName(a, b) { return (a.name || '').localeCompare(b.name || ''); }
 
 function _lxdPowerBadgeHTML(name, status, color, busy) {
   // No power menu for users without the control_instances capability —
@@ -34699,7 +35664,7 @@ function renderComputeNav(instances) {
   instances = (instances || []).filter(i => !((i.name || '').startsWith('bkup--')));
   const vmIcon = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75;"><path d="M0 4s0-2 2-2h12s2 0 2 2v6s0 2-2 2h-4c0 .667.083 1.167.25 1.5H11a.5.5 0 0 1 0 1H5a.5.5 0 0 1 0-1h.75c.167-.333.25-.833.25-1.5H2s-2 0-2-2V4zm1.398-.855a.758.758 0 0 0-.254.302A1.46 1.46 0 0 0 1 4.01V10c0 .325.078.502.145.602.07.105.17.188.302.254a1.464 1.464 0 0 0 .538.143L2.01 11H14c.325 0 .502-.078.602-.145a.758.758 0 0 0 .254-.302 1.464 1.464 0 0 0 .143-.538L15 9.99V4c0-.325-.078-.502-.145-.602a.757.757 0 0 0-.302-.254A1.46 1.46 0 0 0 13.99 3H2c-.325 0-.502.078-.602.145z"/></svg>`;
   const ctIcon = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75;"><path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5l2.404.961L10.404 2l-2.218-.887zm3.564 1.426L5.596 5 8 5.961 14.154 3.5l-2.404-.961zm3.25 1.7-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923l6.5 2.6zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464L7.443.184z"/></svg>`;
-  el.innerHTML = instances.map(inst => {
+  el.innerHTML = instances.slice().sort(_byInstName).map(inst => {
     const isVM = inst.type === 'virtual-machine';
     const statusColor = inst.status === 'Running' ? '#3fb950' : inst.status === 'Stopped' ? '#6e7681' : inst.status === 'Error' ? '#ff453a' : '#f0b429';
     const label = inst.description || inst.name;
@@ -37701,12 +38666,19 @@ let _ciLogsCache = null; // {name, entries}
 
 function _ciSwitchTab(tab) {
   _ciActiveTab = tab;
-  ['summary', 'monitor', 'logs', 'console'].forEach(t => {
+  ['summary', 'topology', 'monitor', 'logs', 'console'].forEach(t => {
     const btn = document.getElementById('ci-tab-' + t);
     const pnl = document.getElementById('ci-tab-content-' + t);
     if (btn) btn.classList.toggle('active', t === tab);
     if (pnl) pnl.style.display = t === tab ? '' : 'none';
   });
+  // Per-instance Topology HUD: start polling on entry, stop on leave.
+  if (tab === 'topology') {
+    const instId = (_ciCurrentType === 'virtual-machine' ? 'vm:' : 'container:') + _ciCurrentName;
+    if (typeof startVmTopology === 'function') startVmTopology(instId);
+  } else if (typeof stopVmTopology === 'function') {
+    stopVmTopology();
+  }
   if (tab === 'logs') {
     // Always refresh the activity table — it's cheap (audit log is local
     // disk reads) and keeps the panel current as state changes happen
@@ -37892,7 +38864,7 @@ function _ciMonStart() {
   // Reset state on entry — even if the same instance, treat as a fresh view.
   _ciMonBuffer = { cpu: [], mem: [], disk: [], net: [] };
   _ciMonPaused = false;
-  document.getElementById('ci-mon-rt-pause').textContent = '⏸ Pause';
+  { const b=document.getElementById('ci-mon-rt-pause'); b.textContent='⏸'; b.classList.remove('paused'); b.title='Pause live updates'; }
   // Reflect the persisted interval on the custom dropdown label each
   // time the tab opens. The popover renders lazily on open, so we only
   // need to sync the button label here.
@@ -37934,10 +38906,14 @@ function _ciMonTogglePause() {
   _ciMonPaused = !_ciMonPaused;
   const btn = document.getElementById('ci-mon-rt-pause');
   if (_ciMonPaused) {
-    btn.textContent = '▶ Play';
+    btn.textContent = '▶';
+    btn.classList.add('paused');
+    btn.title = 'Resume live updates';
     if (_ciMonTimer) { clearInterval(_ciMonTimer); _ciMonTimer = null; }
   } else {
-    btn.textContent = '⏸ Pause';
+    btn.textContent = '⏸';
+    btn.classList.remove('paused');
+    btn.title = 'Pause live updates';
     _ciMonTick();
     _ciMonTimer = setInterval(_ciMonTick, _ciMonInterval);
   }
@@ -43293,7 +44269,7 @@ function _lxdPickInstance(title, subtitle, onSelect) {
       <button onclick="document.getElementById('_lxd-pick-popup').remove()" style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:18px;line-height:1;padding:0 4px;">✕</button>
     </div>
     <div style="max-height:320px;overflow-y:auto;padding:6px 0;">
-      ${instances.map(inst => {
+      ${instances.slice().sort(_byInstName).map(inst => {
         const badge = inst.type === 'virtual-machine'
           ? '<span style="background:rgba(88,166,255,0.15);color:#58a6ff;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:600;margin-right:6px;">VM</span>'
           : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:600;margin-right:6px;">CT</span>';
@@ -50698,7 +51674,7 @@ async function loadBridgeMembers() {
     const hasImg = (members || []).some(i => i.image);
     const imgTh = document.getElementById('bridge-members-th-image');
     if (imgTh) imgTh.style.display = hasImg ? '' : 'none';
-    tbody.innerHTML = members.map(m => {
+    tbody.innerHTML = members.slice().sort(_byInstName).map(m => {
       const typeBadge = m.type === 'virtual-machine'
         ? '<span style="background:rgba(88,166,255,0.15);color:#58a6ff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">VM</span>'
         : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">LXC</span>';
@@ -51136,7 +52112,7 @@ async function loadDatastoreMembers() {
     const hasImg = (members || []).some(i => i.image);
     const imgTh = document.getElementById('ds-members-th-image');
     if (imgTh) imgTh.style.display = hasImg ? '' : 'none';
-    tbody.innerHTML = members.map(m => {
+    tbody.innerHTML = members.slice().sort(_byInstName).map(m => {
       const typeBadge = m.type === 'virtual-machine'
         ? '<span style="background:rgba(88,166,255,0.15);color:#58a6ff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">VM</span>'
         : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">LXC</span>';
