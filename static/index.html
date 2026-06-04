@@ -33009,20 +33009,20 @@ function runReplicationTask(id, name) {
   function mapHoverHTML(id){
     const d=_mapData; if(!d) return '';
     const disk=(d.disks||[]).find(x=>x.id===id);
-    if(disk) return _mhc('disk','🖴', disk.dev, '#22d3ee',
+    if(disk) return _mhc('disk','🖴', disk.dev, 'var(--map-disk)',
       [ _mhcRow('Model', (disk.model||'').trim()||'—'), _mhcRow('Serial', disk.serial||'—'),
         _mhcRow('Size', disk.size_str||'—'), _mhcRow('Class', disk.disk_type||'—'),
         disk.role?_mhcRow('Role', disk.role):'', _mhcRow('Status', (disk.present===false?'MISSING':disk.status)||'—') ],
       [ _mhcMetric('▼ Read', mapRate(disk.read_kbps)), _mhcMetric('▲ Write', mapRate(disk.write_kbps)), _mhcBar('Busy', disk.busy_pct) ]);
     const pool=(d.pools||[]).find(x=>x.id===id);
     if(pool){ const pct=pool.usable?pool.used/pool.usable*100:0;
-      return _mhc('pool','🛢', pool.name, '#a855f7',
+      return _mhc('pool','🛢', pool.name, 'var(--map-pool)',
         [ _mhcRow('Health', pool.state||'—'), _mhcRow('Capacity', `${mapBytes(pool.used)} / ${mapBytes(pool.usable)}`) ],
         [ _mhcBar('Used', pct), _mhcBar('ARC hit RAM', pool.arc_pct) ],
         _mapIoSection(pool.name)); }
     const ds=(d.datasets||[]).find(x=>x.id===id);
     if(ds){ const tot=(Number(ds.used)||0)+(Number(ds.avail)||0); const pct=tot?ds.used/tot*100:0;
-      return _mhc(ds.kind==='zvol'?'zvol':'dataset', mapIcon(ds), mapLeaf(ds.name), '#2dd4bf',
+      return _mhc(ds.kind==='zvol'?'zvol':'dataset', mapIcon(ds), mapLeaf(ds.name), 'var(--map-dataset)',
         [ _mhcRow('Path', ds.name), _mhcRow('Encrypted', ds.encrypted?'Yes 🔒':'No'),
           _mhcRow('Used', mapBytes(ds.used)), ds.kind!=='zvol'?_mhcRow('Available', mapBytes(ds.avail)):'' ],
         [ ds.kind!=='zvol'?_mhcBar('Used', pct):'' ],
@@ -33040,15 +33040,24 @@ function runReplicationTask(id, name) {
         } else {
           metrics=[ `<div class="mhc-load">reading live metrics…</div>` ];
         }
-        return _mhc(c.type==='vm'?'virtual machine':'container', mapIcon(c), c.name, '#ec4899', info, metrics);
+        return _mhc(c.type==='vm'?'virtual machine':'container', mapIcon(c), c.name, 'var(--map-vm)', info, metrics);
       }
       const tl={smb:'SMB share',nfs:'NFS export',iscsi:'iSCSI target',s3:'S3 bucket'}[c.type]||c.type;
-      return _mhc(tl, mapIcon(c), mapLeaf(c.name), '#f59e0b',
+      return _mhc(tl, mapIcon(c), mapLeaf(c.name), 'var(--map-consumer)',
         [ _mhcRow('Backing', dsNames.join(', ')||'—') ],
         [ _mhcMetric('Connected', `${c.clients||0} client${(c.clients||0)===1?'':'s'}`) ]); }
+    const dk=(d.remotes||[]).find(x=>x.id===id && x.kind==='docker');
+    if(dk){ const st=_dockDot(dk);
+      const hue = st==='up' ? '#3fb950' : (st==='warn' ? '#d29922' : '#f85149');
+      return _mhc('docker container','🐳', dk.dname, hue,
+        [ _mhcRow('Status', dk.dstatus||dk.dstate||'—'),
+          _mhcRow('Image', dk.dimage||'—'),
+          dk.dservice?_mhcRow('Service', dk.dservice):'',
+          dk.dproject?_mhcRow('Stack', dk.dproject):'',
+          dk.dports?_mhcRow('Ports', dk.dports):'' ], []); }
     const r=(d.remotes||[]).find(x=>x.id===id);
     if(r){ const names=(r.consumer_ids||[]).map(cid=>{const cc=(d.consumers||[]).find(x=>x.id===cid);return cc?mapLeaf(cc.name):cid;});
-      return _mhc(r.kind==='peer'?'linked server':'client', mapIcon(r), r.label, '#38bdf8',
+      return _mhc(r.kind==='peer'?'linked server':'client', mapIcon(r), r.label, 'var(--map-remote)',
         [ (r.ip&&r.ip!==r.label)?_mhcRow('IP', r.ip):'', _mhcRow('Uses', `${names.length} share${names.length===1?'':'s'}`) ], [],
         names.length?`<div class="mhc-chips">${names.map(n=>`<span>${mapEsc(n)}</span>`).join('')}</div>`:''); }
     return '';
@@ -33110,23 +33119,86 @@ function runReplicationTask(id, name) {
   // membership/links are pinned. Reset on (re)entry so a different instance or a
   // re-open recomputes the set.
   let _vmTopoPinned = null;
+  let _vmTopoDocker = [];          // docker containers detected inside this instance
+  let _vmTopoDockerLoaded = false; // first probe has returned (success/empty/denied)
+  let _vmTopoDockerTimer = null;
   window.startVmTopology = function(instId){
-    _vmTopoPinned = null;
+    _vmTopoPinned = null; _vmTopoDocker = []; _vmTopoDockerLoaded = false;
+    if (_vmTopoDockerTimer){ clearInterval(_vmTopoDockerTimer); _vmTopoDockerTimer = null; }
+    const instName = instId.slice(instId.indexOf(':')+1);
+    // Detect docker containers running INSIDE this instance. The endpoint 403s /
+    // returns empty when detection is off or docker isn't present, so this is a
+    // safe best-effort. The probe is heavier than the topology poll, so refresh
+    // it on a slower 8s cadence — enough to keep the status dots current.
+    _vmTopoFetchDocker(instName);
+    _vmTopoDockerTimer = setInterval(()=>_vmTopoFetchDocker(instName), 8000);
     setMapCtx({ svg:'vmtopo-svg', viewport:'vmtopo-viewport', styleBtn:'vmtopo-style-toggle',
                 empty:'vmtopo-empty', status:'vmtopo-status', panel:'ci-tab-content-topology',
                 filter:(d)=>{
-                  if (!_vmTopoPinned){
-                    const f = filterTopologyForInstance(d, instId);
-                    // Pin once the instance actually shows up (its own consumer is
-                    // always present then); until then keep retrying each poll.
-                    if (f.consumers && f.consumers.length) _vmTopoPinned = f;
-                    return f;
+                  if (_vmTopoPinned){
+                    const topo = projectPinnedMetrics(_vmTopoPinned, d);
+                    _vmTopoRefreshDocker(topo); // dot status only; the set is frozen
+                    return topo;
                   }
-                  return projectPinnedMetrics(_vmTopoPinned, d);
+                  const f = filterTopologyForInstance(d, instId);
+                  if (!f.consumers || !f.consumers.length) return f; // instance not in topo yet
+                  _vmTopoInjectDocker(f, instId);
+                  // Freeze the whole picture (storage + docker) once the docker
+                  // probe has settled, so the object set stops changing thereafter.
+                  if (_vmTopoDockerLoaded) _vmTopoPinned = f;
+                  return f;
                 } });
     startMapPoll();
   };
-  window.stopVmTopology = function(){ stopMapPoll(); };
+  window.stopVmTopology = function(){
+    stopMapPoll();
+    if (_vmTopoDockerTimer){ clearInterval(_vmTopoDockerTimer); _vmTopoDockerTimer = null; }
+  };
+
+  async function _vmTopoFetchDocker(name){
+    // Self-stop if the topology tab is no longer visible (e.g. the user navigated
+    // away without a tab switch) so this comparatively heavy probe doesn't leak.
+    const panel = document.getElementById('ci-tab-content-topology');
+    if (!panel || panel.offsetParent === null){
+      if (_vmTopoDockerTimer){ clearInterval(_vmTopoDockerTimer); _vmTopoDockerTimer = null; }
+      return;
+    }
+    if (!name){ _vmTopoDockerLoaded = true; return; }
+    try{
+      const r = await fetch('/api/incus/instances/'+encodeURIComponent(name)+'/docker/containers', {credentials:'same-origin'});
+      _vmTopoDocker = r.ok ? ((await r.json()).containers || []) : [];
+    }catch(e){ _vmTopoDocker = []; }
+    _vmTopoDockerLoaded = true;
+  }
+  // Docker nodes ride on top of the VM as layer-0 (remote-row) boxes linked down
+  // to it. Their id is stable (docker:<instId>/<name>) so re-injecting each poll
+  // never perturbs the layout signature — only the dot status changes.
+  function _vmTopoInjectDocker(topo, instId){
+    (_vmTopoDocker||[]).forEach(c=>{
+      topo.remotes.push({
+        id:'docker:'+instId+'/'+c.name, kind:'docker', label:c.name, consumer_ids:[instId],
+        dname:c.name, dstate:c.state, dstatus:c.status, dimage:c.image,
+        dports:c.ports, dproject:c.project, dservice:c.service,
+      });
+    });
+  }
+  function _vmTopoRefreshDocker(topo){
+    if (!topo.remotes || !topo.remotes.length) return;
+    const byName = {}; (_vmTopoDocker||[]).forEach(c=>{ byName[c.name]=c; });
+    topo.remotes = topo.remotes.map(r=>{
+      if (r.kind!=='docker') return r;
+      const c = byName[r.dname];
+      if (!c) return r; // container gone → keep last-known
+      return Object.assign({}, r, {dstate:c.state, dstatus:c.status, dimage:c.image, dports:c.ports});
+    });
+  }
+  // Classify a docker node for its status dot: green up / amber transient / red down.
+  function _dockDot(n){
+    const st=(n.dstate||'').toLowerCase(), txt=(n.dstatus||'').toLowerCase();
+    if (st==='running') return (txt.indexOf('unhealthy')>=0 || txt.indexOf('health: starting')>=0) ? 'warn' : 'up';
+    if (st==='restarting'||st==='paused'||st==='created') return 'warn';
+    return 'down';
+  }
 
   // Overlay fresh live values (capacity, I/O, state, client counts, header CPU/
   // mem/net) onto the pinned structure without touching membership or links, so
@@ -33226,7 +33298,10 @@ function runReplicationTask(id, name) {
       sub2:`${mapBytes(n.used)} / ${mapBytes(n.usable)}`};
     if (layer===2) return {icon:mapIcon(n), name:mapLeaf(n.name)+(n.encrypted?' 🔒':''),
       sub:mapBytes(n.used), sub2:''};
-    if (layer===0){ const showIp = n.ip && n.ip !== n.label; // hostname on top, IP on its own row
+    if (layer===0){
+      if (n.kind==='docker'){ // container name + short image; status shown via the dot
+        return {icon:'🐳', name:n.dname||n.label, sub:mapTrunc((n.dimage||'').split('/').pop(), 20), sub2:''}; }
+      const showIp = n.ip && n.ip !== n.label; // hostname on top, IP on its own row
       return {icon:mapIcon(n), name:n.label, sub: showIp ? n.ip : '', sub2:''}; }
     let sub='';
     if (n.type==='vm'||n.type==='container') sub=n.state||'';
@@ -33264,6 +33339,7 @@ function runReplicationTask(id, name) {
     let w = 0;
     titleLines.forEach((ln,i)=> w = Math.max(w, _tw((i===0?t.icon+' ':'')+ln, 11, true)));
     w = Math.max(w, _tw(t.sub,9.5,false), _tw(t.sub2,9.5,false));
+    if (n.kind==='docker') w += 12; // reserve top-right room for the status dot
     const rows = titleLines.length + (t.sub?1:0) + (t.sub2?1:0);
     return {
       txt: { icon:t.icon, titleLines, sub:t.sub, sub2:t.sub2 },
@@ -33283,6 +33359,7 @@ function runReplicationTask(id, name) {
       case 'filesystem': return '🗄';
       case 'peer':       return '🔗';
       case 'client':     return '🌐';
+      case 'docker':     return '🐳';
     }
     return '•';
   }
@@ -33560,6 +33637,11 @@ function runReplicationTask(id, name) {
     title += `</text>`;
     const subY  = MAP_BASE + tl.length*MAP_LINE;
     const sub2Y = subY + MAP_LINE;
+    // Docker nodes carry a health dot in the top-right corner (green=healthy,
+    // amber=transient/unhealthy, red=stopped); its colour is driven by the
+    // dock-<state> class and refreshed in mapUpdateDynamic.
+    const dot = (n.kind==='docker')
+      ? `<circle class="map-dock-dot" data-role="dock" cx="${(n.__w-10).toFixed(1)}" cy="10" r="4.5"/>` : '';
     return `<g class="map-node ${cls}" data-id="${n.id}" transform="translate(${n.__x.toFixed(1)},${n.__y.toFixed(1)})">`
       + `<rect class="map-node-base" width="${n.__w}" height="${n.__h}" rx="9"/>`
       + `<rect class="map-node-bg"   width="${n.__w}" height="${n.__h}" rx="9"/>`
@@ -33567,6 +33649,7 @@ function runReplicationTask(id, name) {
       + title
       + `<text class="map-node-sub"   x="9" y="${subY}"  data-role="sub"></text>`
       + `<text class="map-node-sub2"  x="9" y="${sub2Y}" data-role="sub2"></text>`
+      + dot
       + `</g>`;
   }
 
@@ -33574,6 +33657,7 @@ function runReplicationTask(id, name) {
     if (n.__layer===4) return 'map-node--disk';
     if (n.__layer===3) return 'map-node--pool';
     if (n.__layer===2) return 'map-node--dataset';
+    if (n.kind==='docker') return 'map-node--docker dock-'+_dockDot(n);
     if (n.__layer===0) return 'map-node--remote';
     // consumers: split share types vs vm/ct for colour
     if (n.type==='vm' || n.type==='container') return 'map-node--vm';
@@ -33621,6 +33705,10 @@ function runReplicationTask(id, name) {
     data.remotes.filter(r=>r.consumer_ids && r.consumer_ids.length).forEach(r=>{
       const g=node(r.id); if(!g) return;
       fill(g, mapNodeText(r,0));
+      if (r.kind==='docker'){ // keep the health dot in sync without clobbering other classes
+        g.classList.remove('dock-up','dock-warn','dock-down');
+        g.classList.add('dock-'+_dockDot(r));
+      }
     });
 
     // links

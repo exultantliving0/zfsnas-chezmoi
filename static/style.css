@@ -2518,23 +2518,37 @@ body.light .iscsi-icon { filter: none; }
                          background:none; }
 
 /* ════════════════════════ Live Storage Map (v6.6.3) ════════════════════════ */
+/* Theme-aware palette. Dark themes keep the bright neon HUD set; the light theme
+   gets darker, higher-contrast hues. Box fills, text and rails follow the active
+   theme's own variables so the map stays readable on every theme. */
+:root{
+  --map-fill:#0a1018;               /* node box fill — near-black HUD on dark themes */
+  --map-disk:#22d3ee; --map-pool:#a855f7; --map-dataset:#2dd4bf;
+  --map-consumer:#f59e0b; --map-vm:#ec4899; --map-remote:#38bdf8; --map-docker:#4aa3df;
+}
+body.light, body.dawn{       /* every light-background theme uses the dark-hue set */
+  --map-fill:var(--surface);        /* light surface so dark text reads on it */
+  --map-disk:#0e7490; --map-pool:#7c3aed; --map-dataset:#0f766e;
+  --map-consumer:#b45309; --map-vm:#be185d; --map-remote:#0369a1; --map-docker:#1d6fa5;
+}
 .map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;
   margin-bottom:14px;flex-wrap:wrap;}
 .map-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text-3);}
 .map-legend-item{display:inline-flex;align-items:center;gap:6px;}
 .map-legend-item i{width:10px;height:10px;border-radius:3px;display:inline-block;
   box-shadow:0 0 6px currentColor;}
-.map-legend-item[data-layer="remote"]   i{background:#38bdf8;color:#38bdf8;}
-.map-legend-item[data-layer="consumer"] i{background:#f59e0b;color:#f59e0b;}
-.map-legend-item[data-layer="vm"]        i{background:#ec4899;color:#ec4899;}
-.map-legend-item[data-layer="dataset"]   i{background:#2dd4bf;color:#2dd4bf;}
-.map-legend-item[data-layer="pool"]      i{background:#a855f7;color:#a855f7;}
-.map-legend-item[data-layer="disk"]      i{background:#22d3ee;color:#22d3ee;}
+.map-legend-item[data-layer="remote"]   i{background:var(--map-remote);color:var(--map-remote);}
+.map-legend-item[data-layer="consumer"] i{background:var(--map-consumer);color:var(--map-consumer);}
+.map-legend-item[data-layer="vm"]        i{background:var(--map-vm);color:var(--map-vm);}
+.map-legend-item[data-layer="dataset"]   i{background:var(--map-dataset);color:var(--map-dataset);}
+.map-legend-item[data-layer="pool"]      i{background:var(--map-pool);color:var(--map-pool);}
+.map-legend-item[data-layer="disk"]      i{background:var(--map-disk);color:var(--map-disk);}
 .map-toolbar-right{display:flex;align-items:center;gap:12px;}
 .map-status{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;}
-.map-style-toggle{background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.45);
-  color:#c084fc;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;}
-.map-style-toggle:hover{background:rgba(168,85,247,.28);}
+.map-style-toggle{background:color-mix(in srgb, var(--accent-2) 15%, transparent);
+  border:1px solid color-mix(in srgb, var(--accent-2) 45%, transparent);
+  color:var(--accent-2);border-radius:8px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;}
+.map-style-toggle:hover{background:color-mix(in srgb, var(--accent-2) 28%, transparent);}
 
 .map-viewport{position:relative;overflow:auto;max-height:calc(100vh - 240px);
   background:transparent;border:none;}
@@ -2543,26 +2557,27 @@ body.light .iscsi-icon { filter: none; }
   color:var(--text-3);font-size:14px;}
 
 /* header */
-.map-header .map-host{fill:#e9f1ff;font-size:15px;font-weight:700;}
-.map-header .map-host-stats{fill:#8aa0c8;font-size:11px;font-variant-numeric:tabular-nums;}
-.map-header .map-peers{fill:#7dd3fc;font-size:11px;}
+.map-header .map-host{fill:var(--text);font-size:15px;font-weight:700;}
+.map-header .map-host-stats{fill:var(--text-3);font-size:11px;font-variant-numeric:tabular-nums;}
+.map-header .map-peers{fill:var(--map-remote);font-size:11px;}
 
 /* links — orthogonal energy conduits */
-.map-link-rail{fill:none;stroke:rgba(120,140,200,.12);stroke-width:6;
+.map-link-rail{fill:none;stroke:var(--border);stroke-width:6;
   stroke-linecap:round;stroke-linejoin:round;}
 .map-link{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;
   stroke-dasharray:5 7;animation:map-flow-up 1.4s linear infinite;}
 .map-link.down{animation-name:map-flow-down;}
 .map-link.idle{animation:none;opacity:.3;}
-.map-link.l4{stroke:#22d3ee;}
-.map-link.l3{stroke:#a855f7;}
-.map-link.l2{stroke:#2dd4bf;}
-.map-link.l1{stroke:#f59e0b;}
+.map-link.l4{stroke:var(--map-disk);}
+.map-link.l3{stroke:var(--map-pool);}
+.map-link.l2{stroke:var(--map-dataset);}
+.map-link.l1{stroke:var(--map-consumer);}
 /* VM self-mount conduit (share ↔ guest that mounts it) */
-.map-peerlink{stroke:#ec4899;stroke-dasharray:4 5;opacity:.85;}
-.map-hud .map-peerlink{filter:drop-shadow(0 0 4px #ec4899);}
-.map-link-label{fill:#d3e6ff;font-size:10px;font-variant-numeric:tabular-nums;
-  paint-order:stroke;stroke:#05070f;stroke-width:3px;}
+.map-peerlink{stroke:var(--map-vm);stroke-dasharray:4 5;opacity:.85;}
+.map-hud .map-peerlink{filter:drop-shadow(0 0 4px var(--map-vm));}
+/* label sits over the SVG background → halo it with the page bg so it reads */
+.map-link-label{fill:var(--text);font-size:10px;font-variant-numeric:tabular-nums;
+  paint-order:stroke;stroke:var(--bg);stroke-width:3px;}
 @keyframes map-flow-up  {to{stroke-dashoffset:-24;}}
 @keyframes map-flow-down{to{stroke-dashoffset: 24;}}
 
@@ -2570,23 +2585,34 @@ body.light .iscsi-icon { filter: none; }
 /* NOTE: never put a CSS `transform` on .map-node — it overrides the SVG
    transform="translate(x,y)" attribute, snapping the node to the origin and
    causing a hover shake loop. Hover feedback is glow-only. */
-.map-node{--hue:#7dd3fc;cursor:default;}
+.map-node{--hue:var(--map-remote);cursor:default;}
 /* Actionable nodes (open detail / edit / instance view) show a pointer. */
 .map-node--dataset,.map-node--consumer,.map-node--vm{cursor:pointer;}
 /* Opaque base occludes any link drawn behind the box, so conduits read as
    running *between* boxes, never through them. The tint + border sit on top. */
-.map-node .map-node-base{fill:#0a1018;}
-.map-node .map-node-bg{fill:rgba(125,211,252,.08);stroke:var(--hue);stroke-width:1.2;}
+.map-node .map-node-base{fill:var(--map-fill);}
+.map-node .map-node-bg{fill:color-mix(in srgb, var(--hue) 12%, var(--map-fill));
+  stroke:var(--hue);stroke-width:1.2;}
 .map-node .map-node-scan{fill:var(--hue);opacity:.7;}
-.map-node .map-node-title{fill:#eaf2ff;font-size:11px;font-weight:600;}
-.map-node .map-node-sub {fill:#9fb3d6;font-size:9.5px;}
-.map-node .map-node-sub2{fill:#7e93b8;font-size:9.5px;font-variant-numeric:tabular-nums;}
-.map-node--disk   {--hue:#22d3ee;}
-.map-node--pool   {--hue:#a855f7;}
-.map-node--dataset{--hue:#2dd4bf;}
-.map-node--consumer{--hue:#f59e0b;}
-.map-node--vm     {--hue:#ec4899;}
-.map-node--remote {--hue:#38bdf8;}
+.map-node .map-node-title{fill:var(--text);font-size:11px;font-weight:600;}
+.map-node .map-node-sub {fill:var(--text-2);font-size:9.5px;}
+.map-node .map-node-sub2{fill:var(--text-3);font-size:9.5px;font-variant-numeric:tabular-nums;}
+.map-node--disk   {--hue:var(--map-disk);}
+.map-node--pool   {--hue:var(--map-pool);}
+.map-node--dataset{--hue:var(--map-dataset);}
+.map-node--consumer{--hue:var(--map-consumer);}
+.map-node--vm     {--hue:var(--map-vm);}
+.map-node--remote {--hue:var(--map-remote);}
+.map-node--docker {--hue:var(--map-docker);}
+/* docker health dot (top-right of the box): green healthy, amber transient,
+   red stopped. Colour comes from the dock-<state> class on the node group. */
+.map-dock-dot{fill:var(--text-3);stroke:var(--map-fill);stroke-width:1;}
+.map-node--docker.dock-up   .map-dock-dot{fill:#3fb950;}
+.map-node--docker.dock-warn .map-dock-dot{fill:#d29922;}
+.map-node--docker.dock-down .map-dock-dot{fill:#f85149;}
+.map-hud .map-node--docker.dock-up   .map-dock-dot{filter:drop-shadow(0 0 4px #3fb950);}
+.map-hud .map-node--docker.dock-warn .map-dock-dot{filter:drop-shadow(0 0 4px #d29922);}
+.map-hud .map-node--docker.dock-down .map-dock-dot{filter:drop-shadow(0 0 4px #f85149);}
 
 /* HUD glow */
 .map-hud .map-node .map-node-bg{filter:drop-shadow(0 0 7px var(--hue));}
@@ -2599,6 +2625,10 @@ body.light .iscsi-icon { filter: none; }
 /* health states */
 .map-node.st-degraded{--hue:#fbbf24;}
 .map-node.st-faulted,.map-node.st-missing{--hue:#ef4444;}
+body.light .map-node.st-degraded,
+body.dawn  .map-node.st-degraded{--hue:#b45309;}            /* darker amber on a light bg */
+body.light .map-node.st-faulted, body.light .map-node.st-missing,
+body.dawn  .map-node.st-faulted, body.dawn  .map-node.st-missing{--hue:#dc2626;}
 .map-node.st-missing .map-node-bg{stroke-dasharray:4 4;}
 .map-hud .map-node.st-faulted .map-node-bg,
 .map-hud .map-node.st-missing .map-node-bg{animation:map-alarm 1.1s ease-in-out infinite;}
@@ -2632,45 +2662,45 @@ body.light .iscsi-icon { filter: none; }
 .map-hovercard{position:fixed;z-index:5000;pointer-events:none;max-width:300px;min-width:210px;
   opacity:1;transition:opacity .12s ease;}
 .map-hovercard.hidden{opacity:0;visibility:hidden;}
-.mhc{--hue:#7dd3fc;position:relative;border-radius:12px;padding:11px 13px 12px;overflow:hidden;
-  background:linear-gradient(160deg,rgba(14,20,34,.92),rgba(6,9,16,.94));
+.mhc{--hue:var(--map-remote);position:relative;border-radius:12px;padding:11px 13px 12px;overflow:hidden;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--surface) 95%,transparent),color-mix(in srgb,var(--bg) 96%,transparent));
   border:1px solid color-mix(in srgb, var(--hue) 70%, transparent);
-  box-shadow:0 0 0 1px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.55), 0 0 22px color-mix(in srgb, var(--hue) 35%, transparent);
-  backdrop-filter:blur(9px);color:#dce8ff;}
+  box-shadow:0 0 0 1px var(--border), var(--shadow-lg), 0 0 22px color-mix(in srgb, var(--hue) 35%, transparent);
+  backdrop-filter:blur(9px);color:var(--text-2);}
 .mhc-scan{position:absolute;left:0;top:0;height:2px;width:100%;
   background:linear-gradient(90deg,transparent,var(--hue),transparent);opacity:.8;
   animation:mhc-scan 2.4s linear infinite;}
 @keyframes mhc-scan{0%{transform:translateX(-100%);}100%{transform:translateX(100%);}}
 .mhc-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
 .mhc-ic{font-size:16px;filter:drop-shadow(0 0 5px var(--hue));}
-.mhc-ti{font-weight:700;font-size:13px;color:#fff;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mhc-ti{font-weight:700;font-size:13px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .mhc-tp{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--hue);
   border:1px solid color-mix(in srgb,var(--hue) 50%,transparent);border-radius:5px;padding:2px 6px;flex-shrink:0;}
 .mhc-info{display:flex;flex-direction:column;gap:3px;margin-bottom:8px;}
 .mhc-row{display:flex;justify-content:space-between;gap:12px;font-size:11px;}
-.mhc-row>span{color:#8aa0c4;}
-.mhc-row>b{color:#e9f1ff;font-weight:600;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px;}
-.mhc-metrics{display:flex;flex-wrap:wrap;gap:6px;padding-top:8px;border-top:1px solid rgba(120,140,200,.16);}
-.mhc-metric{flex:1 1 calc(50% - 6px);background:rgba(255,255,255,.03);border-radius:7px;padding:5px 8px;}
-.mhc-metric>span{display:block;font-size:9px;color:#8aa0c4;text-transform:uppercase;letter-spacing:.05em;}
+.mhc-row>span{color:var(--text-3);}
+.mhc-row>b{color:var(--text);font-weight:600;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px;}
+.mhc-metrics{display:flex;flex-wrap:wrap;gap:6px;padding-top:8px;border-top:1px solid var(--border);}
+.mhc-metric{flex:1 1 calc(50% - 6px);background:color-mix(in srgb,var(--text) 5%,transparent);border-radius:7px;padding:5px 8px;}
+.mhc-metric>span{display:block;font-size:9px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;}
 .mhc-metric>b{font-size:13px;color:var(--hue);font-variant-numeric:tabular-nums;
   text-shadow:0 0 8px color-mix(in srgb,var(--hue) 45%,transparent);}
 .mhc-bar{flex:1 1 100%;margin-top:2px;}
-.mhc-bar-top{display:flex;justify-content:space-between;font-size:9.5px;color:#9fb3d6;margin-bottom:3px;}
-.mhc-track{height:6px;border-radius:4px;background:rgba(120,140,200,.14);overflow:hidden;}
+.mhc-bar-top{display:flex;justify-content:space-between;font-size:9.5px;color:var(--text-3);margin-bottom:3px;}
+.mhc-track{height:6px;border-radius:4px;background:color-mix(in srgb,var(--text) 12%,transparent);overflow:hidden;}
 .mhc-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--hue),color-mix(in srgb,var(--hue) 50%,#fff));
   box-shadow:0 0 8px var(--hue);transition:width .4s ease;}
-.mhc-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(120,140,200,.16);}
-.mhc-load{font-size:10.5px;color:#8aa0c4;font-style:italic;padding:4px 0 2px;}
+.mhc-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);}
+.mhc-load{font-size:10.5px;color:var(--text-3);font-style:italic;padding:4px 0 2px;}
 /* live zpool iostat charts */
-.mhc-io{margin-top:8px;padding-top:8px;border-top:1px solid rgba(120,140,200,.16);}
-.mhc-io-h{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#7e93b8;margin-bottom:5px;}
+.mhc-io{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);}
+.mhc-io-h{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:5px;}
 .mhc-io-c{margin-bottom:7px;}
-.mhc-io-t{font-size:9.5px;color:#9fb3d6;margin-bottom:2px;}
+.mhc-io-t{font-size:9.5px;color:var(--text-3);margin-bottom:2px;}
 .mhc-io-cv{display:block;width:100%;height:44px;border-radius:5px;
-  background:rgba(120,140,200,.06);}
+  background:color-mix(in srgb,var(--text) 6%,transparent);}
 .mhc-io-leg{display:flex;gap:10px;justify-content:flex-end;font-size:10px;
   font-variant-numeric:tabular-nums;margin-top:2px;}
-.mhc-chips>span{font-size:10px;padding:2px 7px;border-radius:5px;color:#cfe3ff;
+.mhc-chips>span{font-size:10px;padding:2px 7px;border-radius:5px;color:var(--text-2);
   background:color-mix(in srgb,var(--hue) 14%,transparent);border:1px solid color-mix(in srgb,var(--hue) 35%,transparent);}
 @media (prefers-reduced-motion: reduce){ .mhc-scan{animation:none;} .mhc-fill{transition:none;} }
