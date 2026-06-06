@@ -51,9 +51,9 @@ var (
 	// Lines like "  enp5s0:" or "    enp5s0:" inside an "ethernets:" block.
 	// We don't fully parse YAML (per CLAUDE.md, no new module deps) — we
 	// just scan for top-level device-name keys under specific sections.
-	netplanRendererRe   = regexp.MustCompile(`^\s*renderer:\s*([A-Za-z0-9_-]+)\s*$`)
-	netplanSectionRe    = regexp.MustCompile(`^(\s*)(ethernets|bonds|bridges|vlans|wifis|tunnels|modems):\s*$`)
-	netplanDeviceKeyRe  = regexp.MustCompile(`^(\s+)([A-Za-z0-9_.-]+):\s*$`)
+	netplanRendererRe  = regexp.MustCompile(`^\s*renderer:\s*([A-Za-z0-9_-]+)\s*$`)
+	netplanSectionRe   = regexp.MustCompile(`^(\s*)(ethernets|bonds|bridges|vlans|wifis|tunnels|modems):\s*$`)
+	netplanDeviceKeyRe = regexp.MustCompile(`^(\s+)([A-Za-z0-9_.-]+):\s*$`)
 )
 
 // scanNetplanYAMLs reads every /etc/netplan/*.yaml and returns a coarse
@@ -78,7 +78,7 @@ func scanNetplanYAMLs() (*netplanScanResult, error) {
 			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
 		var (
-			currentSection      string
+			currentSection       string
 			currentSectionIndent int
 		)
 		scanner := bufio.NewScanner(strings.NewReader(string(data)))
@@ -296,16 +296,25 @@ const (
 	dhcpcdMarkerEnd   = "# <<< ZNAS netplan→ifupdown migration — clientid pinning <<<"
 )
 
-// pinDhcpcdClientIDs appends per-interface `clientid` directives to
-// /etc/dhcpcd.conf for every DHCP device whose Client-ID we captured from
+// pinDhcpcdClientIDs writes the ZNAS-managed block of /etc/dhcpcd.conf. The
+// block always contains `noipv4ll`, and additionally a per-interface `clientid`
+// directive for every DHCP device whose Client-ID we captured from
 // systemd-networkd. The block is bounded by start/end marker comments so
-// re-running the migration replaces it cleanly. Returns nil when no
-// devices have a captured Client-ID (no-op).
+// re-running the migration replaces it cleanly.
+//
+// `noipv4ll` disables dhcpcd's IPv4 link-local (169.254/16) fallback. When the
+// bridge first comes up at boot the slaved port spends a moment negotiating
+// link, so dhcpcd's first DHCP attempts can fail and it would otherwise
+// self-assign a 169.254 address that then lingers next to the real lease. The
+// bridge stanza already uses `bridge_stp off`/`bridge_fd 0` to forward
+// immediately; this is the belt-and-suspenders that guarantees no APIPA address
+// ever appears.
 func pinDhcpcdClientIDs(snap []liveDeviceSnapshot, log func(string)) error {
 	const path = "/etc/dhcpcd.conf"
 	var block strings.Builder
 	block.WriteString(dhcpcdMarkerStart + "\n")
-	wrote := 0
+	block.WriteString("noipv4ll\n")
+	log("    noipv4ll (disable dhcpcd 169.254 link-local fallback)")
 	for _, d := range snap {
 		if !d.IsDHCP || d.ClientID == "" {
 			continue
@@ -315,20 +324,19 @@ func pinDhcpcdClientIDs(snap []liveDeviceSnapshot, log func(string)) error {
 			continue
 		}
 		fmt.Fprintf(&block, "interface %s\n    clientid %s\n", d.Name, cid)
-		wrote++
 		log(fmt.Sprintf("    %s ← clientid %s (matches systemd-networkd's lease ID)", d.Name, cid))
 	}
 	block.WriteString(dhcpcdMarkerEnd + "\n")
-	if wrote == 0 {
-		return nil
-	}
 
 	existing, err := os.ReadFile(path)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	stripped := stripBlockBetweenMarkers(string(existing), dhcpcdMarkerStart, dhcpcdMarkerEnd)
-	stripped = strings.TrimRight(stripped, "\n") + "\n\n"
+	stripped = strings.TrimRight(stripped, "\n")
+	if stripped != "" {
+		stripped += "\n\n"
+	}
 	out := stripped + block.String()
 
 	if err := writeRoot(path, []byte(out), 0o644); err != nil {
@@ -503,17 +511,17 @@ func readNetplanNameservers() map[string][]string {
 // can pin the parser without touching /etc/netplan.
 func parseNetplanNameserversInto(yaml string, dst map[string][]string) {
 	var (
-		inEthernets        bool
-		ethernetsIndent    int
-		ifname             string
-		ifnameIndent       int
-		inNameservers      bool
-		nameserversIndent  int
-		inAddressesList    bool
-		addressesIndent    int
+		inEthernets       bool
+		ethernetsIndent   int
+		ifname            string
+		ifnameIndent      int
+		inNameservers     bool
+		nameserversIndent int
+		inAddressesList   bool
+		addressesIndent   int
 	)
 	inlineListRe := regexp.MustCompile(`^\s*addresses:\s*\[([^\]]*)\]\s*$`)
-	listItemRe   := regexp.MustCompile(`^\s*-\s*([0-9A-Fa-f.:]+)\s*$`)
+	listItemRe := regexp.MustCompile(`^\s*-\s*([0-9A-Fa-f.:]+)\s*$`)
 
 	for _, line := range strings.Split(yaml, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -690,13 +698,14 @@ func MigrateNetplanToIfupdown(stream func(string)) error {
 		log("ifupdown already installed.")
 	}
 
-	// Step 1b: pin dhcpcd's Client-Identifier to whatever systemd-networkd
-	// was using, so the DHCP server hands the same lease back. Best-effort —
-	// a failure here doesn't abort the migration; the host still gets an
-	// IP, just possibly a different one.
-	log("Pinning dhcpcd Client-ID per interface to match systemd-networkd…")
+	// Step 1b: configure dhcpcd — disable its 169.254 link-local fallback
+	// (noipv4ll) and pin each DHCP interface's Client-Identifier to whatever
+	// systemd-networkd was using, so the DHCP server hands the same lease back.
+	// Best-effort — a failure here doesn't abort the migration; the host still
+	// gets an IP, just possibly a different one.
+	log("Configuring dhcpcd (noipv4ll + Client-ID pinning to match systemd-networkd)…")
 	if err := pinDhcpcdClientIDs(snap, log); err != nil {
-		log("  ⚠ Could not pin dhcpcd clientid: " + err.Error() + " (continuing — IP may change)")
+		log("  ⚠ Could not write dhcpcd config: " + err.Error() + " (continuing — IP may change)")
 	}
 
 	// Step 2: backup + write /etc/network/interfaces.
@@ -727,12 +736,18 @@ func MigrateNetplanToIfupdown(stream func(string)) error {
 	// trying to walk away from. We tolerate "not loaded" / "does not
 	// exist" so older releases without one or another socket don't
 	// abort the migration.
-	log("Disabling systemd-networkd (service + activation sockets)…")
+	log("Disabling systemd-networkd (service + activation sockets + wait-online)…")
 	networkdUnits := []string{
 		"systemd-networkd-resolve-hook.socket",
 		"systemd-networkd-varlink.socket",
 		"systemd-networkd.socket",
 		"systemd-networkd.service",
+		// The wait-online unit is the real boot-time troublemaker: it is pulled
+		// in by network-online.target (Wants=) and its Requires=systemd-networkd
+		// RE-ACTIVATES networkd at boot even after we disable it, then blocks
+		// boot for ~2 min waiting for a "routable" interface networkd no longer
+		// manages. Disable it here and mask it below.
+		"systemd-networkd-wait-online.service",
 	}
 	for _, u := range networkdUnits {
 		for _, action := range []string{"disable", "stop"} {
@@ -746,6 +761,18 @@ func MigrateNetplanToIfupdown(stream func(string)) error {
 				!strings.Contains(msg, "Failed to disable") {
 				log(fmt.Sprintf("  systemctl %s %s: %s (continuing)", action, u, msg))
 			}
+		}
+	}
+
+	// Mask systemd-networkd and its wait-online unit. Disabling alone is not
+	// enough on Ubuntu 26.04: network-online.target still pulls wait-online,
+	// which Requires= networkd and so brings it back at boot (and hangs boot
+	// ~2 min). Masking severs that chain for good — neither unit can be started
+	// or pulled in. Rollback (rollbackNetworkd) unmasks them.
+	log("Masking systemd-networkd + wait-online so boot can't wait on or revive them…")
+	for _, u := range []string{"systemd-networkd-wait-online.service", "systemd-networkd.service"} {
+		if out, err := exec.Command("sudo", "/usr/bin/systemctl", "mask", u).CombinedOutput(); err != nil {
+			log(fmt.Sprintf("  systemctl mask %s: %s (continuing)", u, strings.TrimSpace(string(out))))
 		}
 	}
 
@@ -1075,6 +1102,10 @@ func rollbackInterfaces(targetPath, backupPath string) {
 // pass so a rollback leaves systemd-networkd in the same state we
 // found it.
 func rollbackNetworkd() {
+	// Undo the masks first — a masked unit can't be enabled or started.
+	for _, u := range []string{"systemd-networkd.service", "systemd-networkd-wait-online.service"} {
+		exec.Command("sudo", "/usr/bin/systemctl", "unmask", u).Run() //nolint:errcheck
+	}
 	for _, u := range []string{
 		"systemd-networkd-resolve-hook.socket",
 		"systemd-networkd-varlink.socket",
@@ -1084,4 +1115,8 @@ func rollbackNetworkd() {
 		exec.Command("sudo", "/usr/bin/systemctl", "enable", u).Run() //nolint:errcheck
 		exec.Command("sudo", "/usr/bin/systemctl", "start", u).Run()  //nolint:errcheck
 	}
+	// Re-enable wait-online so the restored networkd setup behaves normally on
+	// the next boot, but do NOT start it now — starting it would block on the
+	// online-wait for up to its timeout during an already-failed migration.
+	exec.Command("sudo", "/usr/bin/systemctl", "enable", "systemd-networkd-wait-online.service").Run() //nolint:errcheck
 }

@@ -483,13 +483,6 @@ func LXDIncusAdminRecover(poolName string) ([]byte, error) {
 	return lxdIncusAdminRecoverInner("")
 }
 
-// LXDIncusAdminRecoverWithMask is the restore-path variant: it temporarily
-// hides every other backup.yaml on the host so recover can succeed even
-// when stale bkup--<vm> datasets exist alongside the fresh clone target.
-func LXDIncusAdminRecoverWithMask(keepDataset string) ([]byte, error) {
-	return lxdIncusAdminRecoverInner(keepDataset)
-}
-
 func lxdIncusAdminRecoverInner(keepDataset string) ([]byte, error) {
 	// Temporarily zfs-rename every other bkup--<vm> dataset out of the
 	// virtual-machines / containers subtrees so `incus admin recover`
@@ -497,11 +490,126 @@ func lxdIncusAdminRecoverInner(keepDataset string) ([]byte, error) {
 	// path of the dataset that should remain in place.
 	renamed := lxdMaskBackupDatasets(keepDataset)
 	defer lxdUnmaskBackupDatasets(renamed)
+	return lxdRunAdminRecover()
+}
 
+// lxdRunAdminRecover runs `incus admin recover` non-interactively: don't add
+// another pool, do scan, do recover the found volumes, accept the default for
+// anything else.
+func lxdRunAdminRecover() ([]byte, error) {
 	cmd := exec.Command("sudo", "incus", "admin", "recover")
-	// Sequence: see top-of-file comment on LXDIncusAdminRecover.
 	cmd.Stdin = strings.NewReader("no\nyes\nyes\n\n")
 	return cmd.CombinedOutput()
+}
+
+// LXDIncusAdminRecoverWithMask is the restore-path recover. Beyond hiding other
+// bkup--* datasets, it masks every UNREGISTERED instance dataset that isn't the
+// restore target `targetName`. Without this, an orphan instance dataset left by
+// a PRIOR failed restore (recover also tries to import every unknown volume it
+// finds) can abort the whole recovery — e.g. an orphan whose custom-volume
+// reference is missing fails with "Storage volume not found", taking the fresh
+// clone down with it. After recover, every masked dataset is moved back.
+func LXDIncusAdminRecoverWithMask(targetName string) ([]byte, error) {
+	renamed := lxdMaskBackupDatasets("")
+	renamed = append(renamed, lxdMaskNonTargetInstances(targetName)...)
+	defer lxdUnmaskBackupDatasets(renamed)
+	return lxdRunAdminRecover()
+}
+
+// lxdRegisteredInstanceNames returns the set of names Incus currently has
+// instances registered under (all projects). Used to decide which on-disk
+// instance datasets are orphans. Returns an error (→ mask nothing) if the list
+// can't be read, so we never risk moving a live instance's dataset.
+func lxdRegisteredInstanceNames() (map[string]bool, error) {
+	out, err := exec.Command("incus", "list", "--all-projects", "--format", "csv", "-c", "n").Output()
+	if err != nil {
+		if out, err = exec.Command("incus", "list", "--format", "csv", "-c", "n").Output(); err != nil {
+			return nil, err
+		}
+	}
+	names := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		// Defensive: add every comma-field of every line. Extra non-name tokens
+		// are harmless (no dataset is named after them); the point is that every
+		// real instance name lands in the set so we never mask a live instance.
+		for _, f := range strings.Split(line, ",") {
+			if n := strings.TrimSpace(strings.Trim(f, "\"")); n != "" {
+				names[n] = true
+			}
+		}
+	}
+	return names, nil
+}
+
+// lxdMaskNonTargetInstances hides every UNREGISTERED instance dataset (and its
+// .block sibling) under <pool>/virtual-machines|containers, except `targetName`,
+// so a restore-path `incus admin recover` only imports the target. Registered
+// instances are NEVER moved. Fail-safe: if the registered-instance list can't be
+// read, nothing is masked.
+func lxdMaskNonTargetInstances(targetName string) []lxdMaskRename {
+	var moves []lxdMaskRename
+	registered, err := lxdRegisteredInstanceNames()
+	if err != nil || len(registered) == 0 {
+		return moves
+	}
+	isRegistered := func(name string) bool {
+		if registered[name] {
+			return true
+		}
+		// "<project>_<name>" dataset form → also treat as registered if the
+		// post-underscore part is a known instance (conservative: over-skipping
+		// only leaves an orphan unmasked, never moves a live instance).
+		if i := strings.IndexByte(name, '_'); i >= 0 && registered[name[i+1:]] {
+			return true
+		}
+		return false
+	}
+	pools, _ := LXDListStoragePools()
+	seen := map[string]bool{}
+	for _, p := range pools {
+		src := getLXDPoolSource(p)
+		if src == "" || seen[src] {
+			continue
+		}
+		seen[src] = true
+		maskParent := src + "/.znas-bkup-mask"
+		for _, kind := range []string{"virtual-machines", "containers"} {
+			parent := src + "/" + kind
+			out, lerr := exec.Command("zfs", "list", "-H", "-o", "name", "-r", "-d", "1", parent).Output()
+			if lerr != nil {
+				continue
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				ds := strings.TrimSpace(line)
+				if ds == "" || ds == parent {
+					continue
+				}
+				name := ds[strings.LastIndex(ds, "/")+1:]
+				if strings.HasSuffix(name, ".block") {
+					continue // moved together with its parent
+				}
+				if name == targetName || strings.HasPrefix(name, LXDBackupPrefix) || isRegistered(name) {
+					continue
+				}
+				// Orphan/unregistered instance dataset → mask aside.
+				_ = exec.Command("sudo", "zfs", "create", "-p", maskParent).Run()
+				bucket := maskParent + "/orphan_" + kind + "_" + name
+				_ = exec.Command("sudo", "zfs", "create", "-p", bucket).Run()
+				dst := bucket + "/" + name
+				if _, e := exec.Command("sudo", "zfs", "rename", ds, dst).CombinedOutput(); e != nil {
+					continue
+				}
+				moves = append(moves, lxdMaskRename{From: ds, To: dst})
+				if blockDS := ds + ".block"; datasetExists(blockDS) {
+					bdst := bucket + "/" + name + ".block"
+					if _, e := exec.Command("sudo", "zfs", "rename", blockDS, bdst).CombinedOutput(); e == nil {
+						moves = append(moves, lxdMaskRename{From: blockDS, To: bdst})
+					}
+				}
+			}
+		}
+	}
+	return moves
 }
 
 // lxdMaskRename records a pair of zfs dataset paths that have been moved
@@ -739,20 +847,7 @@ func LXDRewriteBackupYAMLForRestore(dataset, dstPool, dstZFSSource, srcInstance,
 		return nil // no backup.yaml — nothing to fix
 	}
 	content := string(rawOut)
-	// Attached disk devices whose custom volume wasn't captured → strip them
-	// so recover succeeds (root disks and host-path passthroughs are never
-	// stripped). Captured volumes are kept and source-remapped by the rewriter.
-	stripDevs := map[string]bool{}
-	if volRemap != nil {
-		for _, dv := range backupYAMLDiskDevices(content) {
-			if dv.Path == "/" || dv.Source == "" || strings.HasPrefix(dv.Source, "/") {
-				continue
-			}
-			if _, ok := volRemap[dv.Source]; !ok {
-				stripDevs[dv.Name] = true
-			}
-		}
-	}
+	stripDevs := restoreStripDevs(content, volRemap)
 	replaced := rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, dstInstance, stripDevs, volRemap)
 	if replaced == content {
 		return nil
@@ -790,6 +885,43 @@ var unknownVolatileKeysToStrip = map[string]bool{
 //     stores the storage-pool descriptor) is rewritten to dstPool so the
 //     embedded pool descriptor matches the destination pool. Without
 //     this, recover fails with "pool name mismatch in its backup file".
+// restoreStripDevs decides which non-root disk devices to drop from a backup.yaml
+// on restore so `incus admin recover` doesn't abort on something the restore
+// can't satisfy. Two cases are stripped:
+//   1. Host-path disk devices (source begins with "/") — a cdrom/ISO or a bind
+//      mount. The path is specific to the SOURCE host and isn't part of the
+//      backup, so it won't exist on the restore target; recover otherwise fails
+//      with `Missing source path "…" for disk "…"`. The user re-attaches any
+//      ISO/host mount after restoring.
+//   2. Custom-volume disks whose backing volume wasn't captured in this backup
+//      (absent from volRemap).
+//
+// The root disk (path "/") is always kept. Returns an empty map when volRemap is
+// nil (the legacy "keep everything" behaviour for callers that don't restore
+// custom volumes).
+func restoreStripDevs(content string, volRemap map[string]string) map[string]bool {
+	strip := map[string]bool{}
+	if volRemap == nil {
+		return strip
+	}
+	for _, dv := range backupYAMLDiskDevices(content) {
+		if dv.Path == "/" {
+			continue
+		}
+		if strings.HasPrefix(dv.Source, "/") {
+			strip[dv.Name] = true // host-path cdrom/ISO or bind mount
+			continue
+		}
+		if dv.Source == "" {
+			continue
+		}
+		if _, ok := volRemap[dv.Source]; !ok {
+			strip[dv.Name] = true // uncaptured custom volume
+		}
+	}
+	return strip
+}
+
 func rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, dstInstance string, stripDevs map[string]bool, volRemap map[string]string) string {
 	out := []string{}
 	inSnapshots := false
@@ -843,6 +975,17 @@ func rewriteBackupYAMLForRestore(content, dstPool, dstZFSSource, srcInstance, ds
 						skipDev = stripDevs[strings.TrimSuffix(trimmed, ":")]
 					}
 					if skipDev {
+						continue
+					}
+					// Rewrite a kept disk device's storage pool to the
+					// destination pool. The clone-restore lands every disk on
+					// dstPool, so a device that referenced a source-host pool
+					// (e.g. "BigRaid5") must point at dstPool or recover fails
+					// with `Failed to get storage pool "…": Storage pool not
+					// found`. The general pool: rewrite below never sees these
+					// lines because the device block `continue`s first.
+					if strings.HasPrefix(trimmed, "pool:") {
+						out = append(out, indent+"pool: "+dstPool)
 						continue
 					}
 					// Remap a kept custom-disk device's source to the volume

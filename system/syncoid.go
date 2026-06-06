@@ -96,8 +96,19 @@ func InstallSyncoid() ([]byte, error) {
 
 // RunSyncoidLocal replicates src → dst locally (no SSH). recursive=true sends
 // child datasets (the VM zvol partition for example).
-func RunSyncoidLocal(ctx context.Context, src, dst string, recursive bool, logFn func(string)) error {
-	args := []string{"syncoid", "--no-privilege-elevation", "--no-sync-snap"}
+//
+// ownSnap controls snapshotting. The instance's root-fs and .block parts are
+// snapshotted up-front by `incus snapshot create` (one atomic, ZNAS-named
+// snapshot), so they pass ownSnap=false → --no-sync-snap, and syncoid sends
+// that existing snapshot. Attached custom-volume vdisks are NOT covered by an
+// incus instance snapshot, so they pass ownSnap=true: syncoid creates and
+// auto-prunes its own sync snapshot, which also maintains the incremental
+// anchor across fires with no extra bookkeeping.
+func RunSyncoidLocal(ctx context.Context, src, dst string, recursive, ownSnap bool, logFn func(string)) error {
+	args := []string{"syncoid", "--no-privilege-elevation"}
+	if !ownSnap {
+		args = append(args, "--no-sync-snap")
+	}
 	if recursive {
 		args = append(args, "--recursive")
 	}
@@ -108,10 +119,15 @@ func RunSyncoidLocal(ctx context.Context, src, dst string, recursive bool, logFn
 // RunSyncoidRemote replicates a local source dataset to a peer ZNAS over SSH.
 // host = remote IP/hostname; user = remote unix user (matches push-interlink
 // process user); dst = remote dataset path.
-func RunSyncoidRemote(ctx context.Context, src, host, remoteUser, dst string, recursive bool, logFn func(string)) error {
-	args := []string{"syncoid", "--no-privilege-elevation", "--no-sync-snap",
+func RunSyncoidRemote(ctx context.Context, src, host, remoteUser, dst string, recursive, ownSnap bool, logFn func(string)) error {
+	args := []string{"syncoid", "--no-privilege-elevation",
 		"--sshoption=StrictHostKeyChecking=accept-new",
 		"--sshoption=BatchMode=yes"}
+	if !ownSnap {
+		// root-fs/.block carry an incus-made snapshot already; custom vdisks
+		// don't, so they let syncoid create+prune its own (see RunSyncoidLocal).
+		args = append(args, "--no-sync-snap")
+	}
 	// syncoid is invoked under sudo, which means ssh otherwise looks in
 	// /root/.ssh; the trusted interlink key lives in the zfsnas user's
 	// home, so pass it explicitly.

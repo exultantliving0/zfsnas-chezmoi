@@ -639,6 +639,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleUPSPerfOldest))).Methods("GET")
 	r.Handle("/api/ups/test-client",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleTestNUTClient)))).Methods("POST")
+	r.Handle("/api/ups/calibrate",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUPSCalibrate(appCfg))))).Methods("POST")
 	r.Handle("/api/ups/shutdown-policy",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSaveShutdownPolicy(appCfg))))).Methods("PUT")
 

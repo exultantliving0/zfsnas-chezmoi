@@ -169,6 +169,30 @@ func QueryUPS(name string) (*UPSStatus, error) {
 	return QueryUPSAt(name + "@localhost")
 }
 
+// RunUPSCalibration starts a battery runtime-calibration test on the local UPS
+// via the NUT `calibrate.start` instant command. It authenticates as the local
+// "upsmon" user (which ZNAS grants instcmds=ALL in /etc/nut/upsd.users), so no
+// sudo is needed — upscmd talks to upsd over the NUT protocol on localhost.
+//
+// Calibration is optional (most UPSes self-calibrate periodically) and not all
+// models support it; when unsupported, upscmd returns a clear NUT error which is
+// surfaced to the caller unchanged.
+func RunUPSCalibration(name, monitorPassword string) error {
+	if name == "" {
+		return fmt.Errorf("no local UPS configured")
+	}
+	out, err := exec.Command("upscmd", "-u", "upsmon", "-p", monitorPassword,
+		name+"@localhost", "calibrate.start").CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
 // QueryUPSAt runs `upsc <target>` where target is "name@host" or "name@host:port".
 func QueryUPSAt(target string) (*UPSStatus, error) {
 	out, err := exec.Command("upsc", target).CombinedOutput()

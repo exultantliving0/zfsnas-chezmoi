@@ -8281,7 +8281,7 @@ Select the Console tab to load.</pre>
             <option value="gzip-1">Gzip-1 — fastest gzip</option>
             <option value="gzip-9">Gzip-9 — best gzip compression</option>
             <option value="lzjb">LZJB — legacy, low overhead</option>
-            <option value="none">None — no compression</option>
+            <option value="off">Off — no compression</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">
@@ -8538,7 +8538,7 @@ Select the Console tab to load.</pre>
             <option value="gzip-1">Gzip-1 — fastest gzip</option>
             <option value="gzip-9">Gzip-9 — best gzip compression</option>
             <option value="lzjb">LZJB — legacy, low overhead</option>
-            <option value="none">None — no compression</option>
+            <option value="off">Off — no compression</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">
@@ -8915,7 +8915,7 @@ Select the Console tab to load.</pre>
             <option value="gzip-1">Gzip-1 — fastest gzip</option>
             <option value="gzip-9">Gzip-9 — best gzip compression</option>
             <option value="lzjb">LZJB — legacy, low overhead</option>
-            <option value="none">None — no compression</option>
+            <option value="off">Off — no compression</option>
           </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">
@@ -9027,7 +9027,7 @@ Select the Console tab to load.</pre>
             <option value="gzip-1">Gzip-1 — fastest gzip</option>
             <option value="gzip-9">Gzip-9 — best gzip compression</option>
             <option value="lzjb">LZJB — legacy, low overhead</option>
-            <option value="none">None — no compression</option>
+            <option value="off">Off — no compression</option>
           </select>
         </div>
       </div>
@@ -12833,7 +12833,35 @@ function _restoreActiveJobs() {
     }
     if (pruned > 0) _persistActiveJobs(); // rewrite without the pruned entries
     if (kept > 0)   renderActivityBar(null);
+
+    // Re-attach progress pollers for background jobs that survive this reload
+    // server-side. Backup/restore jobs run under context.Background() on the
+    // server, so closing the browser or switching interlink servers (both
+    // reload the page) never interrupts the actual work — but the client-side
+    // poller is lost, leaving a frozen entry in the bar. Re-attaching resumes
+    // live progress and lets the job report done/error + clear itself. The
+    // server retains finished jobs too, so one that completed while we were
+    // away resolves immediately. (Pollers self-pause while relay is active.)
+    // Deferred a tick so module-level state (e.g. _relayActive) is initialized
+    // before the first synchronous poll runs.
+    const _toResume = Object.keys(activeJobs).filter(k => k.startsWith('bkj-') || k.startsWith('brj-'));
+    if (_toResume.length) setTimeout(() => {
+      _toResume.forEach(k => {
+        if (!activeJobs[k]) return; // resolved/removed in the meantime
+        const label = activeJobs[k].label || 'Background job';
+        if (k.startsWith('bkj-'))      _bgPollBackupJob(k.slice(4),  label, _bgJobBoardRefresh);
+        else if (k.startsWith('brj-')) _bgPollRestoreJob(k.slice(4), label, _bgJobBoardRefresh);
+      });
+    }, 0);
   } catch (_) { /* corrupted JSON — start clean */ }
+}
+
+// Best-effort refresh of any open backup view when a re-attached job finishes.
+function _bgJobBoardRefresh() {
+  if (typeof loadAllBackups === 'function') { try { loadAllBackups(); } catch (_) {} }
+  if (typeof _ciCurrentName !== 'undefined' && _ciCurrentName && typeof loadCIBackups === 'function') {
+    try { loadCIBackups(_ciCurrentName); } catch (_) {}
+  }
 }
 
 // Cross-tab sync: when another tab writes the storage key, mirror its
@@ -25738,6 +25766,15 @@ function _upsShutdownForm(upsEnabled, policy, trigType, pct, mins, cfg, isBatSou
             </div>
           </div>
         </div>
+
+        <!-- Calibration test — local UPS only (hidden in network-client mode) -->
+        <div id="ups-adv-calibrate" style="${cfg.mode==='network_client'?'display:none':''};padding-top:12px;border-top:1px solid var(--border);">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-ghost btn-sm" id="btn-ups-calibrate" onclick="upsRunCalibration()">🔋 Run Calibration Test</button>
+            <i class="info-tip" data-tip="Starts a battery runtime calibration on the UPS (NUT calibrate.start): the UPS briefly runs on battery, then recharges, so it can re-learn its true runtime estimate.&#10;&#10;This is OPTIONAL — most UPSes self-calibrate periodically on their own. It's mainly worth doing after replacing the battery, so the runtime and charge-% readings reflect the new battery. Not all UPS models support this command.&#10;&#10;Avoid starting one when the battery isn't fully charged or a power outage may be imminent."></i>
+            <span id="ups-calibrate-result" style="font-size:12px;"></span>
+          </div>
+        </div>
       </div>
     </details>
     `}
@@ -25753,9 +25790,43 @@ function upsModeSwitched() {
   const hwDiv  = document.getElementById('ups-adv-hardware');
   const srvDiv = document.getElementById('ups-adv-server');
   const cliDiv = document.getElementById('ups-adv-client');
+  const calDiv = document.getElementById('ups-adv-calibrate');
   if (hwDiv)  hwDiv.style.display  = (mode === 'standalone' || mode === 'network_server') ? '' : 'none';
   if (srvDiv) srvDiv.style.display = (mode === 'network_server') ? '' : 'none';
   if (cliDiv) cliDiv.style.display = (mode === 'network_client') ? '' : 'none';
+  // Calibration acts on the locally-owned UPS — hide it for network clients.
+  if (calDiv) calDiv.style.display = (mode === 'network_client') ? 'none' : '';
+}
+
+// upsRunCalibration confirms, then asks NUT to start a battery calibration on
+// the local UPS. Styled modal + toast (never browser popups).
+function upsRunCalibration() {
+  _openDangerConfirm(
+    'Run UPS Calibration Test?',
+    'The UPS will briefly switch to <b>battery</b> and then recharge so it can re-learn its true runtime. '
+    + 'Make sure the battery is fully charged and no power outage is expected. '
+    + 'This is optional — it\'s mainly useful after a battery change.',
+    'Start Calibration',
+    _upsDoCalibration
+  );
+}
+async function _upsDoCalibration() {
+  const btn = document.getElementById('btn-ups-calibrate');
+  const res = document.getElementById('ups-calibrate-result');
+  if (btn) btn.disabled = true;
+  if (res) { res.style.color = 'var(--text-3)'; res.textContent = 'Starting calibration…'; }
+  try {
+    const r = await fetch('/api/ups/calibrate', { method: 'POST', credentials: 'same-origin' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    if (res) { res.style.color = 'var(--accent-3)'; res.textContent = '✓ Calibration started'; }
+    showToast('UPS calibration test started', 'success');
+  } catch (e) {
+    if (res) { res.style.color = 'var(--accent-danger)'; res.textContent = '✗ ' + (e.message || e); }
+    showToast('Calibration failed: ' + (e.message || e), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── UPS Network Server: Allowed Clients helpers ───────────────────────────────
@@ -36401,6 +36472,7 @@ async function ciOpenSnapSchedule() {
     const p = (d && d.policy) || {};
     document.getElementById('ci-snap-sched-enabled').checked = !!p.enabled;
     document.getElementById('ci-snap-sched-unit').value = p.unit || 'hour';
+    _v6519_refreshCS('ci-snap-sched-unit'); // sync the custom-dropdown display to the loaded unit
     _v6519_fillN('ci-snap-sched-n', p.unit || 'hour', _v6519_allowedSnapUnits, p.every_n || 1);
     document.getElementById('ci-snap-sched-prefix').value = p.name_prefix || 'auto';
     document.getElementById('ci-snap-sched-keep').value = p.keep_last || 24;
@@ -38155,6 +38227,7 @@ async function ciOpenBackupSchedule() {
     const p = policy.policy;
     document.getElementById('ci-bkup-sched-enabled').checked = !!p.enabled;
     document.getElementById('ci-bkup-sched-unit').value = p.unit || 'hour';
+    _v6519_refreshCS('ci-bkup-sched-unit'); // sync the custom-dropdown display to the loaded unit
     _v6519_fillN('ci-bkup-sched-n', p.unit || 'hour', _v6519_allowedBackupUnits, p.every_n || 1);
     _v6519_fillHour('ci-bkup-sched-hour', p.hour_of_day || 2);
     _v6519_fillMin('ci-bkup-sched-min', p.minute_of_hour || 0);
@@ -38329,14 +38402,29 @@ async function ciBackupNow() {
   }
 }
 
-// Polls a backup job and surfaces it in the activity bar.
-function _bgPollBackupJob(jobId, label, onDone) {
-  const key = 'bkj-' + jobId;
+// Polls a background job's progress endpoint and surfaces it in the activity
+// bar. Used for backup + restore jobs (both live on the LOCAL server).
+//
+// Two robustness rules so a long-running job in the bar survives normal usage:
+//   1. While relay mode is active (the user is viewing another linked server),
+//      every /api/* call is proxied to THAT server, which doesn't have this
+//      local job. So we PAUSE polling — keep the job in the bar and resume once
+//      relay ends — instead of 404-ing it into a "polling error" and dropping it.
+//   2. A transient failure (relay toggling mid-poll, a brief restart, a network
+//      blip) no longer kills the job on the first miss; we retry a few times
+//      before giving up.
+function _bgPollJob(key, label, progressURL, onDone) {
   addActiveJob(key, label);
+  let fails = 0;
   (async function poll() {
+    if (_relayActive) { setTimeout(poll, 3000); return; } // paused: viewing another server
     try {
-      const r = await fetch('/api/incus/backup-jobs/' + encodeURIComponent(jobId) + '/progress');
-      if (!r.ok) { removeActiveJob(key); showToast(label + ' — polling error', 'error'); return; }
+      const r = await fetch(progressURL, { credentials: 'same-origin' });
+      if (!r.ok) {
+        if (++fails < 5) { setTimeout(poll, 3000); return; }
+        removeActiveJob(key); showToast(label + ' — polling error', 'error'); return;
+      }
+      fails = 0;
       const d = await r.json();
       if (d.status === 'done') {
         removeActiveJob(key);
@@ -38356,10 +38444,17 @@ function _bgPollBackupJob(jobId, label, onDone) {
       if (tail && updateActiveJob) updateActiveJob(key, label + ' — ' + (tail.length > 80 ? tail.slice(0,80)+'…' : tail));
       setTimeout(poll, 3000);
     } catch(e) {
+      if (++fails < 5) { setTimeout(poll, 3000); return; }
       removeActiveJob(key);
       showToast(label + ' — ' + String(e), 'error');
     }
   })();
+}
+
+// Polls a backup job and surfaces it in the activity bar.
+function _bgPollBackupJob(jobId, label, onDone) {
+  _bgPollJob('bkj-' + jobId, label,
+    '/api/incus/backup-jobs/' + encodeURIComponent(jobId) + '/progress', onDone);
 }
 
 // Refresh the snapshot-button "📅" badge and the backup count.
@@ -38509,29 +38604,8 @@ async function rbSubmit() {
   }
 }
 function _bgPollRestoreJob(jobId, label, onDone) {
-  const key = 'brj-' + jobId;
-  addActiveJob(key, label);
-  (async function poll() {
-    try {
-      const r = await fetch('/api/incus/restore-jobs/' + encodeURIComponent(jobId) + '/progress');
-      if (!r.ok) { removeActiveJob(key); showToast(label + ' — polling error', 'error'); return; }
-      const d = await r.json();
-      if (d.status === 'done') { removeActiveJob(key); showToast(label + ' — done', 'success'); if (onDone) onDone(); return; }
-      if (d.status === 'error' || d.status === 'canceled') {
-        removeActiveJob(key);
-        if (d.status === 'error') showToast(label + ' failed: ' + (d.error || 'unknown'), 'error');
-        if (onDone) onDone();
-        return;
-      }
-      const lines = d.lines || [];
-      const tail = lines[lines.length-1];
-      if (tail && updateActiveJob) updateActiveJob(key, label + ' — ' + (tail.length > 80 ? tail.slice(0,80)+'…' : tail));
-      setTimeout(poll, 3000);
-    } catch(e) {
-      removeActiveJob(key);
-      showToast(label + ' — ' + String(e), 'error');
-    }
-  })();
+  _bgPollJob('brj-' + jobId, label,
+    '/api/incus/restore-jobs/' + encodeURIComponent(jobId) + '/progress', onDone);
 }
 
 // ====== Datastores → Backups page ===========================================

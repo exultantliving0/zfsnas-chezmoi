@@ -2572,7 +2572,7 @@ func CreateZVol(req ZVolCreateRequest) error {
 	// the required space and fail with ENOSPC even when the pool has room.
 	// We apply refreservation in a separate "zfs set" after creation.
 	if req.Compression != "" && req.Compression != "inherit" {
-		args = append(args, "-o", "compression="+req.Compression)
+		args = append(args, "-o", "compression="+zfsNormalizeCompression(req.Compression))
 	}
 	if req.Sync != "" && req.Sync != "inherit" {
 		args = append(args, "-o", "sync="+req.Sync)
@@ -2619,11 +2619,22 @@ func CreateZVol(req ZVolCreateRequest) error {
 	return nil
 }
 
+// zfsNormalizeCompression maps the UI's "none" sentinel to ZFS's actual
+// no-compression value ("off"). ZFS has no "none" compression value, so passing
+// it through makes `zfs create/set compression=none` fail with
+// "'compression' must be one of 'on | off | lzjb | gzip | …'".
+func zfsNormalizeCompression(c string) string {
+	if c == "none" {
+		return "off"
+	}
+	return c
+}
+
 // EditZVol updates mutable properties on an existing ZVol.
 func EditZVol(req ZVolEditRequest) error {
 	props := map[string]string{}
 	if req.Compression != "" {
-		props["compression"] = req.Compression
+		props["compression"] = zfsNormalizeCompression(req.Compression)
 	}
 	if req.Sync != "" {
 		props["sync"] = req.Sync

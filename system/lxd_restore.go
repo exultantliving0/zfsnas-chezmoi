@@ -57,8 +57,24 @@ func LXDInstantRestoreBackup(vmID, newName, zfsPool string) error {
 	}
 
 	// --- Workload layout (v6.5.19+ canonical) -----------------------------
-	if pool, kind := findWorkloadBackup(src, zfsPool); pool != "" {
-		return instantRestoreFromWorkload(pool, kind, vmID, newName)
+	if pool, _ := findWorkloadBackup(src, zfsPool); pool != "" {
+		incusPool, _ := findIncusPoolForZFSPool(pool)
+		if incusPool == "" {
+			return fmt.Errorf("ZFS pool %q has no Incus storage pool configured — cannot restore here", pool)
+		}
+		// Route through the safe clone-restore path. It replicates with syncoid
+		// (a COPY — it never renames or destroys snapshots on the backup itself),
+		// restores any attached custom-volume vdisks to <pool>/custom/default_<vol>
+		// and keeps their disk devices in backup.yaml, then `incus admin recover`
+		// registers the instance AND those volumes together.
+		//
+		// The previous in-place path moved the backup datasets into the Incus
+		// subtree and destroyed their snapshots before recover; on any recover
+		// failure that left the backup corrupted (snapshots gone, backup.yaml
+		// rewritten) and it never restored custom-volume vdisks at all — which is
+		// what produced `incus admin recover: … device "disk1": … Storage volume
+		// not found`.
+		return LXDCloneRestoreLocal(context.Background(), vmID, pool, incusPool, newName, "", nil)
 	}
 
 	// --- Legacy Incus-registered fallback ---------------------------------
@@ -94,73 +110,6 @@ func findWorkloadBackup(backupName, zfsPool string) (string, string) {
 		}
 	}
 	return "", ""
-}
-
-// instantRestoreFromWorkload moves a workload-layout backup into the
-// Incus virtual-machines/containers/ subtree, rewrites backup.yaml, and
-// runs incus admin recover.
-func instantRestoreFromWorkload(zfsPool, kind, vmID, newName string) error {
-	// Find which Incus storage pool sources from this ZFS pool. Without
-	// an Incus pool, recover can't register the dataset.
-	incusPool, incusSource := findIncusPoolForZFSPool(zfsPool)
-	if incusPool == "" {
-		return fmt.Errorf("ZFS pool %q has no Incus storage pool configured — clone-restore into another datastore instead", zfsPool)
-	}
-
-	bkup := LXDBackupPrefix + vmID
-	parent := LXDWorkloadBackupParent(zfsPool)
-	srcRoot := parent + "/" + kind + "/" + bkup
-	srcBlock := srcRoot + ".block"
-	hasBlock := kind == "virtual-machines" && datasetExists(srcBlock)
-
-	dstParent := incusSource + "/" + kind
-	dstRoot := dstParent + "/" + newName
-	dstBlock := dstRoot + ".block"
-
-	// Ensure parent path exists on the Incus side.
-	_ = exec.Command("sudo", "zfs", "create", "-p", "-o", "mountpoint=none", dstParent).Run()
-
-	if out, err := exec.Command("sudo", "zfs", "rename", srcRoot, dstRoot).CombinedOutput(); err != nil {
-		return fmt.Errorf("zfs rename root-fs: %s", strings.TrimSpace(string(out)))
-	}
-	if hasBlock {
-		if out, err := exec.Command("sudo", "zfs", "rename", srcBlock, dstBlock).CombinedOutput(); err != nil {
-			// Rollback root rename — partial state is bad.
-			_, _ = exec.Command("sudo", "zfs", "rename", dstRoot, srcRoot).CombinedOutput()
-			return fmt.Errorf("zfs rename .block: %s", strings.TrimSpace(string(out)))
-		}
-	}
-
-	// Destroy snapshots on the renamed datasets so the cleared
-	// snapshots: [] list in backup.yaml lines up with on-disk state.
-	destroyDatasetSnapshots(dstRoot, nil)
-	if hasBlock {
-		destroyDatasetSnapshots(dstBlock, nil)
-	}
-
-	// Rewrite backup.yaml inside the renamed root-fs dataset. This path only
-	// restores the root (+.block), so any attached custom-volume disk is not
-	// present — pass an empty captured-set to strip those devices.
-	if err := LXDRewriteBackupYAMLForRestore(dstRoot, incusPool, incusSource, vmID, newName, map[string]string{}); err != nil {
-		// non-fatal — recover will still attempt
-	}
-
-	// Run incus admin recover, masking other backup datasets so recover
-	// only registers this one. If recover fails, move the dataset back
-	// to its workload home so the user can retry without losing the
-	// backup or stranding a dataset that Incus doesn't know about.
-	out, err := LXDIncusAdminRecoverWithMask("")
-	if err != nil {
-		_, _ = exec.Command("sudo", "zfs", "rename", dstRoot, srcRoot).CombinedOutput()
-		if hasBlock {
-			_, _ = exec.Command("sudo", "zfs", "rename", dstBlock, srcBlock).CombinedOutput()
-		}
-		return fmt.Errorf("incus admin recover: %s", strings.TrimSpace(string(out)))
-	}
-	// Clear volatile state (MAC, vsock id, …) so the new instance gets
-	// fresh values instead of colliding with the original VM.
-	resetCloneVolatileState(newName, nil)
-	return nil
 }
 
 // findIncusPoolForZFSPool returns the (Incus pool name, its zfs `source`)
@@ -286,7 +235,9 @@ func LXDCloneRestoreLocal(ctx context.Context, vmID, srcDatastore, dstDatastore,
 		if logFn != nil {
 			logFn(fmt.Sprintf("[%s] %s -> %s", part.Kind, part.SrcDataset, finalDataset))
 		}
-		if err := RunSyncoidLocal(ctx, part.SrcDataset, landingDataset, part.Recursive, logFn); err != nil {
+		// Restore reads from a backup dataset that already carries snapshots, so
+		// use the existing ones (ownSnap=false → --no-sync-snap).
+		if err := RunSyncoidLocal(ctx, part.SrcDataset, landingDataset, part.Recursive, false, logFn); err != nil {
 			return err
 		}
 		if out, err := exec.Command("sudo", "zfs", "rename", landingDataset, finalDataset).CombinedOutput(); err != nil {
@@ -333,7 +284,7 @@ func LXDCloneRestoreLocal(ctx context.Context, vmID, srcDatastore, dstDatastore,
 	if logFn != nil {
 		logFn("Running incus admin recover on " + dstDatastore)
 	}
-	out, err := LXDIncusAdminRecoverWithMask("")
+	out, err := LXDIncusAdminRecoverWithMask(cloneName)
 	if logFn != nil {
 		for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			if ln != "" {
@@ -557,7 +508,7 @@ func LXDCloneRestoreRemote(ctx context.Context, srcHost, srcUser, srcDataset, ds
 	if logFn != nil {
 		logFn("Running incus admin recover on " + dstDatastore)
 	}
-	out, err := LXDIncusAdminRecoverWithMask("")
+	out, err := LXDIncusAdminRecoverWithMask(cloneName)
 	if logFn != nil {
 		for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			if ln != "" {

@@ -167,12 +167,14 @@ func validateBindMountSource(src string) (string, error) {
 	return clean, nil
 }
 
-// LXDSnapWithInstanceProperty is the user property ZNAS sets on a custom
-// storage volume to mark it as "follow the instance's snapshot lifecycle".
-// CreateLXDSnapshot scans every attached disk device, looks up its source
-// volume's user properties, and snapshots/restores in lockstep when the
-// property is "true". Stored under `user.znas:` so it doesn't collide with
-// any Incus internal config keys.
+// LXDSnapWithInstanceProperty is the user property that controls whether a
+// custom storage volume follows the instance's snapshot lifecycle.
+// CreateLXDSnapshot scans every attached disk device and snapshots/restores
+// its source volume in lockstep UNLESS this property is explicitly "false";
+// an absent or "true" value means included (the default). This way a VM/CT
+// snapshot always covers every attached vdisk, and the "Include in snapshots"
+// toggle in the UI is a deliberate opt-OUT for shared/scratch volumes. Stored
+// under `user.znas:` so it doesn't collide with any Incus internal config keys.
 const LXDSnapWithInstanceProperty = "user.znas:snap_with_instance"
 
 // LXDExistingDisk references an existing ZFS volume to attach as a raw block device.
@@ -7390,10 +7392,15 @@ func DeleteLXDSnapshot(name, snapName string) error {
 	return nil
 }
 
-// lxdSnapTaggedVolumes returns the (pool, volume) pairs of every disk
-// device on `instance` whose source custom volume carries
-// `user.znas:snap_with_instance=true`. Used by the snapshot/restore/delete
-// path to keep volume snapshots in lockstep with the instance's own.
+// lxdSnapTaggedVolumes returns the (pool, volume) pairs of every attached
+// custom-volume vdisk that should be snapshotted together with the instance.
+// A vdisk is INCLUDED unless it is explicitly opted out with
+// `user.znas:snap_with_instance=false` — so disks with the tag set true, AND
+// disks with no tag at all (added before the feature existed, or attached via
+// `incus` directly), are all covered. This guarantees a VM/CT snapshot (manual
+// or scheduled) captures every one of its vdisks, not just ZNAS-tagged ones.
+// Used by the snapshot/restore/delete path to keep volume snapshots in lockstep
+// with the instance's own.
 //
 // We deliberately read the LIVE instance config rather than a cached copy
 // so the lookup picks up disks that were added through the Edit modal
@@ -7454,14 +7461,16 @@ func lxdSnapTaggedVolumes(instance string) [][2]string {
 		}
 		// Probe the volume's user property. `incus storage volume get`
 		// prints the value (or empty) and exits 0; sudo not needed for
-		// `get`. The volume is custom-type — instance-scoped volumes
-		// (which are already part of incus snapshot) don't carry the tag.
+		// `get`. An error means it isn't a snapshot-able custom volume
+		// (e.g. instance-scoped — already covered by the incus snapshot),
+		// so skip it. Otherwise INCLUDE it unless the user explicitly opted
+		// out with "false"; an empty/absent value defaults to included.
 		val, err := exec.Command("incus", "storage", "volume", "get",
 			d.pool, d.source, LXDSnapWithInstanceProperty).Output()
 		if err != nil {
 			continue
 		}
-		if strings.TrimSpace(string(val)) == "true" {
+		if strings.TrimSpace(string(val)) != "false" {
 			out2 = append(out2, [2]string{d.pool, d.source})
 		}
 	}

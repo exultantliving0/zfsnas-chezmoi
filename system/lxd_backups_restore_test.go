@@ -111,3 +111,74 @@ func TestRewriteRemapsCustomDiskSourceOnClone(t *testing.T) {
 		t.Fatalf("expected remapped source in both device maps:\n%s", out)
 	}
 }
+
+// A backup.yaml with a host-path cdrom (source begins "/") and a custom data
+// disk on a DIFFERENT pool than the root — the exact shape of fresh-2604srv.
+const sampleBackupYAMLCdromXpool = `container:
+  name: fresh-2604srv
+  devices:
+    cdrom0:
+      boot.priority: "10"
+      readonly: "true"
+      source: /BIGRAID5/.isos/ubuntu-26.04.iso
+      type: disk
+    data1:
+      pool: BigRaid5
+      source: fresh-2604srv-data1
+      type: disk
+    root:
+      path: /
+      pool: default
+      type: disk
+  expanded_devices:
+    cdrom0:
+      source: /BIGRAID5/.isos/ubuntu-26.04.iso
+      type: disk
+    data1:
+      pool: BigRaid5
+      source: fresh-2604srv-data1
+      type: disk
+    root:
+      path: /
+      pool: default
+      type: disk
+snapshots: []
+`
+
+func TestRestoreStripDevsHostPathAndUncaptured(t *testing.T) {
+	// data1's volume IS captured (in volRemap); cdrom0 is a host path → stripped.
+	remap := map[string]string{"fresh-2604srv-data1": "fresh-2604srv-rt-data1"}
+	strip := restoreStripDevs(sampleBackupYAMLCdromXpool, remap)
+	if !strip["cdrom0"] {
+		t.Errorf("host-path cdrom0 must be stripped, got %v", strip)
+	}
+	if strip["data1"] {
+		t.Errorf("captured data1 must NOT be stripped, got %v", strip)
+	}
+	if strip["root"] {
+		t.Errorf("root disk must never be stripped, got %v", strip)
+	}
+	// nil volRemap → keep everything (legacy callers).
+	if len(restoreStripDevs(sampleBackupYAMLCdromXpool, nil)) != 0 {
+		t.Errorf("nil volRemap should strip nothing")
+	}
+}
+
+func TestRewriteStripsCdromAndRewritesDevicePool(t *testing.T) {
+	remap := map[string]string{"fresh-2604srv-data1": "fresh-2604srv-rt-data1"}
+	strip := restoreStripDevs(sampleBackupYAMLCdromXpool, remap)
+	out := rewriteBackupYAMLForRestore(sampleBackupYAMLCdromXpool, "default", "nvmepool/LXD-zn216",
+		"fresh-2604srv", "fresh-2604srv-rt", strip, remap)
+	if strings.Contains(out, "cdrom0:") || strings.Contains(out, "/BIGRAID5/.isos") {
+		t.Errorf("cdrom0 host-path device should be gone:\n%s", out)
+	}
+	if strings.Contains(out, "pool: BigRaid5") {
+		t.Errorf("device-level pool must be rewritten to dstPool 'default':\n%s", out)
+	}
+	if !strings.Contains(out, "source: fresh-2604srv-rt-data1") {
+		t.Errorf("data1 source should be remapped to the restored volume:\n%s", out)
+	}
+	if !strings.Contains(out, "data1:") {
+		t.Errorf("captured data1 device must be kept:\n%s", out)
+	}
+}

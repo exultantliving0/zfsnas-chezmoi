@@ -646,7 +646,9 @@ func runBackupJob(ctx context.Context, job *lxdBackupJob, p config.LXDBackupPoli
 			// knows why the next fire took longer.
 			system.PrepLocalBackupChain(part.SrcDataset, dstDataset, logFn)
 			logFn(fmt.Sprintf("[%s] %s -> %s (compression=%s)", part.Kind, part.SrcDataset, dstDataset, p.Compression))
-			if err := system.RunSyncoidLocal(ctx, part.SrcDataset, dstDataset, part.Recursive, logFn); err != nil {
+			// Custom-volume vdisks have no incus-made snapshot, so let syncoid
+			// create+manage its own; root-fs/.block use the incus snapshot.
+			if err := system.RunSyncoidLocal(ctx, part.SrcDataset, dstDataset, part.Recursive, part.Kind == "custom", logFn); err != nil {
 				return err
 			}
 			applyBackupRetention(dstDataset, p, logFn)
@@ -747,7 +749,7 @@ func runBackupJob(ctx context.Context, job *lxdBackupJob, p config.LXDBackupPoli
 		}
 		dstDataset := parent + "/" + part.DstBaseName
 		logFn(fmt.Sprintf("[%s] %s -> %s@%s:%s", part.Kind, part.SrcDataset, remoteInfo.ProcessUser, remoteHost, dstDataset))
-		if err := system.RunSyncoidRemote(ctx, part.SrcDataset, remoteHost, remoteInfo.ProcessUser, dstDataset, part.Recursive, logFn); err != nil {
+		if err := system.RunSyncoidRemote(ctx, part.SrcDataset, remoteHost, remoteInfo.ProcessUser, dstDataset, part.Recursive, part.Kind == "custom", logFn); err != nil {
 			return err
 		}
 	}

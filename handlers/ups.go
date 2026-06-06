@@ -451,6 +451,44 @@ func HandleUPSService(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
+// HandleUPSCalibrate starts a battery runtime-calibration test on the local UPS.
+// Only valid in standalone / network-server mode (this host owns the UPS); a
+// network client must run it on the server that owns the UPS.
+// POST /api/ups/calibrate
+func HandleUPSCalibrate(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !system.UPSPrereqsInstalled() {
+			jsonErr(w, http.StatusBadRequest, "NUT is not installed")
+			return
+		}
+		mode := appCfg.UPS.Mode
+		if mode == "" {
+			mode = "standalone"
+		}
+		if mode == "network_client" {
+			jsonErr(w, http.StatusBadRequest, "Calibration must be run on the NUT server that owns the UPS, not a network client.")
+			return
+		}
+		if appCfg.UPS.UPSName == "" {
+			jsonErr(w, http.StatusBadRequest, "no local UPS configured")
+			return
+		}
+		if err := system.RunUPSCalibration(appCfg.UPS.UPSName, appCfg.UPS.MonitorPassword); err != nil {
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		sess := MustSession(r)
+		audit.Log(audit.Entry{
+			User:   sess.Username,
+			Role:   sess.Role,
+			Action: audit.ActionUpdateSettings,
+			Result: audit.ResultOK,
+			Target: "ups:calibrate",
+		})
+		jsonOK(w, map[string]bool{"ok": true})
+	}
+}
+
 // HandleTestNUTClient tests connectivity to a remote NUT server.
 // POST /api/ups/test-client
 func HandleTestNUTClient(w http.ResponseWriter, r *http.Request) {
