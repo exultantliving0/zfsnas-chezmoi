@@ -56,6 +56,25 @@ jobs:
       - name: Verify Go version
         run: go version
 
+      - name: Configure Go environment
+        run: |
+          set -euo pipefail
+          # The job-level env pins PATH but doesn't carry HOME, and this
+          # self-hosted runner runs without one. Go then can't derive its
+          # defaults ($HOME/go for GOPATH, $HOME/.cache/go-build for GOCACHE)
+          # and aborts with "neither GOMODCACHE nor GOPATH is set". Pin them to
+          # a writable base — the runner user's HOME when present, otherwise the
+          # Actions-provided RUNNER_TEMP (always set and writable) — and export
+          # to $GITHUB_ENV so the build and test steps inherit them.
+          base="${HOME:-${RUNNER_TEMP:?RUNNER_TEMP unset}}"
+          mkdir -p "${base}/go/pkg/mod" "${base}/.cache/go-build"
+          {
+            echo "GOPATH=${base}/go"
+            echo "GOMODCACHE=${base}/go/pkg/mod"
+            echo "GOCACHE=${base}/.cache/go-build"
+          } >> "$GITHUB_ENV"
+          echo "Using Go cache base: ${base}"
+
       - name: Build Linux binary
         run: |
           mkdir -p dist
