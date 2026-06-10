@@ -129,8 +129,16 @@ func parsePool(line string) (*Pool, error) {
 func GetAllPools() ([]*Pool, error) {
 	out, err := exec.Command("sudo", "zpool", "list", "-Hp",
 		"-o", "name,size,alloc,free,health").Output()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
-		return []*Pool{}, nil
+	if err != nil {
+		// A command FAILURE (e.g. fork/exec starved under extreme load, or a
+		// momentarily unresponsive zfs) must NOT be reported as "no pools" —
+		// that makes the UI render the create-pool screen as if the pool
+		// vanished. Surface it so the client shows a "system busy" + retry
+		// state instead. (Genuinely-no-pools is exit 0 with empty output.)
+		return nil, fmt.Errorf("zpool list: %w", err)
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return []*Pool{}, nil // no pools configured (fresh host)
 	}
 	var pools []*Pool
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {

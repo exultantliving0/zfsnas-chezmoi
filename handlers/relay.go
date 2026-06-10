@@ -48,6 +48,15 @@ var relayWSForwardPaths = []string{
 	"/ws/compose-logs",
 	"/ws/compose-console",
 	"/ws/docker-console",
+	// Host-mutating install/migration streams must run on the server the
+	// operator is actually viewing in relay mode — NOT the local portal.
+	// Without these, e.g. enabling virtualization on a relayed peer ran the
+	// netplan→ifupdown migration against the LOCAL box (already migrated →
+	// "no /etc/netplan/*.yaml files found"), and prereq installs landed on
+	// the wrong host. Same category as updates-apply / binary-update-apply.
+	"/ws/prereqs-install",
+	"/ws/memcomp-install",
+	"/ws/lxd-migrate-netplan",
 }
 
 // isRelayBypassed reports whether path should be served locally even when
@@ -81,6 +90,17 @@ func RelayMiddleware(appCfg *config.AppConfig, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Always serve local-only paths.
 		if isRelayBypassed(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Per-request opt-out: the multi-terminal "+" menu is a fleet-wide view
+		// and must reflect the TRUE local host + its peers even while the session
+		// is relaying to a peer. Without this the relayed /api/version +
+		// /api/lxd/instances resolve to the viewed peer (so it appears as "this
+		// server"), while the locally-served fleet list still lists that same
+		// peer — duplicating it and dropping the real local host (#2).
+		if r.Header.Get("X-ZNAS-No-Relay") == "1" {
 			next.ServeHTTP(w, r)
 			return
 		}

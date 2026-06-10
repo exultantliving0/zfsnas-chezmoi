@@ -35,8 +35,8 @@ func HandleGetSettings(appCfg *config.AppConfig) http.HandlerFunc {
 			"live_update_enabled":        appCfg.LiveUpdateEnabled,
 			"max_smbd_processes":         appCfg.MaxSmbdProcesses,
 			"web_session":                appCfg.WebSession,
-			"docker_detect_vms":          appCfg.DockerDetectVMs,
-			"docker_detect_containers":   appCfg.DockerDetectContainers,
+			"docker_detect_vms":          appCfg.DockerDetectVMsOn(),
+			"docker_detect_containers":   appCfg.DockerDetectContainersOn(),
 		})
 	}
 }
@@ -115,11 +115,11 @@ func HandleUpdateSettings(appCfg *config.AppConfig) http.HandlerFunc {
 			changed = true
 		}
 		if req.DockerDetectVMs != nil {
-			appCfg.DockerDetectVMs = *req.DockerDetectVMs
+			appCfg.DockerDetectVMs = req.DockerDetectVMs
 			changed = true
 		}
 		if req.DockerDetectContainers != nil {
-			appCfg.DockerDetectContainers = *req.DockerDetectContainers
+			appCfg.DockerDetectContainers = req.DockerDetectContainers
 			changed = true
 		}
 		if req.WebSession != nil {

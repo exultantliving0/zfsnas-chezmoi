@@ -1009,6 +1009,19 @@ fi`, disk.StorageVol)
 			return fmt.Errorf("write disk %d (%s): %s", i, disk.Device, ddErrMsg)
 		}
 
+		// Disk-truth UEFI detection: if the root disk carries an EFI System
+		// Partition but the Proxmox config never flagged UEFI (no `bios: ovmf`,
+		// no efidisk), we configured SeaBIOS/CSM above — which CANNOT boot an OS
+		// that lives behind UEFI: the firmware never finds the EFI loader and the
+		// guest reports it can't find its boot disk (seen importing an OPNsense
+		// VM). Now that the written disk is readable, correct the firmware to UEFI.
+		if i == 0 && !vm.IsUEFI && diskHasEFISystemPartition(blockDev) {
+			log("  Root disk has an EFI System Partition → switching this VM to UEFI boot (the Proxmox config didn't indicate UEFI, so SeaBIOS/CSM was configured, which can't boot it).")
+			vm.IsUEFI = true
+			exec.Command("incus", "config", "unset", vmName, "security.csm").Run()           //nolint:errcheck
+			exec.Command("incus", "config", "set", vmName, "security.secureboot=false").Run() //nolint:errcheck
+		}
+
 		// For UEFI root disk: fix the fallback GRUB boot path on the ESP while
 		// the block device is still accessible (before volmode=none removes it).
 		if vm.IsUEFI && i == 0 {
@@ -1146,6 +1159,35 @@ func proxmoxSizeToLXD(s string) string {
 // falls back to \EFI\BOOT\BOOTX64.EFI. That binary has its prefix set to
 // \EFI\BOOT\ — not \EFI\<distro>\ — so GRUB loads but can't find grub.cfg
 // and drops to the grub> prompt. Placing grub.cfg in \EFI\BOOT\ fixes this.
+// diskHasEFISystemPartition reports whether the GPT on blockDev contains an EFI
+// System Partition (GPT type code EF00 / type GUID C12A7328-F81F-11D2-BA4B-
+// 00A0C93EC93B). It reads the on-disk GPT directly via sgdisk so it works even
+// before the kernel has scanned the freshly-written zvol's partitions. Used to
+// detect a UEFI install whose Proxmox config didn't flag UEFI. Best-effort:
+// returns false when no partition tool is available.
+func diskHasEFISystemPartition(blockDev string) bool {
+	if _, err := exec.LookPath("sgdisk"); err == nil {
+		if out, err := exec.Command("sudo", "sgdisk", "-p", blockDev).CombinedOutput(); err == nil {
+			for _, ln := range strings.Split(string(out), "\n") {
+				// sgdisk prints the 4-hex GPT type code; EF00 == EFI System.
+				if strings.Contains(ln, "EF00") {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	// Fallback: expose partitions and check their type GUIDs via lsblk.
+	exec.Command("sudo", "partx", "-a", "-u", blockDev).Run() //nolint:errcheck
+	defer exec.Command("sudo", "partx", "-d", blockDev).Run() //nolint:errcheck
+	time.Sleep(300 * time.Millisecond)
+	out, err := exec.Command("lsblk", "-rno", "PARTTYPE", blockDev).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(out)), "c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
+}
+
 func fixUEFIGrub(blockDev string, log func(string)) {
 	// Get current user's UID so FAT32 is mounted with uid= and we can
 	// read/write the ESP directly without sudo for file operations.

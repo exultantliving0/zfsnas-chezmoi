@@ -139,9 +139,7 @@ func QuerySysBattery() *UPSStatus {
 
 // UPSPrereqsInstalled returns true when the nut packages are present.
 func UPSPrereqsInstalled() bool {
-	_, err1 := exec.LookPath("upsc")
-	_, err2 := os.Stat("/usr/sbin/upsd")
-	return err1 == nil && err2 == nil
+	return binaryInstalled("upsc", "upsd")
 }
 
 // UPSStatus describes the current state of the UPS.

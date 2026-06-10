@@ -888,6 +888,24 @@ function sendVGAKey(scancode) {
   msg.build_msg(SPICE_MSGC_INPUTS_KEY_UP, up);
   sc.inputs.send_msg(msg);
 }
+// Ctrl+C from the VGA console: stop the BROWSER from stealing it for "copy",
+// then let spice-html5's own canvas keydown handler forward it to the guest
+// with its normal modifier tracking — the same path every other key uses.
+//
+// We do NOT inject a synthetic scancode sequence and do NOT stopPropagation:
+// an earlier version did, and its synthetic Ctrl-down/up collided with the
+// physical Ctrl that spice already tracks, leaving Ctrl STUCK DOWN on the guest
+// after the first use (so nothing interrupted until a reconnect reset the
+// keyboard state). Capture phase runs before the browser's copy and before the
+// canvas listener; preventDefault cancels the copy; the event still propagates
+// to spice's handler, which sends a correctly-paired Ctrl+C.
+document.addEventListener('keydown', function(ev) {
+  if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey
+      && (ev.key === 'c' || ev.key === 'C')) {
+    ev.preventDefault();
+  }
+}, true);
+
 function toggleCursorMenu(e) {
   e.stopPropagation();
   const m = document.getElementById('cur-menu');

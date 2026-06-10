@@ -1363,7 +1363,11 @@
         <!-- TAB: Live Storage Map -->
         <div id="cap-tab-map" class="hidden">
           <div class="map-toolbar">
-            <div class="map-legend">
+            <div class="map-layer-switch" role="tablist" title="Switch the topology layer">
+              <button type="button" class="map-layer-btn active" data-ml="storage" onclick="setMapLayer('storage')">&#9783; Storage &amp; Compute Layer</button>
+              <button type="button" class="map-layer-btn" data-ml="network" onclick="setMapLayer('network')">&#127760; Networking Layer</button>
+            </div>
+            <div class="map-legend map-legend-storage">
               <span class="map-legend-item" data-layer="remote"><i></i>Remotes</span>
               <span class="map-legend-item" data-layer="consumer"><i></i>Shares</span>
               <span class="map-legend-item" data-layer="vm"><i></i>VMs / CT</span>
@@ -1371,8 +1375,18 @@
               <span class="map-legend-item" data-layer="pool"><i></i>Pool</span>
               <span class="map-legend-item" data-layer="disk"><i></i>Disks</span>
             </div>
+            <div class="map-legend map-legend-net" style="display:none;">
+              <span class="map-legend-item" data-layer="bridge"><i></i>Bridges</span>
+              <span class="map-legend-item" data-layer="netvm"><i></i>VMs / CT</span>
+              <span class="map-legend-item" data-layer="docker"><i></i>Containers &amp; Ports</span>
+            </div>
             <div class="map-toolbar-right">
               <span id="map-status" class="map-status"></span>
+              <div class="map-zoom" role="group" aria-label="Zoom">
+                <button type="button" class="map-zoom-btn" onclick="mapZoom('map-svg',-1)" title="Zoom out" aria-label="Zoom out">&minus;</button>
+                <button type="button" class="map-zoom-btn map-zoom-lvl" id="map-zoom-lvl" onclick="mapZoom('map-svg',0)" title="Reset zoom">100%</button>
+                <button type="button" class="map-zoom-btn" onclick="mapZoom('map-svg',1)" title="Zoom in" aria-label="Zoom in">+</button>
+              </div>
               <button id="map-style-toggle" class="map-style-toggle" onclick="toggleMapStyle()">HUD</button>
             </div>
           </div>
@@ -1453,8 +1467,8 @@
             <!-- v6.5.19: syncoid (ZFS Replication) -->
             <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
               <div style="flex:1;">
-                <span style="color:var(--text-1);font-size:14px;font-weight:500;">ZFS Replication (syncoid)</span>
-                <i class="info-tip" data-tip="Enables the VM/Container Backup feature. Backups use syncoid to send ZFS-aware incremental snapshot streams to another local datastore or a peer ZNAS over SSH. Without this, the &#x22;Backups&#x22; button on every VM/Container is greyed out.&#10;&#10;Best practice: install on every ZNAS in your fleet so backups can flow in either direction."></i>
+                <span style="color:var(--text-1);font-size:14px;font-weight:500;">VM/LXC remote ZFS Backups (syncoid)</span>
+                <i class="info-tip" data-tip="Required for a remote virtualization system that uses ZFS for storage to remotely back up / snapshot its workloads to THIS server. Backups use syncoid to send ZFS-aware incremental snapshot streams to another local datastore or a peer ZNAS over SSH. Without this, the &#x22;Backups&#x22; button on every VM/Container is greyed out.&#10;&#10;Best practice: install on every ZNAS in your fleet so backups can flow in either direction."></i>
                 <div style="font-size:12px;color:var(--text-3);margin-top:2px;">Package: sanoid (provides /usr/sbin/syncoid)</div>
               </div>
               <span id="prereq-syncoid-status" style="font-size:13px;color:var(--text-3);">Not installed</span>
@@ -2100,7 +2114,7 @@
                   <select id="lxd-edit-coretype" class="input" onchange="_editApplyCoreType()" style="max-width:280px;">
                     <option value="auto">Auto (no pinning)</option>
                     <option value="performance">Performance Cores only</option>
-                    <option value="efficient">Efficient Cores only</option>
+                    <option id="lxd-edit-coretype-eff" value="efficient">Efficient Cores only</option>
                     <option value="custom">Custom</option>
                   </select>
                   <div id="lxd-edit-coretype-hint" style="font-size:11px;color:var(--text-3);margin-top:4px;"></div>
@@ -2644,7 +2658,7 @@
                     <select id="lxd-vm-coretype" class="input" style="max-width:280px;" onchange="_createApplyCoreType()">
                       <option value="auto">Auto (no pinning)</option>
                       <option value="performance">Performance Cores only</option>
-                      <option value="efficient">Efficient Cores only</option>
+                      <option id="lxd-vm-coretype-eff" value="efficient">Efficient Cores only</option>
                       <option value="custom">Custom</option>
                     </select>
                     <div id="lxd-vm-coretype-hint" style="font-size:11px;color:var(--text-3);margin-top:4px;"></div>
@@ -3986,9 +4000,16 @@
               <label class="form-label">Description</label>
               <input type="text" id="eb-desc" class="input" placeholder="Optional">
             </div>
-            <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin:16px 0 8px;">Configuration Keys</div>
-            <div id="eb-config-rows" style="margin-bottom:8px;"></div>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="addEditBridgeConfigRow()">+ Add Key</button>
+            <div id="eb-unmanaged-note" class="alert alert-warning hidden" style="margin:8px 0;font-size:12px;"></div>
+            <div id="eb-common-section">
+              <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin:16px 0 8px;">Common Settings</div>
+              <div id="eb-common-settings" style="margin-bottom:8px;"></div>
+            </div>
+            <details id="eb-advanced-section" style="margin-top:12px;">
+              <summary style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;cursor:pointer;">Advanced / Other Keys</summary>
+              <div id="eb-config-rows" style="margin:10px 0 8px;"></div>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="addEditBridgeConfigRow()">+ Add Key</button>
+            </details>
             <div id="eb-used-by" style="margin-top:16px;font-size:12px;color:var(--text-3);"></div>
           </div>
           <div class="modal-footer" style="flex-shrink:0;">
@@ -4418,7 +4439,7 @@
             <div id="ci-burger-menu" class="hidden" style="position:absolute;right:0;top:110%;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);min-width:200px;z-index:200;overflow:hidden;">
               <button onclick="ciCloseBurger();openLXDCloneModal(_ciCurrentName)" style="display:block;width:100%;text-align:left;padding:10px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text);">⧉ Clone</button>
               <button id="ci-move-storage-btn" onclick="ciCloseBurger();openLXDMoveStorageModal(_ciCurrentName)" style="display:block;width:100%;text-align:left;padding:10px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text);">📦 Move Storage</button>
-              <button id="ci-push-interlink-btn" onclick="ciCloseBurger();openVMPushModal(_ciCurrentName)" style="display:none;width:100%;text-align:left;padding:10px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text);">⬆ Push InterLink</button>
+              <button id="ci-push-interlink-btn" onclick="ciCloseBurger();openVMPushModal(_ciCurrentName, _ciCurrentType, _ciIsCompose)" style="display:none;width:100%;text-align:left;padding:10px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text);">⬆ Push InterLink</button>
               <button id="ci-repair-efi-btn" onclick="ciCloseBurger();_lxdResetNVRAM(_ciCurrentName)" style="display:none;width:100%;text-align:left;padding:10px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--text);" title="Fixes 'UEFI: cannot find boot target' after cross-version migration">🔧 Repair EFI Boot</button>
               <hr style="margin:0;border:none;border-top:1px solid var(--border);">
               <button onclick="ciConfirmDelete()" style="display:block;width:100%;text-align:left;padding:10px 16px;background:none;border:none;cursor:pointer;font-size:13px;color:var(--accent-danger);">🗑 Delete</button>
@@ -4717,7 +4738,11 @@ Select the Console tab to load.</pre>
              plus any other VM/CT it shares an SMB/NFS mount with. -->
         <div id="ci-tab-content-topology" style="padding:20px 0;display:none;">
           <div class="map-toolbar">
-            <div class="map-legend">
+            <div class="map-layer-switch" role="tablist" title="Switch the topology layer">
+              <button type="button" class="map-layer-btn active" data-ml="storage" onclick="setMapLayer('storage')">&#9783; Storage &amp; Compute Layer</button>
+              <button type="button" class="map-layer-btn" data-ml="network" onclick="setMapLayer('network')">&#127760; Networking Layer</button>
+            </div>
+            <div class="map-legend map-legend-storage">
               <span class="map-legend-item" data-layer="remote"><i></i>Remotes</span>
               <span class="map-legend-item" data-layer="consumer"><i></i>Shares</span>
               <span class="map-legend-item" data-layer="vm"><i></i>VMs / CT</span>
@@ -4725,8 +4750,18 @@ Select the Console tab to load.</pre>
               <span class="map-legend-item" data-layer="pool"><i></i>Pool</span>
               <span class="map-legend-item" data-layer="disk"><i></i>Disks</span>
             </div>
+            <div class="map-legend map-legend-net" style="display:none;">
+              <span class="map-legend-item" data-layer="bridge"><i></i>Bridges</span>
+              <span class="map-legend-item" data-layer="netvm"><i></i>VMs / CT</span>
+              <span class="map-legend-item" data-layer="docker"><i></i>Containers &amp; Ports</span>
+            </div>
             <div class="map-toolbar-right">
               <span id="vmtopo-status" class="map-status"></span>
+              <div class="map-zoom" role="group" aria-label="Zoom">
+                <button type="button" class="map-zoom-btn" onclick="mapZoom('vmtopo-svg',-1)" title="Zoom out" aria-label="Zoom out">&minus;</button>
+                <button type="button" class="map-zoom-btn map-zoom-lvl" id="vmtopo-zoom-lvl" onclick="mapZoom('vmtopo-svg',0)" title="Reset zoom">100%</button>
+                <button type="button" class="map-zoom-btn" onclick="mapZoom('vmtopo-svg',1)" title="Zoom in" aria-label="Zoom in">+</button>
+              </div>
               <button id="vmtopo-style-toggle" class="map-style-toggle" onclick="toggleMapStyle()">HUD</button>
             </div>
           </div>
@@ -7224,7 +7259,7 @@ Select the Console tab to load.</pre>
 <div class="modal-backdrop hidden" id="modal-lxd-vm-push">
   <div class="modal" style="max-width:540px;width:96%;">
     <div class="modal-header">
-      <h3>Push VM to InterLink Server &mdash; <span id="vmpush-vm-name" style="color:var(--accent);font-weight:500;"></span></h3>
+      <h3><span id="vmpush-title-kind">Push VM</span> to InterLink Server &mdash; <span id="vmpush-vm-name" style="color:var(--accent);font-weight:500;"></span></h3>
       <button class="modal-close" onclick="closeVMPushModal()">&#x2715;</button>
     </div>
     <div class="modal-body" style="font-size:13px;color:var(--text-1);">
@@ -7240,13 +7275,13 @@ Select the Console tab to load.</pre>
             <select id="vmpush-pool-sel" class="input" style="width:100%;"></select>
           </div>
           <div>
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:5px;">Remote VM ID</label>
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:5px;">Remote <span id="vmpush-id-kind">VM</span> ID</label>
             <input id="vmpush-dest-id" class="input" style="width:100%;transition:border-color 0.15s;" type="text" placeholder="Same as source"
               oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9-]/g,'-').replace(/^-+|-+$/g,'');_vmpushValidateNames()" />
             <div id="vmpush-dest-id-err" style="display:none;color:var(--accent-danger);font-size:11px;margin-top:4px;">&#x26A0; This ID is already in use on the remote server</div>
           </div>
           <div>
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:5px;">Remote VM Description</label>
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:5px;">Remote <span id="vmpush-desc-kind">VM</span> Description</label>
             <input id="vmpush-dest-desc" class="input" style="width:100%;transition:border-color 0.15s;" type="text" placeholder="Same as source"
               oninput="_vmpushValidateNames()" />
             <div id="vmpush-dest-desc-err" style="display:none;color:var(--accent-danger);font-size:11px;margin-top:4px;">&#x26A0; This description is already in use on the remote server</div>
@@ -7269,7 +7304,7 @@ Select the Console tab to load.</pre>
             &#x26A0; This VM has a virtual TPM device. The destination must have <code>swtpm</code> installed (<code>apt install swtpm</code>) or the VM will fail to start.
           </div>
           <div id="vmpush-stopped-warn" class="alert alert-warning" style="display:none;font-size:12px;">
-            &#x26A0; VM must be stopped before pushing.
+            &#x26A0; Instance must be stopped before pushing.
           </div>
         </div>
       </div>
@@ -7334,9 +7369,21 @@ Select the Console tab to load.</pre>
       <div style="font-size:13px;font-weight:600;color:var(--text-1);margin-bottom:10px;">Prerequisites</div>
       <div id="lxd-enable-prereq-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
+          <span id="lxd-pre-icon-sudoall" style="font-size:15px;">⋯</span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Full sudo access (<code style="background:var(--surface3);padding:1px 4px;border-radius:3px;font-size:11px;">sudo all</code>) — required to enable</span>
+          <span id="lxd-pre-note-sudoall" style="font-size:12px;color:var(--text-3);max-width:300px;text-align:right;"></span>
+          <button id="lxd-pre-sudoall-fix-btn" class="btn btn-sm btn-ghost" style="display:none;white-space:nowrap;" onclick="lxdEnableSwitchSudoAll()">Switch to sudo all</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-sudoers" style="font-size:15px;">⋯</span>
           <span style="flex:1;font-size:13px;color:var(--text-1);">Sudoers configuration allows feature setup</span>
           <span id="lxd-pre-note-sudoers" style="font-size:12px;color:var(--text-3);max-width:340px;text-align:right;"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
+          <span id="lxd-pre-icon-staticip" style="font-size:15px;">⋯</span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Primary interface uses a static IP</span>
+          <span id="lxd-pre-note-staticip" style="font-size:12px;color:var(--text-3);max-width:300px;text-align:right;"></span>
+          <button id="lxd-pre-staticip-fix-btn" class="btn btn-sm btn-ghost" style="display:none;white-space:nowrap;" onclick="lxdEnableOpenStaticIP()">Configure Static IP</button>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-network" style="font-size:15px;">⋯</span>
@@ -10443,8 +10490,8 @@ Select the Console tab to load.</pre>
        onmouseover="this.style.borderColor='rgba(255,94,91,0.75)';this.style.boxShadow='0 4px 20px rgba(255,94,91,0.28)'" onmouseout="this.style.borderColor='rgba(255,94,91,0.45)';this.style.boxShadow='0 2px 12px rgba(255,94,91,0.12)'">
       <span style="font-size:32px;line-height:1;flex-shrink:0;">☕</span>
       <div style="text-align:left;">
-        <div style="font-size:14px;font-weight:700;color:#ff6b6b;margin-bottom:2px;">Buy us a coffee</div>
-        <div style="font-size:12px;color:var(--text-3);line-height:1.4;">Support the project on Ko-fi — every coffee helps!</div>
+        <div style="font-size:14px;font-weight:700;color:#ff6b6b;margin-bottom:2px;">Tip the dev team 10$</div>
+        <div style="font-size:12px;color:var(--text-3);line-height:1.4;">Support the project on Ko-fi — Thanks!</div>
       </div>
     </a>
   </div>
@@ -11540,6 +11587,7 @@ let _upsPerfCostCents = null;   // electricity cost (¢/kWh) for $/yr in UPS too
   // straight onto the "X jobs running" badge instead of a blank bar.
   _restoreActiveJobs();
   startActivityBarRefresh();
+  _startBgJobDiscovery();   // server-authoritative: always surface in-flight backups/restores
   _pollServerOpStatus();
   _startPushJobsPolling();
   checkPrereqsBanner();
@@ -15894,9 +15942,17 @@ function initAlertsWebSocket() {
   connect();
 }
 
+// Set while the VMs & Containers feature is being installed. During the enable
+// flow incus is mid-setup (daemon starting, the service account's incus-admin
+// group not yet applied), so a "not responding" probe is expected — suppress
+// the banner until the user clicks "Close & Reload" (which reloads the page and
+// clears this), per the operator's request.
+let _lxdEnableInProgress = false;
+
 function applyIncusStuckBanner(stuck, d) {
   const el = document.getElementById('incus-stuck-banner');
   if (!el) return;
+  if (_lxdEnableInProgress) { el.style.display = 'none'; return; }
   if (stuck) {
     // Honour any docs URL the server sent so we can re-target the
     // link without a frontend rebuild if upstream renames the page.
@@ -15990,13 +16046,25 @@ let selectedPoolName       = null; // active pool in the Pool tab
 let selectedTopBarPoolName = null; // active pool in the top capacity bar
 let _diskSerialMap         = {};   // device path → serial number, populated on pool tab load
 
+// Returns true when the pool list was refreshed from a successful response,
+// false when the request failed (server busy / transient error). On failure we
+// deliberately DON'T blank allPoolsData — keeping the last-known pools avoids
+// flashing the "no pools / create a pool" screen when the box is just overloaded.
 async function refreshPoolBar() {
+  let pr, dr, zr;
   try {
-    const [pr, dr, zr] = await Promise.all([fetch('/api/pools'), fetch('/api/datasets'), fetch('/api/zvols')]);
-    allPoolsData = pr.ok ? (await pr.json() || []) : [];
-    datasetData  = dr.ok ? await dr.json() : [];
-    zvolCache    = zr.ok ? (await zr.json() || []) : zvolCache;
-  } catch { return; }
+    [pr, dr, zr] = await Promise.all([fetch('/api/pools'), fetch('/api/datasets'), fetch('/api/zvols')]);
+  } catch {
+    return false; // network/abort — keep prior data
+  }
+  if (!pr.ok) return false; // server busy/error — do NOT clear the pool list
+  try {
+    allPoolsData = (await pr.json()) || [];
+    if (dr.ok) datasetData = await dr.json();
+    if (zr.ok) zvolCache  = (await zr.json()) || zvolCache;
+  } catch {
+    return false;
+  }
 
   // Resolve selectedTopBarPoolName: restore from pref when null or pool removed.
   if (allPoolsData.length > 0) {
@@ -16011,6 +16079,34 @@ async function refreshPoolBar() {
   }
   poolData = allPoolsData.find(p => p.name === selectedTopBarPoolName) || null;
   renderPoolBar();
+  return true;
+}
+
+// Renders a friendly "system is under heavy load" placeholder into `el` and, if
+// `retryFn` is given, retries it in a few seconds — but only while `el` is still
+// visible (so navigating away stops the retry loop). Used by the pool/disk pages
+// so a slow or transiently-failed listing reads as "busy, hang on" instead of
+// "no pools / no disks".
+function _systemBusyHTML(what) {
+  return `<div style="text-align:center;padding:44px 24px;color:var(--text-2);">
+      <span class="spinner" style="width:24px;height:24px;border-width:3px;display:inline-block;margin-bottom:16px;"></span>
+      <h3 style="margin:0 0 8px;color:var(--text);">System is busy</h3>
+      <div style="font-size:13px;max-width:460px;margin:0 auto;line-height:1.5;">
+        ${esc(what)} is taking longer than usual — the system is under heavy load right now
+        (a scrub, resilver, or large backup may be running). Please wait; this refreshes
+        automatically and the data should appear in a few seconds.</div>
+    </div>`;
+}
+function _renderSystemBusy(el, what, retryFn) {
+  if (!el) return;
+  el.innerHTML = _systemBusyHTML(what);
+  if (retryFn) setTimeout(() => { if (el.offsetParent !== null) retryFn(); }, 4000);
+}
+// Schedules a swap to the "system busy" message if a load is still in flight
+// after `ms`. Returns the timer id; the caller clears it once the fetch resolves
+// (the real render then overwrites the message). Only swaps while `el` is visible.
+function _slowLoadHint(el, what, ms) {
+  return setTimeout(() => { if (el && el.offsetParent !== null) el.innerHTML = _systemBusyHTML(what); }, ms || 3000);
 }
 
 function poolStatusLabel(pool) {
@@ -16317,7 +16413,9 @@ let _poolStatusInterval = null;
 async function loadPool() {
   const el = document.getElementById('pool-content');
   el.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:32px;">Loading…</div>';
-  const [, disksResp] = await Promise.all([refreshPoolBar(), fetch('/api/disks').catch(() => null)]);
+  const slow = _slowLoadHint(el, 'Reading ZFS pools', 3000);
+  const [poolsOk, disksResp] = await Promise.all([refreshPoolBar(), fetch('/api/disks').catch(() => null)]);
+  clearTimeout(slow);
   if (disksResp && disksResp.ok) {
     try {
       const disks = await disksResp.json();
@@ -16348,6 +16446,10 @@ async function loadPool() {
     renderPoolExists(el, pool);
     _startPoolStatusRefresh();
     _startPhysicalDisksRefresh();
+  } else if (!poolsOk) {
+    // Couldn't read the pools (system busy / transient failure). Don't render
+    // the create-pool screen as if the pool vanished — show busy + auto-retry.
+    _renderSystemBusy(el, 'Reading ZFS pools', loadPool);
   } else {
     renderPoolCreate(el);
   }
@@ -20110,6 +20212,7 @@ function deleteZVol(name) {
   document.getElementById('delete-zvol-confirm-input').value = '';
   const btn = document.getElementById('btn-delete-zvol-confirm');
   btn.disabled = true;
+  btn.textContent = 'Delete ZVol'; // reset — confirmDeleteZVol() leaves it on "Deleting…"
   btn.style.opacity = '.4';
   btn.style.cursor = 'not-allowed';
   document.getElementById('modal-delete-zvol').classList.remove('hidden');
@@ -22046,12 +22149,19 @@ let _diskCache = [];
 async function loadDisks() {
   const el = document.getElementById('disks-content');
   el.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:32px;">Loading disk info…</div>';
+  const slow = _slowLoadHint(el, 'Reading physical disks', 3000);
   try {
     // Ensure pool data is current so we can cross-reference pool members.
     if (!poolData) await refreshPoolBar();
     const resp  = await fetch('/api/disks');
+    clearTimeout(slow);
+    // Under heavy ZFS/CPU load `lsblk`/smartctl can fail or the request 500s.
+    // Treat that as "busy, retrying" rather than rendering "No disks detected"
+    // (which looks like the disks disappeared).
+    if (!resp.ok) { _renderSystemBusy(el, 'Reading physical disks', loadDisks); return; }
     const disks = await resp.json();
-    _diskCache = disks || [];
+    if (!Array.isArray(disks)) { _renderSystemBusy(el, 'Reading physical disks', loadDisks); return; }
+    _diskCache = disks;
     _applyDiskNavDot(_diskCache);
     renderDisks(el, _diskCache);
     // Immediately kick off a background SMART refresh so Temp + SMART are fresh.
@@ -22059,7 +22169,8 @@ async function loadDisks() {
     // and may not complete — spinners would never resolve).
     if (!_relayActive && currentUser && currentUser.role === 'admin') _refreshDisksBackground();
   } catch {
-    el.innerHTML = '<div style="color:var(--accent-danger);padding:24px;">Failed to load disk info.</div>';
+    clearTimeout(slow);
+    _renderSystemBusy(el, 'Reading physical disks', loadDisks);
   }
 }
 
@@ -22460,6 +22571,13 @@ async function loadShares() {
       if (isActive) {
         banner.className = '';
         banner.innerHTML = '';
+      } else if (ss.status === 'unknown') {
+        // Couldn't read the service state (host too busy to fork systemctl).
+        // Show a neutral "busy" hint, not a false "smbd is down" alarm, and
+        // retry shortly while the Shares page is still visible.
+        banner.className = 'banner banner-warn';
+        banner.innerHTML = `⏳ The system is busy — couldn't read the smbd service status yet. Retrying…`;
+        if (el.offsetParent !== null) setTimeout(() => { if (el.offsetParent !== null) loadShares(); }, 4000);
       } else {
         banner.className = 'banner banner-danger';
         banner.innerHTML = `✗ smbd is <strong>${esc(ss.status)}</strong> — shares won't be accessible until it's running.`;
@@ -27515,6 +27633,8 @@ function _termShowContextMenu(ev, term, wsSend) {
   addItem('⧉ Copy', hasSel, () => { _termCopySelection(term); });
   if (wsSend) {
     addItem('⮃ Paste', true, async () => {
+      // Chrome reads silently; Firefox/Safari show their own one-tap paste
+      // confirmation (an unavoidable browser policy for programmatic reads).
       try { const t = await navigator.clipboard.readText(); if (t) wsSend(t); } catch (_) {}
     });
   }
@@ -32860,7 +32980,7 @@ function runReplicationTask(id, name) {
   let _mapCtx = _MAP_CTX_CAP;
   function setMapCtx(ctx){ if(ctx!==_mapCtx){ _mapCtx=ctx; _mapSig=''; } }
 
-  function startMapPoll(){ stopMapPoll(); mapWireClicks(); pollMap(); _mapTimer = setInterval(pollMap, 3000); }
+  function startMapPoll(){ stopMapPoll(); _mapSyncLayerUI(); _mapEnsureZoom(_mapCtx.svg, _mapCtx.viewport); mapWireClicks(); pollMap(); _mapTimer = setInterval(pollMap, 3000); }
   function stopMapPoll(){ if (_mapTimer){ clearInterval(_mapTimer); _mapTimer = null; } mapHoverHide(); }
 
   // Delegated click handling on the persistent <svg> (innerHTML is replaced each
@@ -32874,16 +32994,31 @@ function runReplicationTask(id, name) {
       const g = e.target.closest && e.target.closest('.map-node');
       if (g) mapNodeClick(g.getAttribute('data-id'));
     });
-    // Hover hovercard (delegated; SVG element persists across re-renders).
+    // Hover hovercard (delegated; SVG element persists across re-renders). Works
+    // for both the storage (.map-node) and network (.net-node) layers.
     svg.addEventListener('mouseover', e=>{
-      const g = e.target.closest && e.target.closest('.map-node');
-      if (g){ mapHoverShow(g.getAttribute('data-id'), g); mapHighlightRelated(g.getAttribute('data-id')); }
+      const g = e.target.closest && e.target.closest('.map-node, .net-node');
+      if (g){ mapHoverShow(g.getAttribute('data-id'), g);
+        if (g.classList.contains('map-node')) mapHighlightRelated(g.getAttribute('data-id')); }
     });
     svg.addEventListener('mouseout', e=>{
-      const g = e.target.closest && e.target.closest('.map-node'); if(!g) return;
+      const g = e.target.closest && e.target.closest('.map-node, .net-node'); if(!g) return;
       if (e.relatedTarget && g.contains(e.relatedTarget)) return; // moving within same node
       mapHoverHide(); mapClearHighlight();
     });
+    // Right-click anywhere in the network frame → switch the placement
+    // algorithm. Bound to the VIEWPORT (the whole right pane), not just the SVG,
+    // so the empty space around a fitted/smaller map still opens the menu.
+    const vp = svg.closest('.map-viewport') || document.getElementById(_mapCtx.viewport);
+    if (vp && !vp.dataset.netCtxWired){
+      vp.dataset.netCtxWired = '1';
+      vp.addEventListener('contextmenu', e=>{
+        if (_mapLayer !== 'network') return;                       // only the network layer has layouts
+        if (e.target.closest && e.target.closest('.net-node')) return; // not on a node — background only
+        e.preventDefault();
+        _netShowLayoutMenu(e.clientX, e.clientY);
+      });
+    }
     // Re-measure & relayout when the theme (body class) changes — a different
     // font family (e.g. tron-legacy's wide Orbitron) needs new box sizes.
     const relayout = ()=>{ if(!_mapData) return;
@@ -32957,16 +33092,18 @@ function runReplicationTask(id, name) {
     top =Math.max(8, Math.min(top,  window.innerHeight-ch-8));
     c.style.left=left+'px'; c.style.top=top+'px'; c.style.visibility='';
   }
+  // Pick the hovercard HTML for the active layer.
+  function _hoverHTML(id){ return (_mapLayer==='network') ? netHoverHTML(id) : mapHoverHTML(id); }
   function mapHoverShow(id, g){
     if(id===_mapHoverId) return;          // already showing this node
     _mapStopIo();                         // tear down any previous live iostat stream
-    const html=mapHoverHTML(id);
+    const html=_hoverHTML(id);
     if(!html){ mapHoverHide(); return; }
     _mapHoverId=id; _mapHoverEl=g;
     const c=_mapCardEl(); c.innerHTML=html;
     _mapPositionCard(c, g);
     _mapMaybeFetchVm(id);
-    _mapStartIoFor(id);                   // pool/dataset → live zpool iostat charts
+    if(_mapLayer!=='network') _mapStartIoFor(id);  // pool/dataset → live zpool iostat charts (storage only)
   }
   // Rebuild the open card from latest data (called on each poll) without moving
   // to a different node. Skipped for objects showing live iostat charts, so the
@@ -32975,12 +33112,20 @@ function runReplicationTask(id, name) {
     if(!_mapHoverId || !_mapHoverEl) return;
     if(_mapIo && _mapIo.active) return;
     const c=document.getElementById('map-hovercard'); if(!c || c.classList.contains('hidden')) return;
-    const html=mapHoverHTML(_mapHoverId); if(!html) return;
+    const html=_hoverHTML(_mapHoverId); if(!html) return;
     c.innerHTML=html; _mapPositionCard(c, _mapHoverEl);
   }
-  function _mapMaybeFetchVm(id){
+  // Resolve the VM/CT name a hovered node id refers to, in either layer.
+  function _hoverInstanceName(id){
     const c=_mapData && (_mapData.consumers||[]).find(x=>x.id===id);
-    if(c && (c.type==='vm'||c.type==='container')) mapFetchVmMetrics(c.name);
+    if(c && (c.type==='vm'||c.type==='container')) return c.name;
+    const i=_mapData && _mapData.net && (_mapData.net.instances||[]).find(x=>x.id===id);
+    if(i && (i.type==='vm'||i.type==='container')) return i.name;
+    return null;
+  }
+  function _mapMaybeFetchVm(id){
+    const name=_hoverInstanceName(id);
+    if(name) mapFetchVmMetrics(name);
   }
 
   // ---- live zpool iostat charts (pool / dataset / zvol hovercards) ----
@@ -33050,9 +33195,72 @@ function runReplicationTask(id, name) {
       const r=await fetch('/api/map/instance-metrics?name='+encodeURIComponent(name),{credentials:'same-origin'});
       if(!r.ok) return;
       _mapVmMetrics[name]=await r.json();
-      const c=_mapData && (_mapData.consumers||[]).find(x=>x.id===_mapHoverId);
-      if(c && c.name===name) mapHoverRender();
+      if(_mapHoverId && _hoverInstanceName(_mapHoverId)===name) mapHoverRender();
     }catch(e){}
+  }
+
+  // Network-layer hovercard: bridge / instance (with live CPU·mem·fs metrics,
+  // same as the storage layer) / docker container.
+  function netHoverHTML(id){
+    const net=(_mapData && _mapData.net) || {};
+    const b=(net.bridges||[]).find(x=>x.id===id);
+    if(b) return _mhc(b.managed?'managed bridge':'bridge','🌉', b.name, 'var(--map-pool)',
+      [ _mhcRow('Type', b.managed?'Incus-managed':'Host bridge') ],
+      [ _mhcMetric('▼ Rx', netMbps(b.rx_mbps)+' Mbps'), _mhcMetric('▲ Tx', netMbps(b.tx_mbps)+' Mbps') ]);
+    const i=(net.instances||[]).find(x=>x.id===id);
+    if(i){
+      const info=[ _mhcRow('State', i.state||'—'), _mhcRow('Type', i.type==='vm'?'Virtual machine':'Container') ];
+      const m=_mapVmMetrics[i.name];
+      let metrics;
+      if(m){
+        metrics=[ _mhcCpu(m.cpu_pct), _mhcUsage('Memory', m.mem_usage, m.mem_total) ];
+        (m.disks||[]).forEach(dk=> metrics.push(_mhcUsage(dk.name==='root'?'Filesystem':('FS · '+dk.name), dk.usage, dk.total)));
+        if(m.processes) info.push(_mhcRow('Processes', String(m.processes)));
+      } else {
+        metrics=[ `<div class="mhc-load">reading live metrics…</div>` ];
+      }
+      return _mhc(i.type==='vm'?'virtual machine':'container', i.type==='vm'?'🖥':'📦', i.name, 'var(--map-vm)', info, metrics);
+    }
+    const dk=(net.docker||[]).find(x=>x.id===id);
+    if(dk){ const st=_dockDotState(dk);
+      const hue = st==='up' ? '#3fb950' : (st==='warn' ? '#d29922' : '#f85149');
+      return _mhc('docker container','🐳', dk.name, hue,
+        [ _mhcRow('Status', dk.status||dk.state||'—'), _mhcRow('Image', dk.image||'—'),
+          (dk.ports&&dk.ports.length)?_mhcRow('Ports', netPortsLine(dk.ports)):'' ], []); }
+    return '';
+  }
+
+  // Right-click background menu to switch the network placement algorithm.
+  function _netShowLayoutMenu(x, y){
+    const old=document.getElementById('net-layout-menu'); if(old) old.remove();
+    const menu=document.createElement('div');
+    menu.id='net-layout-menu';
+    menu.style.cssText='position:fixed;z-index:99999;min-width:188px;background:var(--surface,#1a1a1f);'
+      +'border:1px solid var(--border,#333);border-radius:8px;padding:5px;'
+      +'box-shadow:0 8px 24px rgba(0,0,0,.5);font-size:13px;user-select:none;';
+    const close=()=>{ menu.remove(); document.removeEventListener('click', close, true); document.removeEventListener('contextmenu', close, true); };
+    const head=document.createElement('div');
+    head.textContent='Placement';
+    head.style.cssText='padding:4px 10px 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3,#888);';
+    menu.appendChild(head);
+    [['hierarchy','▤ Hierarchy (compact)'],['radial','✷ Star / radial'],['grid','▦ Grid']].forEach(([val,label])=>{
+      const it=document.createElement('div');
+      it.textContent=(_netLayout===val?'● ':'   ')+label;
+      it.style.cssText='padding:6px 12px;border-radius:5px;white-space:nowrap;cursor:pointer;color:var(--text-1,#e2e2e6);';
+      it.onmouseenter=()=>{ it.style.background='rgba(124,124,255,0.18)'; };
+      it.onmouseleave=()=>{ it.style.background='transparent'; };
+      it.onclick=()=>{ close(); if(val!==_netLayout){ _netLayout=val;
+        try{ localStorage.setItem('znasNetLayout', val); }catch(e){}
+        _netFitted['map-svg']=false; _netFitted['vmtopo-svg']=false; // re-fit the new layout
+        _mapSig=''; if(_mapData) renderMap(_mapData); } };
+      menu.appendChild(it);
+    });
+    document.body.appendChild(menu);
+    let px=x, py=y; const w=menu.offsetWidth, h=menu.offsetHeight;
+    if(px+w>window.innerWidth)  px=Math.max(6, window.innerWidth-w-6);
+    if(py+h>window.innerHeight) py=Math.max(6, window.innerHeight-h-6);
+    menu.style.left=px+'px'; menu.style.top=py+'px';
+    setTimeout(()=>{ document.addEventListener('click', close, true); document.addEventListener('contextmenu', close, true); }, 0);
   }
 
   const _mhcRow    = (l,v)=> `<div class="mhc-row"><span>${mapEsc(l)}</span><b>${mapEsc(v)}</b></div>`;
@@ -33164,6 +33372,126 @@ function runReplicationTask(id, name) {
     if (btn) btn.textContent = hud ? 'HUD' : 'Flat';
   };
 
+  // ── Topology layer switch (Storage & Compute ↔ Networking) ──────────────────
+  // Persisted so a refresh keeps the chosen layer. setMapLayer updates the
+  // toolbar buttons + legends on BOTH map surfaces and forces a relayout.
+  let _mapLayer = (function(){
+    try { return localStorage.getItem('znasMapLayer') === 'network' ? 'network' : 'storage'; }
+    catch(e){ return 'storage'; }
+  })();
+  let _netFocusInst = null; // when on the per-instance Topology tab, focus this id
+  window.setMapLayer = function(layer){
+    layer = (layer === 'network') ? 'network' : 'storage';
+    _mapLayer = layer;
+    try { localStorage.setItem('znasMapLayer', layer); } catch(e){}
+    document.querySelectorAll('.map-layer-btn').forEach(b => b.classList.toggle('active', b.dataset.ml === layer));
+    document.querySelectorAll('.map-legend-storage').forEach(el => el.style.display = (layer === 'storage') ? '' : 'none');
+    document.querySelectorAll('.map-legend-net').forEach(el => el.style.display = (layer === 'network') ? '' : 'none');
+    // Re-fit the entered layer to the viewport each time it's switched to.
+    if (layer === 'network'){ _netFitted['map-svg'] = false; _netFitted['vmtopo-svg'] = false; }
+    else { _storeFitted['map-svg'] = false; _storeFitted['vmtopo-svg'] = false; }
+    _mapSig = ''; // force a full relayout on the next render
+    if (_mapData) renderMap(_mapData);
+  };
+  // Reflect the persisted layer on the toolbar as soon as the DOM is ready.
+  function _mapSyncLayerUI(){
+    document.querySelectorAll('.map-layer-btn').forEach(b => b.classList.toggle('active', b.dataset.ml === _mapLayer));
+    document.querySelectorAll('.map-legend-storage').forEach(el => el.style.display = (_mapLayer === 'storage') ? '' : 'none');
+    document.querySelectorAll('.map-legend-net').forEach(el => el.style.display = (_mapLayer === 'network') ? '' : 'none');
+  }
+
+  // ── Zoom (mouse wheel + ctrl/⌘-wheel + trackpad/touch pinch + buttons) ───────
+  // The SVG renders at its natural size (W×H stored on dataset.natW/natH) inside a
+  // scrolling viewport. Zooming sets the SVG element's width/height to nat·z so the
+  // viewport's scrollbars track the scaled content; the scroll offset is adjusted
+  // to keep the focal point (cursor / pinch midpoint / viewport centre) anchored.
+  const MAP_ZMIN = 0.3, MAP_ZMAX = 4;
+  const _mapZoomState = {}; // svgId → scale
+  const _netFitted = {};    // svgId → true once the network layer has auto-fit it
+  const _storeFitted = {};  // svgId → true once the storage layer has auto-fit it
+  // Network placement algorithm (right-click the map background to switch).
+  let _netLayout = (function(){ try { const v=localStorage.getItem('znasNetLayout');
+    return (v==='radial'||v==='hierarchy'||v==='grid')?v:'hierarchy'; } catch(e){ return 'hierarchy'; } })();
+  function _mapGetZoom(svgId){ return _mapZoomState[svgId] || 1; }
+  function _mapZoomLabelId(svgId){ return svgId.replace('-svg','') + '-zoom-lvl'; }
+  function _mapUpdateZoomLabel(svgId){
+    const el = document.getElementById(_mapZoomLabelId(svgId));
+    if (el) el.textContent = Math.round(_mapGetZoom(svgId)*100) + '%';
+  }
+  // Re-apply the stored zoom to an SVG (called after every full relayout, which
+  // resets width/height to natural). Safe to call before a render has happened.
+  function _mapApplyZoom(svg){
+    if (!svg) return;
+    const nw = parseFloat(svg.dataset.natW||'0'), nh = parseFloat(svg.dataset.natH||'0');
+    const z = _mapGetZoom(svg.id);
+    if (nw>0 && nh>0){ svg.setAttribute('width', Math.round(nw*z)); svg.setAttribute('height', Math.round(nh*z)); }
+    _mapUpdateZoomLabel(svg.id);
+  }
+  // Zoom to a target scale, anchoring on a viewport-relative focal point. focalX/Y
+  // are clientX/clientY (page coords); omitted ⇒ viewport centre.
+  function _mapZoomTo(svgId, newZ, focalX, focalY){
+    const svg = document.getElementById(svgId); if (!svg) return;
+    const vp  = svg.closest('.map-viewport') || svg.parentElement; if (!vp) return;
+    newZ = Math.max(MAP_ZMIN, Math.min(MAP_ZMAX, newZ));
+    const old = _mapGetZoom(svgId);
+    if (Math.abs(newZ-old) < 0.001) return;
+    const rect = vp.getBoundingClientRect();
+    const fx = (focalX==null) ? rect.width/2  : (focalX - rect.left);
+    const fy = (focalY==null) ? rect.height/2 : (focalY - rect.top);
+    const cx = (vp.scrollLeft + fx) / old;
+    const cy = (vp.scrollTop  + fy) / old;
+    _mapZoomState[svgId] = newZ;
+    _mapApplyZoom(svg);
+    vp.scrollLeft = cx*newZ - fx;
+    vp.scrollTop  = cy*newZ - fy;
+  }
+  // Toolbar buttons: dir −1 out, +1 in, 0 reset to 100%.
+  window.mapZoom = function(svgId, dir){
+    if (dir === 0){ _mapZoomTo(svgId, 1); return; }
+    _mapZoomTo(svgId, _mapGetZoom(svgId) * (dir>0 ? 1.2 : 1/1.2));
+  };
+  // Wire wheel + touch gestures once per viewport.
+  function _mapEnsureZoom(svgId, vpId){
+    const vp = document.getElementById(vpId);
+    if (!vp || vp.dataset.zoomWired) return;
+    vp.dataset.zoomWired = '1';
+    // Ctrl/⌘ + wheel zooms toward the cursor; trackpad pinch arrives as ctrl+wheel
+    // in every modern browser. Plain wheel keeps native scrolling.
+    vp.addEventListener('wheel', (e)=>{
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 1/1.12;
+      _mapZoomTo(svgId, _mapGetZoom(svgId)*factor, e.clientX, e.clientY);
+    }, {passive:false});
+    // Touch: one finger pans, two fingers pinch-zoom (iPad/iPhone). touch-action:none
+    // on .map-viewport hands us full control so the page never pinch-zooms instead.
+    let pinch=null, pan=null;
+    const dist = (t)=> Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+    const mid  = (t)=> ({x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2});
+    vp.addEventListener('touchstart', (e)=>{
+      if (e.touches.length === 2){
+        pan=null; pinch={ d0:dist(e.touches), z0:_mapGetZoom(svgId) }; e.preventDefault();
+      } else if (e.touches.length === 1){
+        const t=e.touches[0]; pan={ x:t.clientX, y:t.clientY, sl:vp.scrollLeft, st:vp.scrollTop };
+      }
+    }, {passive:false});
+    vp.addEventListener('touchmove', (e)=>{
+      if (e.touches.length === 2 && pinch){
+        e.preventDefault();
+        const m = mid(e.touches);
+        _mapZoomTo(svgId, pinch.z0 * (dist(e.touches)/pinch.d0), m.x, m.y);
+      } else if (e.touches.length === 1 && pan){
+        e.preventDefault();
+        const t=e.touches[0];
+        vp.scrollLeft = pan.sl - (t.clientX - pan.x);
+        vp.scrollTop  = pan.st - (t.clientY - pan.y);
+      }
+    }, {passive:false});
+    const endTouch = (e)=>{ if (e.touches.length < 2) pinch=null; if (e.touches.length === 0) pan=null; };
+    vp.addEventListener('touchend', endTouch);
+    vp.addEventListener('touchcancel', endTouch);
+  }
+
   async function pollMap(){
     // offsetParent is null when the panel itself (display:none) or any ancestor
     // page is hidden — covers both the .hidden capacity tab and the display:none
@@ -33194,6 +33522,7 @@ function runReplicationTask(id, name) {
   let _vmTopoDockerLoaded = false; // first probe has returned (success/empty/denied)
   let _vmTopoDockerTimer = null;
   window.startVmTopology = function(instId){
+    _netFocusInst = instId; // Networking Layer focuses this instance on the CI tab
     _vmTopoPinned = null; _vmTopoDocker = []; _vmTopoDockerLoaded = false;
     if (_vmTopoDockerTimer){ clearInterval(_vmTopoDockerTimer); _vmTopoDockerTimer = null; }
     const instName = instId.slice(instId.indexOf(':')+1);
@@ -33292,6 +33621,7 @@ function runReplicationTask(id, name) {
       datasets:  merge(pinned.datasets, ['used','avail','encrypted']),
       consumers: merge(pinned.consumers,['state','clients','rate_kbps']),
       remotes:   pinned.remotes,        // remotes carry no live metrics here
+      net:       fresh.net || pinned.net, // Networking Layer keeps its own relayout signature
       ts:        fresh.ts,
     };
   }
@@ -33337,6 +33667,7 @@ function runReplicationTask(id, name) {
       datasets: (data.datasets||[]).filter(d=>keepDs.has(d.id)),
       consumers:(data.consumers||[]).filter(c=>keepC.has(c.id)),
       remotes:  [], // fellow consumers of a shared mount are intentionally excluded
+      net:      data.net, // Networking Layer filters to the focused instance itself
       ts:       data.ts,
     };
   }
@@ -33435,6 +33766,20 @@ function runReplicationTask(id, name) {
     return '•';
   }
 
+  // Hide the "Networking Layer" switch button when virtualization is off, and
+  // force the storage layer if it was the persisted choice (#1).
+  function _mapApplyVirtGate(data){
+    const virt = !!(data && data.server && data.server.virt_enabled);
+    document.querySelectorAll('.map-layer-btn[data-ml="network"]').forEach(b => { b.style.display = virt ? '' : 'none'; });
+    if (!virt && _mapLayer === 'network'){
+      _mapLayer = 'storage';
+      try { localStorage.setItem('znasMapLayer', 'storage'); } catch(e){}
+      document.querySelectorAll('.map-layer-btn').forEach(b => b.classList.toggle('active', b.dataset.ml === 'storage'));
+      document.querySelectorAll('.map-legend-storage').forEach(el => el.style.display = '');
+      document.querySelectorAll('.map-legend-net').forEach(el => el.style.display = 'none');
+    }
+  }
+
   // ---- layout + render ----
   function renderMap(data){
     _mapData = data; // for click dispatch
@@ -33442,6 +33787,17 @@ function runReplicationTask(id, name) {
     const empty = document.getElementById(_mapCtx.empty);
     const status= document.getElementById(_mapCtx.status);
     if (!svg) return;
+
+    // #1: the Networking Layer only exists when virtualization is enabled. On a
+    // pure-storage host, hide its switch button and fall back to the Storage &
+    // Compute layer so the user never lands on an empty network view.
+    _mapApplyVirtGate(data);
+
+    // ── Networking Layer takes a completely different (radial) layout ────────
+    if (_mapLayer === 'network'){
+      renderNetMap(svg, empty, status, data);
+      return;
+    }
 
     if (!data.pools || data.pools.length === 0){
       if (empty) empty.classList.remove('hidden');
@@ -33452,13 +33808,15 @@ function runReplicationTask(id, name) {
     }
     if (empty) empty.classList.add('hidden');
 
-    // Signature of the *set* of nodes — relayout only when it changes.
+    // Signature of the *set* of nodes — relayout only when it changes. Each
+    // array is guarded (||[]) because a standalone host marshals empty slices as
+    // null, and an unguarded .map() on null would throw and blank the whole map.
     const sig = [
-      data.pools.map(p=>p.id),
-      data.disks.map(d=>d.id+':'+d.pool_id),
-      data.datasets.map(d=>d.id+':'+d.pool_id),
-      data.consumers.map(c=>c.id+':'+(c.dataset_ids||[]).join('+')+'>'+(c.client_of||[]).join('+')),
-      data.remotes.map(r=>r.id+':'+(r.consumer_ids||[]).join('+'))
+      (data.pools||[]).map(p=>p.id),
+      (data.disks||[]).map(d=>d.id+':'+d.pool_id),
+      (data.datasets||[]).map(d=>d.id+':'+d.pool_id),
+      (data.consumers||[]).map(c=>c.id+':'+(c.dataset_ids||[]).join('+')+'>'+(c.client_of||[]).join('+')),
+      (data.remotes||[]).map(r=>r.id+':'+(r.consumer_ids||[]).join('+'))
     ].map(a=>a.join(',')).join('|');
 
     if (sig !== _mapSig){
@@ -33471,6 +33829,438 @@ function runReplicationTask(id, name) {
       const ts = new Date((data.ts||0)*1000);
       status.textContent = 'live · ' + ts.toLocaleTimeString();
     }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // NETWORKING LAYER — radial render
+  //
+  // Bridges are glowing hubs. Each instance attached to a bridge orbits it on a
+  // straight spoke (no orthogonal jogs). An instance that runs docker containers
+  // gets a smaller ring of container nodes around it, each listing the TCP/UDP
+  // ports it publishes on 0.0.0.0. Live bandwidth (Mb/s) rides on every bridge↔
+  // instance spoke and on the hub. Each bridge gets its own hue; spokes animate
+  // a dashed flow whose speed scales with traffic.
+  // ════════════════════════════════════════════════════════════════════════
+  const NET = { INST_GAP:10, DOCK_GAP:6, CLUSTER_GAP:16 };
+  const NET_HUES = [190, 280, 332, 45, 152, 14, 222, 96, 258, 168];
+
+  function netMbps(m){
+    m = Number(m)||0;
+    if (m >= 1000) return (m/1000).toFixed(1)+' Gb/s';
+    if (m >= 1)    return m.toFixed(1)+' Mb/s';
+    if (m >= 0.01) return (m*1000).toFixed(0)+' Kb/s';
+    return '·';
+  }
+  function netPortsLine(ports){
+    ports = ports || [];
+    const tcp = ports.filter(p=>p.proto==='tcp').map(p=>p.port).sort((a,b)=>a-b);
+    const udp = ports.filter(p=>p.proto==='udp').map(p=>p.port).sort((a,b)=>a-b);
+    const parts = [];
+    if (tcp.length) parts.push('tcp '+tcp.slice(0,6).join(',')+(tcp.length>6?'…':''));
+    if (udp.length) parts.push('udp '+udp.slice(0,6).join(',')+(udp.length>6?'…':''));
+    return parts.join('  ');
+  }
+  // Generic box measurement reusing the storage layer's font-aware _tw/wrapName.
+  function netMeasure(icon, name, subs){
+    const lines = wrapName(name);
+    let w = 0;
+    lines.forEach((ln,i)=> w = Math.max(w, _tw((i===0?icon+' ':'')+ln, 11, true)));
+    (subs||[]).forEach(s=> w = Math.max(w, _tw(s, 9.5, false)));
+    const cleanSubs = (subs||[]).filter(Boolean);
+    const rows = lines.length + cleanSubs.length;
+    return { lines, subs:cleanSubs,
+             w: Math.round(Math.max(58, Math.min(210, w+14))),
+             h: 16 + (rows-1)*14 + 7 };
+  }
+  function netNodeMarkup(o){
+    const x = o.cx - o.w/2, y = o.cy - o.h/2;
+    let title = `<text class="net-node-title">`;
+    o.lines.forEach((ln,i)=>{
+      const t = (i===0 ? (o.icon?o.icon+' ':'') : '') + ln;
+      title += `<tspan x="9" ${i===0?`y="16"`:`dy="14"`}>${mapEsc(t)}</tspan>`;
+    });
+    title += `</text>`;
+    let subs = '';
+    let sy = 16 + o.lines.length*14;
+    (o.subs||[]).forEach((s,i)=>{
+      subs += `<text class="net-node-sub" x="9" y="${sy+i*14}" data-role="sub${i||''}">${mapEsc(s)}</text>`;
+    });
+    const dot = o.dot ? `<circle class="net-dock-dot" data-role="dock" cx="${(o.w-10).toFixed(1)}" cy="10" r="4.5"/>` : '';
+    const hue = (o.hue!=null) ? ` style="--h:${o.hue}"` : '';
+    const tip = o.tip ? `<title>${mapEsc(o.tip)}</title>` : '';
+    return `<g class="net-node ${o.cls}" data-id="${mapEsc(o.id)}" transform="translate(${x.toFixed(1)},${y.toFixed(1)})"${hue}>`
+      + `<rect class="net-node-bg" width="${o.w}" height="${o.h}" rx="9"/>`
+      + `<rect class="net-node-scan" width="${o.w}" height="3" rx="2"/>`
+      + tip + title + subs + dot + `</g>`;
+  }
+  function netSpokeMarkup(id, x1, y1, x2, y2, hue, kind){
+    const mx = ((x1+x2)/2).toFixed(1), my = ((y1+y2)/2 - 4).toFixed(1);
+    const coords = `x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"`;
+    const lbl = (kind==='nic')
+      ? `<text class="net-spoke-label" data-role="rate" x="${mx}" y="${my}" text-anchor="middle"></text>` : '';
+    return `<g class="net-spokeg net-spoke-${kind}" data-id="${mapEsc(id)}" style="--h:${hue}">`
+      + `<line class="net-spoke-rail" ${coords}/>`
+      + `<line class="net-spoke" data-role="flow" ${coords}/>`
+      + lbl + `</g>`;
+  }
+  function _dockDotState(d){
+    const st=(d.state||'').toLowerCase(), txt=(d.status||'').toLowerCase();
+    if (st==='running') return (txt.indexOf('unhealthy')>=0 || txt.indexOf('health: starting')>=0) ? 'warn' : 'up';
+    if (st==='restarting'||st==='paused'||st==='created') return 'warn';
+    return 'down';
+  }
+
+  // Build {pairs, instBridges} from the nic list — one entry per (instance,
+  // bridge), summing bandwidth across multiple NICs on the same pair.
+  function netPairs(net){
+    const instById = {}; (net.instances||[]).forEach(i=>instById[i.id]=i);
+    const pair = {};        // "inst|bridge" -> {rx,tx,instance_id,bridge_id}
+    const instBridges = {}; // instId -> [bridgeId,...] (unique, encounter order)
+    (net.nics||[]).forEach(n=>{
+      if (!instById[n.instance_id]) return;
+      const key = n.instance_id+'|'+n.bridge_id;
+      if (pair[key]){ pair[key].rx += (n.rx_mbps||0); pair[key].tx += (n.tx_mbps||0); return; }
+      pair[key] = { rx:n.rx_mbps||0, tx:n.tx_mbps||0, instance_id:n.instance_id, bridge_id:n.bridge_id };
+      (instBridges[n.instance_id] = instBridges[n.instance_id]||[]).push(n.bridge_id);
+    });
+    return { pair, instBridges, instById };
+  }
+
+  // ── Placement algorithms ────────────────────────────────────────────────
+  // Each receives the measured node sets and assigns __cx/__cy/__hue, returning
+  // the content bounds {W,H}. Bridge hues are pre-assigned by the caller.
+
+  // Radial / "star": each bridge is a hub with its instances on a ring and the
+  // docker fanned around each instance. Clusters are shelf-packed.
+  function _netPlaceRadial(bridges, instances, docker, briBox, instBox, dockBox, dockByInst, instOnBridge, instById){
+    const cellInfo={};
+    instances.forEach(i=>{
+      const ib=instBox[i.id], instR=Math.hypot(ib.w,ib.h)/2;
+      const kids=dockByInst[i.id]||[];
+      if (!kids.length){ cellInfo[i.id]={r2:0, cellR:instR}; return; }
+      let maxKid=0; kids.forEach(k=> maxKid=Math.max(maxKid, Math.hypot(dockBox[k.id].w,dockBox[k.id].h)/2));
+      const need = kids.length*(2*maxKid+NET.DOCK_GAP);
+      const r2 = Math.max(instR+maxKid+8, need/(2*Math.PI));
+      cellInfo[i.id]={ r2, cellR:r2+maxKid };
+    });
+    const clusterInfo={};
+    bridges.forEach(b=>{
+      const insts=instOnBridge[b.id], bb=briBox[b.id], hubR=Math.hypot(bb.w,bb.h)/2;
+      if (!insts.length){ clusterInfo[b.id]={hubR, riById:{}, clusterR:hubR+14}; return; }
+      const n=insts.length, sinStep=Math.sin(Math.PI/Math.max(2,n));
+      const riById={}; let clusterR=hubR+14;
+      insts.forEach(id=>{
+        const cr=cellInfo[id].cellR;
+        const ri=Math.max(hubR+cr+6, (cr+NET.INST_GAP/2)/sinStep);
+        riById[id]=ri; clusterR=Math.max(clusterR, ri+cr);
+      });
+      clusterInfo[b.id]={ hubR, riById, clusterR };
+    });
+    const cellW = b => 2*clusterInfo[b.id].clusterR + NET.CLUSTER_GAP;
+    let sumArea=0, widest=0;
+    bridges.forEach(b=>{ const w=cellW(b); sumArea+=w*w; widest=Math.max(widest,w); });
+    const targetW = Math.max(widest, Math.sqrt(sumArea)*1.04);
+    const packRows=[]; let curRow=[], curW=0;
+    bridges.forEach(b=>{
+      const w=cellW(b);
+      if (curRow.length && curW+w>targetW){ packRows.push(curRow); curRow=[]; curW=0; }
+      curRow.push(b); curW+=w;
+    });
+    if (curRow.length) packRows.push(curRow);
+    const HEADER=34; let y=HEADER, W=300;
+    packRows.forEach(rw=>{
+      let rowH=0; rw.forEach(b=> rowH=Math.max(rowH, 2*clusterInfo[b.id].clusterR));
+      let x=NET.CLUSTER_GAP/2;
+      rw.forEach(b=>{ const cr=clusterInfo[b.id].clusterR;
+        b.__cx=x+cr; b.__cy=y+rowH/2; x += 2*cr + NET.CLUSTER_GAP; });
+      W=Math.max(W, x);
+      y += rowH + NET.CLUSTER_GAP;
+    });
+    bridges.forEach(b=>{
+      const insts=instOnBridge[b.id]; const ci=clusterInfo[b.id];
+      insts.forEach((id,k)=>{
+        const ang=(k/Math.max(1,insts.length))*2*Math.PI - Math.PI/2;
+        const i=instById[id]; const Ri=ci.riById[id];
+        i.__cx=b.__cx+Ri*Math.cos(ang); i.__cy=b.__cy+Ri*Math.sin(ang);
+        i.__hue=b.__hue; i.__ang=ang;
+        const kids=dockByInst[id]||[]; const r2=cellInfo[id].r2;
+        kids.forEach((d,j)=>{
+          const da=ang + (j - (kids.length-1)/2)*(2*Math.PI/Math.max(8,kids.length*1.6));
+          d.__cx=i.__cx+r2*Math.cos(da); d.__cy=i.__cy+r2*Math.sin(da); d.__hue=b.__hue;
+        });
+      });
+    });
+    return { W, H:y+8 };
+  }
+
+  // Hierarchy / layered: bridges on a top row, their instances on a middle row,
+  // docker on a bottom row directly under each instance. Far more space
+  // efficient than the radial hubs — many icons fit without deep zoom-out.
+  function _netPlaceHierarchy(bridges, instances, docker, briBox, instBox, dockBox, dockByInst, instOnBridge, instById){
+    const HGAP=14, GROUP_GAP=30, PAD=18, ROW_GAP=52, HEADER=40;
+    let maxBriH=0, maxInstH=0, maxDockH=0;
+    bridges.forEach(b=> maxBriH=Math.max(maxBriH, briBox[b.id].h));
+    instances.forEach(i=> maxInstH=Math.max(maxInstH, instBox[i.id].h));
+    docker.forEach(d=> maxDockH=Math.max(maxDockH, dockBox[d.id].h));
+    const hasDock = docker.length>0;
+    const briCY  = HEADER + maxBriH/2;
+    const instCY = briCY + maxBriH/2 + ROW_GAP + maxInstH/2;
+    const dockCY = instCY + maxInstH/2 + ROW_GAP + maxDockH/2;
+    let x = PAD, W = 0;
+    bridges.forEach(b=>{
+      const insts = instOnBridge[b.id];
+      const groupStart = x;
+      if (!insts.length){ // bridge whose instances live under another (secondary links only)
+        b.__cx = x + briBox[b.id].w/2; b.__cy = briCY;
+        x += briBox[b.id].w + GROUP_GAP; W = Math.max(W, x); return;
+      }
+      insts.forEach(id=>{
+        const kids = dockByInst[id]||[];
+        let dockW=0; kids.forEach(d=> dockW += dockBox[d.id].w + HGAP); if (kids.length) dockW -= HGAP;
+        const cellW = Math.max(instBox[id].w, dockW);
+        const cx = x + cellW/2;
+        const i = instById[id];
+        i.__cx = cx; i.__cy = instCY; i.__hue = b.__hue;
+        let dxx = cx - dockW/2;
+        kids.forEach(d=>{ const w=dockBox[d.id].w; d.__cx = dxx + w/2; d.__cy = dockCY; d.__hue = b.__hue; dxx += w + HGAP; });
+        x += cellW + HGAP;
+      });
+      const groupEnd = x - HGAP;
+      b.__cx = (groupStart + groupEnd)/2; b.__cy = briCY;
+      x += GROUP_GAP; W = Math.max(W, groupEnd);
+    });
+    const H = (hasDock ? dockCY + maxDockH/2 : instCY + maxInstH/2) + PAD;
+    return { W: Math.max(300, W + PAD), H };
+  }
+
+  // Grid: ignore hierarchy and tile every node in a dense grid (bridges, then
+  // instances, then docker), sorted, for the densest possible packing.
+  function _netPlaceGrid(bridges, instances, docker, briBox, instBox, dockBox, dockByInst, instOnBridge, instById){
+    const GAP=14, PAD=18, HEADER=40;
+    // Colour consistency: instance inherits its home bridge's hue, docker its
+    // instance's hue.
+    const homeHue={};
+    bridges.forEach(b=> (instOnBridge[b.id]||[]).forEach(id=> homeHue[id]=b.__hue));
+    instances.forEach(i=>{ if(homeHue[i.id]!=null) i.__hue=homeHue[i.id]; });
+    docker.forEach(d=>{ const i=instById[d.instance_id]; if(i) d.__hue=i.__hue; });
+    const all = [];
+    bridges.forEach(b=> all.push({n:b, box:briBox[b.id]}));
+    instances.forEach(i=> all.push({n:i, box:instBox[i.id]}));
+    docker.forEach(d=> all.push({n:d, box:dockBox[d.id]}));
+    const maxW = all.reduce((m,o)=>Math.max(m,o.box.w),0);
+    const maxH = all.reduce((m,o)=>Math.max(m,o.box.h),0);
+    const cols = Math.max(1, Math.ceil(Math.sqrt(all.length* (maxH/maxW||1))));
+    let W=0;
+    all.forEach((o,idx)=>{
+      const r=Math.floor(idx/cols), c=idx%cols;
+      o.n.__cx = PAD + c*(maxW+GAP) + maxW/2;
+      o.n.__cy = HEADER + r*(maxH+GAP) + maxH/2;
+      W = Math.max(W, o.n.__cx + maxW/2);
+    });
+    const rows = Math.ceil(all.length/cols);
+    return { W: Math.max(300, W + PAD), H: HEADER + rows*(maxH+GAP) + PAD };
+  }
+
+  function netFullRender(svg, net){
+    _mapFontFamily = getComputedStyle(document.body).fontFamily || _mapFontFamily;
+    const { pair, instBridges, instById } = netPairs(net);
+    // Deterministic order by id so the SAME node set always lays out identically
+    // — a metric-only refresh never reshuffles the topology (backend map
+    // iteration order is otherwise random). Also drop anything not connected to
+    // anything: bridges with no NIC, instances with no bridge, and docker whose
+    // owning instance was dropped.
+    const byId=(a,b)=> a.id<b.id?-1:a.id>b.id?1:0;
+    const liveBridges=new Set(), liveInsts=new Set();
+    Object.keys(pair).forEach(k=>{ liveBridges.add(pair[k].bridge_id); liveInsts.add(pair[k].instance_id); });
+    const bridges = (net.bridges||[]).filter(b=>liveBridges.has(b.id)).sort(byId);
+    const instances = (net.instances||[]).filter(i=>liveInsts.has(i.id)).sort(byId);
+    const keptInst = new Set(instances.map(i=>i.id));
+    const docker = (net.docker||[]).filter(d=>keptInst.has(d.instance_id)).sort(byId);
+
+    const dockByInst = {};
+    docker.forEach(d=>{ (dockByInst[d.instance_id] = dockByInst[d.instance_id]||[]).push(d); });
+
+    // Home bridge = first bridge each instance connects to; the instance is laid
+    // out around its home, with extra spokes drawn to any other bridges.
+    const instOnBridge = {}; bridges.forEach(b=> instOnBridge[b.id]=[]);
+    instances.forEach(i=>{
+      const home = (instBridges[i.id]||[])[0];
+      if (home && instOnBridge[home]) instOnBridge[home].push(i.id);
+    });
+
+    // Measure all boxes.
+    const briBox={}, instBox={}, dockBox={};
+    bridges.forEach(b=> briBox[b.id]=netMeasure('🌉', b.name, [netMbps((b.rx_mbps||0)+(b.tx_mbps||0))]));
+    instances.forEach(i=> instBox[i.id]=netMeasure(i.type==='vm'?'🖥':'📦', i.name, [i.state||'']));
+    docker.forEach(d=> dockBox[d.id]=netMeasure('🐳', d.name, [netPortsLine(d.ports)]));
+
+    // Bridge accent hues + lookup, shared by every placement algorithm
+    // (instances/docker inherit their home bridge's hue).
+    bridges.forEach((b,idx)=> b.__hue=NET_HUES[idx%NET_HUES.length]);
+    const briById={}; bridges.forEach(b=> briById[b.id]=b);
+    instances.forEach(i=>{ i.__cx=null; i.__cy=null; });
+    docker.forEach(d=>{ d.__cx=null; d.__cy=null; });
+
+    // Dispatch to the chosen placement algorithm; each sets every node's
+    // __cx/__cy/__hue and returns the content bounds {W,H}.
+    const args=[bridges, instances, docker, briBox, instBox, dockBox, dockByInst, instOnBridge, instById];
+    const { W, H } = (_netLayout==='hierarchy') ? _netPlaceHierarchy(...args)
+                   : (_netLayout==='grid')      ? _netPlaceGrid(...args)
+                   :                              _netPlaceRadial(...args);
+
+    // ── Build SVG ──
+    // Hub pulse rings.
+    let hubsSvg='';
+    bridges.forEach(b=>{
+      const rr=(Math.hypot(briBox[b.id].w,briBox[b.id].h)/2)+10;
+      hubsSvg += `<circle class="net-hub-ring" cx="${b.__cx.toFixed(1)}" cy="${b.__cy.toFixed(1)}" r="${rr.toFixed(1)}" style="--h:${b.__hue}"/>`;
+    });
+
+    // Spokes: bridge↔instance (every nic pair) + instance↔docker.
+    let spokesSvg='';
+    Object.keys(pair).forEach(key=>{
+      const p=pair[key]; const b=briById[p.bridge_id], i=instById[p.instance_id];
+      if (!b || !i || i.__cx==null) return;
+      spokesSvg += netSpokeMarkup('nic:'+key, b.__cx, b.__cy, i.__cx, i.__cy, b.__hue, 'nic');
+    });
+    docker.forEach(d=>{
+      const i=instById[d.instance_id];
+      if (!i || i.__cx==null || d.__cx==null) return;
+      spokesSvg += netSpokeMarkup('dk:'+d.id, i.__cx, i.__cy, d.__cx, d.__cy, d.__hue, 'dock');
+    });
+
+    // Nodes.
+    let nodesSvg='';
+    bridges.forEach(b=>{
+      const bb=briBox[b.id];
+      nodesSvg += netNodeMarkup({ id:b.id, cx:b.__cx, cy:b.__cy, w:bb.w, h:bb.h,
+        cls:'net-node--bridge'+(b.managed?' net-managed':''), icon:'🌉',
+        lines:bb.lines, subs:bb.subs, hue:b.__hue,
+        tip:b.name+(b.managed?' (managed)':'')+' — ↓'+netMbps(b.rx_mbps)+' ↑'+netMbps(b.tx_mbps) });
+    });
+    instances.forEach(i=>{
+      if (i.__cx==null) return;
+      const ib=instBox[i.id];
+      nodesSvg += netNodeMarkup({ id:i.id, cx:i.__cx, cy:i.__cy, w:ib.w, h:ib.h,
+        cls:'net-node--'+(i.type==='vm'?'vm':'ct'), icon:i.type==='vm'?'🖥':'📦',
+        lines:ib.lines, subs:ib.subs, hue:i.__hue, tip:i.name+' · '+(i.state||'') });
+    });
+    docker.forEach(d=>{
+      if (d.__cx==null) return;
+      const db=dockBox[d.id];
+      nodesSvg += netNodeMarkup({ id:d.id, cx:d.__cx, cy:d.__cy, w:db.w, h:db.h,
+        cls:'net-node--docker dock-'+_dockDotState(d), icon:'🐳',
+        lines:db.lines, subs:db.subs, hue:d.__hue, dot:true,
+        tip:d.name+' · '+(d.image||'')+(netPortsLine(d.ports)?'\n'+netPortsLine(d.ports):'') });
+    });
+
+    // First time this surface shows the network layer, fit the whole packed map
+    // into the viewport so the default view is filled (never upscaled past 1:1).
+    // Once the user zooms/pans, their scale persists and we stop auto-fitting.
+    if (!_netFitted[svg.id]){
+      const vp = svg.closest('.map-viewport') || svg.parentElement;
+      if (vp && vp.clientWidth > 40 && vp.clientHeight > 40){
+        // Fit the whole map to the viewport; allow upscaling past 100% (capped)
+        // so a small/compact map fills the panel instead of sitting tiny in a
+        // sea of white space, and shrink as far as needed for a large one.
+        const fit = Math.min((vp.clientWidth-12)/W, (vp.clientHeight-12)/H);
+        _mapZoomState[svg.id] = Math.max(MAP_ZMIN, Math.min(1.6, fit));
+        _netFitted[svg.id] = true;
+      }
+    }
+
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('width', W);
+    svg.setAttribute('height', H);
+    svg.dataset.natW = W; svg.dataset.natH = H; // base size for the zoom controller
+    svg.innerHTML =
+      netDefs() +
+      `<text class="net-title" x="20" y="28">⛓ Networking Layer</text>` +
+      `<g class="net-hubs">${hubsSvg}</g>` +
+      `<g class="net-spokes">${spokesSvg}</g>` +
+      `<g class="net-nodes">${nodesSvg}</g>`;
+    netUpdateDynamic(svg, net);
+    _mapApplyZoom(svg); // re-apply the user's zoom after the relayout
+  }
+
+  function netDefs(){
+    return `<defs>
+      <radialGradient id="netBg" cx="50%" cy="40%" r="120%">
+        <stop offset="0%" stop-color="#0a1322"/><stop offset="100%" stop-color="#04060d"/>
+      </radialGradient>
+      <filter id="netGlow" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur stdDeviation="2.6" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>`;
+  }
+
+  // Per-poll refresh: spoke bandwidth labels + flow speed, bridge totals, docker
+  // health dots, instance/container run-state — no relayout.
+  function netUpdateDynamic(svg, net){
+    const { pair } = netPairs(net);
+    const byBridge = {};
+    Object.keys(pair).forEach(key=>{
+      const p=pair[key];
+      const g=svg.querySelector(`.net-spokeg[data-id="${cssEsc('nic:'+key)}"]`);
+      const total=(p.rx||0)+(p.tx||0);
+      byBridge[p.bridge_id]=(byBridge[p.bridge_id]||0)+total;
+      if (g){
+        const lbl=g.querySelector('[data-role="rate"]');
+        if (lbl) lbl.textContent = total>=0.01 ? ('↓'+netMbps(p.rx)+' ↑'+netMbps(p.tx)) : '';
+        const flow=g.querySelector('[data-role="flow"]');
+        if (flow){
+          const idle=total<0.05;
+          flow.classList.toggle('idle', idle);
+          let dur=2.0; if(!idle) dur=Math.max(0.5, Math.min(2.0, 2.0 - Math.log10(1+total)*0.6));
+          flow.style.setProperty('--dur', dur.toFixed(2)+'s');
+        }
+      }
+    });
+    (net.bridges||[]).forEach(b=>{
+      const g=svg.querySelector(`.net-node[data-id="${cssEsc(b.id)}"]`); if(!g) return;
+      const sub=g.querySelector('[data-role="sub"]');
+      if (sub) sub.textContent = '↓'+netMbps(b.rx_mbps)+' ↑'+netMbps(b.tx_mbps);
+    });
+    (net.instances||[]).forEach(i=>{
+      const g=svg.querySelector(`.net-node[data-id="${cssEsc(i.id)}"]`); if(!g) return;
+      const sub=g.querySelector('[data-role="sub"]'); if(sub) sub.textContent=i.state||'';
+      g.classList.toggle('st-active', (i.state||'').toLowerCase()==='running');
+    });
+    (net.docker||[]).forEach(d=>{
+      const g=svg.querySelector(`.net-node[data-id="${cssEsc(d.id)}"]`); if(!g) return;
+      g.classList.remove('dock-up','dock-warn','dock-down');
+      g.classList.add('dock-'+_dockDotState(d));
+    });
+  }
+
+  // Entry point dispatched from renderMap when the Networking Layer is active.
+  function renderNetMap(svg, empty, status, data){
+    let net = (data && data.net) || { bridges:[], instances:[], nics:[], docker:[] };
+    // Per-instance Topology tab: focus the open instance's bridges + neighbours.
+    const focus = (_mapCtx.svg === 'vmtopo-svg') ? _netFocusInst : null;
+    if (focus){
+      const fb = new Set((net.nics||[]).filter(n=>n.instance_id===focus).map(n=>n.bridge_id));
+      const bridges=(net.bridges||[]).filter(b=>fb.has(b.id));
+      const nics=(net.nics||[]).filter(n=>fb.has(n.bridge_id));
+      const keep=new Set(nics.map(n=>n.instance_id));
+      net={ bridges, nics,
+            instances:(net.instances||[]).filter(i=>keep.has(i.id)),
+            docker:(net.docker||[]).filter(d=>keep.has(d.instance_id)) };
+    }
+    if (!net.bridges || !net.bridges.length){
+      if (empty){ empty.textContent='No bridges detected for this layer.'; empty.classList.remove('hidden'); }
+      svg.innerHTML=''; _mapSig=''; if(status) status.textContent=''; return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    const sig = 'NET|'
+      + (net.bridges||[]).map(b=>b.id).join(',') + '|'
+      + (net.nics||[]).map(n=>n.instance_id+'>'+n.bridge_id+':'+n.device).sort().join(',') + '|'
+      + (net.docker||[]).map(d=>d.id+'#'+(d.ports||[]).map(p=>p.proto+p.port).join('/')).sort().join(',');
+    if (sig !== _mapSig){ _mapSig=sig; netFullRender(svg, net); }
+    else netUpdateDynamic(svg, net);
+    if (status){ const ts=new Date((data.ts||0)*1000); status.textContent='live · '+ts.toLocaleTimeString(); }
   }
 
   // Resolve each consumer/remote to the pool group it belongs to.
@@ -33626,17 +34416,32 @@ function runReplicationTask(id, name) {
       data.remotes.filter(r=>r.__x!=null)
     ).map(mapNodeMarkup).join('');
 
+    // First render of the storage map on this surface: auto-fit to the viewport.
+    // Unlike the network layer, the floor is 90% (large maps scroll rather than
+    // shrink below that, keeping nodes legible) and we DO allow upscaling past
+    // 100% so a small map fills the panel instead of floating in white space.
+    if (!_storeFitted[svg.id]){
+      const vp = svg.closest('.map-viewport') || svg.parentElement;
+      if (vp && vp.clientWidth > 40 && vp.clientHeight > 40){
+        const fit = Math.min((vp.clientWidth-12)/W, (vp.clientHeight-12)/H);
+        _mapZoomState[svg.id] = Math.max(0.9, Math.min(MAP_ZMAX, fit));
+        _storeFitted[svg.id] = true; // only lock once the viewport was measurable
+      }
+    }
+
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     // Render at natural size and let the viewport scroll, so nodes stay legible
     // on large topologies rather than shrinking to fit the panel width.
     svg.setAttribute('width', W);
     svg.setAttribute('height', H);
+    svg.dataset.natW = W; svg.dataset.natH = H; // base size for the zoom controller
     svg.innerHTML =
       mapDefs() +
       mapHeaderMarkup(data, W) +
       `<g class="map-links">${linkSvg}</g>` +
       `<g class="map-nodes">${nodeSvg}</g>`;
     mapUpdateDynamic(svg, data); // set live text/classes immediately
+    _mapApplyZoom(svg);          // re-apply the user's zoom after the relayout
   }
 
   function mapDefs(){
@@ -38413,48 +39218,197 @@ async function ciBackupNow() {
 //   2. A transient failure (relay toggling mid-poll, a brief restart, a network
 //      blip) no longer kills the job on the first miss; we retry a few times
 //      before giving up.
-function _bgPollJob(key, label, progressURL, onDone) {
-  addActiveJob(key, label);
+// Live state for each backup/restore job, keyed by its activity-bar key. Feeds
+// the clickable progress modal (_openBgJobModal) and the ETA on the bar row.
+const _bgJobs = {};
+
+function _bgUnitBytes(u) {
+  const m = { B:1, KB:1e3, KIB:1024, MB:1e6, MIB:1048576, GB:1e9, GIB:1073741824, TB:1e12, TIB:1099511627776 };
+  return m[String(u).toUpperCase()] || 1;
+}
+
+// Best-effort "duration left" for a syncoid-driven job. We can't get byte-level
+// progress out of syncoid, so we approximate: each replicated part ([root-fs]/
+// [root-blk]/[custom] for local, "Pulling …" for remote) prints its full-send
+// size as "(~ N GB)". Once at least one part has finished we have a transfer
+// rate (completed bytes / elapsed) and extrapolate over the remaining parts.
+// Returns seconds, or null when there isn't enough signal yet ("estimating…").
+function _bgEstimateETA(lines, startedAtMs) {
+  const parts = []; let cur = null;
+  const sizeRe = /Sending oldest full snapshot.*\(~\s*([\d.]+)\s*([KMGTP]?i?B)\)/i;
+  for (const l of (lines || [])) {
+    if (/^\[(root-fs|root-blk|custom)\]/.test(l) || /^Pulling /.test(l)) { cur = { size: 0 }; parts.push(cur); continue; }
+    if (cur && cur.size === 0) { const m = l.match(sizeRe); if (m) cur.size = parseFloat(m[1]) * _bgUnitBytes(m[2]); }
+  }
+  const total = parts.reduce((a, p) => a + (p.size || 0), 0);
+  if (parts.length < 2 || total <= 0) return null;       // need ≥1 finished part to time a rate
+  const done = parts.slice(0, -1).reduce((a, p) => a + (p.size || 0), 0);
+  const elapsed = (Date.now() - startedAtMs) / 1000;
+  if (done <= 0 || elapsed <= 0) return null;
+  return Math.max(0, (total - done) / (done / elapsed));
+}
+
+// Generic poller for a background job whose server-side progress endpoint
+// returns {status, lines, error}. Surfaces it in the activity bar as a
+// clickable row (opens the progress modal) with a ✕ cancel button.
+function _bgPollJob(key, label, progressURL, onDone, opts) {
+  opts = opts || {};
+  const st = _bgJobs[key] || (_bgJobs[key] = {});
+  // Idempotent: server-authoritative discovery and the localStorage re-attach
+  // can both target the same job — only ever run one poll loop per key.
+  if (st._polling) { st.label = label; if (opts.cancelURL) st.cancelURL = opts.cancelURL; return; }
+  st._polling = true;
+  st.label = label; st.progressURL = progressURL; st.cancelURL = opts.cancelURL || '';
+  // localOnly jobs (VM/CT backup & restore) belong to THIS host. They keep
+  // polling the local server even while the session is relaying to a peer, so
+  // the task stays visible in the activity bar and never red-alerts after an
+  // interlink switch (#7).
+  st.localOnly = !!opts.localOnly;
+  st.kind = opts.kind || 'task'; st.startedAt = st.startedAt || Date.now();
+  st.lines = st.lines || []; st.status = 'running'; st.error = '';
+
+  addActiveJob(key, label, {
+    clickFnName:  '_openBgJobModal',
+    clickArgs:    [key],
+    cancelFnName: opts.cancelURL ? '_bgCancelJobByURL' : undefined,
+    cancelJobId:  opts.cancelURL || undefined,
+  });
+
   let fails = 0;
   (async function poll() {
-    if (_relayActive) { setTimeout(poll, 3000); return; } // paused: viewing another server
+    if (_relayActive && !st.localOnly) { setTimeout(poll, 3000); return; } // paused: viewing another server
     try {
-      const r = await fetch(progressURL, { credentials: 'same-origin' });
+      const r = await fetch(progressURL, st.localOnly
+        ? { credentials: 'same-origin', headers: { 'X-ZNAS-No-Relay': '1' } }
+        : { credentials: 'same-origin' });
       if (!r.ok) {
         if (++fails < 5) { setTimeout(poll, 3000); return; }
-        removeActiveJob(key); showToast(label + ' — polling error', 'error'); return;
+        removeActiveJob(key); _bgJobModalClose(key);
+        showToast(label + ' — polling error', 'error'); return;
       }
       fails = 0;
       const d = await r.json();
-      if (d.status === 'done') {
+      st.lines = d.lines || st.lines;
+      st.status = d.status || 'running';
+      st.error = d.error || '';
+      if (typeof d.progress === 'number') st.progress = d.progress;
+      if (d.phase) st.phase = d.phase;
+      if (d.status === 'done' || d.status === 'error' || d.status === 'canceled') {
+        st.eta = null;
+        _bgJobModalRender(key);                 // final paint so an open modal shows the end state
         removeActiveJob(key);
-        showToast(label + ' — done', 'success');
+        if (d.status === 'done')  showToast(label + ' — done', 'success');
+        if (d.status === 'error') showToast(label + ' failed: ' + (d.error || 'unknown'), 'error');
+        setTimeout(() => { delete _bgJobs[key]; }, 60000); // keep briefly for an open modal
         if (onDone) onDone();
         return;
       }
-      if (d.status === 'error' || d.status === 'canceled') {
-        removeActiveJob(key);
-        if (d.status === 'error') showToast((label + ' failed: ') + (d.error || 'unknown'), 'error');
-        if (onDone) onDone();
-        return;
+      // Running — refresh progress, ETA, the bar label, and the open modal.
+      st.eta = _bgEstimateETA(st.lines, st.startedAt);
+      const aj = activeJobs[key];
+      if (aj) {
+        aj.eta = (st.eta && st.eta > 0) ? st.eta : null;
+        // Real byte-level % from pv (per current part); null hides the bar.
+        aj.progress = (st.progress > 0) ? Math.min(1, st.progress / 100) : null;
       }
-      // Update label with last line for progress
-      const lines = d.lines || [];
-      const tail = lines[lines.length-1];
-      if (tail && updateActiveJob) updateActiveJob(key, label + ' — ' + (tail.length > 80 ? tail.slice(0,80)+'…' : tail));
+      const phaseTxt = st.phase ? (' [' + st.phase + (st.progress > 0 ? ' ' + st.progress + '%' : '') + ']') : '';
+      const tail = st.lines[st.lines.length - 1];
+      const labelTxt = label + phaseTxt + (tail ? ' — ' + (tail.length > 80 ? tail.slice(0, 80) + '…' : tail) : '');
+      if (updateActiveJob) updateActiveJob(key, labelTxt); else renderActivityBar(null);
+      _bgJobModalRender(key);
       setTimeout(poll, 3000);
-    } catch(e) {
+    } catch (e) {
       if (++fails < 5) { setTimeout(poll, 3000); return; }
-      removeActiveJob(key);
+      removeActiveJob(key); _bgJobModalClose(key);
       showToast(label + ' — ' + String(e), 'error');
     }
   })();
 }
 
+// Opens (or refreshes) the progress modal for a background job.
+function _openBgJobModal(key) {
+  let m = document.getElementById('bg-job-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'bg-job-modal'; m.className = 'modal-backdrop';
+    m.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:9998;';
+    m.addEventListener('click', (ev) => { if (ev.target === m) _bgJobModalClose(); });
+    document.body.appendChild(m);
+  }
+  m.dataset.jobKey = key;
+  m.style.display = 'flex';
+  _bgJobModalRender(key);
+}
+
+// Closes the modal. With a key, only closes if it's currently showing that job
+// (so one job ending doesn't dismiss another job's open modal).
+function _bgJobModalClose(key) {
+  const m = document.getElementById('bg-job-modal');
+  if (!m) return;
+  if (key && m.dataset.jobKey !== key) return;
+  m.style.display = 'none'; m.dataset.jobKey = '';
+}
+
+// Renders the modal body for `key`. Called on every poll while open so the log
+// and ETA stay live; preserves the user's scroll unless they're at the bottom.
+function _bgJobModalRender(key) {
+  const m = document.getElementById('bg-job-modal');
+  if (!m || m.style.display === 'none' || m.dataset.jobKey !== key) return;
+  const st = _bgJobs[key];
+  if (!st) { _bgJobModalClose(); return; }
+  const elapsed = Math.max(0, Math.round((Date.now() - st.startedAt) / 1000));
+  const sColor = st.status === 'done' ? 'var(--accent-3)'
+    : st.status === 'error' ? 'var(--accent-danger)'
+    : st.status === 'canceled' ? 'var(--text-3)' : 'var(--accent-2)';
+  const etaTxt = st.status === 'running'
+    ? (st.eta && st.eta > 0 ? '~' + _fmtETA(st.eta) + ' left (estimate)' : 'estimating…')
+    : '';
+  const title = st.kind === 'restore' ? 'Restore progress' : st.kind === 'backup' ? 'Backup progress' : 'Task progress';
+  const cancelBtn = (st.cancelURL && st.status === 'running')
+    ? `<button class="btn btn-sm" style="color:var(--accent-danger);border-color:var(--accent-danger);" onclick="_bgCancelJobByURL('${esc(st.cancelURL)}')">■ Cancel</button>` : '';
+  const log = (st.lines || []).map(esc).join('\n') || '(waiting for output…)';
+  const prev = m.querySelector('#bg-job-log');
+  const atBottom = !prev || (prev.scrollHeight - prev.scrollTop - prev.clientHeight < 30);
+  m.innerHTML = `<div class="modal" style="max-width:780px;width:94vw;">
+      <div class="modal-header"><h3>${esc(title)}</h3><button class="modal-close" onclick="_bgJobModalClose()">✕</button></div>
+      <div style="padding:6px 24px 0;font-size:13px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(st.label)}</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 24px;font-size:12px;color:var(--text-2);">
+        <span>Status: <b style="color:${sColor};text-transform:capitalize;">${esc(st.status || 'running')}</b></span>
+        <span>Elapsed: <b>${esc(_fmtETA(elapsed) || '0s')}</b></span>
+        ${etaTxt ? `<span>⏱ <b>${esc(etaTxt)}</b></span>` : ''}
+        ${st.status === 'running' && st.progress > 0 ? `<span>Progress: <b>${st.progress}%</b>${st.phase ? ' (' + esc(st.phase) + ')' : ''}</span>` : ''}
+      </div>
+      ${st.error ? `<div class="alert alert-error" style="margin:0 24px 8px;">${esc(st.error)}</div>` : ''}
+      <pre id="bg-job-log" style="margin:0 24px;background:#0d0d0f;color:#e6e6e6;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;font-family:'SF Mono','Fira Code','JetBrains Mono',monospace;font-size:12px;line-height:1.5;height:46vh;min-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;">${log}</pre>
+      <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding:14px 24px;">
+        ${cancelBtn}
+        <button class="btn btn-ghost btn-sm" onclick="_bgJobModalClose()">Close</button>
+      </div>
+    </div>`;
+  const logEl = m.querySelector('#bg-job-log');
+  if (logEl && atBottom) logEl.scrollTop = logEl.scrollHeight;
+}
+
+// POSTs to a job's cancel endpoint (used by both the bar ✕ and the modal).
+async function _bgCancelJobByURL(cancelURL) {
+  if (!cancelURL) return;
+  // Cancel must reach the same host the job is polling — for localOnly jobs
+  // that's the local server even while relaying (#7).
+  const st = Object.values(_bgJobs).find(j => j && j.cancelURL === cancelURL);
+  const opts = { method: 'POST', credentials: 'same-origin' };
+  if (st && st.localOnly) opts.headers = { 'X-ZNAS-No-Relay': '1' };
+  try {
+    await fetch(cancelURL, opts);
+    showToast('Cancel requested — stopping…', 'info');
+  } catch (e) { showToast('Cancel failed: ' + (e.message || e), 'error'); }
+  _bgJobModalClose();
+}
+
 // Polls a backup job and surfaces it in the activity bar.
 function _bgPollBackupJob(jobId, label, onDone) {
   _bgPollJob('bkj-' + jobId, label,
-    '/api/incus/backup-jobs/' + encodeURIComponent(jobId) + '/progress', onDone);
+    '/api/incus/backup-jobs/' + encodeURIComponent(jobId) + '/progress', onDone,
+    { kind: 'backup', localOnly: true, cancelURL: '/api/incus/backup-jobs/' + encodeURIComponent(jobId) + '/cancel' });
 }
 
 // Refresh the snapshot-button "📅" badge and the backup count.
@@ -38605,7 +39559,52 @@ async function rbSubmit() {
 }
 function _bgPollRestoreJob(jobId, label, onDone) {
   _bgPollJob('brj-' + jobId, label,
-    '/api/incus/restore-jobs/' + encodeURIComponent(jobId) + '/progress', onDone);
+    '/api/incus/restore-jobs/' + encodeURIComponent(jobId) + '/progress', onDone,
+    { kind: 'restore', localOnly: true, cancelURL: '/api/incus/restore-jobs/' + encodeURIComponent(jobId) + '/cancel' });
+}
+
+// Server-authoritative job discovery. Backup/restore jobs run under
+// context.Background() on the server, fully independent of any browser, so the
+// only way to ALWAYS see an in-flight job — after a reload, from a different
+// tab, a different device, or when localStorage was cleared — is to ask the
+// server which jobs are live and (re)attach a poller for each. The poll loop
+// is idempotent (see _bgPollJob), so this never double-tracks a job already
+// shown in this tab. Paused while relaying to another server (its bar is proxied).
+async function _bgDiscoverServerJobs() {
+  // Backup/restore jobs are local-origin (#7): keep discovering them on the
+  // LOCAL host even while relaying, via the no-relay header, so a switch to a
+  // peer never hides an in-flight local backup or strands it without a poller.
+  const NORELAY = { credentials: 'same-origin', headers: { 'X-ZNAS-No-Relay': '1' } };
+  try {
+    const [br, rr] = await Promise.all([
+      fetch('/api/incus/backup-jobs',  NORELAY).catch(() => null),
+      fetch('/api/incus/restore-jobs', NORELAY).catch(() => null),
+    ]);
+    if (br && br.ok) {
+      const d = await br.json();
+      for (const j of (d.jobs || [])) {
+        if (j.status !== 'running' && j.status !== 'queued') continue;
+        if (_bgJobs['bkj-' + j.job_id]) continue; // already tracked here
+        const dest = j.dest_kind === 'remote' ? (j.dest_host || 'remote') : 'local';
+        _bgPollBackupJob(j.job_id, 'Backup ' + j.instance + ' → ' + dest + ':' + j.dest_pool, _bgJobBoardRefresh);
+      }
+    }
+    if (rr && rr.ok) {
+      const d = await rr.json();
+      for (const j of (d.jobs || [])) {
+        if (j.status !== 'running' && j.status !== 'queued') continue;
+        if (_bgJobs['brj-' + j.job_id]) continue;
+        _bgPollRestoreJob(j.job_id, 'Restore ' + j.vm_id + ' → ' + j.clone_name, _bgJobBoardRefresh);
+      }
+    }
+  } catch (_) { /* transient — next tick retries */ }
+}
+
+let _bgDiscoverIv = null;
+function _startBgJobDiscovery() {
+  if (_bgDiscoverIv) return;
+  _bgDiscoverServerJobs();                                  // immediate first sweep
+  _bgDiscoverIv = setInterval(_bgDiscoverServerJobs, 10000); // then every 10s
 }
 
 // ====== Datastores → Backups page ===========================================
@@ -40077,11 +41076,11 @@ const _ZNAS_TERM_THEMES = {
   'light': { label: 'Light', theme: {
     background:'#fafafa', foreground:'#1a1a1f', cursor:'#0066ff',
     selectionBackground:'rgba(0,102,255,0.18)',
-    black:'#000000', red:'#c91b00', green:'#00c200', yellow:'#c7c400',
-    blue:'#0037da', magenta:'#c930c7', cyan:'#00c5c7', white:'#c7c7c7',
-    brightBlack:'#676767', brightRed:'#ff6d67', brightGreen:'#5ff967',
-    brightYellow:'#fefb67', brightBlue:'#6871ff', brightMagenta:'#ff76ff',
-    brightCyan:'#5ffdff', brightWhite:'#feffff',
+    black:'#000000', red:'#c91b00', green:'#008a1e', yellow:'#9a7d00',
+    blue:'#0037da', magenta:'#c930c7', cyan:'#008b8d', white:'#c7c7c7',
+    brightBlack:'#676767', brightRed:'#ff6d67', brightGreen:'#1fa82f',
+    brightYellow:'#b59a00', brightBlue:'#6871ff', brightMagenta:'#ff76ff',
+    brightCyan:'#19a9ab', brightWhite:'#feffff',
   }},
 };
 
@@ -40692,13 +41691,14 @@ function _ciUpdateBurgerPushVisibility() {
   const pushBtn = document.getElementById('ci-push-interlink-btn');
   if (!pushBtn) return;
   const hasLXDPeers = (_interlinkServersCache || []).some(s => s.lxd_enabled);
-  const isVM = _ciCurrentType === 'virtual-machine';
+  // Push works for VMs and containers (incus copy is instance-type agnostic).
+  const isInstance = _ciCurrentType === 'virtual-machine' || _ciCurrentType === 'container';
   const badge = document.getElementById('ci-status-badge');
   const isStopped = badge && badge.dataset.status && badge.dataset.status.toLowerCase() === 'stopped';
-  pushBtn.style.display = (isVM && hasLXDPeers) ? 'block' : 'none';
-  if (isVM && hasLXDPeers) {
+  pushBtn.style.display = (isInstance && hasLXDPeers) ? 'block' : 'none';
+  if (isInstance && hasLXDPeers) {
     if (isStopped) { pushBtn.disabled = false; pushBtn.style.opacity = ''; pushBtn.style.cursor = 'pointer'; pushBtn.title = ''; }
-    else { pushBtn.disabled = true; pushBtn.style.opacity = '0.4'; pushBtn.style.cursor = 'default'; pushBtn.title = 'VM must be stopped before pushing'; }
+    else { pushBtn.disabled = true; pushBtn.style.opacity = '0.4'; pushBtn.style.cursor = 'default'; pushBtn.title = 'Instance must be stopped before pushing'; }
   }
 }
 
@@ -40716,6 +41716,7 @@ function ciToggleBurger(e) {
   }
   const hasLXDPeers = (_interlinkServersCache || []).some(s => s.lxd_enabled);
   const isVM = _ciCurrentType === 'virtual-machine';
+  const isInstance = _ciCurrentType === 'virtual-machine' || _ciCurrentType === 'container';
   const badge = document.getElementById('ci-status-badge');
   const isStopped = badge && badge.dataset.status && badge.dataset.status.toLowerCase() === 'stopped';
   const disabledStyle = (btn, tooltip) => {
@@ -40725,8 +41726,8 @@ function ciToggleBurger(e) {
     btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer';
   };
 
-  // Push InterLink: VM only + LXD peers exist.
-  document.getElementById('ci-push-interlink-btn').style.display = (isVM && hasLXDPeers) ? 'block' : 'none';
+  // Push InterLink: VMs and containers + LXD peers exist.
+  document.getElementById('ci-push-interlink-btn').style.display = (isInstance && hasLXDPeers) ? 'block' : 'none';
 
   // Move Storage: always visible, disabled unless stopped.
   const moveBtn = document.getElementById('ci-move-storage-btn');
@@ -40743,9 +41744,9 @@ function ciToggleBurger(e) {
 
   // Push InterLink: disabled unless stopped.
   const pushBtn = document.getElementById('ci-push-interlink-btn');
-  if (isVM && hasLXDPeers) {
+  if (isInstance && hasLXDPeers) {
     if (isStopped) { enabledStyle(pushBtn); pushBtn.title = ''; }
-    else disabledStyle(pushBtn, 'VM must be stopped before pushing');
+    else disabledStyle(pushBtn, 'Instance must be stopped before pushing');
   }
 
   const wasOpen = !menu.classList.contains('hidden');
@@ -42365,8 +43366,14 @@ async function _lxdEditLoadComposeFiles(name) {
     const et = document.getElementById('lxd-edit-compose-env');
     if (yt) { yt.value = d.compose_yaml || ''; if (yt._cmInstance) yt._cmInstance.setValue(yt.value); }
     if (et) { et.value = d.env || '';          if (et._cmInstance) et._cmInstance.setValue(et.value); }
+    // Remember what was deployed so Save can skip the down/up redeploy when the
+    // compose file and .env are untouched (only instance params changed).
+    _lxdEditComposeOrigYaml = d.compose_yaml || '';
+    _lxdEditComposeOrigEnv  = d.env || '';
   } catch(_) {}
 }
+let _lxdEditComposeOrigYaml = '';
+let _lxdEditComposeOrigEnv  = '';
 
 async function openLXDEditModal(name, type) {
   _lxdEditName = name;
@@ -42857,6 +43864,14 @@ async function submitLXDEdit() {
       _syncCMEditor('lxd-edit-compose-env');
       const cy = document.getElementById('lxd-edit-compose-yaml')?.value || '';
       const ce = document.getElementById('lxd-edit-compose-env')?.value || '';
+      // If neither the compose file nor the .env changed, the instance-level
+      // config was already saved above (and the modal is already closed) —
+      // there's nothing to redeploy, so skip the podman compose down/up (#5).
+      if (cy === _lxdEditComposeOrigYaml && ce === _lxdEditComposeOrigEnv) {
+        showToast('Saved.', 'success');
+        btn.disabled = false; btn.textContent = 'Save';
+        return;
+      }
       const yamlV = _composeValidate(cy);
       const envV  = _envValidate(ce);
       _markCMErrors(document.getElementById('lxd-edit-compose-yaml')?._cmInstance, yamlV.errors);
@@ -43073,11 +44088,19 @@ let _vmpushStartTime = 0;
 let _vmpushRemoteBridges = [];
 let _vmpushRemoteInstances = null; // null=not loaded, array=loaded
 
-async function openVMPushModal(name) {
+async function openVMPushModal(name, type, isCompose) {
   _vmpushVMName = name;
   _vmpushJobID  = '';
   _vmpushRemoteBridges = [];
   _vmpushRemoteInstances = null;
+  // Relabel the modal for the instance kind (VM / Container / Compose Stack).
+  // incus copy is type-agnostic; only the wording changes.
+  const isVM = (type === 'virtual-machine');
+  const kindShort = isVM ? 'VM' : 'CT';
+  const kindLong  = isVM ? 'VM' : (isCompose ? 'Compose Stack' : 'Container');
+  document.getElementById('vmpush-title-kind').textContent = 'Push ' + kindLong;
+  document.getElementById('vmpush-id-kind').textContent = kindShort;
+  document.getElementById('vmpush-desc-kind').textContent = kindShort;
   document.getElementById('vmpush-vm-name').textContent = name;
   document.getElementById('vmpush-form').style.display = '';
   document.getElementById('vmpush-progress').style.display = 'none';
@@ -45095,8 +46118,23 @@ async function _loadCPUTopology() {
   return _cpuTopologyCache;
 }
 
+// Hide the "Efficient Cores only" option on non-hybrid CPUs — without P/E
+// cores there is nothing to choose, so only Performance (plus auto/custom)
+// makes sense. Also reset the selection off "efficient" if it was hidden.
+function _applyCoreTypeOptionVisibility(topo, selId, effOptId) {
+  const eff = document.getElementById(effOptId);
+  if (eff) {
+    const hide = !(topo && topo.hybrid);
+    eff.hidden = hide;
+    eff.disabled = hide;
+    const sel = document.getElementById(selId);
+    if (hide && sel && sel.value === 'efficient') sel.value = 'auto';
+  }
+}
+
 async function _editShowCoreTypeSection() {
   const topo = await _loadCPUTopology();
+  _applyCoreTypeOptionVisibility(topo, 'lxd-edit-coretype', 'lxd-edit-coretype-eff');
   const hint = document.getElementById('lxd-edit-coretype-hint');
   if (!hint) return;
   if (topo && topo.hybrid) {
@@ -45159,6 +46197,7 @@ function _editPinManualEdit() {
 // ─── CPU Core Type — Create VM ─────────────────────────────────────────────────
 async function _createLoadCoreType() {
   const topo = await _loadCPUTopology();
+  _applyCoreTypeOptionVisibility(topo, 'lxd-vm-coretype', 'lxd-vm-coretype-eff');
   const hint = document.getElementById('lxd-vm-coretype-hint');
   if (!hint) return;
   if (topo && topo.hybrid) {
@@ -47811,6 +48850,9 @@ function openLXDEnableModal() {
 
 function closeLXDEnableModal() {
   if (_lxdEnablePollTmr) { clearInterval(_lxdEnablePollTmr); _lxdEnablePollTmr = null; }
+  // Resume normal incus-health banner behaviour if the user backs out without
+  // completing the install (success path reloads the page instead).
+  _lxdEnableInProgress = false;
   document.getElementById('modal-lxd-enable').classList.add('hidden');
 }
 
@@ -47823,14 +48865,15 @@ function _lxdEnableShowPhase(n) {
 
 async function lxdEnableLoadPrereqs() {
   // Reset icons to loading state
-  ['sudoers','network','debian','pools'].forEach(k => {
+  ['sudoall','sudoers','staticip','network','debian','pools'].forEach(k => {
     const ic = document.getElementById('lxd-pre-icon-'+k);
     const nt = document.getElementById('lxd-pre-note-'+k);
     if (ic) ic.textContent = '⋯';
     if (nt) nt.textContent = '';
   });
-  const fixBtn = document.getElementById('lxd-pre-network-fix-btn');
-  if (fixBtn) fixBtn.style.display = 'none';
+  ['lxd-pre-network-fix-btn','lxd-pre-sudoall-fix-btn','lxd-pre-staticip-fix-btn'].forEach(id => {
+    const b = document.getElementById(id); if (b) b.style.display = 'none';
+  });
   const startBtn = document.getElementById('lxd-enable-start-btn');
   if (startBtn) startBtn.disabled = true;
   try {
@@ -47847,29 +48890,87 @@ async function lxdEnableLoadPrereqs() {
 // Split out from lxdEnableLoadPrereqs so the migrate-netplan WS handler
 // can apply the embedded `prereqs` field on its closing frame without
 // issuing a second GET.
-function _lxdEnableApplyPrereqs(p) {
-  _lxdEnableSetPrereq('sudoers', p.sudoers_ok, p.sudoers_note);
-  _lxdEnableSetPrereq('network', p.network_ok, p.network_note);
-  _lxdEnableSetPrereq('debian',  p.os_supported, p.os_note);
-  _lxdEnableSetPrereq('pools',   p.has_pools,  p.pools_note);
+// Latest "all prerequisites green" verdict, remembered so the pool <select>
+// change handler can re-evaluate the Enable button without re-fetching.
+let _lxdEnableAllOK = false;
 
-  // "Switch to systemd Networking" button: shown only when the backend
-  // says network_can_fix=true (netplan is the only network config).
-  const fixBtn = document.getElementById('lxd-pre-network-fix-btn');
-  if (fixBtn) fixBtn.style.display = p.network_can_fix ? '' : 'none';
-
+// Enable "Enable Feature" only when every prerequisite is green AND a storage
+// pool is selected at the bottom.
+function _lxdEnableSyncStartBtn() {
+  const startBtn = document.getElementById('lxd-enable-start-btn');
   const sel = document.getElementById('lxd-enable-pool-select');
-  if (sel && p.zfs_pools) {
-    sel.innerHTML = p.zfs_pools.map(pl => `<option value="${pl}">${pl}</option>`).join('');
+  if (!startBtn) return;
+  const poolPicked = !!(sel && sel.value);
+  startBtn.disabled = !(_lxdEnableAllOK && poolPicked);
+  startBtn.title = !startBtn.disabled ? ''
+    : (!_lxdEnableAllOK ? 'Resolve all prerequisites first' : 'Select a storage pool');
+}
+
+function _lxdEnableApplyPrereqs(p) {
+  _lxdEnableSetPrereq('sudoall',  p.sudo_all_ok, p.sudo_all_note);
+  _lxdEnableSetPrereq('sudoers',  p.sudoers_ok, p.sudoers_note);
+  _lxdEnableSetPrereq('staticip', p.static_ip_ok, p.static_ip_note);
+  _lxdEnableSetPrereq('network',  p.network_ok, p.network_note);
+  _lxdEnableSetPrereq('debian',   p.os_supported, p.os_note);
+  _lxdEnableSetPrereq('pools',    p.has_pools,  p.pools_note);
+
+  // "Switch to sudo all" button — shown until full sudo is granted.
+  const sudoBtn = document.getElementById('lxd-pre-sudoall-fix-btn');
+  if (sudoBtn) sudoBtn.style.display = p.sudo_all_ok ? 'none' : '';
+
+  // "Configure Static IP" button — shown while the primary NIC is on DHCP, but
+  // greyed out until the steps above it (full sudo + sudoers) are green: the
+  // static-IP apply rewrites and re-applies the host network config, which needs
+  // working sudo, so there's no point letting the user start it earlier.
+  const ipBtn = document.getElementById('lxd-pre-staticip-fix-btn');
+  if (ipBtn) {
+    ipBtn.style.display = p.static_ip_ok ? 'none' : '';
+    const ipPrereqsOK = p.sudo_all_ok && p.sudoers_ok;
+    ipBtn.disabled = !ipPrereqsOK;
+    ipBtn.title = ipPrereqsOK ? '' : 'Complete the steps above (sudo) first';
   }
 
-  const startBtn = document.getElementById('lxd-enable-start-btn');
-  if (startBtn) startBtn.disabled = !p.all_ok;
+  // "Switch to systemd Networking" button: shown only when the backend
+  // says network_can_fix=true (netplan is the only network config). It stays
+  // disabled until a static IP is configured, so the migration inherits a
+  // stable address instead of a DHCP lease (issues #13/#14).
+  const fixBtn = document.getElementById('lxd-pre-network-fix-btn');
+  if (fixBtn) {
+    fixBtn.style.display = p.network_can_fix ? '' : 'none';
+    fixBtn.disabled = !p.static_ip_ok;
+    fixBtn.title = p.static_ip_ok ? '' : 'Configure a static IP first';
+  }
+
+  const sel = document.getElementById('lxd-enable-pool-select');
+  if (sel) {
+    const pools = Array.isArray(p.zfs_pools) ? p.zfs_pools : [];
+    const prev = sel.value;
+    sel.innerHTML = pools.map(pl => `<option value="${esc(pl)}">${esc(pl)}</option>`).join('');
+    // Always keep a pool pre-selected — restore the prior choice if still valid,
+    // otherwise the first pool. The user switches pools via the dropdown.
+    sel.value = (prev && pools.includes(prev)) ? prev : (pools[0] || '');
+    // Bulletproof: the dropdown must never render with options but nothing
+    // selected — if a value mismatch left it unselected, fall back to the first.
+    if (sel.options.length && sel.selectedIndex < 0) sel.selectedIndex = 0;
+    if (!sel.dataset.wired) { sel.dataset.wired = '1'; sel.addEventListener('change', _lxdEnableSyncStartBtn); }
+    // The native <select> is hidden and wrapped by the custom-dropdown widget
+    // (cs-*). Repopulating options + setting .value programmatically fires no
+    // change event, so the widget's visible button keeps showing its old (empty)
+    // label. Rebuild its option list and refresh the label so the picked pool
+    // actually shows. Without this the dropdown looks empty even though a pool
+    // is selected in the DOM.
+    try { if (sel._csRebuild) sel._csRebuild(); } catch (e) {}
+    if (window.csRefresh) { try { csRefresh('lxd-enable-pool-select'); } catch (e) {} }
+  }
+
+  // The Enable button needs every prerequisite green AND a pool selected.
+  _lxdEnableAllOK = !!p.all_ok;
+  _lxdEnableSyncStartBtn();
 
   const alertEl = document.getElementById('lxd-enable-prereq-alert');
   if (alertEl) {
     if (!p.all_ok) {
-      const issues = [p.sudoers_note, p.network_note, p.os_note, p.pools_note].filter(Boolean);
+      const issues = [p.sudo_all_note, p.sudoers_note, p.static_ip_note, p.network_note, p.os_note, p.pools_note].filter(Boolean);
       alertEl.textContent = issues.join(' · ');
       alertEl.classList.remove('hidden');
     } else {
@@ -47889,6 +48990,162 @@ function _lxdEnableSetPrereq(key, ok, note) {
     nt.textContent = note || '';
     nt.style.color = '';
   }
+}
+
+// lxdEnableSwitchSudoAll replaces hardened sudoers with unrestricted sudo so
+// the enable flow (which touches commands outside the hardened template) can
+// run. The user is reminded that hardening can be re-applied afterwards.
+function lxdEnableSwitchSudoAll() {
+  showConfirm({
+    title: 'Switch to sudo all?',
+    body: 'This grants the ZNAS service account full passwordless sudo (<code>NOPASSWD: ALL</code>), which is required to enable virtualization. You can re-apply sudoers hardening afterwards from <strong>Settings → Sudoers</strong>.',
+    confirmText: 'Switch to sudo all',
+    onConfirm: async () => {
+      try {
+        const r = await fetch('/api/sudoers/apply-sudo-all', { method: 'POST', credentials: 'same-origin' });
+        if (!r.ok) throw new Error(await r.text());
+        showToast('Full sudo access granted.', 'success');
+        lxdEnableLoadPrereqs();
+      } catch (e) {
+        showToast('Could not switch to sudo all: ' + (e.message || e), 'error');
+      }
+    },
+  });
+}
+
+// lxdEnableOpenStaticIP opens the Configure Static IP popup, pre-filled with the
+// primary interface's current (DHCP-assigned) address/gateway/DNS so the user
+// can confirm the same values to reserve them statically — no IP change, no
+// session drop. A static IP avoids the DHCP lease churn during the netplan
+// migration and vmbr0 bridge creation (issues #13/#14).
+async function lxdEnableOpenStaticIP() {
+  const m = document.getElementById('modal-lxd-static-ip');
+  if (!m) return;
+  const errEl = document.getElementById('lxd-static-ip-error');
+  if (errEl) errEl.classList.add('hidden');
+  // Reset + load current values.
+  ['iface','address','gateway','dns1','dns2'].forEach(k => {
+    const el = document.getElementById('lxd-static-ip-' + k);
+    if (el) el.value = '';
+  });
+  m.classList.remove('hidden');
+  try {
+    const r = await fetch('/api/lxd/enable/netconfig', { credentials: 'same-origin' });
+    if (r.ok) {
+      const c = await r.json();
+      const set = (k, v) => { const el = document.getElementById('lxd-static-ip-' + k); if (el && v != null) el.value = v; };
+      set('iface', c.iface);
+      set('address', c.address);
+      set('gateway', c.gateway);
+      if (Array.isArray(c.dns)) { set('dns1', c.dns[0] || ''); set('dns2', c.dns[1] || ''); }
+    }
+  } catch (_) {}
+}
+
+function lxdEnableCloseStaticIP() {
+  const m = document.getElementById('modal-lxd-static-ip');
+  if (m) m.classList.add('hidden');
+}
+
+async function lxdEnableApplyStaticIP() {
+  const val = k => (document.getElementById('lxd-static-ip-' + k)?.value || '').trim();
+  const iface = val('iface'), address = val('address'), gateway = val('gateway');
+  const dns = [val('dns1'), val('dns2')].filter(Boolean);
+  const errEl = document.getElementById('lxd-static-ip-error');
+  const btn = document.getElementById('lxd-static-ip-apply-btn');
+  if (!iface || !address) {
+    if (errEl) { errEl.textContent = 'Interface and address (CIDR) are required.'; errEl.classList.remove('hidden'); }
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+  if (errEl) errEl.classList.add('hidden');
+
+  // If the chosen IP differs from the one we're connected on, applying it will
+  // drop THIS connection the moment networking reconfigures. Fire the request
+  // without depending on its response arriving, then reconnect the browser on
+  // the new IP.
+  const newIP = (address.split('/')[0] || '').trim();
+  const willChangeIP = newIP && newIP !== location.hostname;
+
+  if (willChangeIP) {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      await fetch('/api/lxd/enable/static-ip', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ iface, address, gateway, dns }),
+        signal: ctrl.signal,
+      });
+    } catch (_) { /* expected: the socket drops when the host moves to the new IP */ }
+    clearTimeout(to);
+    _staticIPReconnect(newIP);
+    return;
+  }
+
+  // Same IP — make it static in place; the connection survives.
+  try {
+    const r = await fetch('/api/lxd/enable/static-ip', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ iface, address, gateway, dns }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const fresh = await r.json();
+    lxdEnableCloseStaticIP();
+    showToast('Static IP configured on ' + iface + '.', 'success');
+    if (fresh) _lxdEnableApplyPrereqs(fresh); else lxdEnableLoadPrereqs();
+  } catch (e) {
+    // The apply may briefly blip the network even when the IP is unchanged —
+    // re-check prereqs so a lost response doesn't strand the UI.
+    if (errEl) { errEl.textContent = 'Apply may have completed despite an error — re-checking. ' + (e.message || e); errEl.classList.remove('hidden'); }
+    setTimeout(lxdEnableLoadPrereqs, 2500);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Apply Static IP'; }
+  }
+}
+
+// Show a full-screen "reconnecting" overlay and move the browser to the host's
+// new IP once it answers there (the old connection is gone). Falls back to a
+// hard redirect after a timeout, and always offers a manual link.
+function _staticIPReconnect(newIP) {
+  lxdEnableCloseStaticIP();
+  const port = location.port ? (':' + location.port) : '';
+  const base = location.protocol + '//' + newIP + port;
+  const dest = base + location.pathname + location.search + location.hash;
+  let ov = document.getElementById('static-ip-reconnect-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'static-ip-reconnect-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;'
+      + 'justify-content:center;background:rgba(8,10,18,.94);color:#e2e2e6;text-align:center;padding:24px;';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = '<div style="max-width:460px;font-size:15px;line-height:1.6;">'
+    + '<div class="spinner" style="margin:0 auto 18px;width:30px;height:30px;border-width:3px;"></div>'
+    + 'Static IP applied — the server is moving to <b>' + esc(newIP) + '</b>.<br>Reconnecting…'
+    + '<div style="margin-top:16px;font-size:13px;color:#9aa3b2;">If this page doesn’t redirect automatically, open '
+    + '<a href="' + esc(dest) + '" style="color:#7df9ff;">' + esc(base) + '</a> manually. '
+    + 'You may need to re-accept the self-signed certificate on the new address.</div></div>';
+  // The self-signed cert usually won't yet cover the new IP, so the probe
+  // typically can't confirm reachability — cap the wait so we still redirect
+  // promptly once networking has had time to apply (netplan apply is a few
+  // seconds). The probe just lets us jump sooner when the cert IS trusted.
+  const deadline = Date.now() + 14000;
+  (async function waitAndGo() {
+    await new Promise(r => setTimeout(r, 2500)); // let networking apply before probing
+    while (Date.now() < deadline) {
+      try {
+        // A resolved (even opaque) response means the new IP is up and its TLS
+        // is trusted by this browser. If the cert isn't trusted yet the probe
+        // keeps failing and we redirect on timeout so the user can accept it.
+        await fetch(base + '/api/version', { mode: 'no-cors', cache: 'no-store' });
+        break;
+      } catch (_) {}
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    location.href = dest;
+  })();
 }
 
 // lxdMigrateNetplanStart confirms with the user, opens a small log
@@ -47989,6 +49246,12 @@ async function lxdEnableStart() {
   if (!pool) { showToast('Select a storage pool', 'error'); return; }
   document.getElementById('lxd-enable-close-btn').style.display = 'none';
 
+  // Suppress the "incus not responding" banner for the whole install — incus is
+  // mid-setup so transient probe failures are expected. Cleared by the reload in
+  // lxdEnableDone, or by closeLXDEnableModal if the user backs out.
+  _lxdEnableInProgress = true;
+  applyIncusStuckBanner(false);
+
   _lxdEnableShowPhase(2);
   document.getElementById('lxd-enable-terminal').textContent = '';
   _lxdEnableRenderSteps([
@@ -48065,7 +49328,7 @@ function _lxdEnableSuccess() {
   if (footer) footer.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;flex:1;">
       <span style="color:#30d158;font-size:15px;font-weight:700;">✓</span>
-      <span style="font-size:13px;color:#30d158;font-weight:600;">VMs &amp; Containers Support enabled successfully! The portal will reload.</span>
+      <span style="font-size:13px;color:#30d158;font-weight:600;">VMs &amp; Containers Support enabled! The portal may briefly restart to finish — it will reload automatically.</span>
     </div>
     <button class="btn btn-primary" onclick="lxdEnableDone()">Close &amp; Reload</button>`;
 }
@@ -48092,9 +49355,21 @@ async function lxdEnableCancel() {
 }
 
 async function lxdEnableDone() {
-  closeLXDEnableModal();
-  // Trigger LXD status re-probe then reload
+  // After enabling, the service may restart to pick up the incus-admin group
+  // (#15). Wait for the portal to answer again before reloading so the user
+  // isn't dropped onto a connection-refused page mid-restart.
+  const btn = document.querySelector('#lxd-enable-phase2 .modal-footer .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Finalizing…'; }
   try { await fetch('/api/incus/refresh-status', {method:'POST'}); } catch (_) {}
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch('/api/version', { cache: 'no-store' });
+      if (r.ok) break;
+    } catch (_) {}
+    await new Promise(res => setTimeout(res, 1500));
+  }
+  closeLXDEnableModal();
   window.location.reload();
 }
 
@@ -48644,6 +49919,53 @@ function showToast(msg, type = 'error') {
     </div>
     <div class="modal-footer">
       <button id="lxd-migrate-netplan-close" class="btn btn-ghost" disabled onclick="lxdMigrateNetplanClose()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── VMs & Containers: Configure Static IP ─────────────────────────────────
+     Opened from the "Configure Static IP" button on the enable prereqs page.
+     Pre-filled with the primary NIC's current DHCP values so confirming keeps
+     the same address (no session drop) while pinning it statically. -->
+<div class="modal-backdrop hidden" id="modal-lxd-static-ip" onclick="if(event.target===this)lxdEnableCloseStaticIP()">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <h3 style="margin:0;">Configure Static IP</h3>
+      <button class="modal-close" onclick="lxdEnableCloseStaticIP()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:16px;">
+        Virtualization rewrites your network onto a bridge (<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:12px;">vmbr0</code>). A DHCP address changes during that conversion and again when the bridge comes up, so the server can end up on a new IP. Pinning a static address first avoids the churn.
+        <br><br>
+        The fields below are pre-filled with your <strong>current</strong> address — keep them as-is to reserve the IP you already have (no disruption), or edit them if you want a different static address.
+      </div>
+      <div id="lxd-static-ip-error" class="alert alert-error hidden" style="margin-bottom:12px;font-size:13px;"></div>
+      <div class="form-group">
+        <label class="form-label">Interface</label>
+        <input id="lxd-static-ip-iface" class="input" type="text" readonly style="opacity:.75;">
+      </div>
+      <div class="form-group">
+        <label class="form-label">IP Address / CIDR <span style="font-size:11px;color:var(--text-3);">(e.g. 192.168.2.20/24)</span></label>
+        <input id="lxd-static-ip-address" class="input" type="text" placeholder="192.168.2.20/24">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Gateway</label>
+        <input id="lxd-static-ip-gateway" class="input" type="text" placeholder="192.168.2.1">
+      </div>
+      <div style="display:flex;gap:12px;">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">DNS 1</label>
+          <input id="lxd-static-ip-dns1" class="input" type="text" placeholder="1.1.1.1">
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">DNS 2 <span style="font-size:11px;color:var(--text-3);">(optional)</span></label>
+          <input id="lxd-static-ip-dns2" class="input" type="text" placeholder="8.8.8.8">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="lxdEnableCloseStaticIP()">Cancel</button>
+      <button id="lxd-static-ip-apply-btn" class="btn btn-primary" onclick="lxdEnableApplyStaticIP()">Apply Static IP</button>
     </div>
   </div>
 </div>
@@ -52110,32 +53432,112 @@ async function submitCreateBridge() {
   }
 }
 
+// Structured bridge settings shown in the Edit Bridge dialog, each with an
+// info bubble. Incus HIDES defaults — e.g. ipv4.dhcp and ipv4.nat default to
+// TRUE the moment an IPv4 address is set, silently starting a DHCP+NAT server
+// on the bridge. We surface the EFFECTIVE value (default included) so the user
+// can see and control it instead of being surprised by a rogue DHCP server.
+const _ebSettingsSpec = [
+  {key:'ipv4.address', label:'IPv4 address', type:'text', placeholder:'none',
+   tip:"IPv4 address for the bridge in CIDR, e.g. 10.0.0.1/24.&#10;Leave blank (= 'none') for a plain Layer-2 bridge that joins an existing LAN/VLAN.&#10;⚠ Any address makes Incus run a DHCP + NAT server on this bridge unless you turn them off below."},
+  {key:'ipv4.dhcp', label:'IPv4 DHCP server', type:'bool', dep:'ipv4.address',
+   tip:"Run a DHCP server (dnsmasq) on this bridge handing out IPv4 leases.&#10;⚠ Defaults ON whenever an IPv4 address is set.&#10;Turn OFF if this bridge joins a network that already has a DHCP server — otherwise you create a second, conflicting (rogue) DHCP server."},
+  {key:'ipv4.nat', label:'IPv4 NAT', type:'bool', dep:'ipv4.address',
+   tip:"Masquerade (NAT) outbound traffic from this bridge behind the host's IP — for an isolated/internal network.&#10;Turn OFF for a bridge that joins an existing network at Layer 2."},
+  {key:'ipv4.dhcp.ranges', label:'IPv4 DHCP range', type:'text', placeholder:'whole subnet', dep:'ipv4.address',
+   tip:"DHCP pool range(s), e.g. 10.0.0.100-10.0.0.200.&#10;Only used when IPv4 DHCP is ON; blank = hand out the whole subnet."},
+  {key:'ipv6.address', label:'IPv6 address', type:'text', placeholder:'none',
+   tip:"IPv6 address for the bridge, e.g. fd00::1/64.&#10;Blank (= 'none') for no IPv6."},
+  {key:'ipv6.dhcp', label:'IPv6 DHCP/SLAAC', type:'bool', dep:'ipv6.address',
+   tip:"Hand out IPv6 addresses (DHCPv6/SLAAC) on this bridge.&#10;Defaults ON when an IPv6 address is set."},
+  {key:'ipv6.nat', label:'IPv6 NAT', type:'bool', dep:'ipv6.address',
+   tip:"Masquerade IPv6 traffic from this bridge behind the host."},
+  {key:'dns.mode', label:'DNS mode', type:'select', options:['managed','dynamic','none'],
+   tip:"Built-in DNS for instances on this bridge:&#10;managed = A/AAAA records for instance names&#10;dynamic = also register the DHCP-supplied hostname&#10;none = no DNS records."},
+  {key:'dns.domain', label:'DNS domain', type:'text', placeholder:'incus',
+   tip:"DNS domain/suffix for instances on this bridge (default 'incus')."},
+  {key:'bridge.mtu', label:'MTU', type:'text', placeholder:'1500',
+   tip:"Bridge MTU in bytes. Blank = default (1500)."},
+];
+let _ebInitial = {};   // effective values shown when the dialog opened (change detection)
+let _ebStored  = {};   // raw stored config (to know which keys were explicitly set)
+let _ebManaged = false;
+
+// _ebEffective returns the value Incus actually uses for a key: the stored
+// value, or the (often hidden) default that makes the feature behave.
+function _ebEffective(cfg, key) {
+  if (cfg[key] != null && cfg[key] !== '') return cfg[key];
+  const has4 = cfg['ipv4.address'] && cfg['ipv4.address'] !== 'none';
+  const has6 = cfg['ipv6.address'] && cfg['ipv6.address'] !== 'none';
+  switch (key) {
+    case 'ipv4.dhcp': case 'ipv4.nat': return has4 ? 'true' : 'false';
+    case 'ipv6.dhcp': case 'ipv6.nat': return has6 ? 'true' : 'false';
+    case 'dns.mode':   return 'managed';
+    case 'dns.domain': return 'incus';
+    case 'ipv4.address': case 'ipv6.address': return 'none';
+    default: return '';
+  }
+}
+
 function openEditBridgeModal(name) {
   const net = _lxdNetworksCache.find(n => n.name === name);
   if (!net) return;
   _editBridgeCurrentName = name;
+  _ebManaged = !!net.managed;
+  _ebStored = Object.assign({}, net.config || {});
   document.getElementById('edit-bridge-name').textContent = name;
   document.getElementById('eb-desc').value = net.description || '';
-  const al = document.getElementById('edit-bridge-alert');
-  al.classList.add('hidden');
-  // Render config rows.
-  _renderEditBridgeConfigRows(net.config || {});
-  // Used-by info.
-  const ubEl = document.getElementById('eb-used-by');
-  if (net.used_by && net.used_by.length > 0) {
-    const names = net.used_by.map(u => u.replace(/.*\//, '')).join(', ');
-    ubEl.textContent = `Used by: ${names}`;
+  document.getElementById('edit-bridge-alert').classList.add('hidden');
+
+  const note = document.getElementById('eb-unmanaged-note');
+  const commonSec = document.getElementById('eb-common-section');
+  if (!_ebManaged) {
+    note.textContent = 'This is an unmanaged OS bridge (defined in /etc/network/interfaces). Incus-managed network settings (DHCP, NAT, DNS…) do not apply here — edit it via the host network configuration.';
+    note.classList.remove('hidden');
+    commonSec.style.display = 'none';
   } else {
-    ubEl.textContent = '';
+    note.classList.add('hidden');
+    commonSec.style.display = '';
+    _renderEbCommonSettings(net.config || {});
   }
+  // Advanced section = any keys not covered by the structured form.
+  const known = new Set(_ebSettingsSpec.map(s => s.key));
+  _ebConfigPairs = Object.entries(net.config || {}).filter(([k]) => !known.has(k)).map(([k,v]) => ({k, v}));
+  _refreshEditBridgeConfigRows();
+
+  const ubEl = document.getElementById('eb-used-by');
+  ubEl.textContent = (net.used_by && net.used_by.length)
+    ? 'Used by: ' + net.used_by.map(u => u.replace(/.*\//, '')).join(', ') : '';
   document.getElementById('modal-edit-bridge').classList.remove('hidden');
 }
 
-let _ebConfigPairs = [];
-function _renderEditBridgeConfigRows(cfg) {
-  _ebConfigPairs = Object.entries(cfg || {}).map(([k,v]) => ({k, v}));
-  _refreshEditBridgeConfigRows();
+function _renderEbCommonSettings(cfg) {
+  _ebInitial = {};
+  const el = document.getElementById('eb-common-settings');
+  el.innerHTML = _ebSettingsSpec.map(s => {
+    const eff = _ebEffective(cfg, s.key);
+    _ebInitial[s.key] = eff;
+    const fid = 'ebf-' + s.key.replace(/\./g, '_');
+    let field;
+    if (s.type === 'bool') {
+      field = `<select id="${fid}" class="input" style="width:120px;flex-shrink:0;">
+        <option value="true"${eff==='true'?' selected':''}>On</option>
+        <option value="false"${eff!=='true'?' selected':''}>Off</option></select>`;
+    } else if (s.type === 'select') {
+      field = `<select id="${fid}" class="input" style="width:150px;flex-shrink:0;">` +
+        s.options.map(o => `<option value="${o}"${eff===o?' selected':''}>${o}</option>`).join('') + `</select>`;
+    } else {
+      const shown = (eff === 'none' && s.key.indexOf('address') >= 0) ? '' : eff;
+      field = `<input id="${fid}" class="input" style="flex:1;min-width:150px;" value="${esc(shown)}" placeholder="${esc(s.placeholder||'')}">`;
+    }
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <label class="form-label" style="width:140px;margin:0;flex-shrink:0;display:flex;align-items:center;gap:4px;">${s.label}
+        <i class="info-tip tip-right" data-tip="${s.tip}"></i></label>
+      ${field}</div>`;
+  }).join('');
 }
+
+let _ebConfigPairs = [];
 function _refreshEditBridgeConfigRows() {
   const el = document.getElementById('eb-config-rows');
   el.innerHTML = _ebConfigPairs.map((p, i) => `
@@ -52155,6 +53557,24 @@ async function submitEditBridge() {
   al.classList.add('hidden');
   const config = {};
   _ebConfigPairs.forEach(p => { if (p.k.trim()) config[p.k.trim()] = p.v; });
+  if (_ebManaged) {
+    const get = k => { const e = document.getElementById('ebf-' + k.replace(/\./g,'_')); return e ? e.value.trim() : ''; };
+    // A blank address must become 'none', NOT unset: Incus defaults ipv4.address
+    // to 'auto', which would re-create a random subnet + DHCP — the exact footgun.
+    const norm = (k,v) => (k.indexOf('address') >= 0 && v === '') ? 'none' : v;
+    const v4on = (() => { const a = norm('ipv4.address', get('ipv4.address')); return !!a && a !== 'none'; })();
+    const v6on = (() => { const a = norm('ipv6.address', get('ipv6.address')); return !!a && a !== 'none'; })();
+    _ebSettingsSpec.forEach(s => {
+      const val = norm(s.key, get(s.key));
+      const relevant = !s.dep || (s.dep === 'ipv4.address' ? v4on : v6on);
+      if (!relevant) {
+        // Feature no longer applies (its address was cleared) — unset if it was explicitly stored.
+        if (_ebStored[s.key] != null) config[s.key] = '';
+        return;
+      }
+      if (val !== _ebInitial[s.key]) config[s.key] = val;  // changed → apply ('' unsets; addresses normalized to 'none')
+    });
+  }
   const req = { name: _editBridgeCurrentName, description: document.getElementById('eb-desc').value.trim(), config };
   const btn = document.getElementById('edit-bridge-submit');
   btn.disabled = true; btn.textContent = 'Saving…';

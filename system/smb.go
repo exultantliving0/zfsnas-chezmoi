@@ -734,20 +734,27 @@ func RestartSamba() error {
 
 // IsSambaInstalled checks if the smbd binary is available.
 func IsSambaInstalled() bool {
-	_, err := exec.LookPath("smbd")
-	return err == nil
+	return binaryInstalled("smbd")
 }
 
-// SambaStatus returns "active", "inactive", or "not-installed".
+// SambaStatus returns "active", "inactive", "unknown", or "not-installed".
+//
+// `systemctl is-active` prints the state word to stdout ("inactive", "failed",
+// …) even when it exits non-zero for a genuinely-stopped service, so we trust
+// any non-empty output. Empty output means the command never produced a verdict
+// — almost always because the host is too busy to fork (load ~24 during a big
+// zfs receive). In that case we return "unknown" rather than "inactive" so the
+// UI shows a neutral "couldn't determine, busy" hint instead of a false
+// "smbd is down" alarm. See feedback_high_load_false_negatives.
 func SambaStatus() string {
 	if !IsSambaInstalled() {
 		return "not-installed"
 	}
-	out, err := exec.Command("systemctl", "is-active", "smbd").Output()
-	if err != nil {
-		return "inactive"
+	out, _ := exec.Command("systemctl", "is-active", "smbd").Output()
+	if state := strings.TrimSpace(string(out)); state != "" {
+		return state
 	}
-	return strings.TrimSpace(string(out))
+	return "unknown"
 }
 
 // ControlSamba runs systemctl start/stop/restart on smbd (and nmbd if present).

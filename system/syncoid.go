@@ -28,6 +28,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -83,8 +84,7 @@ func zfsnasSSHKey() string {
 
 // SyncoidPrereqsInstalled returns true when /usr/sbin/syncoid is on PATH.
 func SyncoidPrereqsInstalled() bool {
-	_, err := exec.LookPath("syncoid")
-	return err == nil
+	return binaryInstalled("syncoid")
 }
 
 // InstallSyncoid runs apt-get to install the sanoid package (which contains
@@ -177,6 +177,22 @@ func runSyncoid(ctx context.Context, args []string, logFn func(string)) error {
 		logFn("$ sudo " + strings.Join(args, " "))
 	}
 	cmd := exec.CommandContext(ctx, "sudo", args...)
+	// Run syncoid in its own process group so cancellation can take down the
+	// WHOLE pipeline (sudo → syncoid → sh -c 'zfs send | pv | mbuffer | ssh').
+	// exec.CommandContext's default only SIGKILLs the direct child (sudo),
+	// which orphans the zfs-send pipeline underneath it — a stuck/abandoned
+	// backup that keeps hammering the disks. With Setpgid the child is its own
+	// group leader (pgid == pid), so signalling -pid hits every descendant.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// SIGTERM the group first for a clean teardown, then SIGKILL to be sure.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("pipe stdout: %w", err)
@@ -193,6 +209,11 @@ func runSyncoid(ctx context.Context, args []string, logFn func(string)) error {
 	scan := func(rc io.Reader) {
 		s := bufio.NewScanner(rc)
 		s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		// Break on BOTH '\n' and '\r' so pv's carriage-return-terminated
+		// progress updates ("4.17GiB … 25% ETA 0:01:30") stream through as
+		// they happen instead of being swallowed until the next newline. This
+		// is what gives the activity bar a live percentage.
+		s.Split(scanLinesAndCR)
 		for s.Scan() {
 			line := strings.TrimRight(s.Text(), "\r\n")
 			if line == "" {
@@ -216,4 +237,51 @@ func runSyncoid(ctx context.Context, args []string, logFn func(string)) error {
 		return fmt.Errorf("syncoid: %w", err)
 	}
 	return nil
+}
+
+// scanLinesAndCR is a bufio.SplitFunc that splits on either '\n' or '\r'. The
+// stdlib bufio.ScanLines only breaks on '\n', so pv's progress updates (which
+// it rewrites in place using a bare '\r') would never surface until syncoid
+// printed a newline. Splitting on '\r' too lets each progress refresh through.
+func scanLinesAndCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i, b := range data {
+		if b == '\n' || b == '\r' {
+			return i + 1, data[:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil // request more data
+}
+
+// ParseSyncoidPercent extracts a 0–100 progress percentage from a pv progress
+// line (e.g. "4.17GiB 0:00:30 [142MiB/s] [===>      ] 25% ETA 0:01:30").
+// Returns ok=false when the line carries no percentage.
+func ParseSyncoidPercent(line string) (int, bool) {
+	// Find a "NN%" token; pv right-pads the percentage so it always precedes
+	// the literal '%'. Walk back over digits from each '%'.
+	for i := 0; i < len(line); i++ {
+		if line[i] != '%' {
+			continue
+		}
+		j := i
+		for j > 0 && line[j-1] >= '0' && line[j-1] <= '9' {
+			j--
+		}
+		if j == i {
+			continue // a lone '%' with no leading digits
+		}
+		n := 0
+		for k := j; k < i; k++ {
+			n = n*10 + int(line[k]-'0')
+		}
+		if n >= 0 && n <= 100 {
+			return n, true
+		}
+	}
+	return 0, false
 }

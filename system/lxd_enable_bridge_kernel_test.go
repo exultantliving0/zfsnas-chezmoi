@@ -43,14 +43,19 @@ func TestBridgeStanzaTailKernel6(t *testing.T) {
 //   - No `bridge-vids 2-4094` (same regression — the explicit VID add
 //     is what triggers the drop of VID 1).
 //
-// MAC pinning, when needed, must be expressed as a `pre-up` ip-link
-// invocation, which runs before bridge_ports adds the slave and avoids
-// the kernel-side conflict.
+// MAC pinning, when needed, must be a NON-FATAL `post-up` ip-link
+// invocation (`… || true`). It CANNOT be `pre-up`: ifupdown creates the
+// bridge during pre-up (the bridge_ports hook), and a stanza pre-up runs
+// BEFORE that hook, so `ip link set vmbr0` fails "Cannot find device" and
+// aborts the bridge bring-up → the IP is never applied and the host
+// disconnects (confirmed live on znas3, kernel 7.0.0-22, June 2026).
+// post-up runs after the bridge exists and after the IP is applied; `|| true`
+// guarantees a MAC-pin failure can never take the host's network down.
 func TestBridgeStanzaTailKernel7(t *testing.T) {
 	c := bridgeCandidate{NIC: "enp2s0f0", MAC: "f4:e9:d4:99:41:a0", Bridge: "vmbr0"}
 	got := bridgeKernelStanzaTail(c, true)
 	mustHave := []string{
-		"pre-up /usr/sbin/ip link set vmbr0 address f4:e9:d4:99:41:a0",
+		"post-up /usr/sbin/ip link set vmbr0 address f4:e9:d4:99:41:a0 || true",
 		"bridge_ports enp2s0f0",
 		"bridge_stp off",
 		"bridge_fd 0",
@@ -64,6 +69,7 @@ func TestBridgeStanzaTailKernel7(t *testing.T) {
 		"hwaddress ether",
 		"bridge-vlan-aware",
 		"bridge-vids",
+		"pre-up", // pre-up form is the bug that disconnected the host
 	}
 	for _, w := range mustNotHave {
 		if strings.Contains(got, w) {

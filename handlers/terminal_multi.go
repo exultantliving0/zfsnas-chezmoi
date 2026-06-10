@@ -263,11 +263,11 @@ const THEMES = {
   'light': { label: 'Light', theme: {
     background:'#fafafa', foreground:'#1a1a1f', cursor:'#0066ff',
     selectionBackground:'rgba(0,102,255,0.18)',
-    black:'#000000', red:'#c91b00', green:'#00c200', yellow:'#c7c400',
-    blue:'#0037da', magenta:'#c930c7', cyan:'#00c5c7', white:'#c7c7c7',
-    brightBlack:'#676767', brightRed:'#ff6d67', brightGreen:'#5ff967',
-    brightYellow:'#fefb67', brightBlue:'#6871ff', brightMagenta:'#ff76ff',
-    brightCyan:'#5ffdff', brightWhite:'#feffff',
+    black:'#000000', red:'#c91b00', green:'#008a1e', yellow:'#9a7d00',
+    blue:'#0037da', magenta:'#c930c7', cyan:'#008b8d', white:'#c7c7c7',
+    brightBlack:'#676767', brightRed:'#ff6d67', brightGreen:'#1fa82f',
+    brightYellow:'#b59a00', brightBlue:'#6871ff', brightMagenta:'#ff76ff',
+    brightCyan:'#19a9ab', brightWhite:'#feffff',
   }},
 };
 
@@ -509,6 +509,19 @@ function closeTab(i) {
 
 // ── WebSocket attach for one tab ───────────────────────────────────────────
 
+// termPasteFromClipboard reads the clipboard and injects it into the PTY.
+// Chrome reads silently; Firefox/Safari show their own one-tap paste
+// confirmation (a browser security policy for programmatic clipboard reads that
+// we can't bypass from a menu click). Ctrl+Shift+V / native paste remain
+// available as the popup-free path via xterm's own paste handling.
+async function termPasteFromClipboard(wsSend) {
+  if (!wsSend) return;
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) wsSend(t);
+  } catch (e) { /* read blocked/denied — user can use Ctrl+Shift+V */ }
+}
+
 // Right-click menu (Copy / Paste / Select All). Overriding the native menu
 // lets Copy fire from this click gesture, which is what makes the clipboard
 // write succeed on Safari (Mac/iPad).
@@ -552,9 +565,7 @@ function showTermCtxMenu(ev, term, wsSend) {
     if (sel) { try { navigator.clipboard.writeText(sel).catch(()=>{}); } catch (e) {} }
   });
   if (wsSend) {
-    addItem('⮃ Paste', true, async () => {
-      try { const t = await navigator.clipboard.readText(); if (t) wsSend(t); } catch (e) {}
-    });
+    addItem('⮃ Paste', true, () => { termPasteFromClipboard(wsSend); });
   }
   addItem('☰ Select All', true, () => { try { term.selectAll(); } catch (e) {} });
 
@@ -622,13 +633,25 @@ function buildPane(tab) {
   // this the user had to right-click → Copy on macOS/iPadOS.
   term.attachCustomKeyEventHandler((ev) => {
     if (ev.type !== 'keydown' || (ev.key !== 'c' && ev.key !== 'C')) return true;
-    const meta  = ev.metaKey && !ev.ctrlKey && !ev.altKey;
-    const ctrlS = ev.ctrlKey && ev.shiftKey && !ev.metaKey && !ev.altKey;
-    if (!meta && !ctrlS) return true;
-    let sel = ''; try { sel = term.getSelection() || ''; } catch{}
-    if (!sel) return true;
-    try { navigator.clipboard.writeText(sel).catch(()=>{}); } catch{}
-    return false; // don't let xterm also act on the key
+    const meta  = ev.metaKey && !ev.ctrlKey && !ev.altKey;            // Cmd+C
+    const ctrlS = ev.ctrlKey && ev.shiftKey && !ev.metaKey && !ev.altKey; // Ctrl+Shift+C
+    if (meta || ctrlS) {
+      let sel = ''; try { sel = term.getSelection() || ''; } catch{}
+      if (!sel) return true;
+      try { navigator.clipboard.writeText(sel).catch(()=>{}); } catch{}
+      return false; // copy; don't let xterm also act on the key
+    }
+    // Plain Ctrl+C MUST send SIGINT to the PTY — even when a selection exists.
+    // xterm's default treats Ctrl+C as "copy" whenever there's a selection, and
+    // this page auto-copies on selectionchange, so a selection is almost always
+    // present after a click → Ctrl+C would silently copy instead of interrupting.
+    // Forward \x03 ourselves (use Ctrl+Shift+C or right-click to copy). Matches
+    // the docked-panel behaviour in index.html.
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey) {
+      if (tab.ws && tab.ws.readyState === 1) { try { tab.ws.send('\x03'); } catch{} }
+      return false; // tell xterm not to also handle it (would copy)
+    }
+    return true;
   });
 
   // Right-click → Copy / Paste / Select All.
@@ -887,12 +910,18 @@ async function buildAddMenu() {
   // each with its own "Host shell" entry plus one row per *running* VM
   // and container. The "+" menu is the single jumping-off point for
   // every terminal target reachable from this portal.
+  // This menu is a fleet-wide view: it must always show the TRUE local host and
+  // its peers, even when the session is relaying to a peer. The X-ZNAS-No-Relay
+  // header tells the relay middleware to serve these locally so the viewed peer
+  // doesn't masquerade as "this server" (and get listed twice while the real
+  // local host vanishes) — see #2.
+  const NORELAY = {credentials:'same-origin', headers:{'X-ZNAS-No-Relay':'1'}};
   let localHostname = '';
   try {
-    const v = await fetch('/api/version', {credentials:'same-origin'}).then(r => r.ok ? r.json() : null);
+    const v = await fetch('/api/version', NORELAY).then(r => r.ok ? r.json() : null);
     if (v && v.hostname) localHostname = v.hostname;
   } catch {}
-  const peers = await fetch('/api/interlink/servers', {credentials:'same-origin'})
+  const peers = await fetch('/api/interlink/servers', NORELAY)
                   .then(r => r.ok ? r.json() : []).catch(() => []);
 
   // Fetch local + each online peer's instances in parallel.
@@ -903,7 +932,7 @@ async function buildAddMenu() {
   // (extended in v6.5.30 specifically so this menu could filter to
   // running) — normalise the local payload to the same shape below.
   const promises = [
-    fetch('/api/lxd/instances', {credentials:'same-origin'})
+    fetch('/api/lxd/instances', NORELAY)
       .then(r => r.ok ? r.json() : [])
       .then(list => ({
         serverId: '',
@@ -919,7 +948,7 @@ async function buildAddMenu() {
   ];
   for (const p of onlinePeers) {
     promises.push(
-      fetch('/api/interlink/remote-lxd-instances/' + encodeURIComponent(p.id), {credentials:'same-origin'})
+      fetch('/api/interlink/remote-lxd-instances/' + encodeURIComponent(p.id), NORELAY)
         .then(r => r.ok ? r.json() : {instances:[]})
         .then(data => ({serverId: p.id, hostname: p.hostname, instances: (data && data.instances) || []}))
         .catch(() => ({serverId: p.id, hostname: p.hostname, instances: []}))

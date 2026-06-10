@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,8 @@ type lxdBackupJob struct {
 	DestHost  string    `json:"dest_host,omitempty"`
 	DestPool  string    `json:"dest_pool"`
 	StartedAt time.Time `json:"started_at"`
+	Progress  int       `json:"progress"` // 0–100 for the current part (pv %)
+	Phase     string    `json:"phase"`    // which dataset is transferring now
 	cancelFn  context.CancelFunc
 }
 
@@ -52,6 +55,26 @@ func (j *lxdBackupJob) appendLine(line string) {
 		j.Lines = j.Lines[len(j.Lines)-3000:]
 	}
 	j.Lines = append(j.Lines, line)
+	// Track live progress for the activity bar. A new part resets the bar;
+	// pv's percentage updates drive it. See ParseSyncoidPercent / the
+	// scanLinesAndCR splitter that lets pv lines stream.
+	if ph, ok := backupPhaseLabel(line); ok {
+		j.Phase = ph
+		j.Progress = 0
+	} else if pct, ok := system.ParseSyncoidPercent(line); ok {
+		j.Progress = pct
+	}
+}
+
+// backupPhaseLabel recognises the "[root-fs] src -> dst" / "[custom] …" header
+// lines runBackupJob prints before each dataset and returns a short phase name.
+func backupPhaseLabel(line string) (string, bool) {
+	for _, p := range []string{"[root-fs]", "[root-blk]", "[custom]"} {
+		if strings.HasPrefix(line, p) {
+			return strings.Trim(p, "[]"), true
+		}
+	}
+	return "", false
 }
 
 func (j *lxdBackupJob) cancel() {
@@ -409,7 +432,49 @@ func HandleLXDBackupProgress(w http.ResponseWriter, r *http.Request) {
 		"dest_host":  j.DestHost,
 		"dest_pool":  j.DestPool,
 		"started_at": j.StartedAt,
+		"progress":   j.Progress,
+		"phase":      j.Phase,
 	})
+}
+
+// HandleListBackupJobs returns all backup jobs the server currently knows about
+// — every running/queued one plus any that finished in the last few minutes.
+// This is what lets the activity bar rediscover an in-flight backup after a
+// page reload or from a different browser/tab: the jobs run under
+// context.Background() on the server, independent of any UI.
+// GET /api/incus/backup-jobs
+func HandleListBackupJobs(w http.ResponseWriter, r *http.Request) {
+	jsonOK(w, map[string]interface{}{"jobs": listBackupJobs()})
+}
+
+func listBackupJobs() []map[string]interface{} {
+	out := []map[string]interface{}{}
+	lxdBackupJobs.Range(func(k, v interface{}) bool {
+		id := k.(string)
+		j := v.(*lxdBackupJob)
+		j.mu.Lock()
+		keep := j.Status == "running" || j.Status == "queued" ||
+			time.Since(j.StartedAt) < 5*time.Minute
+		if keep {
+			out = append(out, map[string]interface{}{
+				"job_id":     id,
+				"status":     j.Status,
+				"instance":   j.Instance,
+				"dest_kind":  j.DestKind,
+				"dest_host":  j.DestHost,
+				"dest_pool":  j.DestPool,
+				"started_at": j.StartedAt,
+				"progress":   j.Progress,
+				"phase":      j.Phase,
+			})
+		}
+		j.mu.Unlock()
+		return true
+	})
+	sort.Slice(out, func(a, b int) bool {
+		return out[a]["started_at"].(time.Time).After(out[b]["started_at"].(time.Time))
+	})
+	return out
 }
 
 // HandleInstallSyncoid runs apt-get install -y sanoid.

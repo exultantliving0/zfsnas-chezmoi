@@ -121,22 +121,45 @@ func getTopologyFromFreq() *CPUTopology {
 
 	topo := &CPUTopology{TotalCPUs: len(cpus)}
 
-	if len(freqSet) < 2 {
+	allPerformance := func() *CPUTopology {
 		for _, c := range cpus {
 			topo.PCores = append(topo.PCores, c.id)
 		}
 		return topo
 	}
 
-	topo.Hybrid = true
-	var maxFreq uint64
+	if len(freqSet) < 2 {
+		return allPerformance()
+	}
+
+	var maxFreq, minFreq uint64
 	for f := range freqSet {
 		if f > maxFreq {
 			maxFreq = f
 		}
+		if minFreq == 0 || f < minFreq {
+			minFreq = f
+		}
 	}
+
+	// A genuine P/E hybrid clocks its efficiency cores well below the
+	// performance cores. Minor per-core max-frequency variation — Intel Turbo
+	// Boost Max 3.0 / ITMT "favored cores", AMD preferred cores, or silicon
+	// binning — is only a few percent and must NOT be read as an efficiency
+	// tier, or a homogeneous host wrongly offers an "Efficient Cores" option.
+	// Require at least a 15% spread between the slowest and fastest core before
+	// classifying the CPU as hybrid.
+	if minFreq*100 >= maxFreq*85 {
+		return allPerformance()
+	}
+
+	topo.Hybrid = true
+	// Split at the midpoint so the fast tier (P-cores, including any favored
+	// core boosted slightly above its peers) lands in PCores and the slow tier
+	// in ECores — rather than treating only the single highest frequency as P.
+	mid := (maxFreq + minFreq) / 2
 	for _, c := range cpus {
-		if c.freq == maxFreq {
+		if c.freq > mid {
 			topo.PCores = append(topo.PCores, c.id)
 		} else {
 			topo.ECores = append(topo.ECores, c.id)

@@ -55,11 +55,54 @@ func HandleLXDEnableStart(w http.ResponseWriter, r *http.Request) {
 			v := system.LXDAvailable()
 			SetLXDAvailable(v)
 			audit.Log(audit.Entry{Action: audit.ActionLXDEnable, User: "system", Details: "VMs & Containers feature enabled on pool " + req.StoragePool})
+			// #15: when the non-root service account still can't reach the daemon
+			// directly (its incus-admin group membership won't apply until a fresh
+			// systemd start re-runs initgroups), restart so the "incus CLI not
+			// answering" banner clears without a manual service restart.
+			if !v && system.IncusInstalled() {
+				system.ScheduleServiceRestartForIncus()
+			}
 		}
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
 	jsonOK(w, map[string]string{"job_id": jobID})
+}
+
+// HandleLXDEnableNetConfig returns the primary interface's current address /
+// gateway / DNS to pre-fill the "Configure Static IP" popup.
+// GET /api/lxd/enable/netconfig
+func HandleLXDEnableNetConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := system.GetEnableNetConfig()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, cfg)
+}
+
+// HandleLXDEnableStaticIP pins the primary interface to a static address (the
+// values confirmed in the popup) so the netplan→ifupdown migration and the
+// vmbr0 bridge inherit a stable IP. Returns the re-evaluated prerequisites so
+// the UI can refresh the row without a second GET.
+// POST /api/lxd/enable/static-ip  body: {iface, address, gateway, dns:[]}
+func HandleLXDEnableStaticIP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Iface   string   `json:"iface"`
+		Address string   `json:"address"`
+		Gateway string   `json:"gateway"`
+		DNS     []string `json:"dns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := system.SetEnableStaticIP(req.Iface, req.Address, req.Gateway, req.DNS); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	audit.Log(audit.Entry{Action: audit.ActionLXDEnable, User: "system", Details: "Static IP configured on " + req.Iface + " (" + req.Address + ") for virtualization enable"})
+	jsonOK(w, system.LXDEnableCheckPrereqs())
 }
 
 // HandleLXDEnableProgress returns the current state of an enable job.

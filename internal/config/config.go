@@ -381,10 +381,12 @@ type AppConfig struct {
 	ComposeBaseImage  string    `json:"compose_base_image,omitempty"`
 	// Docker Detection (v6.5.26) — when enabled, the portal probes each
 	// VM or LXC the user opens for a running Docker daemon and renders
-	// a Docker card listing the containers/stacks found. Both default
-	// off; admin opts in per type from Settings → Virtualization.
-	DockerDetectVMs        bool      `json:"docker_detect_vms,omitempty"`
-	DockerDetectContainers bool      `json:"docker_detect_containers,omitempty"`
+	// a Docker card listing the containers/stacks found. Pointers so an
+	// absent value means "never configured" and defaults ON (v6.6.9); an
+	// explicit false (admin opted out per type from Settings → Virtualization)
+	// is preserved. Read via DockerDetectVMsOn / DockerDetectContainersOn.
+	DockerDetectVMs        *bool     `json:"docker_detect_vms,omitempty"`
+	DockerDetectContainers *bool     `json:"docker_detect_containers,omitempty"`
 	StorageUnit       string    `json:"storage_unit,omitempty"`        // "gb" (1000-based) or "gib" (1024-based)
 	LoginTheme        string    `json:"login_theme,omitempty"`         // "dark" | "light" | "auto"
 	SMARTLastRefresh  time.Time `json:"smart_last_refresh,omitempty"`
@@ -626,6 +628,18 @@ func saveJSON(filename string, v interface{}) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// DockerDetectVMsOn reports the effective Docker-detection setting for VMs.
+// Defaults ON when never explicitly configured (nil pointer); an explicit
+// false is honoured.
+func (c *AppConfig) DockerDetectVMsOn() bool {
+	return c.DockerDetectVMs == nil || *c.DockerDetectVMs
+}
+
+// DockerDetectContainersOn is the same for LXC containers — defaults ON.
+func (c *AppConfig) DockerDetectContainersOn() bool {
+	return c.DockerDetectContainers == nil || *c.DockerDetectContainers
 }
 
 // LoadAppConfig loads or initializes application config with defaults.

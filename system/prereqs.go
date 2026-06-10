@@ -239,15 +239,15 @@ func CheckSudoAccess() SudoStatus {
 	// Hardened configuration — check each required entry.
 	var missing []string
 	for _, chk := range requiredSudoChecks {
-		// Skip experimental-only entries on non-experimental hosts.
-		// The sudoers template removes their alias block entirely in
-		// that mode (see stripExperimentalSudoersSections), so warning
-		// about a missing line the user can't add from the editor is
-		// pure noise. v6.5.30 fix for a user on Ubuntu 26.04 who saw
-		// "syncoid *" perpetually missing because their system had
-		// syncoid installed (transitive sanoid dep) but no
-		// virtualization feature in use.
-		if chk.IfExperimental && !version.IsExperimental() {
+		// Skip experimental-only entries unless --experimental is on AND
+		// virtualization is actually installed. The sudoers template removes
+		// their alias block until the feature is enabled, so warning about a
+		// missing line the user can't add from the editor is pure noise. Merely
+		// passing --experimental (without ever installing virtualization) must
+		// not surface red "missing" rows for virtualization sudo entries. v6.5.30
+		// covered the non-experimental case; v6.6.9 also gates on IncusInstalled
+		// so an experimental-but-not-yet-installed host stays clean.
+		if chk.IfExperimental && !(version.IsExperimental() && IncusInstalled()) {
 			continue
 		}
 		// Skip optional-feature entries when the feature is not installed.

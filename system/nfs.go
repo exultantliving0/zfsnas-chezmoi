@@ -144,8 +144,7 @@ func ExportFS() error {
 
 // IsNFSInstalled checks whether the exportfs binary is present.
 func IsNFSInstalled() bool {
-	_, err := exec.LookPath("exportfs")
-	return err == nil
+	return binaryInstalled("exportfs")
 }
 
 // NFSStatus returns "active", "inactive", or "not-installed".

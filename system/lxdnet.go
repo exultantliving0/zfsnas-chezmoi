@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -617,8 +618,24 @@ func EditLXDNetwork(req LXDNetworkEditRequest) error {
 	if err := setLXDNetworkDescription(req.Name, req.Description); err != nil {
 		return err
 	}
-	// Apply each config key.
-	for k, v := range req.Config {
+	// Apply config keys in a safe order: *address keys FIRST. Dependent keys
+	// (ipv4.dhcp/nat, ipv4.dhcp.ranges, dns.*) are rejected by Incus unless the
+	// address is already set, and Go map iteration is random — so without this
+	// ordering a single edit could intermittently fail with e.g.
+	// "Cannot use ipv4.dhcp when ipv4.address is unset".
+	keys := make([]string, 0, len(req.Config))
+	for k := range req.Config {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		ai, aj := strings.Contains(keys[i], "address"), strings.Contains(keys[j], "address")
+		if ai != aj {
+			return ai // address keys sort first
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		v := req.Config[k]
 		if v == "" {
 			if out, err := exec.Command("incus", "network", "unset", req.Name, k).CombinedOutput(); err != nil {
 				return fmt.Errorf("unset %s: %s", k, strings.TrimSpace(string(out)))

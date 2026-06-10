@@ -16,8 +16,7 @@ type ISCSIServiceStatus struct {
 
 // ISCSIPrereqsInstalled returns true when targetcli is available on the system.
 func ISCSIPrereqsInstalled() bool {
-	_, err := exec.LookPath("targetcli")
-	return err == nil
+	return binaryInstalled("targetcli")
 }
 
 // iscsiServiceName returns the systemd service name for the iSCSI daemon.

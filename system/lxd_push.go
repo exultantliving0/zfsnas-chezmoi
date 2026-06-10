@@ -707,18 +707,23 @@ func LXDPushVM(ctx context.Context, req LXDPushVMRequest, job *pushinterlink.Job
 		return
 	}
 
-	// Repair UEFI boot on the destination: reset NVRAM + fix EFI fallback boot
-	// path.  Required after cross-version migration (e.g. LXD 6.7 → 5.0) where
-	// NVRAM device-path entries are stale and EFI/BOOT/grub.cfg may be absent.
-	if repairErr := ResetRemoteVMNVRAM(ls.URL, ls.SharedSecret, ls.TLSFingerprint, req.DestName); repairErr != nil {
-		fmt.Printf("lxd push: EFI boot repair on remote failed (non-fatal): %v\n", repairErr)
-	}
+	// UEFI/TPM repairs only apply to virtual machines. Containers share the host
+	// kernel and have no NVRAM or swtpm state, so skip these remote round-trips
+	// for them (they would otherwise log misleading "failed" warnings).
+	if lxdInstanceIsVM(req.VMName) {
+		// Repair UEFI boot on the destination: reset NVRAM + fix EFI fallback boot
+		// path.  Required after cross-version migration (e.g. LXD 6.7 → 5.0) where
+		// NVRAM device-path entries are stale and EFI/BOOT/grub.cfg may be absent.
+		if repairErr := ResetRemoteVMNVRAM(ls.URL, ls.SharedSecret, ls.TLSFingerprint, req.DestName); repairErr != nil {
+			fmt.Printf("lxd push: EFI boot repair on remote failed (non-fatal): %v\n", repairErr)
+		}
 
-	// Clear swtpm state on the destination.  The state file copied from the source
-	// is tied to the source OVMF session; using it on a different OVMF build
-	// causes QEMU to exit with a TPM fatal error on every cold start.
-	if tpmErr := ClearRemoteTPMState(ls.URL, ls.SharedSecret, ls.TLSFingerprint, req.DestName); tpmErr != nil {
-		fmt.Printf("lxd push: TPM state clear on remote failed (non-fatal): %v\n", tpmErr)
+		// Clear swtpm state on the destination.  The state file copied from the source
+		// is tied to the source OVMF session; using it on a different OVMF build
+		// causes QEMU to exit with a TPM fatal error on every cold start.
+		if tpmErr := ClearRemoteTPMState(ls.URL, ls.SharedSecret, ls.TLSFingerprint, req.DestName); tpmErr != nil {
+			fmt.Printf("lxd push: TPM state clear on remote failed (non-fatal): %v\n", tpmErr)
+		}
 	}
 
 	// Apply NIC overrides on destination.
@@ -770,7 +775,9 @@ func LXDPushVM(ctx context.Context, req LXDPushVMRequest, job *pushinterlink.Job
 // HMAC portal round-trips or the CLI-cert exchange, which can fail and abort
 // that function before it ever reaches its pin step (leaving a stale cert in
 // place). Healing the pin here is what fixes the recurring
-//   "x509: certificate signed by unknown authority … candidate authority <peer>"
+//
+//	"x509: certificate signed by unknown authority … candidate authority <peer>"
+//
 // copy failure after the destination's daemon cert rotates.
 func LXDRepinPeerServerCert(ls config.LinkedServer) error {
 	peerIP := extractHost(ls.URL)
@@ -1013,6 +1020,24 @@ func lxdCustomVolumesForVM(vmName string) []string {
 		}
 	}
 	return vols
+}
+
+// lxdInstanceIsVM reports whether an instance is a virtual-machine (as opposed
+// to a container). Used to gate the UEFI-NVRAM / swtpm post-copy repair steps,
+// which are meaningless for containers. Defaults to false (container) on error
+// so a probe failure can't trigger VM-only remote operations.
+func lxdInstanceIsVM(name string) bool {
+	out, err := exec.Command("incus", "query", "/1.0/instances/"+name).Output()
+	if err != nil {
+		return false
+	}
+	var inst struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(out, &inst); err != nil {
+		return false
+	}
+	return inst.Type == "virtual-machine"
 }
 
 // lxdGetDeviceConfig returns the config map for a single device on a VM by

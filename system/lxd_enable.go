@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,7 +52,17 @@ func bridgeKernelStanzaTail(c bridgeCandidate, k7 bool) string {
 	var b strings.Builder
 	if c.MAC != "" {
 		if k7 {
-			fmt.Fprintf(&b, "    pre-up /usr/sbin/ip link set %s address %s\n", c.Bridge, c.MAC)
+			// MUST be post-up, NOT pre-up: ifupdown creates the bridge during
+			// the pre-up phase (the bridge_ports if-pre-up.d hook), and a
+			// stanza `pre-up` runs BEFORE that hook — so `ip link set <bridge>`
+			// at pre-up fails "Cannot find device", which ABORTS the whole
+			// bridge bring-up and the static/DHCP IP is never applied →
+			// the host disconnects (confirmed live on znas3, kernel 7.0.0-22,
+			// June 2026: /etc/network/interfaces.bad). post-up runs after the
+			// bridge exists AND after the IP is applied, and `|| true` makes
+			// the MAC-pin non-fatal so it can NEVER take the host's network
+			// down — worst case the bridge keeps its auto-assigned MAC.
+			fmt.Fprintf(&b, "    post-up /usr/sbin/ip link set %s address %s || true\n", c.Bridge, c.MAC)
 		} else {
 			fmt.Fprintf(&b, "    hwaddress ether %s\n", c.MAC)
 		}
@@ -125,13 +136,17 @@ func lxdBinaryPath() string {
 // Networking" button on the Network row — set when netplan is the only
 // network configuration on the host (see netplan_migrate.go).
 type LXDEnablePrereqResult struct {
+	SudoAllOK     bool     `json:"sudo_all_ok"`
 	SudoersOK     bool     `json:"sudoers_ok"`
+	StaticIPOK    bool     `json:"static_ip_ok"`
 	NetworkOK     bool     `json:"network_ok"`
 	NetworkCanFix bool     `json:"network_can_fix,omitempty"`
 	OSSupported   bool     `json:"os_supported"`
 	HasPools      bool     `json:"has_pools"`
 	AllOK         bool     `json:"all_ok"`
+	SudoAllNote   string   `json:"sudo_all_note,omitempty"`
 	SudoersNote   string   `json:"sudoers_note,omitempty"`
+	StaticIPNote  string   `json:"static_ip_note,omitempty"`
 	NetworkNote   string   `json:"network_note,omitempty"`
 	OSNote        string   `json:"os_note,omitempty"`
 	PoolsNote     string   `json:"pools_note,omitempty"`
@@ -194,8 +209,19 @@ func (j *LXDEnableJob) Snapshot() LXDEnableJob {
 func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 	res := LXDEnablePrereqResult{}
 
-	// 1. Sudoers: can we run apt-get? (root, all, or hardened with ZFSNAS_APT)
+	// 0. Sudo all: enabling virtualization touches many commands not covered by
+	// the hardened sudoers template (incus admin init, netplan/ifupdown rewrites,
+	// service control). It is therefore MANDATORY to hold unrestricted sudo while
+	// enabling — the user can re-apply hardening from Settings → Sudoers once the
+	// feature is on. A "Switch to sudo all" button is offered on the row.
 	sudo := CheckSudoAccess()
+	if sudo.Type == "all" || sudo.Type == "root" {
+		res.SudoAllOK = true
+	} else {
+		res.SudoAllNote = "Hardened sudoers detected. Enabling virtualization requires full passwordless sudo — click \"Switch to sudo all\". You can re-apply hardening afterwards from Settings → Sudoers."
+	}
+
+	// 1. Sudoers: can we run apt-get? (root, all, or hardened with ZFSNAS_APT)
 	switch sudo.Type {
 	case "root", "all":
 		res.SudoersOK = true
@@ -289,8 +315,270 @@ func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 		res.PoolsNote = "No ZFS storage pools found. Create a pool first before enabling VMs & Containers."
 	}
 
-	res.AllOK = res.SudoersOK && res.NetworkOK && res.OSSupported && res.HasPools
+	// 5. Static IP: a DHCP-assigned primary interface causes the host to change
+	// IP during the netplan→ifupdown migration and again when vmbr0 is created
+	// (the bridge presents a different DHCP identity). Requiring a static address
+	// up front — keeping the IP the host already has — sidesteps the churn
+	// entirely. Detection is renderer-agnostic: the live `ip -j addr` "dynamic"
+	// flag tells us whether the address came from DHCP.
+	if snap, err := primaryNetSnapshot(); err == nil && snap != nil {
+		if snap.IsDHCP {
+			res.StaticIPNote = "Primary interface " + snap.Name + " uses a DHCP address. A static IP is required before enabling virtualization — click \"Configure Static IP\"."
+		} else {
+			res.StaticIPOK = true
+		}
+	} else {
+		// Could not determine the primary interface — don't hard-block on a
+		// detection gap, but surface a note so the user knows it was skipped.
+		res.StaticIPOK = true
+		res.StaticIPNote = "Could not determine the primary network interface; static-IP check skipped."
+	}
+
+	res.AllOK = res.SudoAllOK && res.SudoersOK && res.StaticIPOK &&
+		res.NetworkOK && res.OSSupported && res.HasPools
 	return res
+}
+
+// primaryNetSnapshot returns the live snapshot of the host's primary management
+// interface — the ether device carrying the default route with a global IPv4.
+// Used by the static-IP prerequisite to detect DHCP and to pre-fill the
+// "Configure Static IP" popup.
+func primaryNetSnapshot() (*liveDeviceSnapshot, error) {
+	addrOut, err := exec.Command("ip", "-j", "addr").Output()
+	if err != nil {
+		return nil, fmt.Errorf("ip -j addr: %w", err)
+	}
+	var ifaces []ipAddrLite
+	if err := json.Unmarshal(addrOut, &ifaces); err != nil {
+		return nil, fmt.Errorf("parse ip addr: %w", err)
+	}
+	// Collect ether devices that carry a global IPv4 and are not enslaved to a
+	// bridge/bond (master set) — those are the management-NIC candidates.
+	var names []string
+	for _, ifc := range ifaces {
+		if ifc.LinkType != "ether" || ifc.Master != "" {
+			continue
+		}
+		for _, a := range ifc.AddrInfo {
+			if a.Family == "inet" && a.Scope == "global" {
+				names = append(names, ifc.IfName)
+				break
+			}
+		}
+	}
+	snaps, err := snapshotLiveNet(names)
+	if err != nil {
+		return nil, err
+	}
+	// Prefer the device that owns the default route; fall back to the first
+	// device with an IPv4 address.
+	var fallback *liveDeviceSnapshot
+	for i := range snaps {
+		s := &snaps[i]
+		if s.IPv4 == "" {
+			continue
+		}
+		if s.Gateway != "" {
+			return s, nil
+		}
+		if fallback == nil {
+			fallback = s
+		}
+	}
+	if fallback != nil {
+		return fallback, nil
+	}
+	return nil, fmt.Errorf("no primary IPv4 interface found")
+}
+
+// EnableNetConfig is the pre-fill payload for the "Configure Static IP" popup:
+// the primary interface plus its current (DHCP-assigned) address/gateway/DNS,
+// so the user can simply confirm the same values to reserve them statically.
+type EnableNetConfig struct {
+	Iface   string   `json:"iface"`
+	Address string   `json:"address"` // CIDR, e.g. "192.168.2.20/24"
+	Gateway string   `json:"gateway"`
+	DNS     []string `json:"dns"`
+	IsDHCP  bool     `json:"is_dhcp"`
+}
+
+// GetEnableNetConfig returns the live primary-interface config for the popup.
+func GetEnableNetConfig() (*EnableNetConfig, error) {
+	snap, err := primaryNetSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	return &EnableNetConfig{
+		Iface:   snap.Name,
+		Address: snap.IPv4,
+		Gateway: snap.Gateway,
+		DNS:     snap.DNS,
+		IsDHCP:  snap.IsDHCP,
+	}, nil
+}
+
+// netplanIsAuthoritative reports whether netplan (via systemd-networkd) is the
+// host's live network manager — the case on a fresh Ubuntu install. When true,
+// the static-IP apply writes a netplan drop-in; otherwise it edits
+// /etc/network/interfaces (ifupdown).
+func netplanIsAuthoritative() bool {
+	files, _ := filepath.Glob("/etc/netplan/*.yaml")
+	return len(files) > 0 && systemdNetworkdActive()
+}
+
+// SetEnableStaticIP reconfigures the host's primary interface to a static
+// address in whatever renderer is currently authoritative, then applies it.
+// After this the interface's address is no longer DHCP-dynamic, so the
+// netplan→ifupdown migration and the vmbr0 bridge inherit a stable address —
+// removing the DHCP IP churn behind v6.6.9 issues #13 and #14. Keeping the same
+// IP the host already has means the apply does not drop the session.
+func SetEnableStaticIP(iface, addrCIDR, gateway string, dns []string) error {
+	iface = strings.TrimSpace(iface)
+	addrCIDR = strings.TrimSpace(addrCIDR)
+	gateway = strings.TrimSpace(gateway)
+	if iface == "" || addrCIDR == "" {
+		return fmt.Errorf("interface and address are required")
+	}
+	if _, _, err := net.ParseCIDR(addrCIDR); err != nil {
+		return fmt.Errorf("address must be CIDR (e.g. 192.168.2.20/24): %w", err)
+	}
+	if gateway != "" && net.ParseIP(gateway) == nil {
+		return fmt.Errorf("invalid gateway %q", gateway)
+	}
+	var cleanDNS []string
+	for _, d := range dns {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		if net.ParseIP(d) == nil {
+			return fmt.Errorf("invalid DNS server %q", d)
+		}
+		cleanDNS = append(cleanDNS, d)
+	}
+
+	if netplanIsAuthoritative() {
+		return writeNetplanStaticAndApply(iface, addrCIDR, gateway, cleanDNS)
+	}
+	return writeIfupdownStaticAndApply(iface, addrCIDR, gateway, cleanDNS)
+}
+
+// writeNetplanStaticAndApply drops a high-priority netplan file pinning the
+// interface to a static address (overriding the installer's dhcp4: true for the
+// same device) and runs `netplan apply`.
+func writeNetplanStaticAndApply(iface, addrCIDR, gateway string, dns []string) error {
+	var y strings.Builder
+	y.WriteString("# Written by ZNAS — static IP for " + iface + " (set before enabling virtualization).\n")
+	y.WriteString("network:\n  version: 2\n  renderer: networkd\n  ethernets:\n")
+	y.WriteString("    " + iface + ":\n")
+	y.WriteString("      dhcp4: false\n      dhcp6: false\n")
+	y.WriteString("      addresses:\n        - " + addrCIDR + "\n")
+	if gateway != "" {
+		y.WriteString("      routes:\n        - to: default\n          via: " + gateway + "\n")
+	}
+	if len(dns) > 0 {
+		y.WriteString("      nameservers:\n        addresses:\n")
+		for _, d := range dns {
+			y.WriteString("          - " + d + "\n")
+		}
+	}
+	const path = "/etc/netplan/90-znas-static.yaml"
+	if err := writeInterfacesFile(path, []byte(y.String())); err != nil {
+		return fmt.Errorf("write netplan: %w", err)
+	}
+	// netplan ≥ 24.04 refuses to apply a world-readable config.
+	exec.Command("sudo", "chmod", "600", path).Run() //nolint:errcheck
+	if out, err := exec.Command("sudo", "netplan", "apply").CombinedOutput(); err != nil {
+		return fmt.Errorf("netplan apply: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// writeIfupdownStaticAndApply rewrites the interface's stanza in
+// /etc/network/interfaces to a static configuration and restarts networking.
+func writeIfupdownStaticAndApply(iface, addrCIDR, gateway string, dns []string) error {
+	const path = "/etc/network/interfaces"
+	existing, _ := readPossiblyRoot(path)
+	updated := rewriteIfaceStanzaStatic(string(existing), iface, addrCIDR, gateway, dns)
+	if err := writeInterfacesFile(path, []byte(updated)); err != nil {
+		return fmt.Errorf("write interfaces: %w", err)
+	}
+	if out, err := exec.Command("sudo", "systemctl", "restart", "networking").CombinedOutput(); err != nil {
+		return fmt.Errorf("restart networking: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// rewriteIfaceStanzaStatic replaces (or appends) the `iface <name> inet ...`
+// stanza in an /etc/network/interfaces file with a static configuration,
+// preserving every other stanza. The matched stanza's indented option lines are
+// dropped and replaced with ours; the `auto <name>` line is ensured.
+func rewriteIfaceStanzaStatic(content, iface, addrCIDR, gateway string, dns []string) string {
+	var block strings.Builder
+	block.WriteString("auto " + iface + "\n")
+	block.WriteString("iface " + iface + " inet static\n")
+	block.WriteString("    address " + addrCIDR + "\n")
+	if gateway != "" {
+		block.WriteString("    gateway " + gateway + "\n")
+	}
+	if len(dns) > 0 {
+		block.WriteString("    dns-nameservers " + strings.Join(dns, " ") + "\n")
+	}
+
+	ifaceRe := regexp.MustCompile(`^\s*iface\s+` + regexp.QuoteMeta(iface) + `\s+inet\s+\w+`)
+	autoRe := regexp.MustCompile(`^\s*auto\s+` + regexp.QuoteMeta(iface) + `\s*$`)
+	var out []string
+	replaced := false
+	lines := strings.Split(content, "\n")
+	for i := 0; i < len(lines); i++ {
+		ln := lines[i]
+		if autoRe.MatchString(ln) {
+			continue // our block re-adds the auto line
+		}
+		if ifaceRe.MatchString(ln) {
+			if !replaced {
+				out = append(out, strings.TrimRight(block.String(), "\n"))
+				replaced = true
+			}
+			// Skip this iface line and its indented option lines.
+			for i+1 < len(lines) {
+				nxt := lines[i+1]
+				if nxt == "" || (len(nxt) > 0 && (nxt[0] == ' ' || nxt[0] == '\t')) {
+					i++
+					continue
+				}
+				break
+			}
+			continue
+		}
+		out = append(out, ln)
+	}
+	res := strings.Join(out, "\n")
+	if !replaced {
+		if res != "" && !strings.HasSuffix(res, "\n") {
+			res += "\n"
+		}
+		res += "\n" + block.String()
+	}
+	return res
+}
+
+// ScheduleServiceRestartForIncus restarts the zfsnas service shortly after
+// virtualization is enabled, so a fresh systemd start re-runs initgroups and the
+// non-root service account picks up its new `incus-admin` group membership.
+// Without this the running process keeps its stale supplementary groups and
+// every direct `incus` call fails until a manual restart (v6.6.9 issue #15).
+// No-op when running as root (root already reaches the daemon).
+func ScheduleServiceRestartForIncus() {
+	if os.Getuid() == 0 {
+		return
+	}
+	go func() {
+		// Give the enable modal a moment to render the "done" state before the
+		// portal drops for its restart.
+		time.Sleep(3 * time.Second)
+		exec.Command("sudo", "systemctl", "restart", "zfsnas").Run() //nolint:errcheck
+	}()
 }
 
 // systemdNetworkdActive returns true when systemd-networkd is currently
@@ -487,15 +775,15 @@ func lxdStep1Packages(ctx context.Context, job *LXDEnableJob) error {
 		// `E: Package 'qemu-kvm' has no installation candidate`.
 		"qemu-system-x86",
 		"dnsmasq-base",
-		"swtpm",        // required for VMs with virtual TPM devices
-		"ovmf",         // UEFI firmware for x86 VMs (OVMF_CODE.4MB.fd)
-		"sshpass",      // required for InterLink push operations
-		"genisoimage",  // mkisofs implementation Incus uses to build the
-		                // agent:config ISO on the fly when an image declares
-		                // image.requirements.cdrom_agent=true (AlmaLinux 10,
-		                // Rocky, CentOS Stream, RHEL-family in general).
-		                // Without this, those VMs fail to start with
-		                // "Neither mkisofs nor genisoimage could be found".
+		"swtpm",       // required for VMs with virtual TPM devices
+		"ovmf",        // UEFI firmware for x86 VMs (OVMF_CODE.4MB.fd)
+		"sshpass",     // required for InterLink push operations
+		"genisoimage", // mkisofs implementation Incus uses to build the
+		// agent:config ISO on the fly when an image declares
+		// image.requirements.cdrom_agent=true (AlmaLinux 10,
+		// Rocky, CentOS Stream, RHEL-family in general).
+		// Without this, those VMs fail to start with
+		// "Neither mkisofs nor genisoimage could be found".
 	}
 	job.log("Running apt-get update…")
 	if err := runCmdLog(ctx, job, "/usr/bin/apt-get", "update"); err != nil {
@@ -520,8 +808,8 @@ func lxdStep1Packages(ctx context.Context, job *LXDEnableJob) error {
 // EnsureOVMFCompat creates bidirectional symlinks between Ubuntu and Debian
 // OVMF firmware file names so VMs can start on either distro after a push.
 //
-//   Ubuntu: /usr/share/OVMF/OVMF_CODE.4MB.fd
-//   Debian: /usr/share/OVMF/OVMF_CODE_4M.fd
+//	Ubuntu: /usr/share/OVMF/OVMF_CODE.4MB.fd
+//	Debian: /usr/share/OVMF/OVMF_CODE_4M.fd
 func EnsureOVMFCompat() {
 	pairs := [][2]string{
 		{"/usr/share/OVMF/OVMF_CODE.4MB.fd", "/usr/share/OVMF/OVMF_CODE_4M.fd"},
@@ -631,9 +919,9 @@ func lxdStep2Init(ctx context.Context, storagePool, hostname string, job *LXDEna
 // problem.
 //
 // We refuse to remove it when:
-//   * it doesn't exist (nothing to do)
-//   * its name is `host-nat` (we'd be deleting our own bridge)
-//   * Incus reports it has any users (`used_by` non-empty) — someone
+//   - it doesn't exist (nothing to do)
+//   - its name is `host-nat` (we'd be deleting our own bridge)
+//   - Incus reports it has any users (`used_by` non-empty) — someone
 //     attached an instance/profile to it explicitly; leave it alone.
 //
 // On the delete path we try the Incus-managed form first; if that
@@ -1095,11 +1383,11 @@ func pinDhcpcdBridgeClientIDs(cands []bridgeCandidate, log func(string)) error {
 
 // ipAddrIface is a minimal parse of one entry from `ip -j addr`.
 type ipAddrIface struct {
-	IfName   string `json:"ifname"`
-	LinkType string `json:"link_type"`
-	Address  string `json:"address"` // L2 address, used to keep DHCP leases stable when bridging
+	IfName   string   `json:"ifname"`
+	LinkType string   `json:"link_type"`
+	Address  string   `json:"address"` // L2 address, used to keep DHCP leases stable when bridging
 	Flags    []string `json:"flags"`
-	Master   string `json:"master"`
+	Master   string   `json:"master"`
 	AddrInfo []struct {
 		Family    string `json:"family"`
 		Local     string `json:"local"`
@@ -1240,9 +1528,9 @@ func rewriteInterfacesForBridges(content string, candidates []bridgeCandidate) s
 
 	// Per-NIC preserved settings extracted from stripped stanzas.
 	type nicMeta struct {
-		dns  string // dns-nameservers value
+		dns    string // dns-nameservers value
 		search string // dns-search value
-		mtu  string // mtu value
+		mtu    string // mtu value
 	}
 	nicMetas := map[string]*nicMeta{}
 	for _, c := range candidates {

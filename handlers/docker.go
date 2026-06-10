@@ -73,9 +73,9 @@ func dockerInstanceType(name string) string {
 func dockerGateAllowed(appCfg *config.AppConfig, instance string) bool {
 	t := dockerInstanceType(instance)
 	if t == "virtual-machine" {
-		return appCfg.DockerDetectVMs
+		return appCfg.DockerDetectVMsOn()
 	}
-	return appCfg.DockerDetectContainers
+	return appCfg.DockerDetectContainersOn()
 }
 
 // HandleDockerProbe returns {available, agent_ok, reason}. Cheap; the

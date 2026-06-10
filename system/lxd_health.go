@@ -65,6 +65,26 @@ func StartIncusHealthWatcher(onChange func(IncusHealthState)) {
 		fails := 0
 		var lastErr string
 		for {
+			// No `incus` binary → virtualization isn't installed on this box.
+			// There's no daemon to be "stuck", so never raise the hung-daemon
+			// banner; just make sure any prior stuck state is cleared. This is
+			// the fresh-install case: ZNAS up, virtualization not yet added.
+			if !IncusInstalled() {
+				fails = 0
+				lastErr = ""
+				incusHealthMu.Lock()
+				wasStuck := incusHealthCurrent.Stuck
+				if wasStuck {
+					incusHealthCurrent = IncusHealthState{Stuck: false, ChangedAt: time.Now()}
+				}
+				snap := incusHealthCurrent
+				incusHealthMu.Unlock()
+				if wasStuck && onChange != nil {
+					onChange(snap)
+				}
+				time.Sleep(interval)
+				continue
+			}
 			if LXDAvailableTimeout(probeTimeout) {
 				lastErr = ""
 				fails = 0

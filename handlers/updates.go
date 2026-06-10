@@ -36,9 +36,20 @@ func HandleOSInfo(w http.ResponseWriter, r *http.Request) {
 		val := strings.Trim(line[idx+1:], `"`)
 		fields[key] = val
 	}
+	// DEBIAN_VERSION_FULL only exists on Debian's os-release. Ubuntu (and other
+	// derivatives) don't ship it, so fall back to VERSION (e.g. "26.04 LTS (Noble
+	// Numbat)") and finally VERSION_ID so the platform page shows a version+update
+	// level for Ubuntu too, not a blank.
+	version := fields["DEBIAN_VERSION_FULL"]
+	if version == "" {
+		version = fields["VERSION"]
+	}
+	if version == "" {
+		version = fields["VERSION_ID"]
+	}
 	jsonOK(w, map[string]string{
 		"name":    fields["NAME"],
-		"version": fields["DEBIAN_VERSION_FULL"],
+		"version": version,
 	})
 }
 

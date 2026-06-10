@@ -25,6 +25,12 @@ func TestSudoRSSubstitutionsRemoveAllWildcardErrors(t *testing.T) {
 		"/usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled",
 		"/usr/bin/cat /etc/netplan/*.yaml",
 		"/usr/bin/tee /etc/network/interfaces.pre-znas-*",
+		// ZFSNAS_SYNCOID backup-mount commands (prefix before `*`).
+		"/usr/bin/mkdir -p /tmp/znas-bkup-mount-*",
+		"/usr/bin/rmdir /tmp/znas-bkup-mount-*",
+		"/usr/bin/umount /tmp/znas-bkup-mount-*",
+		"/usr/bin/cat /tmp/znas-bkup-mount-*",
+		"/usr/bin/tee /tmp/znas-bkup-mount-*",
 	}
 	for _, b := range bad {
 		if strings.Contains(rendered, b) {
@@ -39,6 +45,9 @@ func TestSudoRSSubstitutionsRemoveAllWildcardErrors(t *testing.T) {
 		"/usr/bin/rm -f *",
 		"/usr/bin/ip *",
 		"/usr/bin/mv *",
+		"/usr/bin/mkdir -p *",
+		"/usr/bin/rmdir *",
+		"/usr/bin/umount *",
 	}
 	for _, w := range want {
 		if !strings.Contains(rendered, w) {
@@ -47,16 +56,16 @@ func TestSudoRSSubstitutionsRemoveAllWildcardErrors(t *testing.T) {
 	}
 }
 
-// TestApplySudoRSSubstitutionsClassicNoOp verifies the rewrite is a no-op when
-// the host is classic sudo (default for the test runner — which is not
-// sudo-rs). The narrow forms must survive verbatim so least-privilege is
-// preserved on the majority of hosts.
-func TestApplySudoRSSubstitutionsClassicNoOp(t *testing.T) {
-	if IsSudoRS() {
-		t.Skip("test runner is on a sudo-rs host; classic-sudo behavior cannot be verified here")
-	}
+// TestApplySudoRSSubstitutionsAlwaysWidens verifies the rewrite is applied
+// unconditionally (regardless of the host's sudo flavor), so ZNAS always writes
+// a sudoers file that loads on both classic sudo and sudo-rs.
+func TestApplySudoRSSubstitutionsAlwaysWidens(t *testing.T) {
 	in := "/usr/bin/cat /proc/*/smaps_rollup\n/usr/bin/journalctl --since=*\n"
-	if got := applySudoRSSubstitutions(in); got != in {
-		t.Errorf("expected no-op on classic sudo, got %q", got)
+	got := applySudoRSSubstitutions(in)
+	if strings.Contains(got, "/usr/bin/cat /proc/*/smaps_rollup") || strings.Contains(got, "/usr/bin/journalctl --since=*") {
+		t.Errorf("expected sudo-rs-incompatible forms to be widened, got %q", got)
+	}
+	if !strings.Contains(got, "/usr/bin/cat *") || !strings.Contains(got, "/usr/bin/journalctl *") {
+		t.Errorf("expected widened forms present, got %q", got)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -395,6 +396,8 @@ type lxdRestoreJob struct {
 	VMID      string    `json:"vm_id"`
 	CloneName string    `json:"clone_name"`
 	StartedAt time.Time `json:"started_at"`
+	Progress  int       `json:"progress"` // 0–100 for the current part (pv %)
+	Phase     string    `json:"phase"`    // which dataset is transferring now
 	cancelFn  context.CancelFunc
 }
 
@@ -405,6 +408,14 @@ func (j *lxdRestoreJob) appendLine(line string) {
 		j.Lines = j.Lines[len(j.Lines)-3000:]
 	}
 	j.Lines = append(j.Lines, line)
+	// Live progress for the activity bar. Restore prints "Pulling <src> -> <dst>"
+	// before each dataset; pv's percentage drives the bar within a part.
+	if strings.HasPrefix(line, "Pulling ") {
+		j.Phase = "pull"
+		j.Progress = 0
+	} else if pct, ok := system.ParseSyncoidPercent(line); ok {
+		j.Progress = pct
+	}
 }
 
 func (j *lxdRestoreJob) cancel() {
@@ -571,7 +582,41 @@ func HandleRestoreCloneProgress(w http.ResponseWriter, r *http.Request) {
 		"vm_id":      j.VMID,
 		"clone_name": j.CloneName,
 		"started_at": j.StartedAt,
+		"progress":   j.Progress,
+		"phase":      j.Phase,
 	})
+}
+
+// HandleListRestoreJobs returns all clone-restore jobs the server knows about
+// (running/queued + recently finished), so the activity bar can rediscover an
+// in-flight restore after a reload or from another browser/tab.
+// GET /api/incus/restore-jobs
+func HandleListRestoreJobs(w http.ResponseWriter, r *http.Request) {
+	out := []map[string]interface{}{}
+	lxdRestoreJobs.Range(func(k, v interface{}) bool {
+		id := k.(string)
+		j := v.(*lxdRestoreJob)
+		j.mu.Lock()
+		keep := j.Status == "running" || j.Status == "queued" ||
+			time.Since(j.StartedAt) < 5*time.Minute
+		if keep {
+			out = append(out, map[string]interface{}{
+				"job_id":     id,
+				"status":     j.Status,
+				"vm_id":      j.VMID,
+				"clone_name": j.CloneName,
+				"started_at": j.StartedAt,
+				"progress":   j.Progress,
+				"phase":      j.Phase,
+			})
+		}
+		j.mu.Unlock()
+		return true
+	})
+	sort.Slice(out, func(a, b int) bool {
+		return out[a]["started_at"].(time.Time).After(out[b]["started_at"].(time.Time))
+	})
+	jsonOK(w, map[string]interface{}{"jobs": out})
 }
 
 // HandleRestoreCloneCancel cancels a running clone-restore job.

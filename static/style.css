@@ -2549,9 +2549,23 @@ body.light, body.dawn{       /* every light-background theme uses the dark-hue s
   border:1px solid color-mix(in srgb, var(--accent-2) 45%, transparent);
   color:var(--accent-2);border-radius:8px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;}
 .map-style-toggle:hover{background:color-mix(in srgb, var(--accent-2) 28%, transparent);}
+/* zoom controls (− / level / +) */
+.map-zoom{display:inline-flex;align-items:stretch;
+  border:1px solid color-mix(in srgb, var(--accent-2) 35%, transparent);
+  border-radius:8px;overflow:hidden;}
+.map-zoom-btn{background:color-mix(in srgb, var(--accent-2) 12%, transparent);
+  border:none;color:var(--accent-2);font-size:13px;font-weight:600;line-height:1;
+  padding:5px 9px;cursor:pointer;}
+.map-zoom-btn+.map-zoom-btn{border-left:1px solid color-mix(in srgb, var(--accent-2) 25%, transparent);}
+.map-zoom-btn:hover{background:color-mix(in srgb, var(--accent-2) 26%, transparent);}
+.map-zoom-lvl{min-width:46px;font-variant-numeric:tabular-nums;
+  font-size:11px;letter-spacing:.02em;}
 
 .map-viewport{position:relative;overflow:auto;max-height:calc(100vh - 240px);
-  background:transparent;border:none;}
+  background:transparent;border:none;
+  /* JS owns pan + pinch-zoom on touch, so suppress the browser's own gestures
+     (page pinch-zoom / two-finger scroll). Wheel + scrollbars still work. */
+  touch-action:none;-webkit-user-select:none;user-select:none;}
 #map-svg{display:block;background:transparent;}
 .map-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--text-3);font-size:14px;}
@@ -2656,6 +2670,79 @@ body.dawn  .map-node.st-faulted, body.dawn  .map-node.st-missing{--hue:#dc2626;}
 @media (prefers-reduced-motion: reduce){
   .map-link{animation:none !important;}
   .map-node-bg{animation:none !important;}
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Networking Layer (radial topology) — v6.6.4
+   Bridges are glowing hubs; instances orbit on animated spokes; docker
+   containers ring each instance. Each bridge cluster gets its own hue (set
+   inline as --h, an HSL hue angle), so the layer reads as a multi-colour map.
+   ════════════════════════════════════════════════════════════════════════ */
+/* layer switch (top-left of every map toolbar) */
+.map-layer-switch{display:inline-flex;gap:2px;
+  background:color-mix(in srgb, var(--accent-2) 8%, transparent);
+  border:1px solid color-mix(in srgb, var(--accent-2) 30%, transparent);
+  border-radius:9px;padding:2px;}
+.map-layer-btn{background:none;border:none;color:var(--text-3);border-radius:7px;
+  padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;}
+.map-layer-btn:hover{color:var(--text);}
+.map-layer-btn.active{background:var(--gradient);color:#fff;}
+/* networking legend swatches */
+.map-legend-item[data-layer="bridge"] i{background:var(--accent-2);color:var(--accent-2);}
+.map-legend-item[data-layer="netvm"]  i{background:var(--map-vm);color:var(--map-vm);}
+.map-legend-item[data-layer="docker"] i{background:var(--map-docker);color:var(--map-docker);}
+
+.net-title{fill:var(--text-2);font-size:13px;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;opacity:.75;}
+/* hub pulse rings — opacity/glow only (no transform: would re-origin the circle) */
+.net-hub-ring{fill:none;stroke:hsl(var(--h) 90% 60%);stroke-width:1.4;opacity:.4;}
+.map-hud .net-hub-ring{animation:net-pulse 2.6s ease-in-out infinite;
+  filter:drop-shadow(0 0 6px hsl(var(--h) 90% 60%));}
+@keyframes net-pulse{0%,100%{opacity:.16;}50%{opacity:.55;}}
+/* spokes — straight neon conduits, dash speed scales with bandwidth (--dur) */
+.net-spoke-rail{stroke:var(--border);stroke-width:4;stroke-linecap:round;opacity:.45;}
+.net-spoke{stroke:hsl(var(--h) 90% 62%);stroke-width:2;stroke-linecap:round;
+  stroke-dasharray:5 7;animation:net-flow linear infinite;animation-duration:var(--dur,1.6s);}
+.net-spoke.idle{animation:none;opacity:.26;stroke-dasharray:2 6;}
+.net-spoke-dock .net-spoke{stroke-width:1.4;stroke-dasharray:3 5;opacity:.7;}
+.net-spoke-dock .net-spoke-rail{stroke-width:2.5;}
+.map-hud .net-spoke{filter:url(#netGlow);}
+.net-spoke-label{fill:var(--text);font-size:9.5px;font-variant-numeric:tabular-nums;
+  paint-order:stroke;stroke:var(--bg);stroke-width:3px;}
+@keyframes net-flow{to{stroke-dashoffset:-24;}}
+/* nodes */
+.net-node{--h:200;cursor:default;}
+.net-node .net-node-bg{fill:hsl(var(--h) 55% 15% / .93);stroke:hsl(var(--h) 90% 60%);stroke-width:1.2;}
+body.light .net-node .net-node-bg,
+body.dawn  .net-node .net-node-bg{fill:hsl(var(--h) 65% 95% / .96);}
+.net-node .net-node-scan{fill:hsl(var(--h) 90% 62%);opacity:.7;}
+.net-node .net-node-title{fill:var(--text);font-size:11px;font-weight:600;}
+.net-node .net-node-sub{fill:var(--text-2);font-size:9.5px;font-variant-numeric:tabular-nums;}
+.net-node--bridge .net-node-bg{stroke-width:2;}
+.net-node--bridge .net-node-title{font-weight:700;font-size:12px;}
+.net-node--docker .net-node-sub{fill:hsl(var(--h) 80% 70%);}
+body.light .net-node--docker .net-node-sub,
+body.dawn  .net-node--docker .net-node-sub{fill:hsl(var(--h) 70% 35%);}
+.map-hud .net-node .net-node-bg{filter:drop-shadow(0 0 7px hsl(var(--h) 90% 60%));}
+.map-hud .net-node--bridge .net-node-bg{animation:net-breathe 3.2s ease-in-out infinite;}
+@keyframes net-breathe{0%,100%{filter:drop-shadow(0 0 10px hsl(var(--h) 90% 60%));}
+  50%{filter:drop-shadow(0 0 20px hsl(var(--h) 90% 60%));}}
+/* docker health dot */
+.net-dock-dot{fill:var(--text-3);stroke:var(--bg);stroke-width:1;}
+.net-node.dock-up   .net-dock-dot{fill:#3fb950;}
+.net-node.dock-warn .net-dock-dot{fill:#d29922;}
+.net-node.dock-down .net-dock-dot{fill:#f85149;}
+.map-hud .net-node.dock-up   .net-dock-dot{filter:drop-shadow(0 0 4px #3fb950);}
+.map-hud .net-node.dock-down .net-dock-dot{filter:drop-shadow(0 0 4px #f85149);}
+.net-node.dock-down{opacity:.6;}
+/* flat mode + reduced motion */
+.map-flat .net-spoke{animation:none !important;}
+.map-flat .net-node-bg{filter:none !important;animation:none !important;}
+.map-flat .net-hub-ring{animation:none !important;}
+@media (prefers-reduced-motion: reduce){
+  .net-spoke{animation:none !important;}
+  .net-hub-ring{animation:none !important;}
+  .net-node-bg{animation:none !important;}
 }
 
 /* ── Map hovercard (hightech info + live metrics) ── */

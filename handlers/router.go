@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"log"
 	"net/http"
@@ -9,6 +11,26 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+// serveSPAHTML writes the single-page-app HTML with a revalidation policy so a
+// freshly deployed binary is never masked by a stale browser cache. The SPA is
+// served with no cache headers historically, which let browsers heuristically
+// cache it — so after every binary update users kept seeing the OLD UI until a
+// manual hard-refresh. `Cache-Control: no-cache` forces the browser to
+// revalidate on each load; a content ETag lets that revalidation return 304
+// when nothing changed, so we don't re-ship the ~2.8 MB document needlessly.
+func serveSPAHTML(w http.ResponseWriter, req *http.Request, data []byte) {
+	sum := sha256.Sum256(data)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("ETag", etag)
+	if req.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Write(data) //nolint:errcheck
+}
 
 // incusPathAliases maps every Incus-canonical URL prefix to the legacy LXD
 // prefix that the route table actually mounts. Set in v6.5.2 so the canonical
@@ -92,8 +114,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 			http.Error(w, "app not found", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(data)
+		serveSPAHTML(w, req, data)
 	}))).Methods("GET")
 
 	// --- Auth API ---
@@ -752,6 +773,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDEnableProgress)))).Methods("GET")
 	r.Handle("/api/lxd/enable/cancel",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDEnableCancel)))).Methods("POST")
+	r.Handle("/api/lxd/enable/netconfig",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDEnableNetConfig)))).Methods("GET")
+	r.Handle("/api/lxd/enable/static-ip",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleLXDEnableStaticIP)))).Methods("POST")
 	// Uninstall flow: count check + async purge job. The progress is
 	// observable through the same /api/lxd/enable/progress endpoint
 	// because the underlying job structure is shared.
@@ -996,8 +1021,13 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/lxd/proxmox-import/cancel",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleProxmoxImportCancel)))).Methods("POST")
 	// ISO management
+	// Listing ISOs is read-only and needed by the VM create/edit CDROM picker,
+	// so it's gated on virtualization ACCESS (view_virtualization), not full
+	// admin — otherwise a non-admin instance editor (incl. a relayed user whose
+	// role on the peer isn't admin) can edit a VM but gets an empty ISO list for
+	// its CDROM. The mutating ISO endpoints (upload/delete/fetch) stay admin-only.
 	r.Handle("/api/lxd/isos",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleListISOs)))).Methods("GET")
+		RequireAuth(RequirePermission("view_virtualization")(http.HandlerFunc(HandleListISOs)))).Methods("GET")
 	r.Handle("/api/lxd/isos/upload",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUploadISO)))).Methods("POST")
 	// ISO fetch from URL: server-side download into the pool's .isos
@@ -1074,6 +1104,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleDeleteLXDBackupPolicy(appCfg))))).Methods("DELETE")
 	r.Handle("/api/lxd/instances/{name}/backup-now",
 		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleLXDBackupNow(appCfg))))).Methods("POST")
+	r.Handle("/api/lxd/backup-jobs",
+		RequireAuth(http.HandlerFunc(HandleListBackupJobs))).Methods("GET")
 	r.Handle("/api/lxd/backup-jobs/{job_id}/progress",
 		RequireAuth(http.HandlerFunc(HandleLXDBackupProgress))).Methods("GET")
 	r.Handle("/api/lxd/backup-jobs/{job_id}/cancel",
@@ -1089,6 +1121,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleDeleteBackup(appCfg))))).Methods("POST")
 	r.Handle("/api/lxd/backups/restore-clone",
 		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleCloneRestoreBackup(appCfg))))).Methods("POST")
+	r.Handle("/api/lxd/restore-jobs",
+		RequireAuth(http.HandlerFunc(HandleListRestoreJobs))).Methods("GET")
 	r.Handle("/api/lxd/restore-jobs/{job_id}/progress",
 		RequireAuth(http.HandlerFunc(HandleRestoreCloneProgress))).Methods("GET")
 	r.Handle("/api/lxd/restore-jobs/{job_id}/cancel",
@@ -1147,8 +1181,7 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(data)
+		serveSPAHTML(w, req, data)
 	}).Methods("GET")
 
 	// RelayMiddleware wraps the completed mux router (Server A outbound proxy):

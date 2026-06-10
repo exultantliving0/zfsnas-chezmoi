@@ -422,86 +422,94 @@ func LXDCloneRestoreRemote(ctx context.Context, srcHost, srcUser, srcDataset, ds
 	}
 
 	dstParent := dstSource + "/" + kind
-
-	// Build the list of remote datasets to pull. Root-fs always; for VMs
-	// the sibling ".block" zvol is the actual disk and must come too.
-	type remotePart struct {
-		src         string
-		landingBase string
-		finalBase   string
-		isRootFS    bool
-		recursive   bool
-	}
-	parts := []remotePart{{
-		src:         srcDataset,
-		landingBase: "incoming-restore-" + cloneName,
-		finalBase:   cloneName,
-		isRootFS:    true,
-		recursive:   true,
-	}}
-	if kind == "virtual-machines" {
-		parts = append(parts, remotePart{
-			src:         srcDataset + ".block",
-			landingBase: "incoming-restore-" + cloneName + ".block",
-			finalBase:   cloneName + ".block",
-			recursive:   false,
-		})
-	}
-
 	_ = exec.Command("sudo", "zfs", "create", "-p", dstParent).Run()
-	for _, p := range parts {
-		landingDataset := dstParent + "/" + p.landingBase
-		finalDataset := dstParent + "/" + p.finalBase
-		// Clean up orphans from a prior FAILED restore of the same clone
-		// name. The LXDGetStatus check above already proved <cloneName>
-		// is not a registered Incus instance, so any dataset sitting at
-		// the landing OR final path is a leftover and safe to destroy.
-		// Without this, the post-syncoid `zfs rename landing→final`
-		// fails with "dataset already exists".
-		_ = exec.Command("sudo", "zfs", "destroy", "-r", landingDataset).Run()
-		_ = exec.Command("sudo", "zfs", "destroy", "-r", finalDataset).Run()
+	_ = exec.Command("sudo", "zfs", "create", "-p", dstSource+"/custom").Run()
 
+	// pull syncoid-pulls one remote dataset into <parent>/<landingBase> then
+	// renames it to <parent>/<finalBase>, returning the final path. allowRollback
+	// applies the chosen point-in-time snapshot (root-fs/.block only — custom
+	// volumes have an independent snapshot history). Any pre-existing landing/
+	// final dataset (orphan from a prior failed restore of this clone name) is
+	// destroyed first; the LXDGetStatus check above proved <cloneName> isn't a
+	// registered instance, so that's safe.
+	pull := func(remoteSrc, parent, landingBase, finalBase string, recursive, allowRollback bool) (string, error) {
+		landing := parent + "/" + landingBase
+		final := parent + "/" + finalBase
+		_ = exec.Command("sudo", "zfs", "destroy", "-r", landing).Run()
+		_ = exec.Command("sudo", "zfs", "destroy", "-r", final).Run()
 		if logFn != nil {
-			logFn(fmt.Sprintf("Pulling %s:%s -> %s", srcHost, p.src, landingDataset))
+			logFn(fmt.Sprintf("Pulling %s:%s -> %s", srcHost, remoteSrc, landing))
 		}
-		if err := RunSyncoidRestore(ctx, srcHost, srcUser, p.src, landingDataset, p.recursive, logFn); err != nil {
-			// The .block zvol IS the VM's disk — restoring without it
-			// yields a useless diskless instance. So a .block failure is
-			// fatal, NOT a skip. The previous "(skip) non-root" path
-			// silently produced corrupt restores when the backup on the
-			// source side was itself incomplete (e.g. .block had no
-			// snapshots). syncoid's "could not find any snapshots on
-			// source" is the tell-tale of an incomplete backup.
-			if !p.isRootFS && strings.Contains(err.Error(), "could not find any snapshots") {
-				return fmt.Errorf("the backup on the source is incomplete — its disk image (%s) has no snapshots. "+
-					"Re-run the backup of this VM to that destination, then retry the restore. (%v)", p.src, err)
+		if err := RunSyncoidRestore(ctx, srcHost, srcUser, remoteSrc, landing, recursive, logFn); err != nil {
+			return "", err
+		}
+		if out, err := exec.Command("sudo", "zfs", "rename", landing, final).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("zfs rename: %s", strings.TrimSpace(string(out)))
+		}
+		if allowRollback && snapshotName != "" {
+			if logFn != nil {
+				logFn("Rolling " + final + " back to @" + snapshotName)
+			}
+			if out, err := exec.Command("sudo", "zfs", "rollback", "-r", final+"@"+snapshotName).CombinedOutput(); err != nil {
+				return "", fmt.Errorf("zfs rollback to @%s: %s", snapshotName, strings.TrimSpace(string(out)))
+			}
+		}
+		destroyDatasetSnapshots(final, logFn)
+		return final, nil
+	}
+
+	// 1. Root filesystem dataset (always present).
+	rootFinal, err := pull(srcDataset, dstParent, "incoming-restore-"+cloneName, cloneName, true, true)
+	if err != nil {
+		return err
+	}
+
+	// 2. VM root .block zvol — the actual disk; its absence is fatal (a diskless
+	//    instance is useless). "could not find any snapshots" means the backup
+	//    itself is incomplete.
+	if kind == "virtual-machines" {
+		if _, err := pull(srcDataset+".block", dstParent, "incoming-restore-"+cloneName+".block", cloneName+".block", false, true); err != nil {
+			if strings.Contains(err.Error(), "could not find any snapshots") {
+				return fmt.Errorf("the backup on the source is incomplete — its disk image (%s.block) has no snapshots. "+
+					"Re-run the backup of this VM to that destination, then retry the restore. (%w)", srcDataset, err)
 			}
 			return err
 		}
-		if out, err := exec.Command("sudo", "zfs", "rename", landingDataset, finalDataset).CombinedOutput(); err != nil {
-			return fmt.Errorf("zfs rename: %s", strings.TrimSpace(string(out)))
+	}
+
+	// 3. Attached custom-volume vdisks. Enumerate the peer's
+	//    <workload>/custom/bkup--<vm>.<vol> datasets over the same SSH access
+	//    syncoid uses, pull each to <dstSource>/custom/default_<newVol>, and build
+	//    the source→restored-name remap so backup.yaml keeps the disk devices
+	//    (pointing at the restored volumes) instead of stripping them. This is
+	//    what makes a remote restore include EVERY disk, like the local path.
+	volRemap := map[string]string{}
+	customParent := lxdRemoteWorkloadCustomParent(srcDataset, kind)
+	for _, vol := range lxdListRemoteCustomBackupVols(ctx, srcHost, srcUser, customParent, vmID) {
+		newVol := vol
+		if cloneName != vmID {
+			if strings.Contains(vol, vmID) {
+				newVol = strings.Replace(vol, vmID, cloneName, 1)
+			} else {
+				newVol = cloneName + "-" + vol
+			}
 		}
-		if snapshotName != "" {
-			rollbackTarget := finalDataset + "@" + snapshotName
-			if logFn != nil {
-				logFn("Rolling " + finalDataset + " back to @" + snapshotName)
-			}
-			if out, err := exec.Command("sudo", "zfs", "rollback", "-r", rollbackTarget).CombinedOutput(); err != nil {
-				return fmt.Errorf("zfs rollback to @%s: %s", snapshotName, strings.TrimSpace(string(out)))
-			}
+		volRemap[vol] = newVol
+		remoteSrc := customParent + "/" + LXDBackupPrefix + vmID + "." + vol
+		if _, err := pull(remoteSrc, dstSource+"/custom", "incoming-restore-default_"+newVol, "default_"+newVol, true, false); err != nil {
+			return fmt.Errorf("restore custom volume %q: %w", vol, err)
 		}
-		destroyDatasetSnapshots(finalDataset, logFn)
-		if p.isRootFS {
-			if logFn != nil {
-				logFn(fmt.Sprintf("Rewriting backup.yaml: pool→%s, name %s→%s, snapshots→[]", dstDatastore, vmID, cloneName))
-			}
-			// Remote clone-restore moves only the root (+.block); strip any
-			// attached custom-volume disk device that isn't present.
-			if err := LXDRewriteBackupYAMLForRestore(finalDataset, dstDatastore, dstSource, vmID, cloneName, map[string]string{}); err != nil {
-				if logFn != nil {
-					logFn("rewrite backup.yaml: " + err.Error())
-				}
-			}
+	}
+
+	// 4. Rewrite the root-fs backup.yaml: dst pool/name, empty snapshots, KEEP the
+	//    captured custom-disk devices (source-remapped + pool-rewritten to dst),
+	//    strip host-path devices (cdrom/ISO) and any uncaptured custom volume.
+	if logFn != nil {
+		logFn(fmt.Sprintf("Rewriting backup.yaml: pool→%s, name %s→%s, snapshots→[]", dstDatastore, vmID, cloneName))
+	}
+	if err := LXDRewriteBackupYAMLForRestore(rootFinal, dstDatastore, dstSource, vmID, cloneName, volRemap); err != nil {
+		if logFn != nil {
+			logFn("rewrite backup.yaml: " + err.Error())
 		}
 	}
 
@@ -523,4 +531,46 @@ func LXDCloneRestoreRemote(ctx context.Context, srcHost, srcUser, srcDataset, ds
 	// next start instead of colliding with the source VM's MAC.
 	resetCloneVolatileState(cloneName, logFn)
 	return nil
+}
+
+// lxdRemoteWorkloadCustomParent derives the peer's workload custom-volume parent
+// (<workload>/custom) from a root-fs backup dataset path
+// (<workload>/<kind>/bkup--<vm>). Returns "" if the kind segment isn't found.
+func lxdRemoteWorkloadCustomParent(rootFSDataset, kind string) string {
+	seg := "/" + kind + "/"
+	i := strings.LastIndex(rootFSDataset, seg)
+	if i < 0 {
+		return ""
+	}
+	return rootFSDataset[:i] + "/custom"
+}
+
+// lxdListRemoteCustomBackupVols lists the custom-volume names captured for `vmID`
+// in the peer's backup, by SSH-listing the direct children of `customParent` and
+// keeping those named "bkup--<vm>.<vol>". Uses the same key/user syncoid pulls
+// with — and syncoid already requires `zfs list` on the source, so this works
+// wherever a pull would. Returns nil on any error (no custom dir / none / denied).
+func lxdListRemoteCustomBackupVols(ctx context.Context, host, user, customParent, vmID string) []string {
+	if customParent == "" || host == "" {
+		return nil
+	}
+	args := []string{"-i", zfsnasSSHKey(),
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=10",
+		user + "@" + host,
+		"zfs list -H -o name -r -d 1 " + customParent}
+	out, err := exec.CommandContext(ctx, "ssh", args...).Output()
+	if err != nil {
+		return nil
+	}
+	prefix := customParent + "/" + LXDBackupPrefix + vmID + "."
+	var vols []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		ds := strings.TrimSpace(line)
+		if strings.HasPrefix(ds, prefix) {
+			vols = append(vols, ds[len(prefix):])
+		}
+	}
+	return vols
 }

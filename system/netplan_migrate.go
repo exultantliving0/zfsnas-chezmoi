@@ -77,48 +77,67 @@ func scanNetplanYAMLs() (*netplanScanResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
-		var (
-			currentSection       string
-			currentSectionIndent int
-		)
-		scanner := bufio.NewScanner(strings.NewReader(string(data)))
-		for scanner.Scan() {
-			line := scanner.Text()
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-				continue
-			}
-			if m := netplanRendererRe.FindStringSubmatch(line); m != nil {
-				res.Renderer = m[1]
-				continue
-			}
-			if m := netplanSectionRe.FindStringSubmatch(line); m != nil {
-				currentSectionIndent = len(m[1])
-				currentSection = m[2]
-				if currentSection != "ethernets" {
-					if !seenSection[currentSection] {
-						res.Unsupported = append(res.Unsupported, currentSection)
-						seenSection[currentSection] = true
-					}
+		parseNetplanYAMLInto(data, res, seenSection)
+	}
+	return res, nil
+}
+
+// parseNetplanYAMLInto does the coarse line-scan of one netplan YAML document,
+// accumulating renderer / ethernet device names / unsupported sections into
+// res. seenSection dedups unsupported-section names across multiple files.
+// Pure (no I/O) so it's unit-testable. We deliberately don't pull in a YAML
+// library (CLAUDE.md: stdlib + gorilla only).
+func parseNetplanYAMLInto(data []byte, res *netplanScanResult, seenSection map[string]bool) {
+	var (
+		currentSection       string
+		currentSectionIndent int
+		deviceIndent         = -1 // indent of device-name keys in the current ethernets block (detected lazily)
+	)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if m := netplanRendererRe.FindStringSubmatch(line); m != nil {
+			res.Renderer = m[1]
+			continue
+		}
+		if m := netplanSectionRe.FindStringSubmatch(line); m != nil {
+			currentSectionIndent = len(m[1])
+			currentSection = m[2]
+			deviceIndent = -1 // entering a new section — re-detect the device indent
+			if currentSection != "ethernets" {
+				if !seenSection[currentSection] {
+					res.Unsupported = append(res.Unsupported, currentSection)
+					seenSection[currentSection] = true
 				}
-				continue
 			}
-			// Inside an ethernets: block, top-level keys (one indent
-			// level deeper than the section keyword) are device names.
-			if currentSection == "ethernets" {
-				if m := netplanDeviceKeyRe.FindStringSubmatch(line); m != nil && len(m[1]) > currentSectionIndent {
-					name := m[2]
-					// Skip nested keys like "match:", "addresses:", etc.
-					// — those appear two indent levels deeper than the
-					// section keyword. We accept exactly one level deeper.
-					if len(m[1]) == currentSectionIndent+2 {
-						res.Devices = append(res.Devices, name)
+			continue
+		}
+		// Inside an ethernets: block, device-name keys sit at the FIRST
+		// indent level deeper than the section keyword. Detect that level
+		// dynamically rather than assuming 2-space indentation — Ubuntu's
+		// subiquity installer writes 4-space indents (ethernets: at 4,
+		// device at 8), which the old `+2` check silently dropped, yielding
+		// ethernets=[] and "no ethernet devices found". The first key
+		// deeper than the section defines the device level; anything deeper
+		// is a nested property (addresses:/routes:/match:/nameservers:…).
+		if currentSection == "ethernets" {
+			if m := netplanDeviceKeyRe.FindStringSubmatch(line); m != nil {
+				ind := len(m[1])
+				if ind > currentSectionIndent {
+					if deviceIndent == -1 {
+						deviceIndent = ind
+					}
+					if ind == deviceIndent {
+						res.Devices = append(res.Devices, m[2])
 					}
 				}
 			}
 		}
 	}
-	return res, nil
 }
 
 // readPossiblyRoot reads a file directly when the caller can, else via
@@ -315,6 +334,15 @@ func pinDhcpcdClientIDs(snap []liveDeviceSnapshot, log func(string)) error {
 	block.WriteString(dhcpcdMarkerStart + "\n")
 	block.WriteString("noipv4ll\n")
 	log("    noipv4ll (disable dhcpcd 169.254 link-local fallback)")
+	// Disable dhcpcd's built-in resolv.conf hook. On a systemd-resolved host
+	// that hook calls `resolvconf`/`resolvectl`, which BLOCKS ~90 s at boot
+	// because resolved hasn't claimed its D-Bus name yet ("Failed to set DNS
+	// configuration: Transport endpoint is not connected") — dhcpcd then can't
+	// background, so networking.service hangs for minutes. We instead write a
+	// plain /etc/resolv.conf from the dhcpcd exit-hook (no resolvectl). See
+	// dhcpcdResolvedHookBody and feedback_netplan_migration_waitonline_apipa.
+	block.WriteString("nohook resolv.conf\n")
+	log("    nohook resolv.conf (write a plain /etc/resolv.conf, not via resolved — avoids the 90s boot hang)")
 	for _, d := range snap {
 		if !d.IsDHCP || d.ClientID == "" {
 			continue
@@ -613,6 +641,12 @@ func renderInterfacesFile(devices []liveDeviceSnapshot) string {
 	b.WriteString("# `resolvectl dns` output at migration time.\n\n")
 	b.WriteString("auto lo\niface lo inet loopback\n\n")
 	for _, d := range devices {
+		// `auto` (NOT allow-hotplug): networking.service brings the NIC up via
+		// `ifup -a`. The udev path that would otherwise race it (ifup@<dev>)
+		// is masked by hardenIfupdownBoot, so there's a single bring-up path
+		// and no /run/network/ifstate lock contention. `auto` is also required
+		// for the later bridge/VLAN stanzas (their pre-up `ip link add` must
+		// run from networking.service), so we keep one consistent keyword.
 		b.WriteString(fmt.Sprintf("auto %s\n", d.Name))
 		if d.IsDHCP || d.IPv4 == "" {
 			// DHCP path: deliberately omit `dns-nameservers`. The
@@ -846,16 +880,29 @@ func MigrateNetplanToIfupdown(stream func(string)) error {
 	//     user opted for static, so their DNS is part of that fixed
 	//     config — it lives both in /etc/network/interfaces and in
 	//     /etc/resolv.conf, exactly as the user expects.
-	if dns := collectStaticDNS(snap); len(dns) > 0 {
-		log(fmt.Sprintf("Writing /etc/resolv.conf with static DNS %v (from static-IP interface(s))…", dns))
-		if err := writeStaticResolvConf(dns); err != nil {
-			log("  ⚠ Could not write static /etc/resolv.conf: " + err.Error())
-		}
+	// Always write a PLAIN /etc/resolv.conf — never the systemd-resolved stub
+	// symlink. On ifupdown we keep DNS in a plain file so NOTHING in the boot
+	// path depends on systemd-resolved being reachable on D-Bus (it isn't, this
+	// early in boot — see hardenIfupdownBoot). Static DNS is authoritative; for
+	// DHCP interfaces the dhcpcd exit-hook (dhcpcdResolvedHookBody) refreshes
+	// this same plain file on every lease. Previously DHCP restored the resolved
+	// stub symlink, whose resolvectl-based hooks hung networking.service ~90 s
+	// at boot (confirmed on a fresh Ubuntu 26.04 DHCP VM).
+	dns := collectAllDNS(snap)
+	if len(dns) > 0 {
+		log(fmt.Sprintf("Writing plain /etc/resolv.conf with DNS %v…", dns))
 	} else {
-		if err := ensureResolvConfStubSymlink(log); err != nil {
-			log("  ⚠ Could not restore /etc/resolv.conf symlink: " + err.Error())
-		}
+		log("No DNS captured; writing a plain /etc/resolv.conf for the dhcpcd exit-hook to populate on first lease…")
 	}
+	if err := writeStaticResolvConf(dns); err != nil {
+		log("  ⚠ Could not write /etc/resolv.conf: " + err.Error())
+	}
+
+	// Step 5c: remove the two ifupdown boot-hang traps (resolved-vs-dbus race
+	// and the udev ifup@ duplicate-bring-up race) BEFORE networking.service
+	// runs, so the migration's own `ifup -a` below — and every subsequent
+	// boot — is fast. See hardenIfupdownBoot.
+	hardenIfupdownBoot(log)
 
 	// Step 6: enable + start ifupdown's networking.service. This is the
 	// "may briefly drop the link" moment.
@@ -968,28 +1015,29 @@ func writeRoot(path string, data []byte, _ os.FileMode) error {
 // $reason and $new_domain_name_servers / $new_domain_search.
 const dhcpcdResolvedHookPath = "/etc/dhcpcd.exit-hook"
 
-// dhcpcdResolvedHookBody is the entire exit-hook content. Idempotent —
-// dhcpcd may invoke the hook multiple times per second during fast
-// renewals; resolvectl handles the no-op case fine.
+// dhcpcdResolvedHookBody is the entire exit-hook content. It writes a PLAIN
+// /etc/resolv.conf from the DHCP-supplied DNS — deliberately NOT via resolvectl
+// / systemd-resolved. resolved hasn't claimed its D-Bus name this early in boot
+// (it starts before dbus), so any resolvectl call BLOCKS ~90 s before failing
+// "Transport endpoint is not connected", which prevents dhcpcd from
+// backgrounding and hangs networking.service for minutes (confirmed on a fresh
+// Ubuntu 26.04 DHCP VM). A plain file write is instant and resolves DNS the
+// same way the static path does. Paired with `nohook resolv.conf` in
+// dhcpcd.conf so dhcpcd's own resolved hook doesn't run. Idempotent.
 const dhcpcdResolvedHookBody = `#!/bin/sh
 # Managed by ZNAS netplan→ifupdown migration.
-# Push DHCP-supplied DNS into systemd-resolved on every lease event so
-# /etc/resolv.conf (the systemd-resolved stub) sees real upstream DNS
-# without us baking a static dns-nameservers line into the interfaces
-# file. Removing this hook returns to dhcpcd's default resolv.conf
-# behaviour.
-
+# Write a plain /etc/resolv.conf from the DHCP-supplied DNS. NO resolvectl /
+# systemd-resolved (it isn't on D-Bus this early in boot and would hang
+# networking.service ~90s). Single-uplink hosts: last lease wins.
 case "$reason" in
     BOUND|RENEW|REBIND|REBOOT|INFORM)
         if [ -n "$new_domain_name_servers" ]; then
-            /usr/bin/resolvectl dns "$interface" $new_domain_name_servers 2>/dev/null || true
+            {
+                for s in $new_domain_name_servers; do echo "nameserver $s"; done
+                [ -n "$new_domain_search" ] && echo "search $new_domain_search"
+                [ -n "$new_domain_name" ] && echo "domain $new_domain_name"
+            } > /etc/resolv.conf 2>/dev/null || true
         fi
-        if [ -n "$new_domain_search" ] || [ -n "$new_domain_name" ]; then
-            /usr/bin/resolvectl domain "$interface" $new_domain_search $new_domain_name 2>/dev/null || true
-        fi
-        ;;
-    EXPIRE|FAIL|IPV4LL|NOCARRIER|STOP|RELEASE)
-        /usr/bin/resolvectl revert "$interface" 2>/dev/null || true
         ;;
 esac
 `
@@ -1019,6 +1067,25 @@ func collectStaticDNS(devices []liveDeviceSnapshot) []string {
 		if d.IsDHCP {
 			continue
 		}
+		for _, s := range d.DNS {
+			if seen[s] {
+				continue
+			}
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// collectAllDNS returns the deduped DNS servers across EVERY device (static and
+// DHCP) captured at migration time. We seed /etc/resolv.conf with these so DNS
+// works immediately after the switch; for DHCP interfaces the dhcpcd exit-hook
+// then keeps the same plain file refreshed on each lease.
+func collectAllDNS(devices []liveDeviceSnapshot) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range devices {
 		for _, s := range d.DNS {
 			if seen[s] {
 				continue
@@ -1101,7 +1168,57 @@ func rollbackInterfaces(targetPath, backupPath string) {
 // sockets. Best-effort. Mirrors the units we disabled in the forward
 // pass so a rollback leaves systemd-networkd in the same state we
 // found it.
+// resolvedIfupHook is systemd-resolved's ifupdown hook. ifup runs it for every
+// non-lo interface whenever resolved is enabled, and it calls `resolvectl` over
+// D-Bus — the boot-hang trap that hardenIfupdownBoot neutralizes.
+const resolvedIfupHook = "/etc/network/if-up.d/resolved"
+
+// hardenIfupdownBoot removes the two boot-hang traps that surface after the
+// switch to ifupdown on Ubuntu 26.04. Confirmed live on a fresh install (znas3,
+// June 2026) where boot stalled ~5 min on networking.service/start and the
+// portal/sshd didn't come up until network-online.target finally gave up:
+//
+//  1. ifup runs /etc/network/if-up.d/resolved, which calls `resolvectl` over
+//     D-Bus. At boot, networking.service has no ordering guarantee vs dbus and
+//     systemd-resolved usually hasn't claimed its org.freedesktop.resolve1
+//     name yet (it starts in sysinit, before dbus), so resolvectl either blocks
+//     25 s on D-Bus activation or fails with `sd_bus_open_system: No such file`
+//     when dbus.socket isn't up — and networking.service then hits its 5-min
+//     TimeoutStartSec, fails, and drags network-online.target (portal + sshd)
+//     with it. We already write a static /etc/resolv.conf, so the hook is
+//     redundant here. NEUTRALIZE it (chmod -x — ifup's run-parts only executes
+//     executable files), removing dbus/resolved from the boot-critical network
+//     path entirely.
+//
+//     Do NOT try to fix this by ordering resolved After=dbus via a drop-in: it
+//     BACKFIRES. resolved is part of sysinit.target, which dbus transitively
+//     needs, so After=dbus forms an ordering cycle; systemd breaks it by
+//     deleting a job — non-deterministically dbus.socket — which bricks D-Bus
+//     and makes boot WORSE and flaky (a lucky cycle-break boots fine, an
+//     unlucky one hangs 5 min). This was tried on znas3 and reverted.
+//  2. udev's ifupdown-hotplug starts ifup@<dev>.service in parallel with
+//     networking.service's `ifup -a`; both race for /run/network/ifstate.<dev>.
+//     Mask ifup@.service so networking.service is the single bring-up path.
+//
+// Both actions are undone by rollbackNetworkd. Best-effort: failures are logged
+// but do not abort the migration.
+func hardenIfupdownBoot(log func(string)) {
+	log("Neutralizing the systemd-resolved ifup hook (it calls resolvectl over D-Bus and hangs boot; static /etc/resolv.conf already provides DNS)…")
+	if out, err := exec.Command("sudo", "/usr/bin/chmod", "-x", resolvedIfupHook).CombinedOutput(); err != nil {
+		log("  ⚠ chmod -x " + resolvedIfupHook + ": " + strings.TrimSpace(string(out)))
+	}
+
+	log("Masking ifup@.service so networking.service is the sole interface bring-up (avoids the udev ifup lock race)…")
+	if out, err := exec.Command("sudo", "/usr/bin/systemctl", "mask", "ifup@.service").CombinedOutput(); err != nil {
+		log("  ⚠ mask ifup@.service: " + strings.TrimSpace(string(out)))
+	}
+}
+
 func rollbackNetworkd() {
+	// Undo the ifupdown boot-hardening (hardenIfupdownBoot).
+	exec.Command("sudo", "/usr/bin/systemctl", "unmask", "ifup@.service").Run() //nolint:errcheck
+	exec.Command("sudo", "/usr/bin/chmod", "+x", resolvedIfupHook).Run()        //nolint:errcheck
+
 	// Undo the masks first — a masked unit can't be enabled or started.
 	for _, u := range []string{"systemd-networkd.service", "systemd-networkd-wait-online.service"} {
 		exec.Command("sudo", "/usr/bin/systemctl", "unmask", u).Run() //nolint:errcheck

@@ -10,8 +10,7 @@ import (
 
 // DiskPowerPrereqsInstalled returns true when hdparm is available on PATH.
 func DiskPowerPrereqsInstalled() bool {
-	_, err := exec.LookPath("hdparm")
-	return err == nil
+	return binaryInstalled("hdparm")
 }
 
 // ListPhysicalDisks returns all physical block device names (/dev/sda, /dev/sdb, …)

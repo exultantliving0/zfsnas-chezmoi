@@ -86,8 +86,8 @@ type LXDInstance struct {
 	Image       string `json:"image"`
 	CPULimit    string `json:"cpu_limit"`
 	MemoryLimit string `json:"memory_limit"`
-	RootPool    string `json:"root_pool"` // LXD storage pool name for the root disk
-	Autostart   bool   `json:"autostart"` // boot.autostart=true on the instance or its profile
+	RootPool    string `json:"root_pool"`  // LXD storage pool name for the root disk
+	Autostart   bool   `json:"autostart"`  // boot.autostart=true on the instance or its profile
 	IsCompose   bool   `json:"is_compose"` // user.zfsnas.compose=true — a Podman Compose stack
 }
 
@@ -1342,6 +1342,15 @@ func applyPCIRawQEMU(name string, pciDevices []LXDPCIDevice) {
 	}
 }
 
+// IncusInstalled reports whether the `incus` binary is present. Distinct from
+// LXDAvailable (which probes whether the *daemon* answers): a fresh ZNAS box
+// with no virtualization installed has no `incus` binary at all, and must not
+// be mistaken for an installed-but-hung daemon. Uses the load-robust presence
+// helper so a busy host doesn't false-negative. See binpresence.go.
+func IncusInstalled() bool {
+	return binaryInstalled("incus")
+}
+
 // LXDAvailable probes LXD accessibility by running `lxc list --format json`.
 func LXDAvailable() bool {
 	cmd := exec.Command("incus", "list", "--format", "json")
@@ -1850,16 +1859,16 @@ type LXDCapabilities struct {
 
 // LXDInstanceConfig holds the editable configuration of an LXD instance.
 type LXDInstanceConfig struct {
-	Description       string    `json:"description"`
+	Description string `json:"description"`
 	// CreatedAt is the timestamp Incus recorded when the instance was
 	// created. Surfaced verbatim from the /1.0/instances/<n> API.
-	CreatedAt         time.Time `json:"created_at,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
 	// Image is a human-readable label for the image the instance was
 	// initially launched from — Incus' `image.description` config key
 	// (e.g. "Debian bookworm amd64 (20260524_05:24)") with a fallback
 	// to "<os> <release>" when description isn't populated. Empty for
 	// instances created without a recognised image (e.g. blank VMs).
-	Image             string    `json:"image,omitempty"`
+	Image             string `json:"image,omitempty"`
 	CPULimit          string `json:"cpu_limit"`
 	CPUPin            string `json:"cpu_pin"`     // LXD range string for pinning; overrides CPULimit when non-empty
 	CPUSockets        int    `json:"cpu_sockets"` // QEMU socket topology (0=auto)
@@ -3730,497 +3739,497 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	// Guard: when the request didn't include a `nics` field at all, leave
 	// the instance's current NICs untouched. See LXDInstanceConfig.ManageNICs.
 	if cfg.ManageNICs {
-	wantNICs := map[string]struct{}{}
-	for _, nic := range cfg.NICs {
-		if !lxdDevNameRe.MatchString(nic.Name) {
-			return fmt.Errorf("invalid NIC name: %s", nic.Name)
-		}
-		wantNICs[nic.Name] = struct{}{}
-		cur, exists := curNICs[nic.Name]
-		_, inProfile := expandedNICs[nic.Name]
-		isProfileOnly := !exists && inProfile
-		if !exists {
-			if !nic.Connected {
-				// Profile NIC being disconnected: bring the link down inside the container.
-				// Instance-level NICs that don't exist yet just skip (nothing to disconnect).
-				if isProfileOnly && isRunning {
-					exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "down").Run()
-				}
-				continue
+		wantNICs := map[string]struct{}{}
+		for _, nic := range cfg.NICs {
+			if !lxdDevNameRe.MatchString(nic.Name) {
+				return fmt.Errorf("invalid NIC name: %s", nic.Name)
 			}
-			if isProfileOnly {
-				// Profile-inherited NIC. Compare the requested settings against the
-				// profile's effective values; if anything the user can edit (bridge,
-				// VLAN, MAC) differs we must add a local instance-level device that
-				// overrides the profile NIC. Without this override the request was
-				// silently swallowed — the audit log showed "lxd_edit_config" success
-				// while the VM kept the profile's old bridge.
-				profDev := expandedNICs[nic.Name]
-				profBridge := profDev["network"]
-				if profBridge == "" {
-					profBridge = profDev["parent"]
+			wantNICs[nic.Name] = struct{}{}
+			cur, exists := curNICs[nic.Name]
+			_, inProfile := expandedNICs[nic.Name]
+			isProfileOnly := !exists && inProfile
+			if !exists {
+				if !nic.Connected {
+					// Profile NIC being disconnected: bring the link down inside the container.
+					// Instance-level NICs that don't exist yet just skip (nothing to disconnect).
+					if isProfileOnly && isRunning {
+						exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "down").Run()
+					}
+					continue
 				}
-				profVlan := profDev["vlan"]
-				profMAC := strings.ToLower(profDev["hwaddr"])
-				// Same volatile-MAC fallback as the instance-NIC path below:
-				// the GET response synthesises an effective MAC from
-				// volatile.<name>.hwaddr when the profile / device hwaddr
-				// is unset, and a no-op save would round-trip that value
-				// here. Without this fallback every save would create a
-				// per-instance override device just to pin the volatile MAC.
-				if profMAC == "" {
-					profMAC = strings.ToLower(rawDev.ExpandedConfig["volatile."+nic.Name+".hwaddr"])
+				if isProfileOnly {
+					// Profile-inherited NIC. Compare the requested settings against the
+					// profile's effective values; if anything the user can edit (bridge,
+					// VLAN, MAC) differs we must add a local instance-level device that
+					// overrides the profile NIC. Without this override the request was
+					// silently swallowed — the audit log showed "lxd_edit_config" success
+					// while the VM kept the profile's old bridge.
+					profDev := expandedNICs[nic.Name]
+					profBridge := profDev["network"]
+					if profBridge == "" {
+						profBridge = profDev["parent"]
+					}
+					profVlan := profDev["vlan"]
+					profMAC := strings.ToLower(profDev["hwaddr"])
+					// Same volatile-MAC fallback as the instance-NIC path below:
+					// the GET response synthesises an effective MAC from
+					// volatile.<name>.hwaddr when the profile / device hwaddr
+					// is unset, and a no-op save would round-trip that value
+					// here. Without this fallback every save would create a
+					// per-instance override device just to pin the volatile MAC.
+					if profMAC == "" {
+						profMAC = strings.ToLower(rawDev.ExpandedConfig["volatile."+nic.Name+".hwaddr"])
+					}
+					wantVlan := ""
+					if nic.VlanID > 0 {
+						wantVlan = fmt.Sprintf("%d", nic.VlanID)
+					}
+					wantMAC := strings.ToLower(nic.MAC)
+					needsOverride := profBridge != nic.Bridge || profVlan != wantVlan || profMAC != wantMAC
+					if needsOverride {
+						// Always pin overrides as nictype=bridged so we don't end up
+						// double-registering the instance in an LXD-managed bridge's DNS.
+						args := nicBridgedArgs(nic.Name, nic.Bridge)
+						if wantVlan != "" {
+							args = append(args, "vlan="+wantVlan)
+						}
+						if wantMAC != "" {
+							args = append(args, "hwaddr="+wantMAC)
+						}
+						if out, err := lxcNICRun(nic.Bridge, args); err != nil {
+							return fmt.Errorf("override profile NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
+						}
+					}
+					// Bring the link up regardless (best-effort; VMs without lxd-agent
+					// will fail silently, which is the existing pre-fix behaviour).
+					if isRunning {
+						exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run()
+					}
+					continue
 				}
+				// Truly new NIC (or reconnect of a previously disconnected NIC).
+				// Always add as nictype=bridged to avoid LXD DNS registration.
+				args := nicBridgedArgs(nic.Name, nic.Bridge)
+				if nic.VlanID > 0 {
+					args = append(args, fmt.Sprintf("vlan=%d", nic.VlanID))
+				}
+				if nic.MAC != "" {
+					args = append(args, "hwaddr="+strings.ToLower(nic.MAC))
+				}
+				if out, err := lxcNICRun(nic.Bridge, args); err != nil {
+					return fmt.Errorf("add NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
+				}
+				// Clear any disconnected-NIC metadata for this device.
+				exec.Command("incus", "config", "unset", name, "user.disconnected_nics."+nic.Name).Run() //nolint:errcheck
+			} else {
+				// NIC exists in instance config.
+				// Clear any stale disconnected-NIC metadata so the UI stays consistent.
+				exec.Command("incus", "config", "unset", name, "user.disconnected_nics."+nic.Name).Run() //nolint:errcheck
+
+				curUsesNetwork := cur["network"] != "" // "network=" style registers with LXD DNS
+				curBridge := cur["network"]
+				if curBridge == "" {
+					curBridge = cur["parent"]
+				}
+
+				if !nic.Connected {
+					// Disconnect: remove the LXD device and save NIC info as instance metadata
+					// so the UI can show it as disconnected and restore it on reconnect.
+					if isRunning {
+						return fmt.Errorf("stop the VM first to disconnect NIC %s", nic.Name)
+					}
+					if out, err := exec.Command("incus", "config", "device", "remove", name, nic.Name).CombinedOutput(); err != nil {
+						return fmt.Errorf("disconnect NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
+					}
+					mac := cur["hwaddr"]
+					if mac == "" {
+						mac = rawDev.ExpandedConfig["volatile."+nic.Name+".hwaddr"]
+					}
+					metaVal, _ := json.Marshal(map[string]string{
+						"bridge": curBridge,
+						"mac":    mac,
+						"vlan":   cur["vlan"],
+					})
+					exec.Command("incus", "config", "set", name,
+						"user.disconnected_nics."+nic.Name, string(metaVal)).Run() //nolint:errcheck
+					// wantNICs still contains this name so the deletion loop won't retry the remove.
+					continue
+				}
+
+				bridgeChanged := curBridge != nic.Bridge
+
+				if curUsesNetwork && bridgeChanged {
+					// NIC is "network=" style and bridge is changing.
+					// "device set" cannot mix nictype= and network= properties, so must remove+re-add.
+					if isRunning {
+						return fmt.Errorf("stop the VM first to change NIC %s bridge (managed-network NIC requires restart)", nic.Name)
+					}
+					if out, err := exec.Command("incus", "config", "device", "remove", name, nic.Name).CombinedOutput(); err != nil {
+						return fmt.Errorf("update NIC %s (remove): %s", nic.Name, strings.TrimSpace(string(out)))
+					}
+					addArgs := nicBridgedArgs(nic.Name, nic.Bridge)
+					if nic.VlanID > 0 {
+						addArgs = append(addArgs, fmt.Sprintf("vlan=%d", nic.VlanID))
+					}
+					if nic.MAC != "" {
+						addArgs = append(addArgs, "hwaddr="+strings.ToLower(nic.MAC))
+					}
+					if out, err := lxcNICRun(nic.Bridge, addArgs); err != nil {
+						return fmt.Errorf("update NIC %s (re-add): %s", nic.Name, strings.TrimSpace(string(out)))
+					}
+					continue // VLAN and MAC already applied above
+				} else if !curUsesNetwork && bridgeChanged {
+					// nictype=bridged parent= style; change parent. Works on running VMs.
+					setArgs := []string{"config", "device", "set", name, nic.Name,
+						"nictype=bridged", "parent=" + nic.Bridge}
+					if out, err := lxcNICRun(nic.Bridge, setArgs); err != nil {
+						return fmt.Errorf("update NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
+					}
+				}
+				// If curUsesNetwork && !bridgeChanged: same bridge, leave as-is; fall through to patch.
+
+				// Patch VLAN and MAC in place.
+				curVlan := cur["vlan"]
 				wantVlan := ""
 				if nic.VlanID > 0 {
 					wantVlan = fmt.Sprintf("%d", nic.VlanID)
 				}
+				if curVlan != wantVlan {
+					if wantVlan == "" {
+						exec.Command("incus", "config", "device", "unset", name, nic.Name, "vlan").Run() //nolint:errcheck
+					} else {
+						if out, err := exec.Command("incus", "config", "device", "set",
+							name, nic.Name, "vlan="+wantVlan).CombinedOutput(); err != nil {
+							return fmt.Errorf("update NIC %s vlan: %s", nic.Name, strings.TrimSpace(string(out)))
+						}
+					}
+				}
+				// MAC comparison: the GET endpoint returns the effective MAC by
+				// falling back to volatile.<nic>.hwaddr when the device-level
+				// hwaddr is unset (Incus auto-assigns volatile MACs). A round-
+				// trip through the edit form therefore gives us wantMAC == the
+				// volatile MAC even when the user changed nothing. If we only
+				// compared against cur["hwaddr"] here, every save would re-pin
+				// the MAC at the device level and Incus would treat that as a
+				// NIC change — which on stateful or freshly-created VMs surfaces
+				// as "Failed to detach NIC after 10s". Treat the volatile MAC
+				// as part of the current state so a no-op save stays a no-op.
+				curMAC := strings.ToLower(cur["hwaddr"])
+				if curMAC == "" {
+					curMAC = strings.ToLower(rawDev.ExpandedConfig["volatile."+nic.Name+".hwaddr"])
+				}
 				wantMAC := strings.ToLower(nic.MAC)
-				needsOverride := profBridge != nic.Bridge || profVlan != wantVlan || profMAC != wantMAC
-				if needsOverride {
-					// Always pin overrides as nictype=bridged so we don't end up
-					// double-registering the instance in an LXD-managed bridge's DNS.
-					args := nicBridgedArgs(nic.Name, nic.Bridge)
-					if wantVlan != "" {
-						args = append(args, "vlan="+wantVlan)
-					}
-					if wantMAC != "" {
-						args = append(args, "hwaddr="+wantMAC)
-					}
-					if out, err := lxcNICRun(nic.Bridge, args); err != nil {
-						return fmt.Errorf("override profile NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
-					}
-				}
-				// Bring the link up regardless (best-effort; VMs without lxd-agent
-				// will fail silently, which is the existing pre-fix behaviour).
-				if isRunning {
-					exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run()
-				}
-				continue
-			}
-			// Truly new NIC (or reconnect of a previously disconnected NIC).
-			// Always add as nictype=bridged to avoid LXD DNS registration.
-			args := nicBridgedArgs(nic.Name, nic.Bridge)
-			if nic.VlanID > 0 {
-				args = append(args, fmt.Sprintf("vlan=%d", nic.VlanID))
-			}
-			if nic.MAC != "" {
-				args = append(args, "hwaddr="+strings.ToLower(nic.MAC))
-			}
-			if out, err := lxcNICRun(nic.Bridge, args); err != nil {
-				return fmt.Errorf("add NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
-			}
-			// Clear any disconnected-NIC metadata for this device.
-			exec.Command("incus", "config", "unset", name, "user.disconnected_nics."+nic.Name).Run() //nolint:errcheck
-		} else {
-			// NIC exists in instance config.
-			// Clear any stale disconnected-NIC metadata so the UI stays consistent.
-			exec.Command("incus", "config", "unset", name, "user.disconnected_nics."+nic.Name).Run() //nolint:errcheck
-
-			curUsesNetwork := cur["network"] != "" // "network=" style registers with LXD DNS
-			curBridge := cur["network"]
-			if curBridge == "" {
-				curBridge = cur["parent"]
-			}
-
-			if !nic.Connected {
-				// Disconnect: remove the LXD device and save NIC info as instance metadata
-				// so the UI can show it as disconnected and restore it on reconnect.
-				if isRunning {
-					return fmt.Errorf("stop the VM first to disconnect NIC %s", nic.Name)
-				}
-				if out, err := exec.Command("incus", "config", "device", "remove", name, nic.Name).CombinedOutput(); err != nil {
-					return fmt.Errorf("disconnect NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
-				}
-				mac := cur["hwaddr"]
-				if mac == "" {
-					mac = rawDev.ExpandedConfig["volatile."+nic.Name+".hwaddr"]
-				}
-				metaVal, _ := json.Marshal(map[string]string{
-					"bridge": curBridge,
-					"mac":    mac,
-					"vlan":   cur["vlan"],
-				})
-				exec.Command("incus", "config", "set", name,
-					"user.disconnected_nics."+nic.Name, string(metaVal)).Run() //nolint:errcheck
-				// wantNICs still contains this name so the deletion loop won't retry the remove.
-				continue
-			}
-
-			bridgeChanged := curBridge != nic.Bridge
-
-			if curUsesNetwork && bridgeChanged {
-				// NIC is "network=" style and bridge is changing.
-				// "device set" cannot mix nictype= and network= properties, so must remove+re-add.
-				if isRunning {
-					return fmt.Errorf("stop the VM first to change NIC %s bridge (managed-network NIC requires restart)", nic.Name)
-				}
-				if out, err := exec.Command("incus", "config", "device", "remove", name, nic.Name).CombinedOutput(); err != nil {
-					return fmt.Errorf("update NIC %s (remove): %s", nic.Name, strings.TrimSpace(string(out)))
-				}
-				addArgs := nicBridgedArgs(nic.Name, nic.Bridge)
-				if nic.VlanID > 0 {
-					addArgs = append(addArgs, fmt.Sprintf("vlan=%d", nic.VlanID))
-				}
-				if nic.MAC != "" {
-					addArgs = append(addArgs, "hwaddr="+strings.ToLower(nic.MAC))
-				}
-				if out, err := lxcNICRun(nic.Bridge, addArgs); err != nil {
-					return fmt.Errorf("update NIC %s (re-add): %s", nic.Name, strings.TrimSpace(string(out)))
-				}
-				continue // VLAN and MAC already applied above
-			} else if !curUsesNetwork && bridgeChanged {
-				// nictype=bridged parent= style; change parent. Works on running VMs.
-				setArgs := []string{"config", "device", "set", name, nic.Name,
-					"nictype=bridged", "parent=" + nic.Bridge}
-				if out, err := lxcNICRun(nic.Bridge, setArgs); err != nil {
-					return fmt.Errorf("update NIC %s: %s", nic.Name, strings.TrimSpace(string(out)))
-				}
-			}
-			// If curUsesNetwork && !bridgeChanged: same bridge, leave as-is; fall through to patch.
-
-			// Patch VLAN and MAC in place.
-			curVlan := cur["vlan"]
-			wantVlan := ""
-			if nic.VlanID > 0 {
-				wantVlan = fmt.Sprintf("%d", nic.VlanID)
-			}
-			if curVlan != wantVlan {
-				if wantVlan == "" {
-					exec.Command("incus", "config", "device", "unset", name, nic.Name, "vlan").Run() //nolint:errcheck
-				} else {
-					if out, err := exec.Command("incus", "config", "device", "set",
-						name, nic.Name, "vlan="+wantVlan).CombinedOutput(); err != nil {
-						return fmt.Errorf("update NIC %s vlan: %s", nic.Name, strings.TrimSpace(string(out)))
-					}
-				}
-			}
-			// MAC comparison: the GET endpoint returns the effective MAC by
-			// falling back to volatile.<nic>.hwaddr when the device-level
-			// hwaddr is unset (Incus auto-assigns volatile MACs). A round-
-			// trip through the edit form therefore gives us wantMAC == the
-			// volatile MAC even when the user changed nothing. If we only
-			// compared against cur["hwaddr"] here, every save would re-pin
-			// the MAC at the device level and Incus would treat that as a
-			// NIC change — which on stateful or freshly-created VMs surfaces
-			// as "Failed to detach NIC after 10s". Treat the volatile MAC
-			// as part of the current state so a no-op save stays a no-op.
-			curMAC := strings.ToLower(cur["hwaddr"])
-			if curMAC == "" {
-				curMAC = strings.ToLower(rawDev.ExpandedConfig["volatile."+nic.Name+".hwaddr"])
-			}
-			wantMAC := strings.ToLower(nic.MAC)
-			if curMAC != wantMAC {
-				if wantMAC == "" {
-					exec.Command("incus", "config", "device", "unset", name, nic.Name, "hwaddr").Run() //nolint:errcheck
-				} else {
-					if out, err := exec.Command("incus", "config", "device", "set",
-						name, nic.Name, "hwaddr="+wantMAC).CombinedOutput(); err != nil {
-						return fmt.Errorf("update NIC %s hwaddr: %s", nic.Name, strings.TrimSpace(string(out)))
+				if curMAC != wantMAC {
+					if wantMAC == "" {
+						exec.Command("incus", "config", "device", "unset", name, nic.Name, "hwaddr").Run() //nolint:errcheck
+					} else {
+						if out, err := exec.Command("incus", "config", "device", "set",
+							name, nic.Name, "hwaddr="+wantMAC).CombinedOutput(); err != nil {
+							return fmt.Errorf("update NIC %s hwaddr: %s", nic.Name, strings.TrimSpace(string(out)))
+						}
 					}
 				}
 			}
 		}
-	}
-	for n := range curNICs {
-		if _, ok := wantNICs[n]; !ok {
-			if out, err := exec.Command("incus", "config", "device", "remove", name, n).CombinedOutput(); err != nil {
-				outStr := strings.TrimSpace(string(out))
-				if isRunning {
-					return fmt.Errorf("remove NIC %s: %s (stop the VM first to remove NICs)", n, outStr)
+		for n := range curNICs {
+			if _, ok := wantNICs[n]; !ok {
+				if out, err := exec.Command("incus", "config", "device", "remove", name, n).CombinedOutput(); err != nil {
+					outStr := strings.TrimSpace(string(out))
+					if isRunning {
+						return fmt.Errorf("remove NIC %s: %s (stop the VM first to remove NICs)", n, outStr)
+					}
+					return fmt.Errorf("remove NIC %s: %s", n, outStr)
 				}
-				return fmt.Errorf("remove NIC %s: %s", n, outStr)
 			}
 		}
-	}
-	// Bring newly-added NICs up. Disconnected NICs are removed from LXD config entirely.
-	if isRunning {
-		for _, nic := range cfg.NICs {
-			if nic.Connected {
-				exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run() //nolint:errcheck
-			}
-		}
-	}
-
-	// Apply per-NIC IPv4 config for containers. We act on BOTH "static" and
-	// "dhcp" modes — switching from one to the other has to write the new
-	// persistent shape AND clean up the old one, otherwise reboot picks up
-	// the stale config (eg. a leftover DHCP netplan file beats the new
-	// static systemd-networkd file at boot and the interface ends up with
-	// no IP). Mode "" means "keep current" and is intentionally a no-op.
-	if !isVM {
-		var staticNICs []LXDNIC
-		var changedDevs []string
-		for _, nic := range cfg.NICs {
-			switch nic.IPv4Mode {
-			case "static":
-				if nic.IPv4Addr == "" {
-					continue
-				}
-				n := LXDNIC{IPv4Mode: "static", IPv4Addr: nic.IPv4Addr, IPv4GW: nic.IPv4GW, DNS1: nic.DNS1, DNS2: nic.DNS2}
-				_pushNICPersistentConfig(name, nic.Name, n)
-				if isRunning {
-					_applyStaticIPCommands(name, nic.Name, n)
-				}
-				staticNICs = append(staticNICs, n)
-				changedDevs = append(changedDevs, nic.Name)
-			case "dhcp":
-				n := LXDNIC{IPv4Mode: "dhcp"}
-				_pushNICPersistentConfig(name, nic.Name, n)
-				if isRunning {
-					_applyDHCPRuntime(name, nic.Name, changedDevs)
-				}
-				changedDevs = append(changedDevs, nic.Name)
-			}
-		}
-		// Single network-manager reload at the end (one `netplan apply` on
-		// Ubuntu, or `networkctl reload` + per-link `networkctl reconfigure`
-		// elsewhere) makes the new persistent config take effect for every
-		// NIC that changed shape, without a guest reboot. Skipped for VMs
-		// (managed inside the guest) and for stopped containers (the
-		// configs will be read at next boot).
-		if len(changedDevs) > 0 && isRunning {
-			_reloadContainerNetwork(name, changedDevs)
-		}
+		// Bring newly-added NICs up. Disconnected NICs are removed from LXD config entirely.
 		if isRunning {
-			if dnsLines := _collectDNSLines(staticNICs); len(dnsLines) > 0 {
-				resolvConf := strings.Join(dnsLines, "\n") + "\n"
-				cmd := exec.Command("incus", "exec", name, "--", "/bin/sh", "-c",
-					"rm -f /etc/resolv.conf && cat > /etc/resolv.conf")
-				cmd.Stdin = strings.NewReader(resolvConf)
-				cmd.Run() //nolint:errcheck
+			for _, nic := range cfg.NICs {
+				if nic.Connected {
+					exec.Command("incus", "exec", name, "--", "ip", "link", "set", nic.Name, "up").Run() //nolint:errcheck
+				}
 			}
 		}
 
-		// ── Port-forwards sync ───────────────────────────────────────────────
-		// For each NIC in the request, replace its full set of port-forward
-		// proxy devices with the desired list. Devices are named with the
-		// "fwd-<nic>-<proto>-<src>" prefix so we can target them precisely
-		// without touching unrelated proxy devices the user may have added
-		// manually. Sent ALWAYS by the frontend (even when empty) so a
-		// drop-to-zero deletes the leftover forwards.
-		for _, nic := range cfg.NICs {
-			syncNICPortForwards(name, nic.Name, nic.PortForwards, rawDev.ExpandedDevices)
+		// Apply per-NIC IPv4 config for containers. We act on BOTH "static" and
+		// "dhcp" modes — switching from one to the other has to write the new
+		// persistent shape AND clean up the old one, otherwise reboot picks up
+		// the stale config (eg. a leftover DHCP netplan file beats the new
+		// static systemd-networkd file at boot and the interface ends up with
+		// no IP). Mode "" means "keep current" and is intentionally a no-op.
+		if !isVM {
+			var staticNICs []LXDNIC
+			var changedDevs []string
+			for _, nic := range cfg.NICs {
+				switch nic.IPv4Mode {
+				case "static":
+					if nic.IPv4Addr == "" {
+						continue
+					}
+					n := LXDNIC{IPv4Mode: "static", IPv4Addr: nic.IPv4Addr, IPv4GW: nic.IPv4GW, DNS1: nic.DNS1, DNS2: nic.DNS2}
+					_pushNICPersistentConfig(name, nic.Name, n)
+					if isRunning {
+						_applyStaticIPCommands(name, nic.Name, n)
+					}
+					staticNICs = append(staticNICs, n)
+					changedDevs = append(changedDevs, nic.Name)
+				case "dhcp":
+					n := LXDNIC{IPv4Mode: "dhcp"}
+					_pushNICPersistentConfig(name, nic.Name, n)
+					if isRunning {
+						_applyDHCPRuntime(name, nic.Name, changedDevs)
+					}
+					changedDevs = append(changedDevs, nic.Name)
+				}
+			}
+			// Single network-manager reload at the end (one `netplan apply` on
+			// Ubuntu, or `networkctl reload` + per-link `networkctl reconfigure`
+			// elsewhere) makes the new persistent config take effect for every
+			// NIC that changed shape, without a guest reboot. Skipped for VMs
+			// (managed inside the guest) and for stopped containers (the
+			// configs will be read at next boot).
+			if len(changedDevs) > 0 && isRunning {
+				_reloadContainerNetwork(name, changedDevs)
+			}
+			if isRunning {
+				if dnsLines := _collectDNSLines(staticNICs); len(dnsLines) > 0 {
+					resolvConf := strings.Join(dnsLines, "\n") + "\n"
+					cmd := exec.Command("incus", "exec", name, "--", "/bin/sh", "-c",
+						"rm -f /etc/resolv.conf && cat > /etc/resolv.conf")
+					cmd.Stdin = strings.NewReader(resolvConf)
+					cmd.Run() //nolint:errcheck
+				}
+			}
+
+			// ── Port-forwards sync ───────────────────────────────────────────────
+			// For each NIC in the request, replace its full set of port-forward
+			// proxy devices with the desired list. Devices are named with the
+			// "fwd-<nic>-<proto>-<src>" prefix so we can target them precisely
+			// without touching unrelated proxy devices the user may have added
+			// manually. Sent ALWAYS by the frontend (even when empty) so a
+			// drop-to-zero deletes the leftover forwards.
+			for _, nic := range cfg.NICs {
+				syncNICPortForwards(name, nic.Name, nic.PortForwards, rawDev.ExpandedDevices)
+			}
 		}
-	}
 	} // end ManageNICs guard
 
 	// ── Disk diff ─────────────────────────────────────────────────────────────
 	// Guard: a partial PUT without a `disks` field must NOT remove disks
 	// or destroy their backing volumes. See LXDInstanceConfig.ManageDisks.
 	if cfg.ManageDisks {
-	wantDisks := map[string]struct{}{}
-	for _, disk := range cfg.Disks {
-		if !lxdDevNameRe.MatchString(disk.Name) {
-			return fmt.Errorf("invalid disk name: %s", disk.Name)
-		}
-		wantDisks[disk.Name] = struct{}{}
-		cur, exists := curDisks[disk.Name]
-		if !exists {
-			// LXD 5.x requires a named volume; create it first then attach.
-			// VMs take a "block"-type volume attached as a raw device;
-			// containers take a filesystem volume mounted at an in-guest path.
-			volName := name + "-" + disk.Name
-			volArgs := []string{"storage", "volume", "create", disk.Pool, volName}
-			if isVM {
-				volArgs = append(volArgs, "--type", "block")
+		wantDisks := map[string]struct{}{}
+		for _, disk := range cfg.Disks {
+			if !lxdDevNameRe.MatchString(disk.Name) {
+				return fmt.Errorf("invalid disk name: %s", disk.Name)
 			}
-			if disk.Size != "" {
-				volArgs = append(volArgs, "size="+disk.Size)
-			}
-			if out, err := exec.Command("incus", volArgs...).CombinedOutput(); err != nil {
-				return fmt.Errorf("create volume for %s: %s", disk.Name, strings.TrimSpace(string(out)))
-			}
-			devArgs := []string{"config", "device", "add", name, disk.Name, "disk",
-				"pool=" + disk.Pool, "source=" + volName}
-			if !isVM {
-				// Container disk → mount point inside the guest.
-				mountPath := strings.TrimSpace(disk.MountPath)
-				if mountPath == "" {
-					mountPath = "/" + disk.Name
+			wantDisks[disk.Name] = struct{}{}
+			cur, exists := curDisks[disk.Name]
+			if !exists {
+				// LXD 5.x requires a named volume; create it first then attach.
+				// VMs take a "block"-type volume attached as a raw device;
+				// containers take a filesystem volume mounted at an in-guest path.
+				volName := name + "-" + disk.Name
+				volArgs := []string{"storage", "volume", "create", disk.Pool, volName}
+				if isVM {
+					volArgs = append(volArgs, "--type", "block")
 				}
-				devArgs = append(devArgs, "path="+mountPath)
-			}
-			if out, err := exec.Command("incus", devArgs...).CombinedOutput(); err != nil {
-				exec.Command("incus", "storage", "volume", "delete", disk.Pool, volName).Run()
-				return fmt.Errorf("add disk %s: %s", disk.Name, strings.TrimSpace(string(out)))
-			}
-			// Apply ZFS reservation for the newly created volume (zvol-backed
-			// only; lxdFindZFSVol returns "" for container filesystem volumes).
-			if zfsPath := lxdFindZFSVol(volName); zfsPath != "" {
-				lxdSetZvolReservation(zfsPath, disk.ReservePct)
-			}
-		} else if disk.IsRoot && disk.Size != "" && cur["size"] != disk.Size {
-			// Only root disks support size quota via LXD device config.
-			// Non-root custom volumes are resized via ZFS zvol directly.
-			//
-			// Compare in bytes, not as strings: at create time we pass the
-			// 16K-aligned bare-bytes form (e.g. "20000008192B") so the volsize
-			// fits the ZFS volblocksize, and the UI round-trips that as
-			// "20GB" (≈ 19,999,991,808 bytes off — still strictly smaller).
-			// Without this check, simply re-saving the VM (e.g. to update the
-			// description) would call `lxc config device set … size=20GB`,
-			// which LXD rejects with "Block volumes cannot be shrunk".
-			curBytes := lxdVolSizeBytes(cur["size"])
-			newBytes := lxdVolSizeBytes(disk.Size)
-			if newBytes > 0 && curBytes > 0 && newBytes <= curBytes {
-				// Same size or smaller — skip. ZFS volumes can only grow.
-			} else if out, err := exec.Command("incus", "config", "device", "set", name, disk.Name, "size", disk.Size).CombinedOutput(); err != nil {
-				return fmt.Errorf("resize disk %s: %s", disk.Name, strings.TrimSpace(string(out)))
-			}
-		} else if !disk.IsRoot && disk.Size != "" && cur["size"] == "" {
-			// Non-root custom volume: grow the ZFS zvol if the user increased the size.
-			// Compare raw bytes to avoid GiB/GB unit ambiguity with `zfs set`.
-			// Only allow growing — ZFS does not support shrinking zvols safely.
-			wantBytes := lxdVolSizeBytes(disk.Size)
-			if wantBytes > 0 {
-				volName := cur["source"]
-				if volName == "" {
-					volName = name + "-" + disk.Name
+				if disk.Size != "" {
+					volArgs = append(volArgs, "size="+disk.Size)
 				}
+				if out, err := exec.Command("incus", volArgs...).CombinedOutput(); err != nil {
+					return fmt.Errorf("create volume for %s: %s", disk.Name, strings.TrimSpace(string(out)))
+				}
+				devArgs := []string{"config", "device", "add", name, disk.Name, "disk",
+					"pool=" + disk.Pool, "source=" + volName}
+				if !isVM {
+					// Container disk → mount point inside the guest.
+					mountPath := strings.TrimSpace(disk.MountPath)
+					if mountPath == "" {
+						mountPath = "/" + disk.Name
+					}
+					devArgs = append(devArgs, "path="+mountPath)
+				}
+				if out, err := exec.Command("incus", devArgs...).CombinedOutput(); err != nil {
+					exec.Command("incus", "storage", "volume", "delete", disk.Pool, volName).Run()
+					return fmt.Errorf("add disk %s: %s", disk.Name, strings.TrimSpace(string(out)))
+				}
+				// Apply ZFS reservation for the newly created volume (zvol-backed
+				// only; lxdFindZFSVol returns "" for container filesystem volumes).
 				if zfsPath := lxdFindZFSVol(volName); zfsPath != "" {
-					var currentBytes int64
-					if out, err := exec.Command("zfs", "get", "-Hp", "volsize", zfsPath).Output(); err == nil {
-						fields := strings.Fields(strings.TrimSpace(string(out)))
-						if len(fields) >= 3 {
-							currentBytes, _ = strconv.ParseInt(fields[2], 10, 64)
+					lxdSetZvolReservation(zfsPath, disk.ReservePct)
+				}
+			} else if disk.IsRoot && disk.Size != "" && cur["size"] != disk.Size {
+				// Only root disks support size quota via LXD device config.
+				// Non-root custom volumes are resized via ZFS zvol directly.
+				//
+				// Compare in bytes, not as strings: at create time we pass the
+				// 16K-aligned bare-bytes form (e.g. "20000008192B") so the volsize
+				// fits the ZFS volblocksize, and the UI round-trips that as
+				// "20GB" (≈ 19,999,991,808 bytes off — still strictly smaller).
+				// Without this check, simply re-saving the VM (e.g. to update the
+				// description) would call `lxc config device set … size=20GB`,
+				// which LXD rejects with "Block volumes cannot be shrunk".
+				curBytes := lxdVolSizeBytes(cur["size"])
+				newBytes := lxdVolSizeBytes(disk.Size)
+				if newBytes > 0 && curBytes > 0 && newBytes <= curBytes {
+					// Same size or smaller — skip. ZFS volumes can only grow.
+				} else if out, err := exec.Command("incus", "config", "device", "set", name, disk.Name, "size", disk.Size).CombinedOutput(); err != nil {
+					return fmt.Errorf("resize disk %s: %s", disk.Name, strings.TrimSpace(string(out)))
+				}
+			} else if !disk.IsRoot && disk.Size != "" && cur["size"] == "" {
+				// Non-root custom volume: grow the ZFS zvol if the user increased the size.
+				// Compare raw bytes to avoid GiB/GB unit ambiguity with `zfs set`.
+				// Only allow growing — ZFS does not support shrinking zvols safely.
+				wantBytes := lxdVolSizeBytes(disk.Size)
+				if wantBytes > 0 {
+					volName := cur["source"]
+					if volName == "" {
+						volName = name + "-" + disk.Name
+					}
+					if zfsPath := lxdFindZFSVol(volName); zfsPath != "" {
+						var currentBytes int64
+						if out, err := exec.Command("zfs", "get", "-Hp", "volsize", zfsPath).Output(); err == nil {
+							fields := strings.Fields(strings.TrimSpace(string(out)))
+							if len(fields) >= 3 {
+								currentBytes, _ = strconv.ParseInt(fields[2], 10, 64)
+							}
+						}
+						if wantBytes > currentBytes {
+							exec.Command("sudo", "zfs", "set", fmt.Sprintf("volsize=%d", wantBytes), zfsPath).Run()
 						}
 					}
-					if wantBytes > currentBytes {
-						exec.Command("sudo", "zfs", "set", fmt.Sprintf("volsize=%d", wantBytes), zfsPath).Run()
+				}
+			}
+			// Apply ZFS reservation for all existing zvol disks (root and non-root).
+			if exists {
+				var zfsPath string
+				if disk.IsRoot {
+					// Reconstruct root disk ZFS path — not carried in the PUT payload.
+					if zfsPool := lxdZFSPoolForLXDPool(disk.Pool); zfsPool != "" {
+						if isVM {
+							zfsPath = zfsPool + "/virtual-machines/" + name + ".block"
+						} else {
+							zfsPath = zfsPool + "/containers/" + name
+						}
 					}
-				}
-			}
-		}
-		// Apply ZFS reservation for all existing zvol disks (root and non-root).
-		if exists {
-			var zfsPath string
-			if disk.IsRoot {
-				// Reconstruct root disk ZFS path — not carried in the PUT payload.
-				if zfsPool := lxdZFSPoolForLXDPool(disk.Pool); zfsPool != "" {
-					if isVM {
-						zfsPath = zfsPool + "/virtual-machines/" + name + ".block"
-					} else {
-						zfsPath = zfsPool + "/containers/" + name
-					}
-				}
-			} else {
-				volName := cur["source"]
-				if volName == "" {
-					volName = name + "-" + disk.Name
-				}
-				zfsPath = lxdFindZFSVol(volName)
-			}
-			if zfsPath != "" {
-				sizeStr := cur["size"]
-				if sizeStr == "" {
-					sizeStr = disk.Size
-				}
-				lxdSetZvolReservation(zfsPath, disk.ReservePct)
-			}
-		}
-		// Apply boot.priority change for existing disks.
-		if exists {
-			curPrio := cur["boot.priority"]
-			if disk.BootPriority != curPrio {
-				if disk.BootPriority == "" {
-					exec.Command("incus", "config", "device", "unset", name, disk.Name, "boot.priority").Run()
 				} else {
-					exec.Command("incus", "config", "device", "set", name, disk.Name, "boot.priority", disk.BootPriority).Run()
+					volName := cur["source"]
+					if volName == "" {
+						volName = name + "-" + disk.Name
+					}
+					zfsPath = lxdFindZFSVol(volName)
+				}
+				if zfsPath != "" {
+					sizeStr := cur["size"]
+					if sizeStr == "" {
+						sizeStr = disk.Size
+					}
+					lxdSetZvolReservation(zfsPath, disk.ReservePct)
 				}
 			}
-			// Per-disk bus override beats the VM-wide DiskBus when non-empty.
-			// Skip silently when LXD doesn't ship the disk_io_bus extension
-			// (5.0.x) — `lxc config device set io.bus=…` would error and the
-			// frontend already disables that field for unsupported daemons.
-			if isVM && caps.DiskIOBus {
-				want := disk.IOBus
-				if want == "" {
-					want = cfg.DiskBus
-				}
-				if want != cur["io.bus"] {
-					if want == "" {
-						exec.Command("incus", "config", "device", "unset", name, disk.Name, "io.bus").Run() //nolint:errcheck
+			// Apply boot.priority change for existing disks.
+			if exists {
+				curPrio := cur["boot.priority"]
+				if disk.BootPriority != curPrio {
+					if disk.BootPriority == "" {
+						exec.Command("incus", "config", "device", "unset", name, disk.Name, "boot.priority").Run()
 					} else {
+						exec.Command("incus", "config", "device", "set", name, disk.Name, "boot.priority", disk.BootPriority).Run()
+					}
+				}
+				// Per-disk bus override beats the VM-wide DiskBus when non-empty.
+				// Skip silently when LXD doesn't ship the disk_io_bus extension
+				// (5.0.x) — `lxc config device set io.bus=…` would error and the
+				// frontend already disables that field for unsupported daemons.
+				if isVM && caps.DiskIOBus {
+					want := disk.IOBus
+					if want == "" {
+						want = cfg.DiskBus
+					}
+					if want != cur["io.bus"] {
+						if want == "" {
+							exec.Command("incus", "config", "device", "unset", name, disk.Name, "io.bus").Run() //nolint:errcheck
+						} else {
+							exec.Command("incus", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
+						}
+					}
+				}
+				// io.cache (LXD ≥ 5.0 with disk_io_cache extension; widely available).
+				if isVM && caps.DiskIOCache && disk.IOCache != cur["io.cache"] {
+					if disk.IOCache == "" {
+						exec.Command("incus", "config", "device", "unset", name, disk.Name, "io.cache").Run() //nolint:errcheck
+					} else {
+						exec.Command("incus", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
+					}
+				}
+				// readonly: skip on root disks (LXD rejects readonly=true on /).
+				if !disk.IsRoot {
+					curRO := cur["readonly"] == "true"
+					if curRO != disk.ReadOnly {
+						if disk.ReadOnly {
+							exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
+						} else {
+							exec.Command("incus", "config", "device", "unset", name, disk.Name, "readonly").Run() //nolint:errcheck
+						}
+					}
+				}
+				// Container mount point: apply a changed in-guest path on an
+				// existing non-root container disk.
+				if !isVM && !disk.IsRoot && disk.MountPath != "" && cur["path"] != disk.MountPath {
+					exec.Command("incus", "config", "device", "set", name, disk.Name, "path", disk.MountPath).Run() //nolint:errcheck
+				}
+			}
+			// For newly added disks, apply per-disk knobs immediately after device add (VM-only).
+			if !exists && isVM {
+				if caps.DiskIOBus {
+					want := disk.IOBus
+					if want == "" {
+						want = cfg.DiskBus
+					}
+					if want != "" {
 						exec.Command("incus", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
 					}
 				}
-			}
-			// io.cache (LXD ≥ 5.0 with disk_io_cache extension; widely available).
-			if isVM && caps.DiskIOCache && disk.IOCache != cur["io.cache"] {
-				if disk.IOCache == "" {
-					exec.Command("incus", "config", "device", "unset", name, disk.Name, "io.cache").Run() //nolint:errcheck
-				} else {
+				if caps.DiskIOCache && disk.IOCache != "" {
 					exec.Command("incus", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
 				}
-			}
-			// readonly: skip on root disks (LXD rejects readonly=true on /).
-			if !disk.IsRoot {
-				curRO := cur["readonly"] == "true"
-				if curRO != disk.ReadOnly {
-					if disk.ReadOnly {
-						exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
-					} else {
-						exec.Command("incus", "config", "device", "unset", name, disk.Name, "readonly").Run() //nolint:errcheck
-					}
+				if !disk.IsRoot && disk.ReadOnly {
+					exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
 				}
 			}
-			// Container mount point: apply a changed in-guest path on an
-			// existing non-root container disk.
-			if !isVM && !disk.IsRoot && disk.MountPath != "" && cur["path"] != disk.MountPath {
-				exec.Command("incus", "config", "device", "set", name, disk.Name, "path", disk.MountPath).Run() //nolint:errcheck
-			}
-		}
-		// For newly added disks, apply per-disk knobs immediately after device add (VM-only).
-		if !exists && isVM {
-			if caps.DiskIOBus {
-				want := disk.IOBus
-				if want == "" {
-					want = cfg.DiskBus
-				}
-				if want != "" {
-					exec.Command("incus", "config", "device", "set", name, disk.Name, "io.bus", want).Run() //nolint:errcheck
-				}
-			}
-			if caps.DiskIOCache && disk.IOCache != "" {
-				exec.Command("incus", "config", "device", "set", name, disk.Name, "io.cache", disk.IOCache).Run() //nolint:errcheck
-			}
-			if !disk.IsRoot && disk.ReadOnly {
+			// New container disk: apply the read-only flag (containers skip the
+			// VM-only io.bus / io.cache knobs above).
+			if !exists && !isVM && !disk.IsRoot && disk.ReadOnly {
 				exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
 			}
 		}
-		// New container disk: apply the read-only flag (containers skip the
-		// VM-only io.bus / io.cache knobs above).
-		if !exists && !isVM && !disk.IsRoot && disk.ReadOnly {
-			exec.Command("incus", "config", "device", "set", name, disk.Name, "readonly", "true").Run() //nolint:errcheck
+		detachOnly := map[string]bool{}
+		for _, n := range cfg.DetachDisks {
+			detachOnly[n] = true
 		}
-	}
-	detachOnly := map[string]bool{}
-	for _, n := range cfg.DetachDisks {
-		detachOnly[n] = true
-	}
-	for n, d := range curDisks {
-		if d["path"] == "/" {
-			continue // never auto-remove root disk
-		}
-		if d["readonly"] == "true" && strings.HasSuffix(strings.ToLower(d["source"]), ".iso") {
-			continue // cdrom handled separately below
-		}
-		if isHostDirShareSource(d["pool"], d["source"]) {
-			continue // bind mount / VirtIO-FS — managed via cfg.BindMounts, not the disk table
-		}
-		if _, ok := wantDisks[n]; !ok {
-			volPool := d["pool"]
-			volName := d["source"]
-			if out, err := exec.Command("incus", "config", "device", "remove", name, n).CombinedOutput(); err != nil {
-				return fmt.Errorf("remove disk %s: %s", n, strings.TrimSpace(string(out)))
+		for n, d := range curDisks {
+			if d["path"] == "/" {
+				continue // never auto-remove root disk
 			}
-			// Delete the backing block volume unless this is a detach-only operation.
-			if !detachOnly[n] && volPool != "" && volName == name+"-"+n {
-				exec.Command("incus", "storage", "volume", "delete", volPool, volName).Run()
+			if d["readonly"] == "true" && strings.HasSuffix(strings.ToLower(d["source"]), ".iso") {
+				continue // cdrom handled separately below
+			}
+			if isHostDirShareSource(d["pool"], d["source"]) {
+				continue // bind mount / VirtIO-FS — managed via cfg.BindMounts, not the disk table
+			}
+			if _, ok := wantDisks[n]; !ok {
+				volPool := d["pool"]
+				volName := d["source"]
+				if out, err := exec.Command("incus", "config", "device", "remove", name, n).CombinedOutput(); err != nil {
+					return fmt.Errorf("remove disk %s: %s", n, strings.TrimSpace(string(out)))
+				}
+				// Delete the backing block volume unless this is a detach-only operation.
+				if !detachOnly[n] && volPool != "" && volName == name+"-"+n {
+					exec.Command("incus", "storage", "volume", "delete", volPool, volName).Run()
+				}
 			}
 		}
-	}
 	} // end ManageDisks guard
 
 	// Apply DiskBus to the root disk independently of the cfg.Disks loop.
@@ -4316,28 +4325,28 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	// loop only adds; it never detaches existing devices, so leaving it
 	// gated is precautionary rather than data-protective.
 	if cfg.ManageExistingDisks {
-	for _, ed := range cfg.ExistingDisks {
-		devName := ed.DeviceName
-		if devName == "" || !lxdDevNameRe.MatchString(devName) {
-			continue
+		for _, ed := range cfg.ExistingDisks {
+			devName := ed.DeviceName
+			if devName == "" || !lxdDevNameRe.MatchString(devName) {
+				continue
+			}
+			if _, alreadyExists := rawDev.Devices[devName]; alreadyExists {
+				continue
+			}
+			var dArgs []string
+			if pool, vol, ok := parseLXDVolRef(ed.DevPath); ok {
+				dArgs = []string{"config", "device", "add", name, devName, "disk",
+					"pool=" + pool, "source=" + vol}
+			} else if filepath.IsAbs(ed.DevPath) {
+				dArgs = []string{"config", "device", "add", name, devName, "disk",
+					"source=" + ed.DevPath}
+			} else {
+				continue
+			}
+			if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
+				return fmt.Errorf("attach existing disk %s: %s", devName, strings.TrimSpace(string(out)))
+			}
 		}
-		if _, alreadyExists := rawDev.Devices[devName]; alreadyExists {
-			continue
-		}
-		var dArgs []string
-		if pool, vol, ok := parseLXDVolRef(ed.DevPath); ok {
-			dArgs = []string{"config", "device", "add", name, devName, "disk",
-				"pool=" + pool, "source=" + vol}
-		} else if filepath.IsAbs(ed.DevPath) {
-			dArgs = []string{"config", "device", "add", name, devName, "disk",
-				"source=" + ed.DevPath}
-		} else {
-			continue
-		}
-		if out, err := exec.Command("incus", dArgs...).CombinedOutput(); err != nil {
-			return fmt.Errorf("attach existing disk %s: %s", devName, strings.TrimSpace(string(out)))
-		}
-	}
 	} // end ManageExistingDisks guard
 
 	// ── Bind mounts (host /mnt directories) — full reconcile ─────────────────
@@ -4346,157 +4355,157 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 	// Guard: only reconcile when the request listed `bind_mounts` — otherwise
 	// a partial PUT would silently drop every bind-mounted directory.
 	if cfg.ManageBindMounts {
-	wantBind := map[string]bool{}
-	for i, bm := range cfg.BindMounts {
-		devName := bm.DeviceName
-		if devName == "" {
-			devName = fmt.Sprintf("bind%d", i+1)
-		}
-		if !lxdDevNameRe.MatchString(devName) {
-			return fmt.Errorf("invalid bind mount device name: %s", devName)
-		}
-		src, err := validateBindMountSource(bm.Source)
-		if err != nil {
-			return err
-		}
-		ctPath := strings.TrimSpace(bm.Path)
-		if ctPath == "" {
-			return fmt.Errorf("bind mount %s: container path is required", devName)
-		}
-		wantBind[devName] = true
-		cur, exists := rawDev.Devices[devName]
-		if !exists {
-			bmArgs := []string{"config", "device", "add", name, devName, "disk",
-				"source=" + src, "path=" + ctPath}
-			if bm.ReadOnly {
-				bmArgs = append(bmArgs, "readonly=true")
+		wantBind := map[string]bool{}
+		for i, bm := range cfg.BindMounts {
+			devName := bm.DeviceName
+			if devName == "" {
+				devName = fmt.Sprintf("bind%d", i+1)
 			}
-			if out, err := exec.Command("incus", bmArgs...).CombinedOutput(); err != nil {
-				return fmt.Errorf("add bind mount %s: %s", devName, strings.TrimSpace(string(out)))
+			if !lxdDevNameRe.MatchString(devName) {
+				return fmt.Errorf("invalid bind mount device name: %s", devName)
 			}
-			continue
-		}
-		// Existing — push any changed property.
-		if cur["source"] != src {
-			exec.Command("incus", "config", "device", "set", name, devName, "source", src).Run() //nolint:errcheck
-		}
-		if cur["path"] != ctPath {
-			exec.Command("incus", "config", "device", "set", name, devName, "path", ctPath).Run() //nolint:errcheck
-		}
-		if (cur["readonly"] == "true") != bm.ReadOnly {
-			if bm.ReadOnly {
-				exec.Command("incus", "config", "device", "set", name, devName, "readonly", "true").Run() //nolint:errcheck
-			} else {
-				exec.Command("incus", "config", "device", "unset", name, devName, "readonly").Run() //nolint:errcheck
+			src, err := validateBindMountSource(bm.Source)
+			if err != nil {
+				return err
 			}
-		}
-	}
-	// Remove bind-mount / VirtIO-FS devices the user dropped from the list.
-	for devName, d := range rawDev.Devices {
-		if d["type"] != "disk" {
-			continue
-		}
-		if !isHostDirShareSource(d["pool"], d["source"]) {
-			continue
-		}
-		if !wantBind[devName] {
-			if out, err := exec.Command("incus", "config", "device", "remove", name, devName).CombinedOutput(); err != nil {
-				return fmt.Errorf("remove bind mount %s: %s", devName, strings.TrimSpace(string(out)))
+			ctPath := strings.TrimSpace(bm.Path)
+			if ctPath == "" {
+				return fmt.Errorf("bind mount %s: container path is required", devName)
+			}
+			wantBind[devName] = true
+			cur, exists := rawDev.Devices[devName]
+			if !exists {
+				bmArgs := []string{"config", "device", "add", name, devName, "disk",
+					"source=" + src, "path=" + ctPath}
+				if bm.ReadOnly {
+					bmArgs = append(bmArgs, "readonly=true")
+				}
+				if out, err := exec.Command("incus", bmArgs...).CombinedOutput(); err != nil {
+					return fmt.Errorf("add bind mount %s: %s", devName, strings.TrimSpace(string(out)))
+				}
+				continue
+			}
+			// Existing — push any changed property.
+			if cur["source"] != src {
+				exec.Command("incus", "config", "device", "set", name, devName, "source", src).Run() //nolint:errcheck
+			}
+			if cur["path"] != ctPath {
+				exec.Command("incus", "config", "device", "set", name, devName, "path", ctPath).Run() //nolint:errcheck
+			}
+			if (cur["readonly"] == "true") != bm.ReadOnly {
+				if bm.ReadOnly {
+					exec.Command("incus", "config", "device", "set", name, devName, "readonly", "true").Run() //nolint:errcheck
+				} else {
+					exec.Command("incus", "config", "device", "unset", name, devName, "readonly").Run() //nolint:errcheck
+				}
 			}
 		}
-	}
+		// Remove bind-mount / VirtIO-FS devices the user dropped from the list.
+		for devName, d := range rawDev.Devices {
+			if d["type"] != "disk" {
+				continue
+			}
+			if !isHostDirShareSource(d["pool"], d["source"]) {
+				continue
+			}
+			if !wantBind[devName] {
+				if out, err := exec.Command("incus", "config", "device", "remove", name, devName).CombinedOutput(); err != nil {
+					return fmt.Errorf("remove bind mount %s: %s", devName, strings.TrimSpace(string(out)))
+				}
+			}
+		}
 	} // end ManageBindMounts guard
 
 	// ── USB passthrough diff ───────────────────────────────────────────────────
 	// Guard: leave USB passthrough untouched unless the request listed it.
 	if cfg.ManageUSBDevices {
-	wantUSB := map[string]struct{}{}
-	for _, usb := range cfg.USBDevices {
-		if !lxdDevNameRe.MatchString(usb.DeviceName) {
-			return fmt.Errorf("invalid USB device name: %s", usb.DeviceName)
-		}
-		if !usbIDRe.MatchString(usb.VendorID) || !usbIDRe.MatchString(usb.ProductID) {
-			return fmt.Errorf("invalid USB IDs for device %s", usb.DeviceName)
-		}
-		wantUSB[usb.DeviceName] = struct{}{}
-		cur, exists := curUSB[usb.DeviceName]
-		if !exists || cur["vendorid"] != usb.VendorID || cur["productid"] != usb.ProductID {
-			if exists {
-				exec.Command("incus", "config", "device", "remove", name, usb.DeviceName).Run()
+		wantUSB := map[string]struct{}{}
+		for _, usb := range cfg.USBDevices {
+			if !lxdDevNameRe.MatchString(usb.DeviceName) {
+				return fmt.Errorf("invalid USB device name: %s", usb.DeviceName)
 			}
-			args := []string{"config", "device", "add", name, usb.DeviceName, "usb",
-				"vendorid=" + usb.VendorID, "productid=" + usb.ProductID}
-			if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
-				return fmt.Errorf("add USB %s: %s", usb.DeviceName, strings.TrimSpace(string(out)))
+			if !usbIDRe.MatchString(usb.VendorID) || !usbIDRe.MatchString(usb.ProductID) {
+				return fmt.Errorf("invalid USB IDs for device %s", usb.DeviceName)
+			}
+			wantUSB[usb.DeviceName] = struct{}{}
+			cur, exists := curUSB[usb.DeviceName]
+			if !exists || cur["vendorid"] != usb.VendorID || cur["productid"] != usb.ProductID {
+				if exists {
+					exec.Command("incus", "config", "device", "remove", name, usb.DeviceName).Run()
+				}
+				args := []string{"config", "device", "add", name, usb.DeviceName, "usb",
+					"vendorid=" + usb.VendorID, "productid=" + usb.ProductID}
+				if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
+					return fmt.Errorf("add USB %s: %s", usb.DeviceName, strings.TrimSpace(string(out)))
+				}
 			}
 		}
-	}
-	for n := range curUSB {
-		if _, ok := wantUSB[n]; !ok {
-			exec.Command("incus", "config", "device", "remove", name, n).Run()
+		for n := range curUSB {
+			if _, ok := wantUSB[n]; !ok {
+				exec.Command("incus", "config", "device", "remove", name, n).Run()
+			}
 		}
-	}
 	} // end ManageUSBDevices guard
 
 	// ── PCI passthrough diff ───────────────────────────────────────────────────
 	// Guard: leave PCI passthrough untouched unless the request listed it.
 	if cfg.ManagePCIDevices {
-	wantPCI := map[string]struct{}{}
-	for _, pci := range cfg.PCIDevices {
-		if !lxdDevNameRe.MatchString(pci.DeviceName) {
-			return fmt.Errorf("invalid PCI device name: %s", pci.DeviceName)
-		}
-		if !pciAddrRe.MatchString(pci.Address) {
-			return fmt.Errorf("invalid PCI address for device %s", pci.DeviceName)
-		}
-		addr := normPCIAddr(pci.Address)
-		wantPCI[pci.DeviceName] = struct{}{}
-		cur, exists := curPCI[pci.DeviceName]
-		if !exists || normPCIAddr(cur["address"]) != addr {
-			if exists {
-				exec.Command("incus", "config", "device", "remove", name, pci.DeviceName).Run()
+		wantPCI := map[string]struct{}{}
+		for _, pci := range cfg.PCIDevices {
+			if !lxdDevNameRe.MatchString(pci.DeviceName) {
+				return fmt.Errorf("invalid PCI device name: %s", pci.DeviceName)
 			}
-			args := []string{"config", "device", "add", name, pci.DeviceName, "pci", "address=" + addr}
-			if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
-				return fmt.Errorf("add PCI %s: %s", pci.DeviceName, strings.TrimSpace(string(out)))
+			if !pciAddrRe.MatchString(pci.Address) {
+				return fmt.Errorf("invalid PCI address for device %s", pci.DeviceName)
+			}
+			addr := normPCIAddr(pci.Address)
+			wantPCI[pci.DeviceName] = struct{}{}
+			cur, exists := curPCI[pci.DeviceName]
+			if !exists || normPCIAddr(cur["address"]) != addr {
+				if exists {
+					exec.Command("incus", "config", "device", "remove", name, pci.DeviceName).Run()
+				}
+				args := []string{"config", "device", "add", name, pci.DeviceName, "pci", "address=" + addr}
+				if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
+					return fmt.Errorf("add PCI %s: %s", pci.DeviceName, strings.TrimSpace(string(out)))
+				}
 			}
 		}
-	}
-	for n := range curPCI {
-		if _, ok := wantPCI[n]; !ok {
-			exec.Command("incus", "config", "device", "remove", name, n).Run()
+		for n := range curPCI {
+			if _, ok := wantPCI[n]; !ok {
+				exec.Command("incus", "config", "device", "remove", name, n).Run()
+			}
 		}
-	}
 	} // end ManagePCIDevices guard
 
 	// ── Generic passthrough diff (containers) ─────────────────────────────────
 	// Guard: leave generic passthrough devices untouched unless listed.
 	if cfg.ManagePassthroughDevices {
-	wantPT := map[string]struct{}{}
-	for _, dev := range cfg.PassthroughDevices {
-		if !lxdDevNameRe.MatchString(dev.DeviceName) {
-			return fmt.Errorf("invalid device name: %s", dev.DeviceName)
+		wantPT := map[string]struct{}{}
+		for _, dev := range cfg.PassthroughDevices {
+			if !lxdDevNameRe.MatchString(dev.DeviceName) {
+				return fmt.Errorf("invalid device name: %s", dev.DeviceName)
+			}
+			wantPT[dev.DeviceName] = struct{}{}
+			if _, exists := curPassthrough[dev.DeviceName]; exists {
+				exec.Command("incus", "config", "device", "remove", name, dev.DeviceName).Run()
+			}
+			args := []string{"config", "device", "add", name, dev.DeviceName, dev.Type}
+			if dev.HostPath != "" {
+				args = append(args, "path="+dev.HostPath)
+			}
+			for k, v := range dev.Extra {
+				args = append(args, k+"="+v)
+			}
+			if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
+				return fmt.Errorf("add device %s: %s", dev.DeviceName, strings.TrimSpace(string(out)))
+			}
 		}
-		wantPT[dev.DeviceName] = struct{}{}
-		if _, exists := curPassthrough[dev.DeviceName]; exists {
-			exec.Command("incus", "config", "device", "remove", name, dev.DeviceName).Run()
+		for n := range curPassthrough {
+			if _, ok := wantPT[n]; !ok {
+				exec.Command("incus", "config", "device", "remove", name, n).Run()
+			}
 		}
-		args := []string{"config", "device", "add", name, dev.DeviceName, dev.Type}
-		if dev.HostPath != "" {
-			args = append(args, "path="+dev.HostPath)
-		}
-		for k, v := range dev.Extra {
-			args = append(args, k+"="+v)
-		}
-		if out, err := exec.Command("incus", args...).CombinedOutput(); err != nil {
-			return fmt.Errorf("add device %s: %s", dev.DeviceName, strings.TrimSpace(string(out)))
-		}
-	}
-	for n := range curPassthrough {
-		if _, ok := wantPT[n]; !ok {
-			exec.Command("incus", "config", "device", "remove", name, n).Run()
-		}
-	}
 	} // end ManagePassthroughDevices guard
 
 	// FUSE device add/remove for containers (tracked separately from generic passthrough).
@@ -6092,9 +6101,9 @@ func ensureUbuntuDHCP(name string) {
 	}
 	// netplan refuses to apply a world-readable file (security warning that
 	// became a hard error in 24.04).
-	exec.Command("incus", "exec", name, "--", "chmod", "600", "/etc/netplan/99-znas-eth0.yaml").Run() //nolint:errcheck
+	exec.Command("incus", "exec", name, "--", "chmod", "600", "/etc/netplan/99-znas-eth0.yaml").Run()   //nolint:errcheck
 	exec.Command("incus", "exec", name, "--", "systemctl", "enable", "--now", "systemd-networkd").Run() //nolint:errcheck
-	exec.Command("incus", "exec", name, "--", "netplan", "apply").Run() //nolint:errcheck
+	exec.Command("incus", "exec", name, "--", "netplan", "apply").Run()                                 //nolint:errcheck
 }
 
 // disableIPv6InContainer applies the ZNAS-default IPv4-only policy inside a
@@ -6498,9 +6507,9 @@ start_post() {
 			if err := lxdWriteFileInside(stack, "/etc/init.d/podman-socket", initScript); err != nil {
 				return fmt.Errorf("write podman-socket init script: %w", err)
 			}
-			exec.Command("incus", "exec", stack, "--", "chmod", "+x", "/etc/init.d/podman-socket").Run() //nolint:errcheck
+			exec.Command("incus", "exec", stack, "--", "chmod", "+x", "/etc/init.d/podman-socket").Run()     //nolint:errcheck
 			exec.Command("incus", "exec", stack, "--", "rc-update", "add", "podman-socket", "default").Run() //nolint:errcheck
-			exec.Command("incus", "exec", stack, "--", "rc-service", "podman-socket", "start").Run() //nolint:errcheck
+			exec.Command("incus", "exec", stack, "--", "rc-service", "podman-socket", "start").Run()         //nolint:errcheck
 		}
 		if !_waitPodmanSocketReady(stack, 30) {
 			log("WARNING: podman socket didn't come up on Alpine — check /var/log/podman-socket.log inside the stack.")
@@ -6780,7 +6789,11 @@ func _pushNICPersistentConfig(ctName, devName string, nic LXDNIC) {
 			y.WriteString("      dhcp4: true\n      dhcp6: false\n")
 		} else {
 			y.WriteString("      dhcp4: false\n      dhcp6: false\n")
-			y.WriteString("      addresses: [" + nic.IPv4Addr + "]\n")
+			// Block-sequence form (one address per line under "addresses:").
+			// The inline-flow form ("addresses: [10.0.0.10/24]") is rejected by
+			// the netplan parser on some container images, so always emit the
+			// dash-list shape.
+			y.WriteString("      addresses:\n        - " + nic.IPv4Addr + "\n")
 			if nic.IPv4GW != "" {
 				y.WriteString("      routes:\n        - to: default\n          via: " + nic.IPv4GW + "\n")
 			}
@@ -6868,7 +6881,9 @@ func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns
 		} else if strings.Contains(y, "dhcp4: false") {
 			mode = "static"
 		}
-		// Parse the single-line "addresses: [10.0.0.10/24]" form we emit.
+		// Backward-compat: older containers were written with the inline-flow
+		// form "addresses: [10.0.0.10/24]". Parse it first; the block-form scan
+		// below only fills addr when this leaves it empty.
 		if i := strings.Index(y, "addresses: ["); i >= 0 {
 			rest := y[i+len("addresses: ["):]
 			if j := strings.Index(rest, "]"); j > 0 {
@@ -6883,20 +6898,45 @@ func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns
 			}
 			gw = strings.TrimSpace(line)
 		}
-		// Nameservers — we emit them as "          - <ip>" lines under a
-		// "nameservers:\n        addresses:" block. Pluck the first two.
+		// Section-aware scan for the block-sequence form we now emit. The
+		// interface address and the nameserver addresses are BOTH "- <ip>"
+		// list items, so we must track which block we're in: the interface
+		// `addresses:` key comes before `nameservers:`. Route items like
+		// "- to: default" contain a space and are skipped by the no-space check.
 		var dnsList []string
+		inNameservers, inAddrBlock := false, false
 		for _, ln := range strings.Split(y, "\n") {
 			t := strings.TrimSpace(ln)
+			if t == "" {
+				continue
+			}
+			switch {
+			case t == "nameservers:":
+				inNameservers, inAddrBlock = true, false
+				continue
+			case !inNameservers && t == "addresses:":
+				inAddrBlock = true
+				continue
+			case inNameservers && t == "addresses:":
+				continue // the nameservers' own addresses sub-key
+			}
 			if strings.HasPrefix(t, "- ") {
 				v := strings.TrimSpace(strings.TrimPrefix(t, "-"))
-				// Cheap IP-looking check: at least one dot, no spaces. The
-				// only "- " items we emit in our netplan are nameserver
-				// addresses, so this is enough to filter accidental matches.
-				if v != "" && strings.Contains(v, ".") && !strings.ContainsAny(v, " \t") {
-					dnsList = append(dnsList, v)
+				if v == "" || strings.ContainsAny(v, " \t") {
+					continue // route entries ("- to: default") etc.
 				}
+				if inNameservers {
+					if strings.Contains(v, ".") {
+						dnsList = append(dnsList, v)
+					}
+				} else if inAddrBlock && addr == "" {
+					addr = v
+				}
+				continue
 			}
+			// Any other key (dhcp4:, routes:, via:, …) ends the interface
+			// address block.
+			inAddrBlock = false
 		}
 		if len(dnsList) > 0 {
 			dns1 = dnsList[0]
@@ -6999,8 +7039,8 @@ func _applyDHCPRuntime(ctName, devName string, _ []string) {
 // netplan/networkd reload converges. Idempotent: flushes any existing
 // addresses first so a re-apply on the same NIC doesn't pile up duplicates.
 func _applyStaticIPCommands(ctName, devName string, nic LXDNIC) {
-	exec.Command("incus", "exec", ctName, "--", "ip", "link", "set", devName, "up").Run()             //nolint:errcheck
-	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "flush", "dev", devName).Run()          //nolint:errcheck
+	exec.Command("incus", "exec", ctName, "--", "ip", "link", "set", devName, "up").Run()                //nolint:errcheck
+	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "flush", "dev", devName).Run()             //nolint:errcheck
 	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "add", nic.IPv4Addr, "dev", devName).Run() //nolint:errcheck
 	if nic.IPv4GW != "" {
 		exec.Command("incus", "exec", ctName, "--", "ip", "route", "replace", "default", "via", nic.IPv4GW).Run() //nolint:errcheck

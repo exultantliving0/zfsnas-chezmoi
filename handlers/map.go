@@ -102,6 +102,51 @@ type mapRemote struct {
 	Dir         string   `json:"dir"`          // up|down|both|unknown
 }
 
+// ── Networking Layer (v6.6.4) ──────────────────────────────────────────────
+// Parallel section read only by the Map's "Networking Layer". Describes bridges
+// as hubs, the instances attached to each, per-NIC live bandwidth, and the
+// docker containers inside each instance with the ports they publish on 0.0.0.0.
+
+type mapNetBridge struct {
+	ID      string  `json:"id"`   // "br:<name>"
+	Name    string  `json:"name"` // vmbr0 / incusbr0
+	Managed bool    `json:"managed"`
+	RxMbps  float64 `json:"rx_mbps"` // aggregate across attached instance NICs
+	TxMbps  float64 `json:"tx_mbps"`
+}
+
+type mapNetNIC struct {
+	InstanceID string  `json:"instance_id"` // "vm:foo" / "container:bar"
+	BridgeID   string  `json:"bridge_id"`   // "br:<name>"
+	Device     string  `json:"device"`      // eth0
+	RxMbps     float64 `json:"rx_mbps"`
+	TxMbps     float64 `json:"tx_mbps"`
+}
+
+type mapNetInstance struct {
+	ID    string `json:"id"` // "vm:foo" / "container:bar"
+	Name  string `json:"name"`
+	Type  string `json:"type"` // vm | container
+	State string `json:"state"`
+}
+
+type mapNetDocker struct {
+	ID         string                    `json:"id"`          // "docker:<instId>/<name>"
+	InstanceID string                    `json:"instance_id"` // owning vm/container
+	Name       string                    `json:"name"`
+	State      string                    `json:"state"`
+	Status     string                    `json:"status"`
+	Image      string                    `json:"image"`
+	Ports      []system.LXDNetDockerPort `json:"ports"`
+}
+
+type mapNet struct {
+	Bridges   []mapNetBridge   `json:"bridges"`
+	Instances []mapNetInstance `json:"instances"`
+	NICs      []mapNetNIC      `json:"nics"`
+	Docker    []mapNetDocker   `json:"docker"`
+}
+
 type mapTopology struct {
 	Server    mapServer     `json:"server"`
 	Pools     []mapPool     `json:"pools"`
@@ -109,6 +154,7 @@ type mapTopology struct {
 	Datasets  []mapDataset  `json:"datasets"`
 	Consumers []mapConsumer `json:"consumers"`
 	Remotes   []mapRemote   `json:"remotes"`
+	Net       mapNet        `json:"net"`
 	TS        int64         `json:"ts"`
 }
 
@@ -454,22 +500,28 @@ func buildMapTopology(appCfg *config.AppConfig) mapTopology {
 	// ── Resolve SMB/NFS clients to VM lateral links or remote boxes ────────────
 	foldShareClients(top.Consumers, pendingClients, addRemote)
 
-	// ── Hide datasets/zvols nobody uses ────────────────────────────────────
-	// A dataset/zvol only appears on the map if some consumer (SMB/NFS/iSCSI/S3
-	// share, VM, or container) points at it. Orphan datasets add noise.
-	referenced := make(map[string]bool, len(top.Consumers))
-	for _, c := range top.Consumers {
-		for _, id := range c.DatasetIDs {
-			referenced[id] = true
+	// ── Hide datasets/zvols nobody uses (virtualization hosts only) ─────────
+	// On a host with VMs/containers + shares, an orphan dataset/zvol adds noise,
+	// so a dataset/zvol only appears when some consumer (SMB/NFS/iSCSI/S3 share,
+	// VM, or container) points at it. But on a pure-storage host (no
+	// virtualization) the consumers are the whole point of the storage — hiding
+	// orphans would leave the map nearly empty — so we keep every dataset/zvol
+	// and let them flow straight up to their pool (#1).
+	if top.Server.VirtEnabled {
+		referenced := make(map[string]bool, len(top.Consumers))
+		for _, c := range top.Consumers {
+			for _, id := range c.DatasetIDs {
+				referenced[id] = true
+			}
 		}
-	}
-	kept := top.Datasets[:0]
-	for _, d := range top.Datasets {
-		if referenced[d.ID] {
-			kept = append(kept, d)
+		kept := top.Datasets[:0]
+		for _, d := range top.Datasets {
+			if referenced[d.ID] {
+				kept = append(kept, d)
+			}
 		}
+		top.Datasets = kept
 	}
-	top.Datasets = kept
 
 	// Flush de-duplicated client remotes (stable order by id).
 	clientKeys := make([]string, 0, len(remoteAcc))
@@ -495,7 +547,187 @@ func buildMapTopology(appCfg *config.AppConfig) mapTopology {
 		})
 	}
 
+	// ── Networking Layer section (bridges ↔ instances ↔ docker) ────────────
+	if top.Server.VirtEnabled {
+		top.Net = buildMapNet(appCfg)
+	}
+
+	// Guarantee every slice marshals as a JSON array, never null. A standalone
+	// storage-only host with no active SMB/NFS client sessions and no interlink
+	// peers leaves Remotes (and possibly others) nil; the frontend then does
+	// `data.remotes.map(...)` on null and the whole map throws — rendering
+	// nothing despite having pools/datasets/shares. Non-nil empties fix it.
+	if top.Pools == nil {
+		top.Pools = []mapPool{}
+	}
+	if top.Disks == nil {
+		top.Disks = []mapDisk{}
+	}
+	if top.Datasets == nil {
+		top.Datasets = []mapDataset{}
+	}
+	if top.Consumers == nil {
+		top.Consumers = []mapConsumer{}
+	}
+	if top.Remotes == nil {
+		top.Remotes = []mapRemote{}
+	}
+	if top.Net.Bridges == nil {
+		top.Net.Bridges = []mapNetBridge{}
+	}
+	if top.Net.Instances == nil {
+		top.Net.Instances = []mapNetInstance{}
+	}
+	if top.Net.NICs == nil {
+		top.Net.NICs = []mapNetNIC{}
+	}
+	if top.Net.Docker == nil {
+		top.Net.Docker = []mapNetDocker{}
+	}
+
 	return top
+}
+
+// buildMapNet assembles the Networking Layer data: bridges as hubs, the
+// instances attached to each (with live per-NIC bandwidth), and the docker
+// containers running inside each instance with their published 0.0.0.0 ports.
+func buildMapNet(appCfg *config.AppConfig) mapNet {
+	var net mapNet
+
+	// Instances (vm/container) by name → type/state, so NICs and docker nodes
+	// can resolve their owner's id and we know which docker gate applies.
+	instByName := map[string]mapNetInstance{}
+	if insts, err := system.LXDListInstanceSummaries(); err == nil {
+		for _, in := range insts {
+			typ := "container"
+			if in.Type == "virtual-machine" {
+				typ = "vm"
+			}
+			mi := mapNetInstance{ID: typ + ":" + in.Name, Name: in.Name, Type: typ, State: in.State}
+			instByName[in.Name] = mi
+		}
+	}
+
+	// Bridges known to incus (managed). Host bridges referenced by a NIC but not
+	// in this list are added on demand below.
+	bridgeSet := map[string]*mapNetBridge{}
+	addBridge := func(name string, managed bool) *mapNetBridge {
+		id := "br:" + name
+		b := bridgeSet[id]
+		if b == nil {
+			b = &mapNetBridge{ID: id, Name: name, Managed: managed}
+			bridgeSet[id] = b
+		} else if managed {
+			b.Managed = true
+		}
+		return b
+	}
+	if nets, err := system.LXDListNetworkInfos(); err == nil {
+		for _, n := range nets {
+			addBridge(n.Name, n.Managed)
+		}
+	}
+
+	// Live per-NIC throughput (instance → device → rx/tx Mbps).
+	rates := system.LXDNetRates()
+
+	// NIC attachments → links + bridge aggregate bandwidth. Only keep an
+	// attachment whose owning instance is known.
+	usedInstance := map[string]bool{}
+	for _, a := range system.LXDAllInstanceNICs() {
+		mi, ok := instByName[a.Instance]
+		if !ok {
+			continue
+		}
+		b := addBridge(a.Bridge, false) // present-but-unmanaged unless seen above
+		rate := rates[a.Instance][a.Device]
+		net.NICs = append(net.NICs, mapNetNIC{
+			InstanceID: mi.ID, BridgeID: b.ID, Device: a.Device,
+			RxMbps: rate.RxMbps, TxMbps: rate.TxMbps,
+		})
+		b.RxMbps += rate.RxMbps
+		b.TxMbps += rate.TxMbps
+		usedInstance[mi.ID] = true
+	}
+
+	// Only surface instances that are attached to at least one bridge.
+	for _, mi := range instByName {
+		if usedInstance[mi.ID] {
+			net.Instances = append(net.Instances, mi)
+		}
+	}
+
+	// Docker containers per instance (cached, gated by detection settings).
+	for name, mi := range instByName {
+		if !usedInstance[mi.ID] {
+			continue
+		}
+		if mi.Type == "vm" && !appCfg.DockerDetectVMsOn() {
+			continue
+		}
+		if mi.Type == "container" && !appCfg.DockerDetectContainersOn() {
+			continue
+		}
+		for _, c := range mapDockerContainers(name) {
+			if c.State == "" {
+				continue
+			}
+			net.Docker = append(net.Docker, mapNetDocker{
+				ID:         "docker:" + mi.ID + "/" + c.Name,
+				InstanceID: mi.ID,
+				Name:       c.Name,
+				State:      c.State,
+				Status:     c.Status,
+				Image:      c.Image,
+				Ports:      system.ParseDockerPublishedPorts(c.Ports),
+			})
+		}
+	}
+
+	// Flatten bridges (stable order by name).
+	keys := make([]string, 0, len(bridgeSet))
+	for k := range bridgeSet {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		net.Bridges = append(net.Bridges, *bridgeSet[k])
+	}
+	return net
+}
+
+// ── docker container cache (10s) ────────────────────────────────────────────
+// Probing docker inside a guest is heavier than the 3s topology poll, so the
+// Networking Layer reads a 10s-cached per-instance container list. Failures
+// (docker absent, probe denied) cache an empty slice so we don't hammer the
+// guest every tick.
+var (
+	mapDockerMu  sync.Mutex
+	mapDockerC   = map[string]mapDockerEntry{}
+	mapDockerTTL = 10 * time.Second
+)
+
+type mapDockerEntry struct {
+	containers []system.DockerContainer
+	exp        time.Time
+}
+
+func mapDockerContainers(instance string) []system.DockerContainer {
+	mapDockerMu.Lock()
+	if e, ok := mapDockerC[instance]; ok && time.Now().Before(e.exp) {
+		mapDockerMu.Unlock()
+		return e.containers
+	}
+	mapDockerMu.Unlock()
+
+	cs, err := system.DockerListContainers(instance)
+	if err != nil {
+		cs = nil
+	}
+	mapDockerMu.Lock()
+	mapDockerC[instance] = mapDockerEntry{containers: cs, exp: time.Now().Add(mapDockerTTL)}
+	mapDockerMu.Unlock()
+	return cs
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

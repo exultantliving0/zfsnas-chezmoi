@@ -42,9 +42,7 @@ type S3BucketCreateOptions struct {
 
 // MinIOPrereqsInstalled returns true when both the minio and mc binaries are present.
 func MinIOPrereqsInstalled() bool {
-	_, err1 := exec.LookPath("minio")
-	_, err2 := exec.LookPath("mc")
-	return err1 == nil && err2 == nil
+	return binaryInstalled("minio", "mc")
 }
 
 // InstallMinIO downloads the minio and mc binaries, creates the minio-user system

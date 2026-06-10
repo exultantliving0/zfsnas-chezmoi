@@ -151,7 +151,14 @@ func RequiredSudoersContent() string {
 	s := strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
 	s = strings.Replace(s, "{{LXD_CAT_LINE}}", lxdConsoleCatLine(), 1)
 	s = applySudoRSSubstitutions(s)
-	if !version.IsExperimental() {
+	// The experimental aliases (ZFSNAS_INCUS*, ZFSNAS_VMSETUP, ZFSNAS_SYNCOID)
+	// only matter once virtualization is actually installed. Merely passing
+	// --experimental must NOT make them "required" — otherwise a fresh host that
+	// turned the flag on (but never enabled VMs & Containers) reports a pile of
+	// missing VM-import / virtualization sudoers it can't satisfy. The enable
+	// flow itself runs under full sudo (the mandatory "sudo all" prerequisite),
+	// so these hardened rules are only needed AFTER incus is on the box.
+	if !(version.IsExperimental() && IncusInstalled()) {
 		s = stripExperimentalSudoersSections(s)
 	}
 	return s
@@ -283,10 +290,12 @@ func filterAliasTokensInLine(line string) string {
 //     (lxdNameRe in system/lxd.go) so the broader rule is only reachable to
 //     someone who can already shell as the zfsnas service account.
 func lxdConsoleCatLine() string {
-	if IsSudoRS() {
-		return "/usr/bin/cat *"
-	}
-	return "/usr/bin/cat /var/log/incus/*/console.log"
+	// Always emit the sudo-rs-compatible form. The narrower
+	// "/usr/bin/cat /var/log/incus/*/console.log" is rejected by sudo-rs (a
+	// literal suffix after `*` is not allowed), and we want every generated
+	// sudoers file to load on both sudo flavors. The instance name is still
+	// regex-validated server-side before invocation (system/lxd.go).
+	return "/usr/bin/cat *"
 }
 
 // applySudoRSSubstitutions widens sudoers entries that use wildcards in
@@ -296,16 +305,16 @@ func lxdConsoleCatLine() string {
 // "wildcards are not allowed in command arguments" and refuses to load the
 // file, which kills every sudo call the portal needs.
 //
-// Each replacement broadens the rule to a form sudo-rs accepts. Path scoping
-// is still enforced in Go before each invocation (filebrowser.go SafeJoin,
-// netplan_migrate.go fixed paths, system/memprocs.go pid filter, etc.), so
-// the broader sudoers rule is only reachable to someone who can already
-// execute as the zfsnas service account. On classic sudo the original
-// narrow forms are kept.
+// This is applied UNCONDITIONALLY: ZNAS always writes a sudoers file that loads
+// on both sudo flavors, so a host can switch sudo implementation (or be
+// re-imaged onto Ubuntu 26.04) without the file silently becoming unparseable.
+// The widened forms are accepted by classic sudo too. Each replacement broadens
+// the rule to a form sudo-rs accepts; path scoping is still enforced in Go
+// before each invocation (filebrowser.go SafeJoin, netplan_migrate.go fixed
+// paths, lxd_backups.go mount dir, system/memprocs.go pid filter, etc.), so the
+// broader sudoers rule is only reachable to someone who can already execute as
+// the zfsnas service account.
 func applySudoRSSubstitutions(s string) string {
-	if !IsSudoRS() {
-		return s
-	}
 	return widenWildcardsForSudoRS(s)
 }
 
@@ -327,6 +336,17 @@ func widenWildcardsForSudoRS(s string) string {
 		{"/usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled", "/usr/bin/mv *"},
 		{"/usr/bin/cat /etc/netplan/*.yaml", "/usr/bin/cat *"},
 		{"/usr/bin/tee /etc/network/interfaces.pre-znas-*", "/usr/bin/tee *"},
+		// ZFSNAS_SYNCOID — VM/Container backup mounts a snapshot read-only into
+		// a private /tmp dir to read its files. The "/tmp/znas-bkup-mount-*"
+		// argument has a prefix before the `*`, which sudo-rs rejects. Path
+		// scoping is enforced in Go (system/lxd_backups.go builds the dir name
+		// from the sanitized dataset name) so the wider rule is only reachable to
+		// the zfsnas service account.
+		{"/usr/bin/mkdir -p /tmp/znas-bkup-mount-*", "/usr/bin/mkdir -p *"},
+		{"/usr/bin/rmdir /tmp/znas-bkup-mount-*", "/usr/bin/rmdir *"},
+		{"/usr/bin/umount /tmp/znas-bkup-mount-*", "/usr/bin/umount *"},
+		{"/usr/bin/cat /tmp/znas-bkup-mount-*", "/usr/bin/cat *"},
+		{"/usr/bin/tee /tmp/znas-bkup-mount-*", "/usr/bin/tee *"},
 	}
 	for _, r := range repls {
 		s = strings.Replace(s, r[0], r[1], 1)
@@ -1051,6 +1071,10 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/rm -f /run/systemd/network/*.network":                          "Netplan→ifupdown migration (v6.5.6+): removes the netplan-generated systemd-networkd .network files left in tmpfs so a re-spawned networkd has nothing to apply against the host's NICs. /run is tmpfs — these would clear on reboot anyway, but the migration needs them gone now.",
 	"/usr/bin/rm -f /etc/resolv.conf":                                        "Netplan→ifupdown migration (v6.5.6+): removes the systemd-resolved stub symlink at /etc/resolv.conf so the migration can replace it with a regular file containing the captured upstream DNS. Without this, `tee /etc/resolv.conf` would write through the symlink into the resolved-managed run-time file.",
 	"/usr/bin/tee /etc/resolv.conf":                                          "Netplan→ifupdown migration (v6.5.6+): writes /etc/resolv.conf with the captured DNS servers so DNS resolution survives the disabling of systemd-networkd. Narrow path, no wildcard.",
+	"/usr/bin/chmod -x /etc/network/if-up.d/resolved":                        "Netplan→ifupdown migration: makes systemd-resolved's ifup hook non-executable so ifup skips it. The hook calls resolvectl over D-Bus, which hangs networking.service ~5 min at boot when resolved/dbus aren't ready; we already write a static /etc/resolv.conf so the hook is redundant.",
+	"/usr/bin/chmod +x /etc/network/if-up.d/resolved":                        "Netplan→ifupdown migration: rollback — restores the systemd-resolved ifup hook.",
+	"/usr/bin/systemctl mask ifup@.service":                                  "Netplan→ifupdown migration: masks the udev-triggered per-interface ifup@ template so networking.service is the single interface bring-up path — eliminates the /run/network/ifstate lock race that hangs boot.",
+	"/usr/bin/systemctl unmask ifup@.service":                                "Netplan→ifupdown migration: rollback — unmasks ifup@.service.",
 	"/usr/bin/tee /etc/dhcpcd.conf":                                          "Netplan→ifupdown migration (v6.5.6+): appends a per-interface `clientid` block to /etc/dhcpcd.conf that mirrors the DHCP Client-Identifier systemd-networkd was sending (read from /run/systemd/netif/leases/<ifindex>). Without this, dhcpcd would announce itself with its default RFC-4361 DUID+IAID and the DHCP server would lease the host a different IP after the migration.",
 	"/usr/bin/tee /etc/dhcpcd.exit-hook":                                     "Netplan→ifupdown migration (v6.5.6+): writes a small shell exit-hook that pushes DHCP-supplied DNS into systemd-resolved (`resolvectl dns <iface> <ip>`) so /etc/resolv.conf doesn't need a static DNS fallback when the user is on DHCP.",
 	"/usr/bin/chmod 0755 /etc/dhcpcd.exit-hook":                              "Netplan→ifupdown migration (v6.5.6+): makes the dhcpcd exit-hook executable. Narrow path, no wildcard.",
@@ -1460,6 +1484,10 @@ Cmnd_Alias ZFSNAS_VMSETUP = \
     /usr/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf, \
     /usr/bin/systemctl enable systemd-resolved, \
     /usr/bin/systemctl start systemd-resolved, \
+    /usr/bin/chmod -x /etc/network/if-up.d/resolved, \
+    /usr/bin/chmod +x /etc/network/if-up.d/resolved, \
+    /usr/bin/systemctl mask ifup@.service, \
+    /usr/bin/systemctl unmask ifup@.service, \
     /usr/bin/ip addr flush dev * scope global, \
     /usr/bin/ip route flush dev * scope global, \
     /usr/bin/systemctl enable networking, \
