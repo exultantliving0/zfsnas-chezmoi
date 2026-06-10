@@ -761,7 +761,23 @@ function attachTab(tab, opts) {
     scheduleReconnect(tab);
   };
   ws.onerror = () => { /* onclose follows — reconnect lives there */ };
-  term.onData(d => { if (ws.readyState === 1) ws.send(d); });
+  // Dispose the previous onData binding so reconnects don't stack handlers.
+  if (tab._onDataDisp) { try { tab._onDataDisp.dispose(); } catch (_) {} }
+  tab._onDataDisp = term.onData(d => {
+    if (tab.kicked) {
+      // Kicked because another browser took over this session. The first Enter
+      // takes it back HERE (re-attaching kicks the other browser, pausing it).
+      // Swallow other keys so stray input doesn't get lost or queued.
+      if (d === '\r' || d === '\n') {
+        tab.kicked = false;
+        tab.reconnectAttempt = 0;
+        try { term.write('\r\n\x1b[36m[resuming…]\x1b[0m\r\n'); } catch (_) {}
+        attachTab(tab, { reset: false });
+      }
+      return;
+    }
+    if (ws.readyState === 1) ws.send(d);
+  });
   // First resize after open.
   ws.addEventListener('open', () => { sendResize(tab); });
 }

@@ -341,7 +341,7 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 			old.WriteMessage(websocket.TextMessage,
 				[]byte(`{"type":"kicked","reason":"another_browser"}`)) //nolint:errcheck
 			old.WriteMessage(websocket.BinaryMessage,
-				[]byte("\r\n\x1b[33m[disconnected: another browser took over]\x1b[0m\r\n")) //nolint:errcheck
+				[]byte("\r\n\x1b[33m[disconnected: another browser took over — press Enter to resume here]\x1b[0m\r\n")) //nolint:errcheck
 			sess.wsWriteMu.Unlock()
 			old.Close()
 		}()

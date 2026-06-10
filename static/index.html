@@ -28011,8 +28011,23 @@ function _ioShift(arr, val) {
 function updateIOCharts(data) {
   if (!_ioCharts || !data || !data.devices) return;
 
-  // Sync device list
   const devKeys = Object.keys(data.devices).sort();
+  const cur = new Set(devKeys);
+  // Drop devices that are no longer reported — critical when the user switches
+  // to another interlink server: the disk set changes entirely, and without
+  // pruning the charts would keep showing the PREVIOUS host's disks alongside
+  // the new one's. (Disks always appear in /proc/diskstats regardless of
+  // activity, so a device only vanishes here when it's genuinely off the box.)
+  const stale = _ioDevices.filter(d => !cur.has(d));
+  if (stale.length) {
+    _ioDevices = _ioDevices.filter(d => cur.has(d));
+    stale.forEach(d => { delete _ioBufs[d]; });
+    ['read', 'write', 'busy'].forEach(k => {
+      if (_ioCharts[k]) _ioCharts[k].data.datasets = _ioCharts[k].data.datasets.filter(ds => cur.has(ds.label));
+    });
+  }
+
+  // Sync device list (add newly-seen devices)
   devKeys.forEach((dev, idx) => {
     if (!_ioDevices.includes(dev)) {
       _ioDevices.push(dev);
@@ -28044,6 +28059,22 @@ function updateIOCharts(data) {
     _ioCharts.write.update('none');
     _ioCharts.busy.update('none');
   }
+}
+
+// Clear all top-bar disk I/O state so the charts rebuild from scratch for the
+// current server. Called on an interlink relay switch — the previous host's
+// disks (and its pool device filter) must not carry over.
+function _resetIOBar() {
+  _ioDevices = [];
+  _ioBufs = {};
+  _ioCurrentPoolDevs = null;
+  if (_ioCharts) {
+    ['read', 'write', 'busy'].forEach(k => {
+      if (_ioCharts[k]) { _ioCharts[k].data.datasets = []; try { _ioCharts[k].update('none'); } catch (_) {} }
+    });
+  }
+  const bar = document.getElementById('io-bar');
+  if (bar) bar.classList.remove('io-bar-visible');
 }
 
 async function _fetchDiskIO() {
@@ -41667,6 +41698,11 @@ function _ciTermBindWS(name, ws) {
 function _ciTermReopenTab(key) {
   const tab = _ciTermTabs.get(key);
   if (!tab) return;
+  // Explicit "take it back" — clear the kicked flag so reconnecting reclaims the
+  // session here (which kicks/pauses the other browser). Without this the flag
+  // only cleared on the next 'session' frame, leaving a brief double-reopen race.
+  tab.kicked = false;
+  tab.reconnectAttempt = 0;
   tab.term.write('\r\n\x1b[33m[reconnecting…]\x1b[0m\r\n');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsPath = tab.wsPath || ('/ws/incus-console?name=' + encodeURIComponent(key));
@@ -49431,6 +49467,11 @@ async function _softRelayRefresh() {
     if (typeof _lxdNetworks       !== 'undefined') _lxdNetworks       = [];
     if (typeof _lxdPools          !== 'undefined') _lxdPools          = [];
     if (typeof _lxdNetworksCache  !== 'undefined') _lxdNetworksCache  = [];
+
+    // Top-bar disk I/O charts are per-server (device list + pool filter). Reset
+    // them so the previous server's disks don't linger after a switch — the
+    // stale pool filter would otherwise mask the new server's disks entirely.
+    if (typeof _resetIOBar === 'function') _resetIOBar();
 
     // Re-fetch version + feature flags. This updates window._serverHostname
     // to the relay target (when entering relay) or back to the local host
