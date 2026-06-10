@@ -14917,6 +14917,10 @@ async function loadAudit() {
     function _buildOpts() {
       list.innerHTML = '';
       Array.from(sel.options).forEach(function(opt) {
+        // A hidden <option> must not appear in the custom dropdown list — this
+        // is how callers remove a choice (e.g. "Efficient Cores" on a CPU with
+        // no efficiency cores) without deleting it from the native select.
+        if (opt.hidden) return;
         var div = document.createElement('div');
         div.className = 'cs-opt' + (opt.value === sel.value ? ' cs-selected' : '');
         if (opts.richOpts && opt.dataset.html) {
@@ -46107,13 +46111,25 @@ function _cpuRangeToCount(rangeStr) {
 }
 
 // ─── CPU Core Type ─────────────────────────────────────────────────────────────
+// Cached per target server: the core-type dropdown must reflect the CPU of the
+// server the VM is being created/edited on. When relaying to an interlink peer,
+// /api/incus/cpu-topology is proxied to that peer, so a single global cache
+// would wrongly reuse a previous server's topology (e.g. show only Performance
+// on a hybrid peer because a non-hybrid host was cached first). Keying the cache
+// by the relay context refetches whenever the target server changes.
 let _cpuTopologyCache = null;
+let _cpuTopologyCacheKey = null;
+function _cpuTopoServerKey() {
+  return (typeof _relayActive !== 'undefined' && _relayActive && _relayHostname)
+    ? ('relay:' + _relayHostname) : 'local';
+}
 
 async function _loadCPUTopology() {
-  if (_cpuTopologyCache) return _cpuTopologyCache;
+  const key = _cpuTopoServerKey();
+  if (_cpuTopologyCache && _cpuTopologyCacheKey === key) return _cpuTopologyCache;
   try {
-    const res = await fetch('/api/incus/cpu-topology');
-    if (res.ok) _cpuTopologyCache = await res.json();
+    const res = await fetch('/api/incus/cpu-topology', { cache: 'no-store' });
+    if (res.ok) { _cpuTopologyCache = await res.json(); _cpuTopologyCacheKey = key; }
   } catch(_) {}
   return _cpuTopologyCache;
 }
@@ -46129,6 +46145,11 @@ function _applyCoreTypeOptionVisibility(topo, selId, effOptId) {
     eff.disabled = hide;
     const sel = document.getElementById(selId);
     if (hide && sel && sel.value === 'efficient') sel.value = 'auto';
+    // The native <select> is wrapped by the custom dropdown widget; rebuild its
+    // list and refresh its label so the hidden "Efficient Cores" option actually
+    // disappears (and a reset selection shows) without reopening.
+    if (sel) { try { if (sel._csRebuild) sel._csRebuild(); } catch (e) {} }
+    if (window.csRefresh) { try { csRefresh(selId); } catch (e) {} }
   }
 }
 

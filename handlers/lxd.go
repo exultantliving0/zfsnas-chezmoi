@@ -9,8 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 	"zfsnas/internal/audit"
@@ -1008,6 +1008,7 @@ func ServeLXDConsolePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	fmt.Fprintf(w, lxdConsolePageHTML, name, name)
 }
 

@@ -17,6 +17,10 @@ import (
 // GET /terminal-multi
 func ServeTerminalMultiPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// no-cache so a freshly deployed binary isn't masked by a stale cached copy
+	// of this page's inline JS (e.g. the "+" menu's interlink-server list logic);
+	// otherwise the browser keeps running the old script after an update.
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Write([]byte(terminalMultiPageHTML)) //nolint:errcheck
 }
 
@@ -707,6 +711,11 @@ function attachTab(tab, opts) {
       }
     }
   }
+  // Local-host tabs (no serverId) must reach THIS portal's instances even when
+  // the session is relaying to a peer — otherwise /ws/lxd-console etc. get
+  // forwarded to the peer and fail with "Instance not found". Browsers can't set
+  // a header on a WebSocket, so we flag the relay middleware via a query param.
+  if (!tab.serverId) path += (path.includes('?') ? '&' : '?') + 'znas_no_relay=1';
   const sep = path.includes('?') ? '&' : '?';
   let url = path + sep + 'cols=' + term.cols + '&rows=' + term.rows;
   if (tab.id) url += '&session_id=' + encodeURIComponent(tab.id);

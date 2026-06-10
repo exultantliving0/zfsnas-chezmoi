@@ -706,6 +706,7 @@ func ServeComposeConsolePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	fmt.Fprintf(w, composeConsolePageHTML, container+" — "+stack, stack, container)
 }
 

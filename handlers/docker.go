@@ -240,13 +240,13 @@ func HandleDockerPutComposeFile(appCfg *config.AppConfig) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			Path string  `json:"path"`
-			YAML string  `json:"yaml"`
+			Path string `json:"path"`
+			YAML string `json:"yaml"`
 			// Env is a pointer so we can distinguish "field omitted"
 			// (frontend never showed the .env editor) from "field
 			// present with empty string" (user blanked the .env on
 			// purpose, which we treat as 'delete the file').
-			Env  *string `json:"env,omitempty"`
+			Env *string `json:"env,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid request body")
@@ -595,6 +595,7 @@ func ServeDockerConsolePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	fmt.Fprintf(w, dockerConsolePageHTML, container+" — "+instance, instance, container)
 }
 

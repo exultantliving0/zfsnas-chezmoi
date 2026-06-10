@@ -100,7 +100,12 @@ func RelayMiddleware(appCfg *config.AppConfig, next http.Handler) http.Handler {
 		// /api/lxd/instances resolve to the viewed peer (so it appears as "this
 		// server"), while the locally-served fleet list still lists that same
 		// peer — duplicating it and dropping the real local host (#2).
-		if r.Header.Get("X-ZNAS-No-Relay") == "1" {
+		//
+		// The query-param form (znas_no_relay=1) is for WebSockets, where the
+		// browser can't set a custom header: a local-host terminal tab opened
+		// from the popout must connect to THIS portal's instance, not be
+		// forwarded to the relayed peer (which would fail "Instance not found").
+		if r.Header.Get("X-ZNAS-No-Relay") == "1" || r.URL.Query().Get("znas_no_relay") == "1" {
 			next.ServeHTTP(w, r)
 			return
 		}

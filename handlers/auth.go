@@ -35,6 +35,7 @@ func HandleSetupPage(staticContent func(name string) ([]byte, error)) http.Handl
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(data)
 	}
 }
@@ -64,6 +65,7 @@ func HandleLoginPage(staticContent func(name string) ([]byte, error), appCfg *co
 		}
 		data = bytes.Replace(data, []byte("localStorage.getItem('login_theme') || 'dark'"), []byte("'"+theme+"'"), 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(data)
 	}
 }
@@ -154,176 +156,176 @@ func sessionDurationsFor(p config.WebSessionPolicy) (time.Duration, time.Duratio
 // HandleLogin authenticates a user and creates a session.
 func HandleLogin(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+		ip := clientIP(r)
 
-	// Rate limit check — before any DB access so brute-force is cheap to block.
-	if locked, retryAfter := loginLimiter.check(ip); locked {
-		secs := int(retryAfter.Seconds()) + 1
-		w.Header().Set("Retry-After", fmt.Sprintf("%d", secs))
-		jsonErr(w, http.StatusTooManyRequests,
-			fmt.Sprintf("too many failed attempts — try again in %d seconds", secs))
-		return
-	}
-
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	users, err := config.LoadUsers()
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "failed to load users")
-		return
-	}
-
-	user := config.FindUserByUsername(users, strings.TrimSpace(req.Username))
-	if user == nil || user.Role == config.RoleSMBOnly {
-		loginLimiter.recordFailure(ip)
-		alerts.RecordFailedLogin()
-		audit.Log(audit.Entry{
-			User:    req.Username,
-			Action:  audit.ActionLoginFailed,
-			Result:  audit.ResultError,
-			Details: "user not found or SMB-only account (from " + ip + ")",
-		})
-		jsonErr(w, http.StatusUnauthorized, "invalid username or password")
-		return
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		loginLimiter.recordFailure(ip)
-		alerts.RecordFailedLogin()
-		audit.Log(audit.Entry{
-			User:    req.Username,
-			Role:    user.Role,
-			Action:  audit.ActionLoginFailed,
-			Result:  audit.ResultError,
-			Details: "incorrect password (from " + ip + ")",
-		})
-		jsonErr(w, http.StatusUnauthorized, "invalid username or password")
-		return
-	}
-
-	// If TOTP is enabled, return a short-lived pending token instead of a full session.
-	if user.TOTPEnabled {
-		pendingToken, err := session.CreatePendingTOTP(user.ID, user.Username, user.Role)
-		if err != nil {
-			jsonErr(w, http.StatusInternalServerError, "failed to create pending session")
+		// Rate limit check — before any DB access so brute-force is cheap to block.
+		if locked, retryAfter := loginLimiter.check(ip); locked {
+			secs := int(retryAfter.Seconds()) + 1
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", secs))
+			jsonErr(w, http.StatusTooManyRequests,
+				fmt.Sprintf("too many failed attempts — try again in %d seconds", secs))
 			return
 		}
-		// Password was correct — reset failure count so TOTP step starts clean.
+
+		var req struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		users, err := config.LoadUsers()
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to load users")
+			return
+		}
+
+		user := config.FindUserByUsername(users, strings.TrimSpace(req.Username))
+		if user == nil || user.Role == config.RoleSMBOnly {
+			loginLimiter.recordFailure(ip)
+			alerts.RecordFailedLogin()
+			audit.Log(audit.Entry{
+				User:    req.Username,
+				Action:  audit.ActionLoginFailed,
+				Result:  audit.ResultError,
+				Details: "user not found or SMB-only account (from " + ip + ")",
+			})
+			jsonErr(w, http.StatusUnauthorized, "invalid username or password")
+			return
+		}
+
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+			loginLimiter.recordFailure(ip)
+			alerts.RecordFailedLogin()
+			audit.Log(audit.Entry{
+				User:    req.Username,
+				Role:    user.Role,
+				Action:  audit.ActionLoginFailed,
+				Result:  audit.ResultError,
+				Details: "incorrect password (from " + ip + ")",
+			})
+			jsonErr(w, http.StatusUnauthorized, "invalid username or password")
+			return
+		}
+
+		// If TOTP is enabled, return a short-lived pending token instead of a full session.
+		if user.TOTPEnabled {
+			pendingToken, err := session.CreatePendingTOTP(user.ID, user.Username, user.Role)
+			if err != nil {
+				jsonErr(w, http.StatusInternalServerError, "failed to create pending session")
+				return
+			}
+			// Password was correct — reset failure count so TOTP step starts clean.
+			loginLimiter.recordSuccess(ip)
+			alerts.ResetFailedLogins()
+			jsonOK(w, map[string]interface{}{
+				"totp_required": true,
+				"pending_token": pendingToken,
+			})
+			return
+		}
+
+		hardCap, idle := sessionDurationsFor(appCfg.WebSession)
+		sess, err := session.Default.Create(user.ID, user.Username, user.Role, hardCap, idle)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to create session")
+			return
+		}
+
 		loginLimiter.recordSuccess(ip)
 		alerts.ResetFailedLogins()
-		jsonOK(w, map[string]interface{}{
-			"totp_required": true,
-			"pending_token": pendingToken,
+		audit.Log(audit.Entry{
+			User:    user.Username,
+			Role:    user.Role,
+			Action:  audit.ActionLogin,
+			Result:  audit.ResultOK,
+			Details: "from " + ip,
 		})
-		return
-	}
 
-	hardCap, idle := sessionDurationsFor(appCfg.WebSession)
-	sess, err := session.Default.Create(user.ID, user.Username, user.Role, hardCap, idle)
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "failed to create session")
-		return
-	}
-
-	loginLimiter.recordSuccess(ip)
-	alerts.ResetFailedLogins()
-	audit.Log(audit.Entry{
-		User:    user.Username,
-		Role:    user.Role,
-		Action:  audit.ActionLogin,
-		Result:  audit.ResultOK,
-		Details: "from " + ip,
-	})
-
-	SetSessionCookie(w, sess.Token, hardCap)
-	jsonOK(w, map[string]interface{}{
-		"username": user.Username,
-		"role":     user.Role,
-	})
+		SetSessionCookie(w, sess.Token, hardCap)
+		jsonOK(w, map[string]interface{}{
+			"username": user.Username,
+			"role":     user.Role,
+		})
 	}
 }
 
 // HandleTOTPLogin completes two-step login by verifying a TOTP code.
 func HandleTOTPLogin(appCfg *config.AppConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+		ip := clientIP(r)
 
-	if locked, retryAfter := loginLimiter.check(ip); locked {
-		secs := int(retryAfter.Seconds()) + 1
-		w.Header().Set("Retry-After", fmt.Sprintf("%d", secs))
-		jsonErr(w, http.StatusTooManyRequests,
-			fmt.Sprintf("too many failed attempts — try again in %d seconds", secs))
-		return
-	}
+		if locked, retryAfter := loginLimiter.check(ip); locked {
+			secs := int(retryAfter.Seconds()) + 1
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", secs))
+			jsonErr(w, http.StatusTooManyRequests,
+				fmt.Sprintf("too many failed attempts — try again in %d seconds", secs))
+			return
+		}
 
-	var req struct {
-		PendingToken string `json:"pending_token"`
-		Code         string `json:"code"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
+		var req struct {
+			PendingToken string `json:"pending_token"`
+			Code         string `json:"code"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
 
-	pending, ok := session.ConsumePendingTOTP(req.PendingToken)
-	if !ok {
-		jsonErr(w, http.StatusUnauthorized, "invalid or expired session")
-		return
-	}
+		pending, ok := session.ConsumePendingTOTP(req.PendingToken)
+		if !ok {
+			jsonErr(w, http.StatusUnauthorized, "invalid or expired session")
+			return
+		}
 
-	// Load user to get TOTP secret.
-	users, err := config.LoadUsers()
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "failed to load users")
-		return
-	}
-	user := config.FindUserByID(users, pending.UserID)
-	if user == nil || !user.TOTPEnabled {
-		jsonErr(w, http.StatusUnauthorized, "invalid session")
-		return
-	}
+		// Load user to get TOTP secret.
+		users, err := config.LoadUsers()
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to load users")
+			return
+		}
+		user := config.FindUserByID(users, pending.UserID)
+		if user == nil || !user.TOTPEnabled {
+			jsonErr(w, http.StatusUnauthorized, "invalid session")
+			return
+		}
 
-	if !totp.Verify(user.TOTPSecret, strings.TrimSpace(req.Code)) {
-		loginLimiter.recordFailure(ip)
+		if !totp.Verify(user.TOTPSecret, strings.TrimSpace(req.Code)) {
+			loginLimiter.recordFailure(ip)
+			audit.Log(audit.Entry{
+				User:    pending.Username,
+				Role:    pending.Role,
+				Action:  audit.ActionLoginFailed,
+				Result:  audit.ResultError,
+				Details: "invalid TOTP code (from " + ip + ")",
+			})
+			jsonErr(w, http.StatusUnauthorized, "invalid authentication code")
+			return
+		}
+
+		hardCap, idle := sessionDurationsFor(appCfg.WebSession)
+		sess, err := session.Default.Create(user.ID, user.Username, user.Role, hardCap, idle)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "failed to create session")
+			return
+		}
+
+		loginLimiter.recordSuccess(ip)
 		audit.Log(audit.Entry{
-			User:    pending.Username,
-			Role:    pending.Role,
-			Action:  audit.ActionLoginFailed,
-			Result:  audit.ResultError,
-			Details: "invalid TOTP code (from " + ip + ")",
+			User:    user.Username,
+			Role:    user.Role,
+			Action:  audit.ActionLogin,
+			Result:  audit.ResultOK,
+			Details: "2FA verified, from " + ip,
 		})
-		jsonErr(w, http.StatusUnauthorized, "invalid authentication code")
-		return
-	}
 
-	hardCap, idle := sessionDurationsFor(appCfg.WebSession)
-	sess, err := session.Default.Create(user.ID, user.Username, user.Role, hardCap, idle)
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "failed to create session")
-		return
-	}
-
-	loginLimiter.recordSuccess(ip)
-	audit.Log(audit.Entry{
-		User:    user.Username,
-		Role:    user.Role,
-		Action:  audit.ActionLogin,
-		Result:  audit.ResultOK,
-		Details: "2FA verified, from " + ip,
-	})
-
-	SetSessionCookie(w, sess.Token, hardCap)
-	jsonOK(w, map[string]interface{}{
-		"username": user.Username,
-		"role":     user.Role,
-	})
+		SetSessionCookie(w, sess.Token, hardCap)
+		jsonOK(w, map[string]interface{}{
+			"username": user.Username,
+			"role":     user.Role,
+		})
 	}
 }
 
@@ -356,7 +358,7 @@ func HandleTOTPConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Secret = strings.TrimSpace(req.Secret)
-	req.Code   = strings.TrimSpace(req.Code)
+	req.Code = strings.TrimSpace(req.Code)
 	if req.Secret == "" || req.Code == "" {
 		jsonErr(w, http.StatusBadRequest, "secret and code are required")
 		return
@@ -368,7 +370,7 @@ func HandleTOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := config.UpdateUserByID(sess.UserID, func(u *config.User) error {
-		u.TOTPSecret  = req.Secret
+		u.TOTPSecret = req.Secret
 		u.TOTPEnabled = true
 		return nil
 	}); err != nil {
