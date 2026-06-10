@@ -231,6 +231,7 @@ ZNAS Chezmoi is built to stay fast and simple as it grows:
 For the full security model, sudo hardening guide, TLS configuration, and authentication details see **[SECURITY.md](SECURITY.md)**.
 
 ---
+## Important Contributors
 
 ## License
 
