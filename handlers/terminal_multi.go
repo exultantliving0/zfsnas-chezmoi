@@ -737,8 +737,11 @@ function attachTab(tab, opts) {
           return;
         } else if (msg.type === 'kicked') {
           // Another browser took over this session — stop reconnecting
-          // so we don't ping-pong attaches in a tight loop.
+          // so we don't ping-pong attaches in a tight loop. Write our own
+          // resume hint so it shows even when the session's server runs an
+          // older binary whose kick notice doesn't mention Enter.
           tab.kicked = true;
+          try { term.write('\r\n\x1b[33m[another browser took over — press Enter to resume here]\x1b[0m\r\n'); } catch(_) {}
           return;
         } else if (msg.type === 'error') {
           term.write('\r\n[error: ' + (msg.error||'unknown') + ']\r\n');

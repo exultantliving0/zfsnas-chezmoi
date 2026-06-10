@@ -41291,7 +41291,7 @@ function _ciTermScheduleReconnect(key) {
   // the session attached to whoever has it. The user can take it back
   // by clicking the tab or refreshing.
   if (tab.kicked) {
-    try { tab.term.write('\r\n\x1b[33m[another browser is using this terminal — click tab to take over]\x1b[0m\r\n'); } catch (_) {}
+    try { tab.term.write('\r\n\x1b[33m[another browser took over — press Enter to resume here]\x1b[0m\r\n'); } catch (_) {}
     return;
   }
   const attempt = (tab.reconnectAttempt || 0);
@@ -41681,6 +41681,14 @@ function _ciTermBindWS(name, ws) {
   ws.onclose   = () => { _ciTermScheduleReconnect(name); _ciTermRenderTabs(); };
   ws.onerror   = () => { /* onclose will fire too — auto-reconnect is owned there */ };
   tab.onDataDisp   = tab.term.onData(data => {
+    // Kicked by another browser → the first Enter takes the session back here
+    // (reconnecting kicks/pauses the other browser). Check this BEFORE the
+    // open-WS send so a keystroke during the brief close race doesn't leak to
+    // the other browser's session.
+    if (tab.kicked) {
+      if (data === '\r' || data === '\n') _ciTermReopenTab(name);
+      return;
+    }
     if (ws.readyState === WebSocket.OPEN) { ws.send(data); }
     // After a timeout/disconnect, the closed-state hint says "[press
     // Enter to reconnect]" — wire that to actually re-open. Bug fix

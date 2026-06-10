@@ -12,12 +12,14 @@
 package termsessions
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -25,6 +27,42 @@ import (
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 )
+
+// oscQueryRe matches OSC sequences that ask the terminal to REPORT something:
+// they carry a "?" before the BEL or ST terminator — e.g. a background-colour
+// query "\x1b]11;?\x07" (also foreground ]10, cursor ]12, palette ]4;N).
+var oscQueryRe = regexp.MustCompile("\x1b\\][0-9;]*\\?(\x07|\x1b\\\\)")
+
+// csiQueries are exact CSI report-requests (cursor position, device status,
+// device attributes) that, like the OSC colour queries, make the terminal
+// answer back.
+var csiQueries = [][]byte{
+	[]byte("\x1b[6n"), []byte("\x1b[5n"),
+	[]byte("\x1b[c"), []byte("\x1b[0c"),
+	[]byte("\x1b[>c"), []byte("\x1b[>0c"), []byte("\x1b[=c"),
+}
+
+// stripScrollbackQueries removes terminal-report REQUESTS from replayed
+// scrollback. A program (vim, a prompt, dircolors…) may have queried the
+// terminal's colours/cursor while running; those query bytes are invisible but
+// get stored in the scrollback ring. On reconnect we replay the ring, the
+// client's emulator re-answers the query, and the answer ("\x1b]11;rgb:fafa/
+// fafa/fafa\x07") is injected into the shell at the prompt — where readline
+// renders the printable part as garbage like "11;rgb:fafa/fafa/fafa". Dropping
+// the queries from the replay (only) prevents the spurious re-answer without
+// changing anything the user sees.
+func stripScrollbackQueries(b []byte) []byte {
+	if !bytes.Contains(b, []byte{0x1b}) {
+		return b
+	}
+	b = oscQueryRe.ReplaceAll(b, nil)
+	for _, q := range csiQueries {
+		if bytes.Contains(b, q) {
+			b = bytes.ReplaceAll(b, q, nil)
+		}
+	}
+	return b
+}
 
 // Session reason constants — passed to Terminate / surfaced in the final
 // scrollback line so the UI can render an honest reason.
@@ -322,7 +360,7 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 		scroll := sess.scrollback.Snapshot()
 		sess.mu.Unlock()
 		if len(scroll) > 0 {
-			ws.WriteMessage(websocket.BinaryMessage, scroll) //nolint:errcheck
+			ws.WriteMessage(websocket.BinaryMessage, stripScrollbackQueries(scroll)) //nolint:errcheck
 		}
 		ws.Close()
 		return
@@ -391,7 +429,9 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 	// safeWriteWS so the ping goroutine and any in-flight drainPTY
 	// chunks can't interleave on the same conn.
 	if len(scroll) > 0 {
-		sess.safeWriteWS(websocket.BinaryMessage, scroll)
+		// Strip terminal report-requests so the client's emulator doesn't
+		// re-answer them onto the shell prompt (e.g. "11;rgb:fafa/fafa/fafa").
+		sess.safeWriteWS(websocket.BinaryMessage, stripScrollbackQueries(scroll))
 	}
 	if cur > 0 && cur2 > 0 {
 		pty.Setsize(sess.ptmx, &pty.Winsize{Cols: cur, Rows: cur2}) //nolint:errcheck
