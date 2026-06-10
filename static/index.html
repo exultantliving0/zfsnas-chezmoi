@@ -11,6 +11,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="ZFS NAS">
   <link rel="stylesheet" href="/static/style.css">
+  <!-- Console fonts for the terminal gear → Font type picker. Degrades to
+       monospace if the appliance has no internet access. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&family=Fira+Code&family=Source+Code+Pro&family=IBM+Plex+Mono&family=Roboto+Mono&family=Ubuntu+Mono&family=Inconsolata&family=Space+Mono&family=Cousine&display=swap">
   <link rel="stylesheet" href="/static/vendor/xterm.min.css">
   <link rel="stylesheet" href="/static/vendor/codemirror.min.css">
   <link rel="stylesheet" href="/static/vendor/codemirror-dracula.min.css">
@@ -41112,10 +41117,10 @@ const _ZNAS_TERM_THEMES = {
     background:'#fafafa', foreground:'#1a1a1f', cursor:'#0066ff',
     selectionBackground:'rgba(0,102,255,0.18)',
     black:'#000000', red:'#c91b00', green:'#008a1e', yellow:'#9a7d00',
-    blue:'#0037da', magenta:'#c930c7', cyan:'#008b8d', white:'#c7c7c7',
-    brightBlack:'#676767', brightRed:'#ff6d67', brightGreen:'#1fa82f',
-    brightYellow:'#b59a00', brightBlue:'#6871ff', brightMagenta:'#ff76ff',
-    brightCyan:'#19a9ab', brightWhite:'#feffff',
+    blue:'#0037da', magenta:'#c930c7', cyan:'#008b8d', white:'#909090',
+    brightBlack:'#676767', brightRed:'#e85048', brightGreen:'#1fa82f',
+    brightYellow:'#b59a00', brightBlue:'#5560e6', brightMagenta:'#e055e0',
+    brightCyan:'#19a9ab', brightWhite:'#b5b5b5',
   }},
 };
 
@@ -41168,6 +41173,50 @@ function _ciTermSetFont(px) {
 }
 function _ciTermFontDelta(d) { _ciTermSetFont(_ciTermGetFont() + d); }
 
+// ── Font family (gear → Font type) ─ shares the znas-term-font-family key with
+// the /terminal-multi popout so a change in either is reflected in the other.
+const _ZNAS_TERM_FONT_FAMILY_KEY = 'znas-term-font-family';
+const _ZNAS_TERM_SYS_MONO = '"JetBrains Mono", "Fira Code", monospace';
+const _ZNAS_TERM_FONT_FAMILIES = [
+  { label: 'System Monospace', css: _ZNAS_TERM_SYS_MONO },
+  { label: 'JetBrains Mono',   css: '"JetBrains Mono", monospace' },
+  { label: 'Fira Code',        css: '"Fira Code", monospace' },
+  { label: 'Source Code Pro',  css: '"Source Code Pro", monospace' },
+  { label: 'IBM Plex Mono',    css: '"IBM Plex Mono", monospace' },
+  { label: 'Roboto Mono',      css: '"Roboto Mono", monospace' },
+  { label: 'Ubuntu Mono',      css: '"Ubuntu Mono", monospace' },
+  { label: 'Inconsolata',      css: '"Inconsolata", monospace' },
+  { label: 'Space Mono',       css: '"Space Mono", monospace' },
+  { label: 'Cousine',          css: '"Cousine", monospace' },
+];
+function _ciTermGetFontFamily() {
+  try { return localStorage.getItem(_ZNAS_TERM_FONT_FAMILY_KEY) || _ZNAS_TERM_SYS_MONO; }
+  catch (_) { return _ZNAS_TERM_SYS_MONO; }
+}
+function _ciTermFontFamilyLabel(css) {
+  const f = _ZNAS_TERM_FONT_FAMILIES.find(x => x.css === css);
+  return f ? f.label : 'System Monospace';
+}
+function _ciTermSetFontFamily(css) {
+  try { localStorage.setItem(_ZNAS_TERM_FONT_FAMILY_KEY, css); } catch (_) {}
+  if (typeof _ciTermTabs !== 'undefined') {
+    _ciTermTabs.forEach(t => { try { t.term.options.fontFamily = css; } catch (_) {} });
+    // Cell metrics change with the face — re-fit and push new dims (same as
+    // the font-size path).
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      _ciTermTabs.forEach(t => {
+        try { if (t.el) void t.el.offsetHeight; } catch (_) {}
+        try { t.fit && t.fit.fit(); } catch (_) {}
+        try {
+          if (t.ws && t.ws.readyState === WebSocket.OPEN) {
+            t.ws.send(JSON.stringify({type:'resize', cols:t.term.cols, rows:t.term.rows}));
+          }
+        } catch (_) {}
+      });
+    }));
+  }
+}
+
 function _ciTermGearToggle() {
   const existing = document.getElementById('ci-term-gear-menu');
   if (existing) { existing.remove(); return; }
@@ -41196,6 +41245,41 @@ function _ciTermGearToggle() {
   fontRow.querySelector('[data-act="-"]').onclick = (e) => { e.stopPropagation(); _ciTermFontDelta(-1); };
   fontRow.querySelector('[data-act="+"]').onclick = (e) => { e.stopPropagation(); _ciTermFontDelta(+1); };
   menu.appendChild(fontRow);
+
+  // Font type — collapsed row that expands a list of console fonts, each name
+  // previewed in its own face. The chosen font persists across sessions.
+  const ftHdr = document.createElement('div');
+  ftHdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:14px;padding:6px 10px;font-size:12px;color:var(--text-3);cursor:pointer;';
+  ftHdr.innerHTML = '<span>Font type</span><span id="ci-term-ft-cur" style="font-size:11px;color:var(--text-3);"></span>';
+  const ftList = document.createElement('div');
+  ftList.style.display = 'none';
+  const renderFtCur = (open) => {
+    const cur = ftHdr.querySelector('#ci-term-ft-cur');
+    cur.textContent = _ciTermFontFamilyLabel(_ciTermGetFontFamily()) + (open ? ' ▾' : ' ▸');
+    cur.style.fontFamily = _ciTermGetFontFamily();
+  };
+  _ZNAS_TERM_FONT_FAMILIES.forEach(f => {
+    const row = document.createElement('div');
+    const isActive = f.css === _ciTermGetFontFamily();
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:13px;color:var(--text-1);cursor:pointer;border-radius:4px;'
+                      + (isActive ? 'background:var(--surface2);' : '');
+    row.style.fontFamily = f.css;
+    const lbl = document.createElement('span'); lbl.textContent = f.label; row.appendChild(lbl);
+    if (isActive) { const c = document.createElement('span'); c.textContent = '✓'; c.style.cssText = 'margin-left:auto;color:var(--accent);'; row.appendChild(c); }
+    row.onmouseenter = () => { if (!isActive) row.style.background = 'var(--surface2)'; };
+    row.onmouseleave = () => { if (!isActive) row.style.background = ''; };
+    row.onclick = (e) => { e.stopPropagation(); _ciTermSetFontFamily(f.css); menu.remove(); };
+    ftList.appendChild(row);
+  });
+  ftHdr.onclick = (e) => {
+    e.stopPropagation();
+    const willOpen = ftList.style.display === 'none';
+    ftList.style.display = willOpen ? '' : 'none';
+    renderFtCur(willOpen);
+  };
+  renderFtCur(false);
+  menu.appendChild(ftHdr);
+  menu.appendChild(ftList);
 
   // Divider.
   const div = document.createElement('div');
@@ -41365,7 +41449,7 @@ function _ciTermOpenCustomTab(key, label, wsPath, opts) {
   const term = new Terminal({
     cursorBlink: true,
     fontSize: (typeof _ciTermGetFont === 'function') ? _ciTermGetFont() : 14,
-    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    fontFamily: (typeof _ciTermGetFontFamily === 'function') ? _ciTermGetFontFamily() : '"JetBrains Mono", "Fira Code", monospace',
     theme: (typeof _ciTermGetTheme === 'function') ? _ciTermGetTheme() : {
       background: '#0d0d0f', foreground: '#e2e2e6',
     },

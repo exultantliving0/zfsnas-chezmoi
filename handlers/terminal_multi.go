@@ -49,6 +49,10 @@ const terminalMultiPageHTML = `<!DOCTYPE html>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<!-- Selectable console fonts (gear → Font type). Same CDN-assumed model as xterm above. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&family=Fira+Code&family=Source+Code+Pro&family=IBM+Plex+Mono&family=Roboto+Mono&family=Ubuntu+Mono&family=Inconsolata&family=Space+Mono&family=Cousine&display=swap">
 <style>
   :root {
     --bg-0:#0e1014; --bg-1:#161922; --bg-2:#1d2230;
@@ -268,10 +272,10 @@ const THEMES = {
     background:'#fafafa', foreground:'#1a1a1f', cursor:'#0066ff',
     selectionBackground:'rgba(0,102,255,0.18)',
     black:'#000000', red:'#c91b00', green:'#008a1e', yellow:'#9a7d00',
-    blue:'#0037da', magenta:'#c930c7', cyan:'#008b8d', white:'#c7c7c7',
-    brightBlack:'#676767', brightRed:'#ff6d67', brightGreen:'#1fa82f',
-    brightYellow:'#b59a00', brightBlue:'#6871ff', brightMagenta:'#ff76ff',
-    brightCyan:'#19a9ab', brightWhite:'#feffff',
+    blue:'#0037da', magenta:'#c930c7', cyan:'#008b8d', white:'#909090',
+    brightBlack:'#676767', brightRed:'#e85048', brightGreen:'#1fa82f',
+    brightYellow:'#b59a00', brightBlue:'#5560e6', brightMagenta:'#e055e0',
+    brightCyan:'#19a9ab', brightWhite:'#b5b5b5',
   }},
 };
 
@@ -286,6 +290,46 @@ function setFontSize(px) {
   // xterm's renderer recomputes cell metrics asynchronously after the
   // fontSize change. Double-rAF + offsetHeight read so fit() measures
   // against the new cell size; then push dims to the PTY.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    TABS.forEach(t => {
+      if (!t.term || !t.paneEl) return;
+      void t.paneEl.offsetHeight;
+      try { t.fit && t.fit.fit(); } catch (_) {}
+      try { sendResize(t); } catch (_) {}
+    });
+  }));
+}
+
+// ── Font family (gear → Font type) ─────────────────────────────────────────
+const FONT_FAMILY_KEY = 'znas-term-font-family';
+const SYS_MONO = '"SF Mono",Menlo,Consolas,monospace';
+// 10 console fonts. The first is the OS default (no web font); the rest are
+// loaded from the Google Fonts <link> in <head>. Each is rendered in its own
+// face in the menu so the name previews the font.
+const FONT_FAMILIES = [
+  { label: 'System Monospace', css: SYS_MONO },
+  { label: 'JetBrains Mono',   css: '"JetBrains Mono", monospace' },
+  { label: 'Fira Code',        css: '"Fira Code", monospace' },
+  { label: 'Source Code Pro',  css: '"Source Code Pro", monospace' },
+  { label: 'IBM Plex Mono',    css: '"IBM Plex Mono", monospace' },
+  { label: 'Roboto Mono',      css: '"Roboto Mono", monospace' },
+  { label: 'Ubuntu Mono',      css: '"Ubuntu Mono", monospace' },
+  { label: 'Inconsolata',      css: '"Inconsolata", monospace' },
+  { label: 'Space Mono',       css: '"Space Mono", monospace' },
+  { label: 'Cousine',          css: '"Cousine", monospace' },
+];
+function getFontFamily() {
+  try { return localStorage.getItem(FONT_FAMILY_KEY) || SYS_MONO; } catch (_) { return SYS_MONO; }
+}
+function fontFamilyLabel(css) {
+  const f = FONT_FAMILIES.find(x => x.css === css);
+  return f ? f.label : 'System Monospace';
+}
+function setFontFamily(css) {
+  try { localStorage.setItem(FONT_FAMILY_KEY, css); } catch (_) {}
+  TABS.forEach(t => { if (t.term) { try { t.term.options.fontFamily = css; } catch (_) {} } });
+  // Cell metrics change with the face — re-fit and push the new dims, same as
+  // the font-size path.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     TABS.forEach(t => {
       if (!t.term || !t.paneEl) return;
@@ -331,6 +375,39 @@ function openGearMenu() {
   fr.querySelector('[data-act="+"]').onclick = (e) => { e.stopPropagation(); setFontSize(getFontSize() + 1); fr.querySelector('.cur').textContent = getFontSize() + ' px'; };
   fr.querySelector('.cur').textContent = getFontSize() + ' px';
   menu.appendChild(fr);
+
+  // Font type — collapsed row that expands a list of console fonts, each name
+  // previewed in its own face. The chosen font persists across sessions.
+  const ftHdr = document.createElement('div');
+  ftHdr.className = 'row';
+  ftHdr.style.cursor = 'pointer';
+  ftHdr.innerHTML = '<span>Font type</span>'
+    + '<span class="cur" id="ft-cur"></span>';
+  const ftList = document.createElement('div');
+  ftList.style.display = 'none';
+  const renderFtCur = (open) => {
+    const cur = ftHdr.querySelector('#ft-cur');
+    cur.textContent = fontFamilyLabel(getFontFamily()) + (open ? ' ▾' : ' ▸');
+    cur.style.fontFamily = getFontFamily();
+  };
+  FONT_FAMILIES.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'theme-row' + (f.css === getFontFamily() ? ' active' : '');
+    row.style.fontFamily = f.css;
+    const lbl = document.createElement('span'); lbl.textContent = f.label; row.appendChild(lbl);
+    if (f.css === getFontFamily()) { const c = document.createElement('span'); c.className = 'check'; c.textContent = '✓'; row.appendChild(c); }
+    row.addEventListener('click', (e) => { e.stopPropagation(); setFontFamily(f.css); menu.remove(); });
+    ftList.appendChild(row);
+  });
+  ftHdr.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = ftList.style.display === 'none';
+    ftList.style.display = willOpen ? '' : 'none';
+    renderFtCur(willOpen);
+  });
+  renderFtCur(false);
+  menu.appendChild(ftHdr);
+  menu.appendChild(ftList);
 
   // Divider
   const div = document.createElement('div'); div.className = 'divider'; menu.appendChild(div);
@@ -619,7 +696,7 @@ function buildPane(tab) {
 
   const term = new Terminal({
     fontSize: getFontSize(),
-    fontFamily: '"SF Mono",Menlo,Consolas,monospace',
+    fontFamily: getFontFamily(),
     theme: getTheme(),
     scrollback: 5000,
     convertEol: false,
