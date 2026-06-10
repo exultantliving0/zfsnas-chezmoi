@@ -24,12 +24,11 @@ Most NAS management software are slow to install, slow to load, and buried under
 
 - **One binary, zero dependencies** — compile once, copy anywhere, run. No Docker. No Node. No Python runtime.
 - **Instant startup** — the portal is live in under a second. All static assets are embedded directly in the binary.
-- **No database** — configuration lives in plain JSON files next to the binary. Back up with `cp`. Inspect with any text editor.
 - **Advanced Features** 
   - Interlink mode to instantly switch between multiple ZNAS instance, simple push/pull between them
   - UPS Management with one click. Auto install and auto configure local UPS and let you decide actions on battery status
-  - SMB Share but also, iSCSI and S3 Storage made simple !
-  - Advanced capacity monitoring builtin with zero maintenance. See folder tree structure, capacity trend by pool or dataset over time
+  - SMB Share but also NFS, iSCSI and S3 Storage
+  - Advanced capacity monitoring builtin with zero maintenance. See folder tree structure, capacity trend by pool or dataset over time, topology, ...
 - **Guided setup wizard** — first-run installs missing system packages, registers a systemd service, detects existing ZFS pools, and creates your admin account. Start to finish in under five minutes.
 
 Version 5.0.0 Full End-To-End DEMO on Youtube: [Version 5.0.0 DEMO](https://youtu.be/usFcZ15AyOs?si=U-neyJLCjkAfNHMc) \
@@ -89,22 +88,12 @@ Version 6.3.26 DEMO of Interlink and other new features! [Version 6.3.26 DEMO](h
 
 | Requirement | Version |
 |---|---|
-| Debian | **13 (Bookworm) or later — recommended** |
-| Ubuntu | 26.04 LTS or later (also supported) |
+| Debian | **13 (Bookworm) or later** |
+| Ubuntu | **26.04 LTS or later** |
 | Go (if you build from source) | 1.22 or later |
 | `sudo` access without password | Required for ZFS, Samba/NFS management, and SMART commands (or [sudo hardening](SECURITY.md)) |
 
-The following system packages are required. If any are missing, the **Prerequisites** tab will detect them and offer a guided installation:
-
-| Package | Purpose |
-|---|---|
-| `zfsutils-linux` | `zpool` / `zfs` commands |
-| `samba` | SMB file sharing |
-| `nfs-kernel-server` | NFS file sharing |
-| `smartmontools` | SSD wearout via `smartctl` |
-| `nvme-cli` | NVMe wearout via `nvme smart-log` |
-| `util-linux` | Disk listing via `lsblk` |
-| `sudo` | Required to run privileged ZFS, Samba, NFS, and SMART commands |
+A few system packages are required. If any are missing, the **Prerequisites** tab will detect them and offer a guided installation
 
 ---
 
@@ -114,9 +103,9 @@ The following system packages are required. If any are missing, the **Prerequisi
 
 | Installation type | Description | Guide |
 |---|---|---|
+| **Quick installer (script)** | One-command automated setup on any supported Debian/Ubuntu host | [Option A below](#option-a--quick-installer-recommended) |
 | **Proxmox VM** | Run ZNAS inside a Debian VM on a Proxmox host; ZFS disks passed through via PCIe/HBA or virtio | [Wiki — Proxmox VM](https://github.com/macgaver/zfsnas-chezmoi/wiki/Installation-Proxmox-VM) |
 | **Physical / Bare-metal** | Install directly on dedicated NAS hardware | [Wiki — Hardware](https://github.com/macgaver/zfsnas-chezmoi/wiki/Installation-Hardware) |
-| **Quick installer (script)** | One-command automated setup on any supported Debian/Ubuntu host | [Option A below](#option-a--quick-installer-recommended) |
 | **Build from source** | Clone the repo and compile; useful for development or custom builds | [Option B below](#option-b--build-from-source) |
 | **Download binary** | Grab the latest release binary and run it directly | [Option C below](#option-c--download-a-release-binary) |
 
@@ -184,39 +173,11 @@ https://<your-server-ip>:8443
 
 ---
 
-## Configuration
-
-All configuration is stored in `./config/` relative to the binary (or override with `--config`):
-
-```
-config/
-├── config.json            # port, first-run flag
-├── users.json             # all portal users
-├── shares.json            # SMB share definitions
-├── nfs-shares.json        # NFS export definitions
-├── alerts.json            # SMTP config + event subscriptions
-├── snapshot-schedules.json
-├── audit.log              # append-only, one JSON line per event
-└── certs/
-    ├── server.crt
-    └── server.key
-```
-
-### CLI flags
-
-| Flag | Default | Description |
-|---|---|---|
-| `--config` | `./config` | Path to the config directory |
-| `--dev` | off | Serve static files from disk (development mode) |
-| `--debug` | off | Enable verbose logging |
-
----
-
 ## Architecture
 
 ZNAS Chezmoi is built to stay fast and simple as it grows:
 
-- **Go 1.22+** — single statically-linked binary, cold start in milliseconds
+- **Go (latest)** — single statically-linked binary, cold start in milliseconds
 - **Embedded frontend** — HTML, CSS, and JS compiled into the binary via `go:embed`; zero CDN calls in production
 - **Alpine.js** — lightweight reactive UI with no build step, no npm, no bundler
 - **gorilla/mux** — minimal HTTP routing
