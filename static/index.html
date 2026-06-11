@@ -27074,26 +27074,11 @@ function _interlinkSidForHostname(hn, list) {
   return s ? s.id : '';
 }
 // Interactive Update: open the window terminal with an "updater:<host>" tab that
-// runs apt-get update + dist-upgrade interactively on the SELECTED server. When
-// relaying to a peer it must target that peer (peer:<sid>:updater:<host>) — a
-// plain local tab would update the local box instead.
-async function openInteractiveUpdate() {
-  const host = window._serverHostname || 'host';
-  if (typeof _relayActive !== 'undefined' && _relayActive && _relayHostname) {
-    let list = window._interlinkServersCache;
-    if (!Array.isArray(list) || !list.length) {
-      try { const r = await fetch('/api/interlink/servers/fast', { credentials: 'same-origin' });
-            if (r.ok) list = await r.json(); } catch (_) {}
-    }
-    const sid = _interlinkSidForHostname(_relayHostname, list);
-    if (!sid) {
-      if (typeof _showToast === 'function') _showToast('Could not resolve the selected server for the interactive updater.', 'warning');
-      return;
-    }
-    openTermWindow('peer:' + sid + ':updater:' + host);
-  } else {
-    openTermWindow('updater:' + host);
-  }
+// runs apt-get update + dist-upgrade interactively on the SELECTED server.
+// openTermWindow centralises the relay-aware routing (→ peer:<sid>:updater:<host>
+// when relaying), the same path every instance terminal now uses.
+function openInteractiveUpdate() {
+  openTermWindow('updater:' + (window._serverHostname || 'host'));
 }
 
 function applyUpdates() {
@@ -41295,8 +41280,34 @@ function _znasTermOpen(spec, mode) {
   if (_znasTermBC) { try { _znasTermBC.postMessage({type:'add', spec}); } catch (_) {} }
 }
 
-function openTermTab(spec)    { _znasTermOpen(spec, 'tab'); }
-function openTermWindow(spec) { _znasTermOpen(spec, 'window'); }
+// Instance/updater terminals refer to the instance you're CURRENTLY viewing —
+// which lives on the relayed peer when InterLink relay is active. The bottom
+// terminal "just works" because it follows the session's relay state; the
+// window/tab terminals tag tabs per-server (and force znas_no_relay for
+// local ones), so a plain 'lxd:<name>' opened while relaying would wrongly
+// target the LOCAL host → "Instance not found" + reconnect loop. Centralise the
+// fix here so every opener (LXD/compose/docker/updater, tab OR window) routes to
+// the right server: prepend 'peer:<sid>:' when relaying. 'host' and already
+// 'peer:'-prefixed specs are left untouched.
+async function _znasTermOpenPeerAware(spec, mode) {
+  const isInstance = /^(lxd|compose|docker|updater):/.test(spec);
+  if (isInstance && typeof _relayActive !== 'undefined' && _relayActive && _relayHostname) {
+    let list = window._interlinkServersCache;
+    if (!Array.isArray(list) || !list.length) {
+      try { const r = await fetch('/api/interlink/servers/fast', { credentials: 'same-origin' });
+            if (r.ok) list = await r.json(); } catch (_) {}
+    }
+    const sid = _interlinkSidForHostname(_relayHostname, list);
+    if (!sid) {
+      if (typeof _showToast === 'function') _showToast('Could not resolve the selected server for this terminal.', 'warning');
+      return;
+    }
+    spec = 'peer:' + sid + ':' + spec;
+  }
+  _znasTermOpen(spec, mode);
+}
+function openTermTab(spec)    { _znasTermOpenPeerAware(spec, 'tab'); }
+function openTermWindow(spec) { _znasTermOpenPeerAware(spec, 'window'); }
 
 // v6.5.30 — bottom-terminal gear menu (font size + theme). Shared
 // localStorage keys with the /terminal-multi popup page so a change in
