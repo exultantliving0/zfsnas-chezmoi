@@ -365,6 +365,11 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/ws/terminal",
 		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleTerminal)))).Methods("GET")
 
+	// WebSocket: interactive OS package upgrade in a PTY (admin-only — it runs
+	// apt-get dist-upgrade then a shell).
+	r.Handle("/ws/updater",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpdaterTerminal)))).Methods("GET")
+
 	// --- OS Updates (admin only) ---
 	r.Handle("/api/os-info",
 		RequireAuth(http.HandlerFunc(HandleOSInfo))).Methods("GET")

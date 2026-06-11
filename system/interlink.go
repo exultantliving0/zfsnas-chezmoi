@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -236,13 +237,45 @@ var (
 // proxying.  Clients are keyed by TLS fingerprint and created once.
 func InterlinkClientForRelay(tlsFP string) *http.Client {
 	relayClientMu.Lock()
-	defer relayClientMu.Unlock()
-	if c, ok := relayClientCache[tlsFP]; ok {
-		return c
+	c, ok := relayClientCache[tlsFP]
+	if !ok {
+		c = interlinkRelayClientFor(tlsFP)
+		relayClientCache[tlsFP] = c
 	}
-	c := interlinkClientFor(tlsFP)
-	relayClientCache[tlsFP] = c
-	return c
+	relayClientMu.Unlock()
+	// Return a shallow COPY: the Transport (and thus the connection pool) is
+	// shared via its pointer, but Timeout is a value field — so a caller that
+	// sets its own Timeout can't poison the shared client for everyone else.
+	// (This bit us once: an aggregate set Timeout=3s, capping /api/updates/check
+	// relays at 3s → "the peer took too long to respond".)
+	cp := *c
+	return &cp
+}
+
+// interlinkRelayClientFor builds the HTTP client used for relay PROXYING.
+// Unlike interlinkClientFor — a fixed 30s *total* deadline, fine for the tiny
+// ping/link/check-user calls — relayed requests can wrap genuinely slow remote
+// handlers (e.g. /api/updates/check runs `apt-get update` on the peer, routinely
+// well over 30s). A hard client Timeout aborts those mid-flight with the classic
+// "context deadline exceeded (Client.Timeout exceeded while awaiting headers)".
+//
+// So this client carries NO total Timeout; the caller bounds each request with a
+// per-endpoint context deadline instead (generous for the slow ones). To still
+// fail FAST when a peer is genuinely unreachable, the connection-level timeouts
+// (dial + TLS handshake) stay tight — a dead host errors in ~8s regardless of
+// how long the per-request budget is.
+func interlinkRelayClientFor(tlsFP string) *http.Client {
+	return &http.Client{
+		Timeout: 0, // no total deadline — the request context bounds each call
+		Transport: &http.Transport{
+			TLSClientConfig:       InterlinkTLSConfigForRelay(tlsFP),
+			DialContext:           (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   8 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
+	}
 }
 
 // InterlinkTLSConfigForRelay returns the TLS config used for relay connections.

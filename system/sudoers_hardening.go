@@ -1001,6 +1001,7 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/journalctl *":                                                  "sudo-rs fallback for `journalctl --since=*` (Ubuntu 26.04+): sudo-rs rejects the `--since=` prefix before `*`, so the rule is widened to `journalctl *`. Still read-only — journalctl never modifies state. Used by the VMs & Containers state watcher for OOM-kill attribution (v6.5.3+).",
 	"/usr/bin/cat /proc/*/smaps_rollup":                                      "Reads /proc/<pid>/smaps_rollup so the MEM topbar gauge can show complete swap usage (incl. shmem) for QEMU/KVM workers — VmSwap in /proc/<pid>/status only counts anonymous private swap (v6.5.3+).",
 	"/usr/bin/apt-get *":                                                     "Package installation and OS updates. Used by the Prerequisites tab and the Settings > OS Updates page.",
+	"/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get *":                  "OS package upgrade with debconf forced non-interactive (suppresses the 'unable to initialize frontend' warnings on the unattended Auto Update). Used by Settings > OS Updates.",
 	"/usr/bin/tee /etc/samba/smb.conf":                                       "Writes the Samba configuration file when a share is created, edited, or deleted.",
 	"/usr/bin/tee /etc/exports":                                              "Writes the NFS export table; exportfs -ra is called immediately after to apply the change.",
 	"/usr/bin/tee /etc/systemd/system/zfsnas.service":                        "Writes the systemd unit file when the portal registers itself as a system service.",
@@ -1508,6 +1509,7 @@ Cmnd_Alias ZFSNAS_VMSETUP = \
 # since v6.1.0 — apt-get remove / autoremove for optional feature uninstall
 Cmnd_Alias ZFSNAS_APT = \
     /usr/bin/apt-get *, \
+    /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get *, \
     /usr/bin/tee /etc/systemd/system/zfsnas.service, \
     /usr/bin/systemctl daemon-reload, \
     /usr/bin/systemctl enable zfsnas

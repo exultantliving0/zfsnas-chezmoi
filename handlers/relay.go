@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -57,6 +58,32 @@ var relayWSForwardPaths = []string{
 	"/ws/prereqs-install",
 	"/ws/memcomp-install",
 	"/ws/lxd-migrate-netplan",
+}
+
+// relaySlowPrefixes are API path prefixes whose handlers run genuinely slow
+// shell work on the peer (package indexing, dpkg/sudoers probing, a GitHub
+// round-trip). Relayed requests to these get a long deadline so the proxy never
+// aborts a healthy-but-slow response.
+var relaySlowPrefixes = []string{
+	"/api/updates/",       // apt-get update + simulate upgrade (the reported case)
+	"/api/os-updates",     // package upgrade listing
+	"/api/binary-update/", // GitHub release lookup
+	"/api/prereqs",        // dpkg / package-presence probing
+	"/api/sudoers/",       // sudo/visudo validation
+}
+
+// relayProxyTimeout returns the per-request deadline for a relayed path: a
+// generous budget for the known-slow endpoints above, a snappy default for
+// everything else.
+func relayProxyTimeout(path string) time.Duration {
+	for _, p := range relaySlowPrefixes {
+		if strings.HasPrefix(path, p) {
+			// Comfortably under the server's 300s WriteTimeout so the relay
+			// returns a clean timeout error before the inbound connection is cut.
+			return 4 * time.Minute
+		}
+	}
+	return 60 * time.Second
 }
 
 // isRelayBypassed reports whether path should be served locally even when
@@ -174,7 +201,16 @@ func relayIdentityHeaders(ls *config.LinkedServer, username string) (ts int64, n
 // Set-Cookie on the way back so neither side's session crosses the boundary.
 func proxyHTTPToPeer(w http.ResponseWriter, r *http.Request, ls *config.LinkedServer, requestURI, username string, ts int64, nonceHex, sig string) {
 	targetURL := ls.URL + requestURI
-	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
+	// Bound the proxied request with a per-endpoint deadline. Most endpoints
+	// answer in well under a second, but a few wrap slow shell work on the peer
+	// (apt-get update for /api/updates/*, dpkg/sudoers probing for prereqs, a
+	// GitHub round-trip for binary-update) — those get a generous budget so the
+	// relay doesn't abort them mid-flight. A genuinely unreachable peer still
+	// fails fast via the relay client's dial/TLS-handshake timeouts, regardless
+	// of this budget.
+	ctx, cancel := context.WithTimeout(r.Context(), relayProxyTimeout(r.URL.Path))
+	defer cancel()
+	proxyReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL, r.Body)
 	if err != nil {
 		jsonErr(w, http.StatusBadGateway, "relay: failed to build proxy request")
 		return
@@ -201,6 +237,14 @@ func proxyHTTPToPeer(w http.ResponseWriter, r *http.Request, ls *config.LinkedSe
 	client := system.InterlinkClientForRelay(ls.TLSFingerprint)
 	resp, err := client.Do(proxyReq)
 	if err != nil {
+		// Our per-request budget firing (a healthy-but-slow handler) reads as a
+		// timeout, not the misleading "remote unreachable". A dial/TLS-handshake
+		// failure (peer actually down) is NOT context.DeadlineExceeded, so it
+		// still surfaces as "unreachable" below.
+		if errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil {
+			jsonErr(w, http.StatusGatewayTimeout, "relay: the peer took too long to respond (timed out)")
+			return
+		}
 		jsonErr(w, http.StatusBadGateway, "relay: remote unreachable: "+err.Error())
 		return
 	}

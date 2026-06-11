@@ -1926,7 +1926,19 @@
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
               <button class="btn btn-ghost btn-sm" onclick="checkUpdates()" id="btn-check-updates">↻ Check for Updates</button>
-              <button class="btn btn-primary btn-sm hidden" onclick="applyUpdates()" id="btn-apply-updates">⬇ Install Updates</button>
+              <div style="position:relative;display:inline-block;">
+                <button class="btn btn-primary btn-sm hidden" onclick="toggleUpdateMenu(event)" id="btn-apply-updates">⬇ Install Updates&nbsp;▾</button>
+                <div id="update-mode-menu" class="hidden" style="position:absolute;right:0;bottom:calc(100% + 6px);z-index:200;min-width:270px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45);overflow:hidden;">
+                  <button type="button" onclick="closeUpdateMenu();applyUpdates();" style="display:block;width:100%;text-align:left;padding:11px 14px;background:none;border:none;border-bottom:1px solid var(--border);color:var(--text-1);cursor:pointer;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">
+                    <div style="font-size:13px;font-weight:600;">⚙ Auto Update</div>
+                    <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Unattended — apt output streams right here.</div>
+                  </button>
+                  <button type="button" onclick="closeUpdateMenu();openInteractiveUpdate();" style="display:block;width:100%;text-align:left;padding:11px 14px;background:none;border:none;color:var(--text-1);cursor:pointer;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">
+                    <div style="font-size:13px;font-weight:600;">⌨ Interactive Update</div>
+                    <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Opens a terminal window so you can answer apt's prompts.</div>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <div id="updates-status" style="color:var(--text-3);font-size:14px;">Click "Check for Updates" to scan for available packages.</div>
@@ -27011,7 +27023,11 @@ async function checkUpdates() {
   btn.disabled = true;
   btn.textContent = 'Checking…';
   if (installBtn) installBtn.classList.add('hidden');
-  status.textContent = 'Running apt-get update and checking for upgrades…';
+  // Spinner where the package list will render, so the wait (apt-get update can
+  // take a few seconds) reads as "working", not "stuck".
+  status.style.display = '';
+  status.innerHTML = '<span style="display:flex;align-items:center;gap:12px;padding:20px 0;color:var(--text-2);">'
+    + '<span class="spinner"></span>Running apt-get update and checking for upgrades…</span>';
   pkgList.style.display = 'none';
 
   try {
@@ -27029,6 +27045,54 @@ async function checkUpdates() {
   } finally {
     btn.disabled = false;
     btn.textContent = '↻ Check for Updates';
+  }
+}
+
+// ── "Install Updates" split dropdown: Auto vs Interactive ───────────────────
+function toggleUpdateMenu(e) {
+  if (e) e.stopPropagation();
+  const m = document.getElementById('update-mode-menu');
+  if (!m) return;
+  const willOpen = m.classList.contains('hidden');
+  m.classList.toggle('hidden');
+  if (willOpen) {
+    const close = (ev) => {
+      if (!m.contains(ev.target) && ev.target.id !== 'btn-apply-updates') {
+        closeUpdateMenu();
+        document.removeEventListener('click', close, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close, true), 0);
+  }
+}
+function closeUpdateMenu() {
+  const m = document.getElementById('update-mode-menu');
+  if (m) m.classList.add('hidden');
+}
+function _interlinkSidForHostname(hn, list) {
+  const s = (list || []).find(x => x.hostname === hn);
+  return s ? s.id : '';
+}
+// Interactive Update: open the window terminal with an "updater:<host>" tab that
+// runs apt-get update + dist-upgrade interactively on the SELECTED server. When
+// relaying to a peer it must target that peer (peer:<sid>:updater:<host>) — a
+// plain local tab would update the local box instead.
+async function openInteractiveUpdate() {
+  const host = window._serverHostname || 'host';
+  if (typeof _relayActive !== 'undefined' && _relayActive && _relayHostname) {
+    let list = window._interlinkServersCache;
+    if (!Array.isArray(list) || !list.length) {
+      try { const r = await fetch('/api/interlink/servers/fast', { credentials: 'same-origin' });
+            if (r.ok) list = await r.json(); } catch (_) {}
+    }
+    const sid = _interlinkSidForHostname(_relayHostname, list);
+    if (!sid) {
+      if (typeof _showToast === 'function') _showToast('Could not resolve the selected server for the interactive updater.', 'warning');
+      return;
+    }
+    openTermWindow('peer:' + sid + ':updater:' + host);
+  } else {
+    openTermWindow('updater:' + host);
   }
 }
 
@@ -33132,6 +33196,18 @@ function runReplicationTask(id, name) {
     top =Math.max(8, Math.min(top,  window.innerHeight-ch-8));
     c.style.left=left+'px'; c.style.top=top+'px'; c.style.visibility='';
   }
+  // Re-anchor an already-visible card (e.g. after its height changed during an
+  // in-place refresh) without the hide-to-measure flicker of _mapPositionCard.
+  function _mapRepositionCardSoft(c, g){
+    if(!c || !g) return;
+    const r=g.getBoundingClientRect();
+    const cw=c.offsetWidth, ch=c.offsetHeight;
+    let left=r.left + r.width/2 - cw/2;
+    let top = r.top - ch - 12; if(top<8) top=r.bottom+12;
+    left=Math.max(8, Math.min(left, window.innerWidth-cw-8));
+    top =Math.max(8, Math.min(top,  window.innerHeight-ch-8));
+    c.style.left=left+'px'; c.style.top=top+'px';
+  }
   // Pick the hovercard HTML for the active layer.
   function _hoverHTML(id){ return (_mapLayer==='network') ? netHoverHTML(id) : mapHoverHTML(id); }
   function mapHoverShow(id, g){
@@ -33145,15 +33221,50 @@ function runReplicationTask(id, name) {
     _mapMaybeFetchVm(id);
     if(_mapLayer!=='network') _mapStartIoFor(id);  // pool/dataset → live zpool iostat charts (storage only)
   }
-  // Rebuild the open card from latest data (called on each poll) without moving
+  // Refresh the open card from latest data (called on each poll) without moving
   // to a different node. Skipped for objects showing live iostat charts, so the
   // canvases + websocket survive between polls.
+  //
+  // The refresh updates the data sections IN PLACE rather than replacing the
+  // card's innerHTML: a wholesale replace recreates the `.mhc-scan` element
+  // (restarting its infinite shimmer) and the bars every few seconds, which
+  // reads as the whole popup "resetting" on every background poll. Here we keep
+  // the same DOM — preserving the running scan line and animating bar widths
+  // smoothly — and only fall back to a full rebuild when the card's structure
+  // actually changes (e.g. a VM's "reading metrics…" placeholder becoming real
+  // bars), which is a one-off, not every poll.
   function mapHoverRender(){
     if(!_mapHoverId || !_mapHoverEl) return;
     if(_mapIo && _mapIo.active) return;
     const c=document.getElementById('map-hovercard'); if(!c || c.classList.contains('hidden')) return;
     const html=_hoverHTML(_mapHoverId); if(!html) return;
-    c.innerHTML=html; _mapPositionCard(c, _mapHoverEl);
+    const cur=c.querySelector('.mhc');
+    const tmp=document.createElement('div'); tmp.innerHTML=html;
+    const nw=tmp.querySelector('.mhc');
+    // Structure signature = the ordered class list of each section. If it differs
+    // (sections added/removed), the in-place merge can't line up → full rebuild.
+    const sig=el=> el ? [...el.children].map(x=>x.className).join('§') : '';
+    if(!cur || !nw || sig(cur)!==sig(nw)){ c.innerHTML=html; _mapPositionCard(c, _mapHoverEl); return; }
+    const ck=[...cur.children], nk=[...nw.children];
+    for(let i=0;i<ck.length;i++){
+      const a=ck[i], b=nk[i];
+      if(a.classList.contains('mhc-scan')) continue;   // leave the shimmer running
+      if(a.classList.contains('mhc-io'))   continue;   // iostat charts owned elsewhere
+      // Bars: keep the element and just retarget width/label so the .4s width
+      // transition animates to the new value instead of snapping/resetting.
+      const af=a.querySelectorAll('.mhc-fill'), bf=b.querySelectorAll('.mhc-fill');
+      if(af.length && af.length===bf.length){
+        af.forEach((el,j)=>{ el.style.width = bf[j].style.width; });
+        const at=a.querySelectorAll('.mhc-bar-top'), bt=b.querySelectorAll('.mhc-bar-top');
+        at.forEach((el,j)=>{ if(bt[j] && el.innerHTML!==bt[j].innerHTML) el.innerHTML=bt[j].innerHTML; });
+        // Non-bar text in the same section (e.g. metric tiles) still needs sync.
+        const ametr=a.querySelectorAll('.mhc-metric'), bmetr=b.querySelectorAll('.mhc-metric');
+        ametr.forEach((el,j)=>{ if(bmetr[j] && el.innerHTML!==bmetr[j].innerHTML) el.innerHTML=bmetr[j].innerHTML; });
+        continue;
+      }
+      if(a.innerHTML!==b.innerHTML) a.innerHTML=b.innerHTML; // rows/chips/metrics
+    }
+    _mapRepositionCardSoft(c, _mapHoverEl); // keep anchored if the height shifted
   }
   // Resolve the VM/CT name a hovered node id refers to, in either layer.
   function _hoverInstanceName(id){
@@ -33290,7 +33401,7 @@ function runReplicationTask(id, name) {
       it.onmouseenter=()=>{ it.style.background='rgba(124,124,255,0.18)'; };
       it.onmouseleave=()=>{ it.style.background='transparent'; };
       it.onclick=()=>{ close(); if(val!==_netLayout){ _netLayout=val;
-        try{ localStorage.setItem('znasNetLayout', val); }catch(e){}
+        try{ sessionStorage.setItem('znasNetLayout', val); }catch(e){}
         _netFitted['map-svg']=false; _netFitted['vmtopo-svg']=false; // re-fit the new layout
         _mapSig=''; if(_mapData) renderMap(_mapData); } };
       menu.appendChild(it);
@@ -33450,8 +33561,14 @@ function runReplicationTask(id, name) {
   const _netFitted = {};    // svgId → true once the network layer has auto-fit it
   const _storeFitted = {};  // svgId → true once the storage layer has auto-fit it
   // Network placement algorithm (right-click the map background to switch).
-  let _netLayout = (function(){ try { const v=localStorage.getItem('znasNetLayout');
-    return (v==='radial'||v==='hierarchy'||v==='grid')?v:'hierarchy'; } catch(e){ return 'hierarchy'; } })();
+  // Placement type is remembered only for the current session (sessionStorage):
+  // each new session starts on the default 'grid'; a change the user makes lasts
+  // until they close the tab, then it's forgotten. The legacy persistent key is
+  // wiped so an old saved choice can't override the default.
+  let _netLayout = (function(){ try {
+    localStorage.removeItem('znasNetLayout');
+    const v=sessionStorage.getItem('znasNetLayout');
+    return (v==='radial'||v==='hierarchy'||v==='grid')?v:'grid'; } catch(e){ return 'grid'; } })();
   function _mapGetZoom(svgId){ return _mapZoomState[svgId] || 1; }
   function _mapZoomLabelId(svgId){ return svgId.replace('-svg','') + '-zoom-lvl'; }
   function _mapUpdateZoomLabel(svgId){
@@ -33491,7 +33608,37 @@ function runReplicationTask(id, name) {
     _mapZoomTo(svgId, _mapGetZoom(svgId) * (dir>0 ? 1.2 : 1/1.2));
   };
   // Wire wheel + touch gestures once per viewport.
+  // Size a map viewport to fill from its real top edge down to (almost) the
+  // window bottom. The map area sits below a variable-height topbar/io-bar +
+  // tab bar + toolbar, so a fixed "100vh − N" guess either clips or overflows;
+  // measuring the live position is exact. Returns the height applied.
+  function _mapSizeViewport(vp){
+    if (!vp) return 0;
+    const top = vp.getBoundingClientRect().top;
+    const h = Math.max(320, Math.floor(window.innerHeight - top - 14));
+    vp.style.height = h + 'px';
+    void vp.offsetHeight; // flush layout so a subsequent clientHeight read is fresh
+    return h;
+  }
+  let _mapResizeWired = false;
   function _mapEnsureZoom(svgId, vpId){
+    // Re-fit the active map on window resize (debounced): re-measure the
+    // viewport, clear the one-shot fit lock, and re-render.
+    if (!_mapResizeWired){
+      _mapResizeWired = true;
+      let rt = null;
+      window.addEventListener('resize', ()=>{
+        clearTimeout(rt);
+        rt = setTimeout(()=>{
+          const v = document.getElementById(_mapCtx.viewport);
+          if (!v || v.offsetParent === null) return;
+          _mapSizeViewport(v);
+          _netFitted[_mapCtx.svg] = false; _storeFitted[_mapCtx.svg] = false;
+          _mapSig = '';
+          if (_mapData) renderMap(_mapData);
+        }, 150);
+      });
+    }
     const vp = document.getElementById(vpId);
     if (!vp || vp.dataset.zoomWired) return;
     vp.dataset.zoomWired = '1';
@@ -33564,6 +33711,10 @@ function runReplicationTask(id, name) {
   window.startVmTopology = function(instId){
     _netFocusInst = instId; // Networking Layer focuses this instance on the CI tab
     _vmTopoPinned = null; _vmTopoDocker = []; _vmTopoDockerLoaded = false;
+    // Each instance is a different map; clear the one-shot fit locks so the view
+    // re-fits to THIS instance's size instead of inheriting the previous VM's
+    // zoom. (Both layers, since the tab can be on either.)
+    _netFitted['vmtopo-svg'] = false; _storeFitted['vmtopo-svg'] = false;
     if (_vmTopoDockerTimer){ clearInterval(_vmTopoDockerTimer); _vmTopoDockerTimer = null; }
     const instName = instId.slice(instId.indexOf(':')+1);
     // Detect docker containers running INSIDE this instance. The endpoint 403s /
@@ -33827,6 +33978,21 @@ function runReplicationTask(id, name) {
     const empty = document.getElementById(_mapCtx.empty);
     const status= document.getElementById(_mapCtx.status);
     if (!svg) return;
+
+    // Keep the viewport sized to the live layout. The topbar/io-bar and the
+    // per-layer legend settle their heights asynchronously (charts loading, a
+    // layer switch), which shifts where the viewport starts. Re-measure each
+    // render and, only when the available height actually changed, resize the
+    // box and clear the one-shot fit so the map re-fits the new space. This
+    // converges within a poll or two, then stays put (no constant re-fitting).
+    { const vp = document.getElementById(_mapCtx.viewport);
+      if (vp && vp.offsetParent !== null){
+        const avail = Math.max(320, Math.floor(window.innerHeight - vp.getBoundingClientRect().top - 14));
+        if (Math.abs((vp._znAvail||0) - avail) > 4){
+          vp._znAvail = avail; vp.style.height = avail + 'px';
+          _netFitted[svg.id] = false; _storeFitted[svg.id] = false;
+        }
+      } }
 
     // #1: the Networking Layer only exists when virtualization is enabled. On a
     // pure-storage host, hide its switch button and fall back to the Storage &
@@ -34101,6 +34267,73 @@ function runReplicationTask(id, name) {
     return { W: Math.max(300, W + PAD), H: HEADER + rows*(maxH+GAP) + PAD };
   }
 
+  // Focused single-VM view (the per-instance Topology tab): the instance sits
+  // dead-center, the bridges it attaches to FAN across a top arc (the uplinks,
+  // each a colored spoke), and its docker containers fill the COMPLEMENTARY
+  // lower arc on an inner ring. Separating the two fans means an uplink spoke
+  // never crosses a container box — "uplinks above, containers around below".
+  function _netPlaceFocus(bridges, instances, docker, briBox, instBox, dockBox, dockByInst, instOnBridge, instById){
+    const HEADER=44, PAD=30;
+    const vm = instances[0];
+    if (!vm) return { W:320, H:220 };
+    const vb = instBox[vm.id];
+    const vmR = Math.hypot(vb.w, vb.h)/2;
+    vm.__hue = bridges.length ? bridges[0].__hue : 210;
+
+    const kids = dockByInst[vm.id] || [];
+    const B = bridges.length, K = kids.length;
+    let maxKid=0; kids.forEach(k=> maxKid=Math.max(maxKid, Math.hypot(dockBox[k.id].w,dockBox[k.id].h)/2));
+    let maxBri=0; bridges.forEach(b=> maxBri=Math.max(maxBri, Math.hypot(briBox[b.id].w,briBox[b.id].h)/2));
+
+    // Bridge fan: a top arc that widens with bridge count but never wraps past
+    // the sides (cap ~153°), so bridges stay "above" and the bottom is free.
+    const bArc = (B<=1) ? 0 : Math.min(Math.PI*0.85, 0.5*(B-1)+0.7);
+    const kidNeed = K ? K*(2*maxKid+NET.DOCK_GAP+4) : 0;
+    const briNeed = B ? B*(2*maxBri+36) : 0;
+    // Half-angle a box of width w occupies at radius r (plus a little margin) —
+    // used to keep the first container clear of the bridge fan by a true box
+    // width, not a guessed constant.
+    const angHalf = (w,r)=> Math.atan2(w/2+12, Math.max(r,1));
+
+    // Radii + reserved top wedge are mutually dependent (the wedge needs the
+    // radii; the docker radius needs the leftover arc). Converge in a couple of
+    // cheap passes: size rings for the current arc, then recompute the wedge.
+    let dArc = (K<=0) ? 0 : (2*Math.PI - (B?1.2:0));
+    let innerR=0, outerR=0, reserve=0;
+    for (let it=0; it<3; it++){
+      innerR = K ? Math.max(vmR+maxKid+20, kidNeed/Math.max(dArc,1)) : 0;
+      outerR = Math.max(vmR+maxBri+24, innerR, (B>1) ? briNeed/Math.max(bArc,0.5) : 0);
+      const sideClear = (B?angHalf(2*maxBri,outerR):0) + (K?angHalf(2*maxKid,innerR):0);
+      reserve = (B===0) ? 0 : Math.min(Math.PI*1.45, bArc + 2*sideClear);
+      dArc = (K<=0) ? 0 : (2*Math.PI - reserve);
+    }
+
+    // Lay out relative to the VM at the origin, then normalize to tight bounds.
+    vm.__cx = 0; vm.__cy = 0;
+    bridges.forEach((b,k)=>{
+      const ang = (-Math.PI/2) + (B<=1 ? 0 : (k/(B-1)-0.5)*bArc);
+      b.__cx = outerR*Math.cos(ang); b.__cy = outerR*Math.sin(ang);
+    });
+    const dFrom = (-Math.PI/2) + reserve/2;
+    kids.forEach((d,j)=>{
+      const t = (K<=1) ? 0.5 : j/(K-1);
+      const ang = dFrom + t*dArc;
+      d.__cx = innerR*Math.cos(ang); d.__cy = innerR*Math.sin(ang); d.__hue = vm.__hue;
+    });
+
+    // Tight bounds over every placed box, then shift so the content hugs PAD.
+    let minX=-vb.w/2, maxX=vb.w/2, minY=-vb.h/2, maxY=vb.h/2;
+    const acc=(n,box)=>{ minX=Math.min(minX,n.__cx-box.w/2); maxX=Math.max(maxX,n.__cx+box.w/2);
+                         minY=Math.min(minY,n.__cy-box.h/2); maxY=Math.max(maxY,n.__cy+box.h/2); };
+    bridges.forEach(b=>acc(b,briBox[b.id]));
+    kids.forEach(d=>acc(d,dockBox[d.id]));
+    const dx=PAD-minX, dy=HEADER-minY;
+    vm.__cx+=dx; vm.__cy+=dy;
+    bridges.forEach(b=>{ b.__cx+=dx; b.__cy+=dy; });
+    kids.forEach(d=>{ d.__cx+=dx; d.__cy+=dy; });
+    return { W:(maxX-minX)+2*PAD, H:(maxY-minY)+HEADER+PAD };
+  }
+
   function netFullRender(svg, net){
     _mapFontFamily = getComputedStyle(document.body).fontFamily || _mapFontFamily;
     const { pair, instBridges, instById } = netPairs(net);
@@ -34144,8 +34377,13 @@ function runReplicationTask(id, name) {
     // Dispatch to the chosen placement algorithm; each sets every node's
     // __cx/__cy/__hue and returns the content bounds {W,H}.
     const args=[bridges, instances, docker, briBox, instBox, dockBox, dockByInst, instOnBridge, instById];
+    // Honor the chosen placement type everywhere, including the per-instance
+    // Topology tab. On that tab the "radial / star" style becomes the focused
+    // VM-centered layout (a single instance has no fleet to spread radially).
+    const isVm = (svg.id === 'vmtopo-svg') && instances.length === 1;
     const { W, H } = (_netLayout==='hierarchy') ? _netPlaceHierarchy(...args)
                    : (_netLayout==='grid')      ? _netPlaceGrid(...args)
+                   : isVm                       ? _netPlaceFocus(...args)
                    :                              _netPlaceRadial(...args);
 
     // ── Build SVG ──
@@ -34194,17 +34432,16 @@ function runReplicationTask(id, name) {
         tip:d.name+' · '+(d.image||'')+(netPortsLine(d.ports)?'\n'+netPortsLine(d.ports):'') });
     });
 
-    // First time this surface shows the network layer, fit the whole packed map
-    // into the viewport so the default view is filled (never upscaled past 1:1).
-    // Once the user zooms/pans, their scale persists and we stop auto-fitting.
+    // First time this surface shows the network layer, scale the whole packed
+    // map to a perfect fit of the viewport — upscaling well past 100% for a
+    // small map so it fills the panel, and shrinking as far as needed for a
+    // large one. Once the user zooms/pans, their scale persists (we stop
+    // auto-fitting).
     if (!_netFitted[svg.id]){
       const vp = svg.closest('.map-viewport') || svg.parentElement;
       if (vp && vp.clientWidth > 40 && vp.clientHeight > 40){
-        // Fit the whole map to the viewport; allow upscaling past 100% (capped)
-        // so a small/compact map fills the panel instead of sitting tiny in a
-        // sea of white space, and shrink as far as needed for a large one.
-        const fit = Math.min((vp.clientWidth-12)/W, (vp.clientHeight-12)/H);
-        _mapZoomState[svg.id] = Math.max(MAP_ZMIN, Math.min(1.6, fit));
+        const fit = Math.min((vp.clientWidth-8)/W, (vp.clientHeight-8)/H);
+        _mapZoomState[svg.id] = Math.max(MAP_ZMIN, Math.min(MAP_ZMAX, fit));
         _netFitted[svg.id] = true;
       }
     }
@@ -34215,7 +34452,7 @@ function runReplicationTask(id, name) {
     svg.dataset.natW = W; svg.dataset.natH = H; // base size for the zoom controller
     svg.innerHTML =
       netDefs() +
-      `<text class="net-title" x="20" y="28">⛓ Networking Layer</text>` +
+      `<text class="net-title" x="20" y="28">${isVm ? mapEsc('⛓ '+(instances[0].name||'')+' · Network') : '⛓ Networking Layer'}</text>` +
       `<g class="net-hubs">${hubsSvg}</g>` +
       `<g class="net-spokes">${spokesSvg}</g>` +
       `<g class="net-nodes">${nodesSvg}</g>`;
@@ -34280,13 +34517,15 @@ function runReplicationTask(id, name) {
     // Per-instance Topology tab: focus the open instance's bridges + neighbours.
     const focus = (_mapCtx.svg === 'vmtopo-svg') ? _netFocusInst : null;
     if (focus){
+      // Focused per-VM view: keep ONLY this instance, the bridges it attaches
+      // to, and its own docker children. Sibling VMs that merely share a bridge
+      // are dropped — this view is about THIS instance's connectivity, not the
+      // whole segment. (The full Map → Networking Layer still shows everything.)
       const fb = new Set((net.nics||[]).filter(n=>n.instance_id===focus).map(n=>n.bridge_id));
-      const bridges=(net.bridges||[]).filter(b=>fb.has(b.id));
-      const nics=(net.nics||[]).filter(n=>fb.has(n.bridge_id));
-      const keep=new Set(nics.map(n=>n.instance_id));
-      net={ bridges, nics,
-            instances:(net.instances||[]).filter(i=>keep.has(i.id)),
-            docker:(net.docker||[]).filter(d=>keep.has(d.instance_id)) };
+      net={ bridges:(net.bridges||[]).filter(b=>fb.has(b.id)),
+            nics:(net.nics||[]).filter(n=>n.instance_id===focus),
+            instances:(net.instances||[]).filter(i=>i.id===focus),
+            docker:(net.docker||[]).filter(d=>d.instance_id===focus) };
     }
     if (!net.bridges || !net.bridges.length){
       if (empty){ empty.textContent='No bridges detected for this layer.'; empty.classList.remove('hidden'); }
@@ -34456,15 +34695,15 @@ function runReplicationTask(id, name) {
       data.remotes.filter(r=>r.__x!=null)
     ).map(mapNodeMarkup).join('');
 
-    // First render of the storage map on this surface: auto-fit to the viewport.
-    // Unlike the network layer, the floor is 90% (large maps scroll rather than
-    // shrink below that, keeping nodes legible) and we DO allow upscaling past
-    // 100% so a small map fills the panel instead of floating in white space.
+    // First render of the storage map on this surface: scale to a perfect fit of
+    // the viewport — upscaling past 100% for a small map so it fills the panel,
+    // and shrinking as far as needed for a large one. Once the user zooms/pans,
+    // their scale persists (we stop auto-fitting).
     if (!_storeFitted[svg.id]){
       const vp = svg.closest('.map-viewport') || svg.parentElement;
       if (vp && vp.clientWidth > 40 && vp.clientHeight > 40){
-        const fit = Math.min((vp.clientWidth-12)/W, (vp.clientHeight-12)/H);
-        _mapZoomState[svg.id] = Math.max(0.9, Math.min(MAP_ZMAX, fit));
+        const fit = Math.min((vp.clientWidth-8)/W, (vp.clientHeight-8)/H);
+        _mapZoomState[svg.id] = Math.max(MAP_ZMIN, Math.min(MAP_ZMAX, fit));
         _storeFitted[svg.id] = true; // only lock once the viewport was measurable
       }
     }
@@ -49577,12 +49816,36 @@ async function _softRelayRefresh() {
           const hl = document.getElementById('sidebar-hostname-label');
           if (hl) hl.textContent = d.hostname;
         }
+        // The version badge is per-server too — show the version of the server
+        // we're now viewing, not the local one captured at boot.
+        if (d.version) {
+          window._appVersion = d.version;
+          const av = document.getElementById('app-version');
+          if (av) av.textContent = 'v' + d.version;
+        }
+        // Other server-scoped globals captured at boot from the LOCAL /api/version
+        // and consumed across the UI: server IP (SMB/NFS connection hints, server
+        // URL), the OS service username (share/terminal hints), and experimental
+        // mode (gates experimental features). Refresh them to the viewed server.
+        // NOTE: _localHostnameFallback is deliberately NOT touched — it must keep
+        // pointing at the truly-local host for the relay dropdown.
+        if (d.server_ip) window._serverIP = d.server_ip;
+        if (d.username)  window._serverUsername = d.username;
+        _experimentalMode = !!d.experimental_mode;
         if (typeof d.lxd_available === 'boolean')        window._lxdAvailable      = d.lxd_available;
         if (typeof d.lxd_metrics_enabled === 'boolean')  window._lxdMetricsEnabled = d.lxd_metrics_enabled;
         if (typeof updateVirtTabVisibility === 'function')   updateVirtTabVisibility(window._lxdAvailable);
         if (typeof updateMonitorTabVisibility === 'function') updateMonitorTabVisibility();
       }
     } catch(_) {}
+
+    // Re-load server settings into `appSettings` from the server now being
+    // viewed. `appSettings` is populated once at boot from the LOCAL server and
+    // is read by ~every page (Platform's version + Instant-Update toggle,
+    // Settings' port/theme/storage-unit/timezone/NTP/web-session policy, …);
+    // without this re-fetch those screens keep showing the original server's
+    // values in relay mode. /api/settings is relayed, so this pulls the peer's.
+    if (typeof loadSettings === 'function') { try { await loadSettings(); } catch(_) {} }
 
     // Re-run the boot-time sidebar/topbar wiring so the LEFT nav reflects
     // what the new server actually has (LXD on/off, iSCSI/MinIO/UPS

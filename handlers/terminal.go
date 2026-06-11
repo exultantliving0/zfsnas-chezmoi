@@ -48,6 +48,40 @@ func HandleTerminal(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleUpdaterTerminal opens a WebSocket attached to an INTERACTIVE OS-update
+// session: a PTY that runs `apt-get update` then `apt-get dist-upgrade` with the
+// user free to answer apt's prompts (conffile diffs, "continue? [Y/n]"), then
+// drops to a shell so the output stays on screen. This is the hands-on
+// counterpart to the streamed, unattended "Auto Update" (/ws/updates-apply).
+// Same persistent-session machinery as the host shell, so a dropped browser can
+// reattach and keep watching the upgrade.
+func HandleUpdaterTerminal(w http.ResponseWriter, r *http.Request) {
+	conn, err := termUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	sess := MustSession(r)
+	wsAttachOrCreate(conn, r, sess.UserID, termsessions.KindUpdater, "", "OS Update", func() (*exec.Cmd, *os.File, error) {
+		// sudo is NOPASSWD-allowed for apt-get (ZFSNAS_APT alias). dist-upgrade
+		// without -y keeps it interactive. The script ENDS when apt finishes (no
+		// trailing shell) so the PTY closes and the session terminates on its own
+		// — same as typing `exit` right after the upgrade.
+		const script = `set +e
+printf '\n\033[1;36m=== Interactive OS Update ===\033[0m\n\n'
+printf '\033[1;33m> sudo apt-get update\033[0m\n'
+sudo apt-get update
+printf '\n\033[1;33m> sudo apt-get dist-upgrade\033[0m\n'
+sudo apt-get dist-upgrade
+printf '\n\033[1;32m=== Update session finished. ===\033[0m\n'`
+		cmd := exec.Command("/bin/bash", "-c", script)
+		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		ptmx, err := pty.Start(cmd)
+		return cmd, ptmx, err
+	})
+}
+
 // wsAttachOrCreate is the shared "find existing session or spawn a new
 // one, then run the attach loop" used by every PTY-backed WS handler.
 // Ownership is enforced — a session_id from another user is rejected.

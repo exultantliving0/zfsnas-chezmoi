@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -102,7 +103,13 @@ func fetchRemoteTerminalSessions(ls config.LinkedServer, username string) ([]ter
 	ts := time.Now().Unix()
 	sig := system.RelayForwardHMAC(ls.SharedSecret, username, ts, nonce)
 
-	req, err := http.NewRequest("GET", strings.TrimRight(ls.URL, "/")+"/api/terminal-sessions", nil)
+	// Bound this quick "list sessions" call at 3s via the request CONTEXT — NOT
+	// by setting client.Timeout, which would mutate the cached, shared relay
+	// client and silently cap every other relay request (e.g. /api/updates/check
+	// would then abort at 3s, surfacing as "the peer took too long to respond").
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(ls.URL, "/")+"/api/terminal-sessions", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +119,6 @@ func fetchRemoteTerminalSessions(ls config.LinkedServer, username string) ([]ter
 	req.Header.Set("X-Interlink-Relay-HMAC", sig)
 
 	client := system.InterlinkClientForRelay(ls.TLSFingerprint)
-	client.Timeout = 3 * time.Second
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -168,6 +174,10 @@ func HandleInterlinkTerminalProxyWS(appCfg *config.AppConfig) http.HandlerFunc {
 		switch kind {
 		case termsessions.KindHost:
 			peerPath = "/ws/terminal"
+		case termsessions.KindUpdater:
+			// Interactive OS update on the peer. target carries the peer hostname
+			// (for the tab label only); the endpoint always upgrades its own host.
+			peerPath = "/ws/updater"
 		case termsessions.KindLXD:
 			if target == "" {
 				http.Error(w, "target required for lxd", http.StatusBadRequest)
@@ -233,10 +243,25 @@ func HandleInterlinkTerminalProxyWS(appCfg *config.AppConfig) http.HandlerFunc {
 		dialHeader.Set("X-Interlink-Relay-Nonce", nonce)
 		dialHeader.Set("X-Interlink-Relay-HMAC", sig)
 		dialer := websocket.Dialer{TLSClientConfig: system.InterlinkTLSConfigForRelay(ls.TLSFingerprint)}
-		remoteConn, _, err := dialer.Dial(wsBase+peerPath, dialHeader)
+		remoteConn, dialResp, err := dialer.Dial(wsBase+peerPath, dialHeader)
 		if err != nil {
+			// A "bad handshake" means the peer answered with a non-101 status. The
+			// common cause for a newer endpoint like /ws/updater is a peer running
+			// an older ZNAS binary that doesn't have that route (404). Turn the
+			// cryptic gorilla error into something actionable, and send it as a
+			// fatal-error envelope so the client stops the reconnect loop.
+			msg := "peer dial failed: " + err.Error()
+			status := 0
+			if dialResp != nil {
+				status = dialResp.StatusCode
+			}
+			if status == http.StatusNotFound && kind == termsessions.KindUpdater {
+				msg = "This server is running an older ZNAS version without the Interactive Update feature. Update its ZNAS binary first (Platform → Check for Releases), then try again."
+			} else if status != 0 {
+				msg += " (HTTP " + strconv.Itoa(status) + ")"
+			}
 			browserConn.WriteMessage(websocket.TextMessage,
-				[]byte("interlink-terminal: peer dial failed: "+err.Error())) //nolint:errcheck
+				[]byte(`{"type":"error","error":"`+jsonEscape(msg)+`","fatal":true}`)) //nolint:errcheck
 			return
 		}
 		defer remoteConn.Close()
@@ -312,7 +337,11 @@ func HandleCloseRemoteTerminalSession(appCfg *config.AppConfig) http.HandlerFunc
 		ts := time.Now().Unix()
 		sig := system.RelayForwardHMAC(ls.SharedSecret, sess.Username, ts, nonce)
 		peerURL := strings.TrimRight(ls.URL, "/") + "/api/terminal-sessions/" + url.PathEscape(id) + "/close"
-		req, err := http.NewRequest("POST", peerURL, nil)
+		// 5s deadline via context (NOT client.Timeout — that cached client is
+		// shared by every relay request; mutating it caps them all).
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, "POST", peerURL, nil)
 		if err != nil {
 			jsonErr(w, http.StatusInternalServerError, err.Error())
 			return
@@ -322,7 +351,6 @@ func HandleCloseRemoteTerminalSession(appCfg *config.AppConfig) http.HandlerFunc
 		req.Header.Set("X-Interlink-Relay-Nonce", nonce)
 		req.Header.Set("X-Interlink-Relay-HMAC", sig)
 		client := system.InterlinkClientForRelay(ls.TLSFingerprint)
-		client.Timeout = 5 * time.Second
 		resp, err := client.Do(req)
 		if err != nil {
 			jsonErr(w, http.StatusBadGateway, "peer unreachable: "+err.Error())

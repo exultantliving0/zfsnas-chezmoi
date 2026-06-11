@@ -519,6 +519,7 @@ function kindIcon(k) {
     case 'docker':  return '🐳';
     case 'host':    return '🖥';
     case 'vga':     return '🖼';
+    case 'updater': return '⬆';
   }
   return '⌨';
 }
@@ -757,6 +758,7 @@ function sendResize(tab) {
 
 function attachTab(tab, opts) {
   opts = opts || {};
+  tab.fatal = false; // a fresh (re)attach clears any prior fatal-error latch
   if (!tab.paneEl) buildPane(tab);
   // VGA tabs have no PTY WebSocket to attach — the embedded iframe owns its
   // own SPICE connection and reconnect loop.
@@ -775,6 +777,7 @@ function attachTab(tab, opts) {
   } else {
     switch (tab.kind) {
       case 'host':    path = '/ws/terminal'; break;
+      case 'updater': path = '/ws/updater'; break; // target carries the host label only
       case 'lxd':     path = '/ws/lxd-console?name=' + encodeURIComponent(tab.target); break;
       case 'compose': {
         const [stack, container] = tab.target.split(':');
@@ -821,7 +824,14 @@ function attachTab(tab, opts) {
           try { term.write('\r\n\x1b[33m[another browser took over — press Enter to resume here]\x1b[0m\r\n'); } catch(_) {}
           return;
         } else if (msg.type === 'error') {
-          term.write('\r\n[error: ' + (msg.error||'unknown') + ']\r\n');
+          if (msg.fatal) {
+            // Unrecoverable (e.g. peer lacks the endpoint). Show it plainly and
+            // latch so onclose doesn't spin the reconnect loop.
+            tab.fatal = true;
+            try { term.write('\r\n\x1b[33m' + (msg.error || 'connection failed') + '\x1b[0m\r\n'); } catch(_) {}
+          } else {
+            term.write('\r\n[error: ' + (msg.error||'unknown') + ']\r\n');
+          }
           return;
         }
       } catch{}
@@ -863,7 +873,7 @@ function attachTab(tab, opts) {
 }
 
 function scheduleReconnect(tab) {
-  if (!tab || tab.closing || tab.kicked) return;
+  if (!tab || tab.closing || tab.kicked || tab.fatal) return;
   const attempt = (tab.reconnectAttempt || 0);
   if (attempt > 8) {
     try { tab.term.write('\r\n\x1b[33m[disconnected — click tab to retry]\x1b[0m\r\n'); } catch (_) {}
@@ -996,8 +1006,11 @@ function addTabFromSpec(spec, displayTitle) {
                                     && t.target === target
                                     && !t.terminated);
   if (existing >= 0) { activateTab(existing); return; }
-  const tab = { id:'', kind, target, serverId,
-                title: displayTitle || target || kind, terminated:false };
+  // For the OS-update kind the target is the host name, shown as "updater:<host>".
+  const title = (kind === 'updater')
+    ? ('updater:' + (target || 'host'))
+    : (displayTitle || target || kind);
+  const tab = { id:'', kind, target, serverId, title, terminated:false };
   TABS.push(tab);
   renderTabBar();
   buildPane(tab);

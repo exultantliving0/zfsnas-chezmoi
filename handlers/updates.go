@@ -308,7 +308,15 @@ func HandleApplyUpdates(w http.ResponseWriter, r *http.Request) {
 			addLine("Running: sudo apt-get upgrade -y")
 			addLine("─────────────────────────────────────────")
 
-			cmd := exec.Command("sudo", "apt-get", "upgrade", "-y",
+			// DEBIAN_FRONTEND=noninteractive sends debconf straight to its
+			// Noninteractive frontend. Without it, the unattended run (piped, no
+			// controlling TTY) makes debconf try Dialog→Readline→Teletype first,
+			// printing a wall of "unable to initialize frontend … falling back"
+			// warnings before it finally settles on Noninteractive. The env is
+			// passed via `env` (not sudo's env, which it resets) so it reaches the
+			// apt/dpkg/debconf chain; the matching sudoers entry is in ZFSNAS_APT.
+			cmd := exec.Command("sudo", "/usr/bin/env", "DEBIAN_FRONTEND=noninteractive",
+				"apt-get", "upgrade", "-y",
 				"-o", "Dpkg::Use-Pty=0",
 				"-o", "Dpkg::Options::=--force-confold")
 

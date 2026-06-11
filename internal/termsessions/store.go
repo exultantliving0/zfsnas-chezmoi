@@ -81,6 +81,7 @@ const (
 	KindLXD     = "lxd"     // /ws/lxd-console
 	KindCompose = "compose" // /ws/compose-console
 	KindDocker  = "docker"  // /ws/docker-console
+	KindUpdater = "updater" // /ws/updater — interactive OS package upgrade
 )
 
 // SpawnFunc returns a started *exec.Cmd and its controlling PTY. Sessions
