@@ -6321,7 +6321,19 @@ Select the Console tab to load.</pre>
         <!-- Panel controls -->
         <span id="ci-term-gear-btn" onclick="event.stopPropagation(); _ciTermGearToggle()" title="Terminal settings" style="font-size:13px;color:var(--text-3);padding:2px 8px;user-select:none;cursor:pointer;flex-shrink:0;">⚙</span>
         <span id="ci-term-minimize-btn" onclick="ciTermToggleMinimize()" style="font-size:11px;color:var(--text-3);padding:2px 8px;user-select:none;cursor:pointer;flex-shrink:0;">▼</span>
-        <button class="btn btn-ghost btn-sm" onclick="ciCloseBottomTerminal()" style="padding:2px 10px;font-size:11px;flex-shrink:0;">✕ Close All</button>
+        <div style="position:relative;flex-shrink:0;">
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();toggleBottomTermMenu(event)" style="padding:2px 10px;font-size:11px;">✕ Close All ▾</button>
+          <div id="ci-term-close-menu" class="hidden" style="position:absolute;right:0;bottom:calc(100% + 6px);z-index:300;min-width:240px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45);overflow:hidden;">
+            <button type="button" onclick="closeBottomTermMenu();ciCloseBottomTerminal();" style="display:block;width:100%;text-align:left;padding:11px 14px;background:none;border:none;border-bottom:1px solid var(--border);color:var(--text-1);cursor:pointer;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">
+              <div style="font-size:13px;font-weight:600;">⏻ Terminate All Terminals</div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Kills every session — they will NOT survive in the background.</div>
+            </button>
+            <button type="button" onclick="closeBottomTermMenu();ciHideBottomTerminal();" style="display:block;width:100%;text-align:left;padding:11px 14px;background:none;border:none;color:var(--text-1);cursor:pointer;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">
+              <div style="font-size:13px;font-weight:600;">👁 Hide Bottom Terminal</div>
+              <div style="font-size:11px;color:var(--text-3);margin-top:2px;">Keeps all sessions alive — just removes the panel from this browser.</div>
+            </button>
+          </div>
+        </div>
       </div>
       <div id="ci-term-containers" style="flex:1;background:#0d0d0f;overflow:hidden;position:relative;"></div>
     </div>
@@ -41105,14 +41117,21 @@ function ciVGAConsole()       { _ciCloseTermMenu(); if (_ciCurrentName) openTerm
 function ciTerminalBottom() {
   _ciCloseTermMenu();
   if (!_ciCurrentName) return;
-  // If tab already exists, just activate it.
-  if (_ciTermTabs.has(_ciCurrentName)) {
-    _ciTermActivateTab(_ciCurrentName);
-    _ciTermEnsureVisible();
-    return;
-  }
   _ciTermEnsureVisible();
-  _ciTermOpenTab(_ciCurrentName);
+  // v6.6.11 — always open a NEW session; if one for this instance is already
+  // open, suffix the label "(1)", "(2)" and use a unique key so both live side
+  // by side. (Restored sessions are keyed by id, so they coexist already.)
+  _ciTermOpenInstanceSession(_ciCurrentName, '/ws/incus-console?name=' + encodeURIComponent(_ciCurrentName));
+}
+
+// Open a brand-new bottom-terminal session for a target, suffixing the label
+// when one with the same base already exists.
+function _ciTermOpenInstanceSession(name, wsPath) {
+  let label = name, n = 1;
+  const exists = (lbl) => { for (const t of _ciTermTabs.values()) { if (t.label === lbl) return true; } return false; };
+  while (exists(label)) { label = name + ' (' + n + ')'; n++; }
+  const key = 'open:' + name + ':' + Date.now() + ':' + Math.floor(Math.random()*1000);
+  _ciTermOpenCustomTab(key, label, wsPath, { title: label });
 }
 
 function _ciTermEnsureVisible() {
@@ -41639,10 +41658,23 @@ function _ciTermScheduleReconnect(key) {
   tab.reconnectTimer = setTimeout(() => _ciTermReconnect(key), delay);
 }
 
+// v6.6.11 — fully tear down a tab's previous socket before opening a new one.
+// Without this, the iPad force-reconnect on resume leaves the old zombie WS
+// attached as a 2nd server-side viewer → the PTY echo/output reaches BOTH and
+// gets written to the same xterm twice (duplicate characters + duplicate lines).
+function _ciTermTearDownWS(tab) {
+  if (tab && tab.ws) {
+    try { tab.ws.onopen = tab.ws.onmessage = tab.ws.onerror = tab.ws.onclose = null; } catch (_) {}
+    try { tab.ws.close(); } catch (_) {}
+    tab.ws = null;
+  }
+}
+
 function _ciTermReconnect(key) {
   const tab = _ciTermTabs.get(key);
   if (!tab || tab.closing) return;
   tab.reconnectTimer = null;
+  _ciTermTearDownWS(tab);
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   let path = tab.wsPath;
   // Defence: if for some reason session_id never got baked in (very early
@@ -41662,23 +41694,55 @@ function _ciTermReconnect(key) {
 // proactively kick any tab whose WS is closed/closing so they don't have
 // to wait for the backoff timer. This is what makes "come back the next
 // day" feel instant on mobile.
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
+const _ciIsIOS = (function(){ try {
+  return /iP(ad|hone|od)/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+} catch(_) { return false; } })();
+function _ciTermResume() {
   if (typeof _ciTermTabs === 'undefined') return;
   _ciTermTabs.forEach((tab, key) => {
-    if (!tab.closing && (!tab.ws || tab.ws.readyState >= WebSocket.CLOSING)) {
-      tab.reconnectAttempt = 0; // reset backoff on user-driven return
+    if (tab.closing) return;
+    const stale = !tab.ws || tab.ws.readyState >= WebSocket.CLOSING;
+    // v6.6.11 — iPadOS restores a zombie WS (OPEN but dead); force-recycle the
+    // ACTIVE tab on return so it doesn't freeze for seconds. Others lazy-reconnect.
+    const forceIOS = _ciIsIOS && key === _ciTermActiveTab;
+    if (stale || forceIOS) {
+      // _ciTermReconnect tears down the old socket first (no manual close here —
+      // that could fire the old onclose → an extra reconnect → duplicate viewer).
+      tab.reconnectAttempt = 0;
       _ciTermReconnect(key);
     }
   });
-});
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _ciTermResume(); });
+window.addEventListener('pageshow', _ciTermResume);
 
 // Generic tab opener — wsPath is the full WS path (e.g. '/ws/terminal' or '/ws/incus-console?name=foo').
 // label is the human-readable tab title. opts.sessionId pre-seeds the
 // session ID for tabs spawned from a rehydrate fetch; otherwise the ID is
 // captured from the server's first text envelope frame.
+// v6.6.11 — stable id for THIS browser (the bottom terminal lives in the main
+// SPA page). Persisted in sessionStorage so a reload keeps the same identity, so
+// reconnects are recognised as the same window by the multi-controller model.
+const _ciWindowId = (function(){
+  try {
+    let w = sessionStorage.getItem('znas-term-window-id');
+    if (!w) { w = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : ('b'+Date.now()+'-'+Math.random())).slice(0,18);
+              sessionStorage.setItem('znas-term-window-id', w); }
+    return w;
+  } catch(_) { return 'b'+Date.now(); }
+})();
+// Append window_id (and, once, a title override) to a ws path.
+function _ciTermWithWindowId(wsPath, title){
+  let p = wsPath;
+  if (!/[?&]window_id=/.test(p)) p += (p.includes('?') ? '&' : '?') + 'window_id=' + encodeURIComponent(_ciWindowId);
+  if (title && !/[?&]title=/.test(p)) p += '&title=' + encodeURIComponent(title);
+  return p;
+}
+
 function _ciTermOpenCustomTab(key, label, wsPath, opts) {
   opts = opts || {};
+  wsPath = _ciTermWithWindowId(wsPath, opts.title);
   const containers = document.getElementById('ci-term-containers');
   // Hide every existing tab BEFORE creating the new one, then mount the
   // new tab's element already visible. Reason: xterm.js measures its
@@ -41809,16 +41873,33 @@ function _ciTermOpenCustomTab(key, label, wsPath, opts) {
     const sel = _termCleanSelection(term);
     if (sel) navigator.clipboard.writeText(sel).catch(() => {});
   });
-  const tab = { term, ws, fit, resizeObs, el, onDataDisp: null, onResizeDisp: null, wsPath, label, sessionId: opts.sessionId || '', serverId: opts.serverId || '' };
+  const tab = { term, ws, fit, resizeObs, el, onDataDisp: null, onResizeDisp: null, wsPath, label, sessionId: opts.sessionId || '', serverId: opts.serverId || '', control: 'mirror' };
   _ciTermTabs.set(key, tab);
   _ciTermBindWS(key, ws);
   _ciTermRenderTabs();
   _ciTermActivateTab(key);
 }
 
+// v6.6.11 — a window controls ONLY its active tab. Take control of the active
+// one (green); release any other tab we still hold (blue, so the window using it
+// keeps it). takeActive=false reconciles releases only (avoids ping-pong).
+function _ciTermEnforceActiveControl(takeActive) {
+  _ciTermTabs.forEach((t, key) => {
+    if (!t.ws || t.ws.readyState !== WebSocket.OPEN || t.closing || t.kicked) return;
+    if (key === _ciTermActiveTab) {
+      if (takeActive && t.control !== 'controller') {
+        try { t.ws.send(JSON.stringify({type:'take-control'})); t.ws.send(JSON.stringify({type:'resize', cols:t.term.cols, rows:t.term.rows})); } catch(_) {}
+      }
+    } else if (t.control === 'controller') {
+      try { t.ws.send(JSON.stringify({type:'release-control'})); } catch(_) {}
+    }
+  });
+}
+
 function _ciTermActivateTab(name) {
   _ciTermTabs.forEach((t, n) => { t.el.style.display = n === name ? '' : 'none'; });
   _ciTermActiveTab = name;
+  _ciTermEnforceActiveControl(true);
   _ciTermRenderTabs();
   const tab = _ciTermTabs.get(name);
   if (tab) {
@@ -41888,6 +41969,18 @@ function _ciTermRenderTabs() {
     const displayLabel = (tab.label || key) + (closed ? ' ⚠' : '');
     const btn = document.createElement('div');
     btn.style.cssText = `display:flex;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;flex-shrink:0;background:${isActive ? 'rgba(255,255,255,0.08)' : 'transparent'};color:${isActive ? 'var(--text-1)' : 'var(--text-3)'};`;
+    // v6.6.11 control dot: green = this window controls it, blue = another window
+    // does (Enter to take over), grey = terminated/closed.
+    const dot = document.createElement('span');
+    const dotColor = closed ? 'var(--text-3)'
+      : (tab.control === 'controller' ? '#28ca42' : (tab.control === 'mirror' ? '#3fa9ff' : 'var(--text-3)'));
+    const dotGlow = (!closed && tab.control === 'controller') ? '0 0 5px rgba(40,202,66,.7)'
+      : (!closed && tab.control === 'mirror') ? '0 0 5px rgba(63,169,255,.7)' : 'none';
+    dot.style.cssText = `width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${dotColor};box-shadow:${dotGlow};`;
+    dot.title = closed ? 'disconnected'
+      : (tab.control === 'controller' ? 'you control this terminal'
+        : (tab.control === 'mirror' ? ('controlled by ' + (tab.byLabel || 'another window') + ' — press Enter to take over') : ''));
+    btn.appendChild(dot);
     const lbl = document.createElement('span');
     lbl.textContent = displayLabel;
     lbl.onclick = () => {
@@ -41929,6 +42022,43 @@ function ciTermToggleMinimize() {
     const tab = _ciTermTabs.get(_ciTermActiveTab);
     if (tab) requestAnimationFrame(() => tab.fit.fit());
   }
+}
+
+// ── "Close All" split dropdown (v6.6.11): Terminate vs Hide ─────────────────
+function toggleBottomTermMenu(e) {
+  if (e) e.stopPropagation();
+  const m = document.getElementById('ci-term-close-menu');
+  if (!m) return;
+  const willOpen = m.classList.contains('hidden');
+  m.classList.toggle('hidden');
+  if (willOpen) {
+    const close = (ev) => { if (!m.contains(ev.target)) { closeBottomTermMenu(); document.removeEventListener('click', close, true); } };
+    setTimeout(() => document.addEventListener('click', close, true), 0);
+  }
+}
+function closeBottomTermMenu() { const m = document.getElementById('ci-term-close-menu'); if (m) m.classList.add('hidden'); }
+
+// Hide the bottom terminal WITHOUT terminating sessions: detach every WS (no
+// /close call), drop the panel from this browser. Sessions stay alive — the
+// badge still shows the count and reopening the terminal restores the tabs.
+function ciHideBottomTerminal() {
+  _ciTermTabs.forEach(tab => {
+    tab.closing = true; // suppress the onclose auto-reconnect
+    if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }
+    try { tab.resizeObs.disconnect(); } catch (_) {}
+    try { tab.ws.close(); } catch (_) {}
+    try { tab.term.dispose(); } catch (_) {}
+    try { tab.el.remove(); } catch (_) {}
+  });
+  _ciTermTabs.clear();
+  _ciTermActiveTab = null;
+  _ciTermMinimized = false;
+  document.getElementById('ci-term-panel').classList.add('hidden');
+  document.getElementById('ci-term-containers').style.display = '';
+  document.getElementById('ci-term-resize-handle').style.pointerEvents = '';
+  document.getElementById('ci-term-minimize-btn').textContent = '▼';
+  document.getElementById('ci-term-tabs').innerHTML = '';
+  try { _updateTermBadge(); } catch (_) {}
 }
 
 function ciCloseBottomTerminal() {
@@ -41976,6 +42106,10 @@ function _ciTermBindWS(name, ws) {
   // Dispose previous listeners before adding new ones to prevent accumulation.
   if (tab.onDataDisp)   { tab.onDataDisp.dispose();   tab.onDataDisp   = null; }
   if (tab.onResizeDisp) { tab.onResizeDisp.dispose();  tab.onResizeDisp = null; }
+  // New connection → control state unknown until the server's frame; reset to
+  // mirror so a RECONNECT (iPad resume) isn't mistaken for another window
+  // stealing control (the bogus "another window took control" notice).
+  tab.control = 'mirror';
   tab.ws = ws;
   ws.binaryType = 'arraybuffer';
   ws.onopen    = () => {
@@ -41998,11 +42132,31 @@ function _ciTermBindWS(name, ws) {
           // prior kick state.
           tab.reconnectAttempt = 0;
           tab.kicked = false;
+          _ciTermEnforceActiveControl(true); // claim if active, release if not
+          return;
+        }
+        if (m && m.type === 'control') {
+          // v6.6.11: green = this window controls the active tab, blue = a live
+          // mirror. Reconcile (release-only) so an auto-promoted non-active tab
+          // drops to blue; never auto-reclaim (ping-pong). Enter still reclaims.
+          const wasController = tab.control === 'controller';
+          tab.byLabel = m.by_label || '';
+          tab.control = m.controller ? 'controller' : 'mirror';
+          _ciTermRenderTabs();
+          // Only a DIFFERENT window (by !== our id) is a real steal — guards
+          // against our own reconnect (iPad resume) looking like a takeover.
+          if (!m.controller && wasController && m.by && m.by !== _ciWindowId && name === _ciTermActiveTab) {
+            const who = m.by_label ? (' (' + m.by_label + ')') : '';
+            try { tab.term.write('\r\n\x1b[36m[another window took control' + who + ' — press Enter to take it back]\x1b[0m\r\n'); } catch(_){}
+          }
+          _ciTermEnforceActiveControl(false);
           return;
         }
         if (m && m.type === 'kicked') {
-          // Another browser took over — stop the reconnect ping-pong.
+          // Back-compat with an OLDER peer (single-active): it closes our conn.
           tab.kicked = true;
+          tab.control = 'mirror';
+          _ciTermRenderTabs();
           return;
         }
         if (m && m.type === 'error') { tab.term.write('\r\n\x1b[31m[error: ' + (m.error||'unknown') + ']\x1b[0m\r\n'); return; }
@@ -42015,12 +42169,20 @@ function _ciTermBindWS(name, ws) {
   ws.onclose   = () => { _ciTermScheduleReconnect(name); _ciTermRenderTabs(); };
   ws.onerror   = () => { /* onclose will fire too — auto-reconnect is owned there */ };
   tab.onDataDisp   = tab.term.onData(data => {
-    // Kicked by another browser → the first Enter takes the session back here
-    // (reconnecting kicks/pauses the other browser). Check this BEFORE the
-    // open-WS send so a keystroke during the brief close race doesn't leak to
-    // the other browser's session.
+    // OLD-peer single-active kick → first Enter takes the session back here.
     if (tab.kicked) {
       if (data === '\r' || data === '\n') _ciTermReopenTab(name);
+      return;
+    }
+    // v6.6.11: live mirror of a session another window controls → Enter claims
+    // control (server flips the dots); other keystrokes swallowed.
+    if (tab.control === 'mirror') {
+      if (data === '\r' || data === '\n') {
+        try { if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({type:'take-control'}));
+          ws.send(JSON.stringify({type:'resize', cols:tab.term.cols, rows:tab.term.rows}));
+        } } catch(_) {}
+      }
       return;
     }
     if (ws.readyState === WebSocket.OPEN) { ws.send(data); }
@@ -42045,6 +42207,7 @@ function _ciTermReopenTab(key) {
   // only cleared on the next 'session' frame, leaving a brief double-reopen race.
   tab.kicked = false;
   tab.reconnectAttempt = 0;
+  _ciTermTearDownWS(tab);
   tab.term.write('\r\n\x1b[33m[reconnecting…]\x1b[0m\r\n');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsPath = tab.wsPath || ('/ws/incus-console?name=' + encodeURIComponent(key));

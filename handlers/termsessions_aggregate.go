@@ -214,6 +214,17 @@ func HandleInterlinkTerminalProxyWS(appCfg *config.AppConfig) http.HandlerFunc {
 		}
 		if cols != "" && rows != "" {
 			peerPath += sep + "cols=" + url.QueryEscape(cols) + "&rows=" + url.QueryEscape(rows)
+			sep = "&"
+		}
+		// Forward the browser window id so the peer's multi-controller model can
+		// tell windows apart, and the suffixed title for a 2nd+ session of the
+		// same target (v6.6.11).
+		if wid := q.Get("window_id"); wid != "" {
+			peerPath += sep + "window_id=" + url.QueryEscape(wid)
+			sep = "&"
+		}
+		if tt := q.Get("title"); tt != "" {
+			peerPath += sep + "title=" + url.QueryEscape(tt)
 		}
 
 		// Upgrade browser side.

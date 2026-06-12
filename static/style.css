@@ -2726,6 +2726,25 @@ body.dawn  .net-node .net-node-bg{fill:hsl(var(--h) 65% 95% / .96);}
 body.light .net-node--docker .net-node-sub,
 body.dawn  .net-node--docker .net-node-sub{fill:hsl(var(--h) 70% 35%);}
 .map-hud .net-node .net-node-bg{filter:drop-shadow(0 0 7px hsl(var(--h) 90% 60%));}
+/* v6.6.11 — colour VM/CT and Docker nodes BY TYPE so they match the Networking
+   legend (a VM and a container on the same bridge were previously identical,
+   both tinted by the bridge hue). Bridges keep their distinct per-bridge hue,
+   and the spokes stay bridge-hued so you can still trace what's on which bridge.
+   color-mix keeps the dark translucent fill of the bridge-hued nodes. */
+.net-node--vm .net-node-bg,
+.net-node--ct .net-node-bg{fill:color-mix(in srgb, var(--map-vm) 16%, #0d0d0f);stroke:var(--map-vm);}
+.net-node--docker .net-node-bg{fill:color-mix(in srgb, var(--map-docker) 16%, #0d0d0f);stroke:var(--map-docker);}
+.net-node--vm .net-node-scan,
+.net-node--ct .net-node-scan{fill:var(--map-vm);}
+.net-node--docker .net-node-scan{fill:var(--map-docker);}
+.net-node--docker .net-node-sub{fill:color-mix(in srgb, var(--map-docker) 80%, #fff);}
+body.light .net-node--vm .net-node-bg, body.dawn .net-node--vm .net-node-bg,
+body.light .net-node--ct .net-node-bg, body.dawn .net-node--ct .net-node-bg{fill:color-mix(in srgb, var(--map-vm) 12%, #fafafa);}
+body.light .net-node--docker .net-node-bg, body.dawn .net-node--docker .net-node-bg{fill:color-mix(in srgb, var(--map-docker) 12%, #fafafa);}
+body.light .net-node--docker .net-node-sub, body.dawn .net-node--docker .net-node-sub{fill:color-mix(in srgb, var(--map-docker) 70%, #000);}
+.map-hud .net-node--vm .net-node-bg,
+.map-hud .net-node--ct .net-node-bg{filter:drop-shadow(0 0 7px var(--map-vm));}
+.map-hud .net-node--docker .net-node-bg{filter:drop-shadow(0 0 7px var(--map-docker));}
 .map-hud .net-node--bridge .net-node-bg{animation:net-breathe 3.2s ease-in-out infinite;}
 @keyframes net-breathe{0%,100%{filter:drop-shadow(0 0 10px hsl(var(--h) 90% 60%));}
   50%{filter:drop-shadow(0 0 20px hsl(var(--h) 90% 60%));}}

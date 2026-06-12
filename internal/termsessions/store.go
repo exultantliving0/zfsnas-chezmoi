@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -103,9 +104,34 @@ type Snapshot struct {
 	Attached   bool      `json:"attached"`
 	Cols       uint16    `json:"cols"`
 	Rows       uint16    `json:"rows"`
+	// ControllerWindow is the windowID of the browser window currently driving
+	// input (empty = no controller). ViewerCount is how many windows are
+	// attached (mirrors + controller). Lets a freshly-opened window paint the
+	// right dot before its own control frame arrives. (v6.6.11)
+	ControllerWindow string `json:"controller_window,omitempty"`
+	ControllerLabel  string `json:"controller_label,omitempty"` // "<ip> · <browser>" of the controlling window
+	ViewerCount      int    `json:"viewer_count"`
 }
 
-// Session owns one PTY + its scrollback ring + the currently-attached WS.
+// viewer is one attached browser window. Many viewers can mirror a session's
+// output simultaneously; exactly one — the session's `controller` — has its
+// keystrokes forwarded to the PTY. (v6.6.11)
+type viewer struct {
+	ws         *websocket.Conn
+	writeMu    sync.Mutex // gorilla/websocket requires a single writer per conn
+	windowID   string     // the browser window/page this viewer belongs to
+	label      string     // "<ip> · <browser>" — shown as "who controls this" in the UI
+	cols, rows uint16     // this viewer's reported size (PTY follows the controller's)
+}
+
+// write is the serialized per-viewer WebSocket write.
+func (v *viewer) write(messageType int, data []byte) error {
+	v.writeMu.Lock()
+	defer v.writeMu.Unlock()
+	return v.ws.WriteMessage(messageType, data)
+}
+
+// Session owns one PTY + its scrollback ring + the set of attached viewers.
 type Session struct {
 	id, userID, kind, target, title string
 	createdAt                       time.Time
@@ -115,32 +141,124 @@ type Session struct {
 	ptmx        *os.File
 	cmd         *exec.Cmd
 	scrollback  *ringBuf
-	attachedWS  *websocket.Conn
-	wsWriteMu   sync.Mutex      // serializes WriteMessage / WriteControl on attachedWS (gorilla/websocket requires this)
-	attachWG    *sync.WaitGroup // signals the current attach loop's goroutines to exit
-	cols, rows  uint16
+	viewers     map[*viewer]struct{} // every attached browser window (mirrors + controller)
+	controller  *viewer              // the viewer whose input reaches the PTY (nil ⇒ uncontrolled)
+	cols, rows  uint16               // PTY geometry — tracks the controller's viewport
 	terminated  bool
 	termReason  string
 	evictedTimer *time.Timer
 }
 
-// safeWriteWS performs a serialized write to whichever WS the session
-// is currently attached to. Returns ok=false if there is no attached
-// WS (caller decides whether that's an error). Holding wsWriteMu while
-// briefly capturing attachedWS keeps drainPTY, server pings, kick
-// notices, and Attach's scrollback replay from interleaving on the
-// gorilla/websocket conn (which forbids concurrent writers).
-func (sess *Session) safeWriteWS(messageType int, data []byte) (ok bool) {
-	sess.wsWriteMu.Lock()
-	defer sess.wsWriteMu.Unlock()
+// broadcast writes the same frame to EVERY attached viewer (each via its own
+// write mutex). This is how the PTY output mirrors to all windows. A viewer
+// whose write fails is dropped — its read loop will error out and detach too.
+func (sess *Session) broadcast(messageType int, data []byte) {
 	sess.mu.Lock()
-	ws := sess.attachedWS
-	sess.mu.Unlock()
-	if ws == nil {
-		return false
+	vs := make([]*viewer, 0, len(sess.viewers))
+	for v := range sess.viewers {
+		vs = append(vs, v)
 	}
-	ws.WriteMessage(messageType, data) //nolint:errcheck
-	return true
+	sess.mu.Unlock()
+	for _, v := range vs {
+		if err := v.write(messageType, data); err != nil {
+			sess.removeViewer(v)
+		}
+	}
+}
+
+// removeViewer detaches v from the session. If it was the controller, the
+// session goes uncontrolled and the remaining viewers are told (dots → blue),
+// so the next viewer to press Enter can claim it.
+func (sess *Session) removeViewer(v *viewer) {
+	sess.mu.Lock()
+	if _, ok := sess.viewers[v]; !ok {
+		sess.mu.Unlock()
+		return
+	}
+	delete(sess.viewers, v)
+	wasController := sess.controller == v
+	if wasController {
+		sess.controller = nil
+	}
+	sess.mu.Unlock()
+	if wasController {
+		sess.pushControlToAll()
+	}
+}
+
+// takeControl promotes v to controller (demoting the previous one) and pushes
+// the new control state to every viewer so their dots flip. The PTY is resized
+// to the new controller's viewport.
+func (sess *Session) takeControl(v *viewer) {
+	sess.mu.Lock()
+	if sess.terminated || sess.controller == v {
+		sess.mu.Unlock()
+		return
+	}
+	sess.controller = v
+	if v.cols > 0 && v.rows > 0 {
+		sess.cols, sess.rows = v.cols, v.rows
+	}
+	ptmx, c, r := sess.ptmx, sess.cols, sess.rows
+	sess.mu.Unlock()
+	if c > 0 && r > 0 {
+		pty.Setsize(ptmx, &pty.Winsize{Cols: c, Rows: r}) //nolint:errcheck
+	}
+	sess.pushControlToAll()
+}
+
+// releaseControl drops v's controller role (no-op if it isn't the controller),
+// leaving the session uncontrolled until someone else takes it. A window calls
+// this for tabs it's no longer focused on, so its non-active tabs go blue and
+// stay available to the windows actually using them. (v6.6.11)
+func (sess *Session) releaseControl(v *viewer) {
+	sess.mu.Lock()
+	if sess.controller != v {
+		sess.mu.Unlock()
+		return
+	}
+	sess.controller = nil
+	sess.mu.Unlock()
+	sess.pushControlToAll()
+}
+
+// pushControlToAll sends each viewer a {"type":"control",...} frame describing
+// whether IT is the controller and which window (+ a human label: ip · browser)
+// currently holds control.
+func (sess *Session) pushControlToAll() {
+	sess.mu.Lock()
+	vs := make([]*viewer, 0, len(sess.viewers))
+	for v := range sess.viewers {
+		vs = append(vs, v)
+	}
+	ctl := sess.controller
+	by, byLabel := "", ""
+	if ctl != nil {
+		by, byLabel = ctl.windowID, ctl.label
+	}
+	sess.mu.Unlock()
+	for _, v := range vs {
+		v.write(websocket.TextMessage, controlFrame(v == ctl, by, byLabel)) //nolint:errcheck
+	}
+}
+
+func controlFrame(isController bool, by, byLabel string) []byte {
+	b, _ := json.Marshal(map[string]any{"type": "control", "controller": isController, "by": by, "by_label": byLabel})
+	return b
+}
+
+// ctrlMsgType returns the "type" of a control JSON frame ("" if not one).
+func ctrlMsgType(data []byte) string {
+	if len(data) == 0 || data[0] != '{' {
+		return ""
+	}
+	var m struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(data, &m) != nil {
+		return ""
+	}
+	return m.Type
 }
 
 // Store is the per-process session registry.
@@ -230,7 +348,7 @@ func (s *Store) drainPTY(sess *Session) {
 			sess.scrollback.Write(chunk) //nolint:errcheck
 			sess.lastActive = time.Now()
 			sess.mu.Unlock()
-			sess.safeWriteWS(websocket.BinaryMessage, chunk)
+			sess.broadcast(websocket.BinaryMessage, chunk)
 		}
 		if err != nil {
 			s.markTerminated(sess, ReasonProcessExit)
@@ -252,9 +370,14 @@ func (s *Store) markTerminated(sess *Session, reason string) {
 	sess.termReason = reason
 	notice := []byte(fmt.Sprintf("\r\n\x1b[33m[session ended: %s]\x1b[0m\r\n", reason))
 	sess.scrollback.Write(notice) //nolint:errcheck
-	// Don't clear attachedWS yet — safeWriteWS needs it. We'll clear
-	// after the final notice is sent.
-	ws := sess.attachedWS
+	// Snapshot the viewers so we can write the death notice + close them OUTSIDE
+	// the lock, then drop the set.
+	vs := make([]*viewer, 0, len(sess.viewers))
+	for v := range sess.viewers {
+		vs = append(vs, v)
+	}
+	sess.viewers = map[*viewer]struct{}{}
+	sess.controller = nil
 	if sess.cmd != nil && sess.cmd.Process != nil {
 		sess.cmd.Process.Kill() //nolint:errcheck
 	}
@@ -268,12 +391,9 @@ func (s *Store) markTerminated(sess *Session, reason string) {
 		s.mu.Unlock()
 	})
 	sess.mu.Unlock()
-	if ws != nil {
-		sess.safeWriteWS(websocket.BinaryMessage, notice)
-		sess.mu.Lock()
-		sess.attachedWS = nil
-		sess.mu.Unlock()
-		ws.Close()
+	for _, v := range vs {
+		v.write(websocket.BinaryMessage, notice) //nolint:errcheck
+		v.ws.Close()
 	}
 }
 
@@ -345,19 +465,22 @@ const (
 	readDeadline = 90 * time.Second
 )
 
-// Attach replaces (or sets) the WebSocket attached to sess. The previous
-// WS, if any, is kicked with a notice. The scrollback ring is replayed on
-// the new WS as one binary frame, then this call blocks reading input
-// from the WS into the PTY until the WS closes or the session terminates.
+// Attach ADDS a viewer (browser window) to sess. Many viewers can be attached
+// at once — they all mirror the PTY output; exactly one is the controller whose
+// input reaches the PTY. The first viewer to attach becomes the controller; the
+// rest are mirrors until someone takes control (Enter → take-control). Replays
+// the scrollback ring to the new viewer, then blocks reading its input until the
+// WS closes or the session terminates.
 //
-// cols/rows are the client's reported terminal size; we issue an immediate
-// resize so the PTY matches the new viewport.
-func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
-	// Replace existing attachment first.
+// cols/rows are the client's reported size; windowID identifies the browser
+// window so the UI can show "another window is in control".
+func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16, windowID, label string) {
+	v := &viewer{ws: ws, windowID: windowID, label: label, cols: cols, rows: rows}
+
 	sess.mu.Lock()
 	if sess.terminated {
-		// Still send the scrollback (which contains the death notice) so
-		// the user sees what happened, then close.
+		// Still send the scrollback (which contains the death notice) so the
+		// user sees what happened, then close.
 		scroll := sess.scrollback.Snapshot()
 		sess.mu.Unlock()
 		if len(scroll) > 0 {
@@ -366,40 +489,29 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 		ws.Close()
 		return
 	}
-	if sess.attachedWS != nil {
-		old := sess.attachedWS
-		go func() {
-			// Text frame first so the client can recognise the kick as
-			// "another browser took over" and SKIP its auto-reconnect —
-			// otherwise both browsers ping-pong attaches in a tight loop
-			// (each onclose triggers a reconnect, the reconnect kicks
-			// the other browser, etc.). These two writes go through the
-			// session write-mutex so they can't collide with the ping
-			// goroutine or drainPTY on the conn we're about to close.
-			sess.wsWriteMu.Lock()
-			old.WriteMessage(websocket.TextMessage,
-				[]byte(`{"type":"kicked","reason":"another_browser"}`)) //nolint:errcheck
-			old.WriteMessage(websocket.BinaryMessage,
-				[]byte("\r\n\x1b[33m[disconnected: another browser took over — press Enter to resume here]\x1b[0m\r\n")) //nolint:errcheck
-			sess.wsWriteMu.Unlock()
-			old.Close()
-		}()
+	if sess.viewers == nil {
+		sess.viewers = make(map[*viewer]struct{})
 	}
-	sess.attachedWS = ws
-	if cols > 0 && rows > 0 {
-		sess.cols, sess.rows = cols, rows
+	sess.viewers[v] = struct{}{}
+	becameController := sess.controller == nil
+	if becameController {
+		sess.controller = v
+		if cols > 0 && rows > 0 {
+			sess.cols, sess.rows = cols, rows
+		}
 	}
 	scroll := sess.scrollback.Snapshot()
-	cur := sess.cols
-	cur2 := sess.rows
+	cur, cur2 := sess.cols, sess.rows
+	ctlWin, ctlLabel := "", ""
+	if sess.controller != nil {
+		ctlWin, ctlLabel = sess.controller.windowID, sess.controller.label
+	}
 	sess.mu.Unlock()
 
-	// v6.5.30 — keepalive ping/pong. Set a read deadline; every pong
-	// extends it. The ping ticker fires every pingInterval; if the
-	// network is dead, the next ping write fails AND the read deadline
-	// expires, ws.ReadMessage in the loop below returns an error, we
-	// detach and the client's onclose-driven auto-reconnect re-attaches
-	// to this same session (server replays scrollback).
+	// v6.5.30 — keepalive ping/pong, now PER VIEWER. Set a read deadline; every
+	// pong extends it. If the network is dead the ping write fails AND the read
+	// deadline expires, ReadMessage below errors, we detach, and the client's
+	// onclose auto-reconnect re-attaches (replaying scrollback).
 	ws.SetReadDeadline(time.Now().Add(readDeadline))
 	ws.SetPongHandler(func(string) error {
 		ws.SetReadDeadline(time.Now().Add(readDeadline))
@@ -412,9 +524,9 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 		for {
 			select {
 			case <-ticker.C:
-				sess.wsWriteMu.Lock()
+				v.writeMu.Lock()
 				err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
-				sess.wsWriteMu.Unlock()
+				v.writeMu.Unlock()
 				if err != nil {
 					return
 				}
@@ -425,34 +537,53 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 	}()
 	defer close(pingDone)
 
-	// Replay scrollback before any new output races in. The drainPTY
-	// goroutine will write subsequent chunks to this same WS. Go through
-	// safeWriteWS so the ping goroutine and any in-flight drainPTY
-	// chunks can't interleave on the same conn.
+	// Replay scrollback to THIS viewer only (others already have it). Strip
+	// terminal report-requests so the client's emulator doesn't re-answer them
+	// onto the prompt (e.g. "11;rgb:fafa/fafa/fafa").
 	if len(scroll) > 0 {
-		// Strip terminal report-requests so the client's emulator doesn't
-		// re-answer them onto the shell prompt (e.g. "11;rgb:fafa/fafa/fafa").
-		sess.safeWriteWS(websocket.BinaryMessage, stripScrollbackQueries(scroll))
+		v.write(websocket.BinaryMessage, stripScrollbackQueries(scroll)) //nolint:errcheck
 	}
-	if cur > 0 && cur2 > 0 {
+	// Tell this viewer whether it's the controller (drives its dot colour).
+	v.write(websocket.TextMessage, controlFrame(becameController, ctlWin, ctlLabel)) //nolint:errcheck
+	if becameController && cur > 0 && cur2 > 0 {
 		pty.Setsize(sess.ptmx, &pty.Winsize{Cols: cur, Rows: cur2}) //nolint:errcheck
 	}
 
-	// Pump WS → PTY until WS dies. The PTY → WS direction runs in drainPTY.
+	// Pump WS → PTY. Only the controller's keystrokes reach the PTY; a mirror's
+	// raw input is dropped (its Enter arrives as a take-control message instead).
 	for {
 		mt, data, err := ws.ReadMessage()
 		if err != nil {
 			break
 		}
 		if mt == websocket.TextMessage {
-			// Try resize control message.
 			if c, r2, ok := parseResize(data); ok {
+				v.cols, v.rows = c, r2
 				sess.mu.Lock()
-				sess.cols, sess.rows = c, r2
+				isCtl := sess.controller == v
+				if isCtl {
+					sess.cols, sess.rows = c, r2
+				}
 				sess.mu.Unlock()
-				pty.Setsize(sess.ptmx, &pty.Winsize{Cols: c, Rows: r2}) //nolint:errcheck
+				if isCtl {
+					pty.Setsize(sess.ptmx, &pty.Winsize{Cols: c, Rows: r2}) //nolint:errcheck
+				}
 				continue
 			}
+			switch ctrlMsgType(data) {
+			case "take-control":
+				sess.takeControl(v)
+				continue
+			case "release-control":
+				sess.releaseControl(v)
+				continue
+			}
+		}
+		sess.mu.Lock()
+		isCtl := sess.controller == v
+		sess.mu.Unlock()
+		if !isCtl {
+			continue // mirror — ignore input
 		}
 		io.Copy(sess.ptmx, sliceReader(data)) //nolint:errcheck
 		sess.mu.Lock()
@@ -460,12 +591,9 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16) {
 		sess.mu.Unlock()
 	}
 
-	// WS closed — detach but leave the PTY running.
-	sess.mu.Lock()
-	if sess.attachedWS == ws {
-		sess.attachedWS = nil
-	}
-	sess.mu.Unlock()
+	// WS closed — remove this viewer (PTY keeps running; session goes
+	// uncontrolled if this was the controller).
+	sess.removeViewer(v)
 }
 
 // enforceUserCap evicts the oldest detached session above the cap.
@@ -497,19 +625,26 @@ func (s *Store) enforceUserCap(userID string, max int) {
 func (sess *Session) snapshot() Snapshot {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	ctlWin, ctlLabel := "", ""
+	if sess.controller != nil {
+		ctlWin, ctlLabel = sess.controller.windowID, sess.controller.label
+	}
 	return Snapshot{
-		ID:         sess.id,
-		UserID:     sess.userID,
-		Kind:       sess.kind,
-		Target:     sess.target,
-		Title:      sess.title,
-		CreatedAt:  sess.createdAt,
-		LastActive: sess.lastActive,
-		Terminated: sess.terminated,
-		TermReason: sess.termReason,
-		Attached:   sess.attachedWS != nil,
-		Cols:       sess.cols,
-		Rows:       sess.rows,
+		ID:               sess.id,
+		UserID:           sess.userID,
+		Kind:             sess.kind,
+		Target:           sess.target,
+		Title:            sess.title,
+		CreatedAt:        sess.createdAt,
+		LastActive:       sess.lastActive,
+		Terminated:       sess.terminated,
+		TermReason:       sess.termReason,
+		Attached:         len(sess.viewers) > 0,
+		Cols:             sess.cols,
+		Rows:             sess.rows,
+		ControllerWindow: ctlWin,
+		ControllerLabel:  ctlLabel,
+		ViewerCount:      len(sess.viewers),
 	}
 }
 

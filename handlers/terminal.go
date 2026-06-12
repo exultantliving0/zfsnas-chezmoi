@@ -103,6 +103,12 @@ func wsAttachOrCreate(ws *websocket.Conn, r *http.Request,
 		}
 		reattach = true
 	} else {
+		// A client opening a SECOND session for the same target passes its own
+		// suffixed label (e.g. "buildserver216 (1)") via ?title= so every window
+		// shows the same name (v6.6.11). Falls back to the handler's default.
+		if t := r.URL.Query().Get("title"); t != "" {
+			title = t
+		}
 		var err error
 		ts, err = store.New(userID, kind, target, title, spawn)
 		if err != nil {
@@ -121,7 +127,53 @@ func wsAttachOrCreate(ws *websocket.Conn, r *http.Request,
 	cols := parseUint16(r.URL.Query().Get("cols"))
 	rows := parseUint16(r.URL.Query().Get("rows"))
 
-	store.Attach(ts, ws, cols, rows)
+	// window_id identifies the browser window so multiple windows (even the same
+	// user from different computers) can each be a viewer, with one controller.
+	// The label ("<ip> · <browser>") is surfaced in the UI so the user can see
+	// WHO holds a terminal when a control transfer happens.
+	store.Attach(ts, ws, cols, rows, r.URL.Query().Get("window_id"), viewerLabel(r))
+}
+
+// viewerLabel builds a short "who is this" string from the request: the client
+// IP plus a coarse browser/OS name parsed from the User-Agent.
+func viewerLabel(r *http.Request) string {
+	ip := clientIP(r)
+	b := browserName(r.UserAgent())
+	switch {
+	case ip != "" && b != "":
+		return ip + " · " + b
+	case b != "":
+		return b
+	default:
+		return ip
+	}
+}
+
+// browserName returns a coarse browser/device name from a User-Agent string.
+func browserName(ua string) string {
+	switch {
+	case ua == "":
+		return ""
+	case strings.Contains(ua, "iPad"):
+		return "Safari · iPad"
+	case strings.Contains(ua, "iPhone"):
+		return "Safari · iPhone"
+	case strings.Contains(ua, "Edg/"):
+		return "Edge"
+	case strings.Contains(ua, "OPR/") || strings.Contains(ua, "Opera"):
+		return "Opera"
+	case strings.Contains(ua, "Firefox/"):
+		return "Firefox"
+	case strings.Contains(ua, "Chrome/"):
+		if strings.Contains(ua, "Android") {
+			return "Chrome · Android"
+		}
+		return "Chrome"
+	case strings.Contains(ua, "Safari/"):
+		return "Safari"
+	default:
+		return "browser"
+	}
 }
 
 func boolJSON(b bool) string {

@@ -81,9 +81,14 @@ const terminalMultiPageHTML = `<!DOCTYPE html>
   }
   .tab .closex:hover { background:#444; color:#fff; }
   .tab .term-dot {
-    width:6px; height:6px; border-radius:50%; background:var(--ok); display:inline-block;
+    width:7px; height:7px; border-radius:50%; background:var(--muted); display:inline-block; flex-shrink:0;
   }
-  .tab.terminated .term-dot { background:var(--muted); }
+  /* v6.6.11 control dots: green = this window controls it, blue = another window
+     controls it (click to view, Enter to take over), grey = terminated. */
+  .tab .term-dot.ctl-controller { background:#28ca42; box-shadow:0 0 5px rgba(40,202,66,.7); }
+  .tab .term-dot.ctl-mirror     { background:#3fa9ff; box-shadow:0 0 5px rgba(63,169,255,.7); }
+  .tab .term-dot.ctl-terminated,
+  .tab.terminated .term-dot     { background:var(--muted); box-shadow:none; }
   #tabs .addbtn {
     padding:6px 12px; cursor:pointer; color:var(--muted); font-size:18px; line-height:1;
     border-right:1px solid var(--bd);
@@ -216,6 +221,37 @@ document.addEventListener('click', () => {
   addMenu.classList.remove('show');
   gearMenu.classList.remove('show');
 });
+
+// v6.6.11 — a stable id for THIS browser window. Sent on every WS connect so the
+// server's multi-controller model can tell windows apart (green dot = this
+// window controls the session, blue = another window does).
+const WINDOW_ID = (function(){
+  try { return (window.crypto && crypto.randomUUID ? crypto.randomUUID() : ('w'+Date.now()+'-'+Math.random())).slice(0,18); }
+  catch(_) { return 'w'+Date.now(); }
+})();
+
+// Human "who controls this" tooltip for a tab's dot.
+function _ctlTitle(t){
+  if (t.terminated) return 'session ended';
+  if (t.control === 'controller') return 'you control this terminal';
+  if (t.control === 'mirror') return 'controlled by ' + (t.byLabel || 'another window') + ' — press Enter (in this tab) to take over';
+  return '';
+}
+// Paint a tab's control dot from its state (control: 'controller'|'mirror', or
+// terminated). Called live on each control frame + by renderTabBar.
+function updateTabDot(tab){
+  if (!tab || !tab.tabEl) return;
+  const dot = tab.tabEl.querySelector('.term-dot');
+  if (!dot) return;
+  dot.classList.remove('ctl-controller','ctl-mirror','ctl-terminated');
+  const st = tab.terminated ? 'terminated' : (tab.control === 'mirror' ? 'mirror' : (tab.control === 'controller' ? 'controller' : ''));
+  if (st) dot.classList.add('ctl-' + st);
+  try { dot.title = _ctlTitle(tab); } catch(_) {}
+}
+function setTabControl(tab, state){
+  tab.control = state;          // 'controller' | 'mirror'
+  updateTabDot(tab);
+}
 
 // ── Gear menu / font size + theme ──────────────────────────────────────────
 const gearBtn = document.getElementById('gear-btn');
@@ -494,7 +530,8 @@ function renderTabBar() {
   TABS.forEach((t, i) => {
     const el = document.createElement('div');
     el.className = 'tab' + (i === activeIdx ? ' active' : '') + (t.terminated ? ' terminated' : '');
-    el.innerHTML = '<span class="term-dot"></span>'
+    const dotCls = t.terminated ? 'ctl-terminated' : (t.control ? ('ctl-'+t.control) : '');
+    el.innerHTML = '<span class="term-dot ' + dotCls + '" title="' + esc(_ctlTitle(t)) + '"></span>'
                  + '<span class="ic">' + kindIcon(t.kind) + '</span>'
                  + '<span class="ttl">' + esc(t.title || t.kind) + '</span>'
                  + '<span class="closex" title="Close session">×</span>';
@@ -524,9 +561,30 @@ function kindIcon(k) {
   return '⌨';
 }
 
+// v6.6.11 — a window controls ONLY its active tab. Take control of the active
+// one (turns it green; the user types here) and release any OTHER tab this
+// window still controls (turns it blue so the windows actually using it keep it,
+// unimpacted). Safe to call repeatedly.
+function _enforceActiveControl(takeActive) {
+  TABS.forEach((t, j) => {
+    if (!t.ws || t.ws.readyState !== 1 || t.terminated || t.kicked) return;
+    if (j === activeIdx) {
+      // Take control of the active tab only on a user/initial action — NOT in
+      // response to a control frame, or two windows fighting over the same
+      // active tab would ping-pong forever. (Enter still reclaims a stolen tab.)
+      if (takeActive && t.control !== 'controller') { try { t.ws.send(JSON.stringify({type:'take-control'})); sendResize(t); } catch(_) {} }
+    } else if (t.control === 'controller') {
+      // Never hold control of a tab we're not looking at — release so the window
+      // actually using it keeps it.
+      try { t.ws.send(JSON.stringify({type:'release-control'})); } catch(_) {}
+    }
+  });
+}
+
 function activateTab(i) {
   if (i < 0 || i >= TABS.length) return;
   activeIdx = i;
+  _enforceActiveControl(true);
   TABS.forEach((t, j) => {
     if (t.paneEl) t.paneEl.classList.toggle('active', i === j);
   });
@@ -763,6 +821,24 @@ function attachTab(tab, opts) {
   // VGA tabs have no PTY WebSocket to attach — the embedded iframe owns its
   // own SPICE connection and reconnect loop.
   if (tab.kind === 'vga') return;
+  // v6.6.11 — fully tear down any previous socket BEFORE opening a new one.
+  // Otherwise (notably the iPad force-reconnect on resume) the old zombie WS
+  // stays attached as a 2nd server-side viewer: the PTY echo/output is then
+  // delivered to BOTH sockets and written to the same xterm twice → duplicate
+  // characters while typing and duplicate output lines. Null its handlers so it
+  // can't write to the term or trigger its own reconnect, then close it.
+  if (tab.ws) {
+    try { tab.ws.onopen = tab.ws.onmessage = tab.ws.onerror = tab.ws.onclose = null; } catch (_) {}
+    try { tab.ws.close(); } catch (_) {}
+    tab.ws = null;
+  }
+  // A new connection's control state is unknown until the server's control frame
+  // arrives — reset to mirror (blue). Without this, a RECONNECT (e.g. iPad
+  // resume) keeps the stale 'controller' state, so the initial control:false
+  // frame looks like another window stole it → the bogus "another window took
+  // control" notice + a failure to re-take control. Resetting also makes the
+  // session-frame _enforceActiveControl re-claim the active tab.
+  tab.control = 'mirror';
   const term = tab.term;
   if (opts.reset) { term.reset(); term.write('\r\n[connecting…]\r\n'); }
 
@@ -799,6 +875,8 @@ function attachTab(tab, opts) {
   const sep = path.includes('?') ? '&' : '?';
   let url = path + sep + 'cols=' + term.cols + '&rows=' + term.rows;
   if (tab.id) url += '&session_id=' + encodeURIComponent(tab.id);
+  url += '&window_id=' + encodeURIComponent(WINDOW_ID);
+  if (tab.openTitle) url += '&title=' + encodeURIComponent(tab.openTitle);
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(proto + '//' + location.host + url);
@@ -814,13 +892,34 @@ function attachTab(tab, opts) {
           tab.kicked = false;
           tab.reconnectAttempt = 0;
           renderTabBar();
+          // WS is established — claim control if this is the active tab, release
+          // any non-active tab we still hold.
+          _enforceActiveControl(true);
+          return;
+        } else if (msg.type === 'control') {
+          // v6.6.11: green = this window controls the active tab, blue = a live
+          // mirror. The WS stays attached either way. Reconcile (release-only)
+          // so an auto-promoted non-active tab drops back to blue — but never
+          // auto-reclaim, to avoid two windows ping-ponging the active tab.
+          const wasController = tab.control === 'controller';
+          tab.byLabel = msg.by_label || '';
+          setTabControl(tab, msg.controller ? 'controller' : 'mirror');
+          // Only a DIFFERENT window (by !== our WINDOW_ID) is a real steal. On a
+          // single device every connection — including our own reconnects — shares
+          // one WINDOW_ID, so without this guard an iPad-resume reconnect looked
+          // like "another window took control". Show who (ip · browser) when real.
+          if (!msg.controller && wasController && msg.by && msg.by !== WINDOW_ID && TABS[activeIdx] === tab) {
+            const who = msg.by_label ? (' (' + msg.by_label + ')') : '';
+            try { term.write('\r\n\x1b[36m[another window took control' + who + ' — press Enter to take it back]\x1b[0m\r\n'); } catch(_) {}
+          }
+          _enforceActiveControl(false);
           return;
         } else if (msg.type === 'kicked') {
-          // Another browser took over this session — stop reconnecting
-          // so we don't ping-pong attaches in a tight loop. Write our own
-          // resume hint so it shows even when the session's server runs an
-          // older binary whose kick notice doesn't mention Enter.
+          // Back-compat with an OLDER peer (single-active): it closes our conn
+          // on kick. Latch tab.kicked so onclose doesn't ping-pong reconnect;
+          // Enter re-attaches to take it back. New peers send 'control' instead.
           tab.kicked = true;
+          setTabControl(tab, 'mirror');
           try { term.write('\r\n\x1b[33m[another browser took over — press Enter to resume here]\x1b[0m\r\n'); } catch(_) {}
           return;
         } else if (msg.type === 'error') {
@@ -854,15 +953,23 @@ function attachTab(tab, opts) {
   // Dispose the previous onData binding so reconnects don't stack handlers.
   if (tab._onDataDisp) { try { tab._onDataDisp.dispose(); } catch (_) {} }
   tab._onDataDisp = term.onData(d => {
+    if (tab.terminated) return;              // dead session — ignore typing
     if (tab.kicked) {
-      // Kicked because another browser took over this session. The first Enter
-      // takes it back HERE (re-attaching kicks the other browser, pausing it).
-      // Swallow other keys so stray input doesn't get lost or queued.
+      // OLD-peer single-active: another browser took over and closed our conn.
+      // First Enter takes it back HERE (re-attach kicks the other browser).
       if (d === '\r' || d === '\n') {
         tab.kicked = false;
         tab.reconnectAttempt = 0;
         try { term.write('\r\n\x1b[36m[resuming…]\x1b[0m\r\n'); } catch (_) {}
         attachTab(tab, { reset: false });
+      }
+      return;
+    }
+    if (tab.control === 'mirror') {
+      // v6.6.11: live mirror of a session another window controls. Enter claims
+      // control (server flips the dots); other keystrokes are swallowed.
+      if (d === '\r' || d === '\n') {
+        try { if (ws.readyState === 1) { ws.send(JSON.stringify({type:'take-control'})); sendResize(tab); } } catch (_) {}
       }
       return;
     }
@@ -889,19 +996,31 @@ function scheduleReconnect(tab) {
   }, delay);
 }
 
-// v6.5.30 — proactively reconnect when the user returns to the tab
-// (foreground after iPad sleep, switching back, etc.) so we don't wait
-// for the next backoff tick. Same idea as the bottom terminal.
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
-  TABS.forEach(tab => {
-    if (tab.closing || tab.kicked) return;
-    if (!tab.ws || tab.ws.readyState >= WebSocket.CLOSING) {
+// v6.6.11 — iPadOS often restores a ZOMBIE WebSocket on resume: readyState is
+// still OPEN but the socket is dead, so the old "reconnect only when CLOSING"
+// check did nothing and the user stared at a frozen terminal for the few
+// seconds it took the ping/read-deadline to notice. On iOS we now FORCE-recycle
+// the active tab's socket on return; desktop keeps the cheap readyState check.
+const _IS_IOS = (function(){ try {
+  return /iP(ad|hone|od)/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+} catch(_) { return false; } })();
+function _resumeTerminals() {
+  TABS.forEach((tab, i) => {
+    if (tab.closing || tab.kicked || tab.terminated) return;
+    const stale = !tab.ws || tab.ws.readyState >= WebSocket.CLOSING;
+    const forceIOS = _IS_IOS && i === activeIdx; // only the visible tab matters
+    if (stale || forceIOS) {
+      // attachTab tears down the previous socket first, so the zombie can't
+      // linger as a duplicate viewer. (No manual close here — that could fire
+      // the old onclose → an extra reconnect.)
       tab.reconnectAttempt = 0;
       attachTab(tab, {reset:false});
     }
   });
-});
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _resumeTerminals(); });
+window.addEventListener('pageshow', _resumeTerminals); // bfcache restore (iPad)
 
 // ── Bootstrap: list existing sessions, build tabs ──────────────────────────
 
@@ -972,6 +1091,10 @@ function addTabFromSnapshot(s) {
     serverId: s.is_local ? '' : (s.server_id || ''),
     title,
     terminated: s.terminated,
+    // Alive tabs start BLUE (mirror), never grey — control follows the active
+    // tab, so a restored window controls only the tab it lands on. The active
+    // tab takes control (green) via _enforceActiveControl right after restore.
+    control: 'mirror',
   };
   TABS.push(tab);
   renderTabBar();
@@ -999,18 +1122,22 @@ function addTabFromSpec(spec, displayTitle) {
     kind   = idx === -1 ? spec : spec.slice(0, idx);
     target = idx === -1 ? '' : spec.slice(idx+1);
   }
-  // Avoid duplicating a tab for the same (server, kind, target) if one
-  // is already attached.
-  const existing = TABS.findIndex(t => (t.serverId||'') === serverId
-                                    && t.kind === kind
-                                    && t.target === target
-                                    && !t.terminated);
-  if (existing >= 0) { activateTab(existing); return; }
-  // For the OS-update kind the target is the host name, shown as "updater:<host>".
-  const title = (kind === 'updater')
-    ? ('updater:' + (target || 'host'))
-    : (displayTitle || target || kind);
-  const tab = { id:'', kind, target, serverId, title, terminated:false };
+  // v6.6.11 — opening a target that already has a tab spawns ANOTHER independent
+  // session, labelled "<base> (1)", "(2)", … (next free index among same-base
+  // tabs). The suffixed title is sent to the server (tab.openTitle → ?title=) so
+  // every window shows the same label.
+  const base = (kind === 'updater') ? ('updater:' + (target || 'host'))
+                                    : (displayTitle || target || kind);
+  const used = new Set();
+  TABS.forEach(t => {
+    if ((t.serverId||'') !== serverId || t.kind !== kind || t.target !== target) return;
+    const m = /^(.*?)(?: \((\d+)\))?$/.exec(t.title || '');
+    if (m && m[1] === base) used.add(m[2] ? parseInt(m[2],10) : 0);
+  });
+  let suffix = 0;
+  while (used.has(suffix)) suffix++;
+  const title = suffix === 0 ? base : (base + ' (' + suffix + ')');
+  const tab = { id:'', kind, target, serverId, title, openTitle: title, terminated:false };
   TABS.push(tab);
   renderTabBar();
   buildPane(tab);
