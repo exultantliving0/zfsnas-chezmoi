@@ -64,6 +64,7 @@ var sudoersSectionInfoMap = map[string]sudoersSectionInfo{
 	"ZFSNAS_SCAN":      {Label: "Folder Usage Scanning"},
 	"ZFSNAS_FILES":     {Label: "File Browser"},
 	"ZFSNAS_SYSTEM":    {Label: "System Management"},
+	"ZFSNAS_JOURNAL":   {Label: "System Journal Log Viewer"},
 	"ZFSNAS_NTP":       {Label: "Network Time (chrony NTP)", Optional: true},
 	"ZFSNAS_INCUSNET":  {Label: "Incus Network Bridges (VLAN interfaces)", Optional: true},
 	"ZFSNAS_INCUS":     {Label: "Incus Compute (Proxmox Import + ISO Management)", Optional: true},
@@ -1363,6 +1364,15 @@ Cmnd_Alias ZFSNAS_SYSTEM = \
     /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_max, \
     /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_min
 
+# ── System journal log viewer ─────────────────────────────────────────────────
+# since v6.6.12 — Activity & Events page journal tabs (Kernel Logs, ZFSNAS
+#   Service, Virtualization Services, All Journals). Read-only journalctl access
+#   so an admin can inspect kernel/service logs from the portal. Core (not
+#   virtualization-gated) because the kernel/service/all views are useful on any
+#   host; the journal tabs are simply hidden in the UI when this grant is absent.
+Cmnd_Alias ZFSNAS_JOURNAL = \
+    /usr/bin/journalctl *
+
 # ── Network Time (chrony NTP) ─────────────────────────────────────────────────
 # since v6.4.18 — NTP server configuration via Settings > General > Network Time
 #   (card is only visible when chrony is installed and running)
@@ -1529,5 +1539,5 @@ Cmnd_Alias ZFSNAS_SECURITY = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_NTP, ZFSNAS_INCUSNET, ZFSNAS_INCUS, ZFSNAS_VMSETUP, ZFSNAS_APT, ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_JOURNAL, ZFSNAS_NTP, ZFSNAS_INCUSNET, ZFSNAS_INCUS, ZFSNAS_VMSETUP, ZFSNAS_APT, ZFSNAS_SECURITY
 `

@@ -161,6 +161,14 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// when they aggregate; not for browser use.
 	r.HandleFunc("/api/audit/peer-list", HandleAuditPeerList(appCfg)).Methods("POST")
 
+	// --- System journal viewer (Activity & Events > journal tabs) -----------
+	// Availability probe is auth-only (returns available=false for non-admins);
+	// the log read itself is admin-only since system logs are sensitive.
+	r.Handle("/api/journal/available",
+		RequireAuth(http.HandlerFunc(HandleJournalAvailable))).Methods("GET")
+	r.Handle("/api/journal",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleJournal)))).Methods("GET")
+
 	// --- Live alerts (server-side mirror of the browser's registry, for
 	//     interlink aggregation across servers in relay mode) ---
 	r.Handle("/api/live-alerts",

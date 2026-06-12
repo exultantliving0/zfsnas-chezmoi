@@ -295,6 +295,10 @@
     .cs-trigger .cs-label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
     .cs-trigger .cs-arrow { color:var(--text-3); font-size:10px; flex-shrink:0; transition:transform .15s; }
     .cs-trigger.cs-open .cs-arrow { transform:rotate(180deg); }
+    /* Journal toolbar selects: slim them to match the adjacent .btn-sm buttons */
+    .cs-trigger[data-cs="journal-level"], .cs-trigger[data-cs="journal-lines"] {
+      padding:6px 12px; font-size:13px; width:auto; line-height:1.3;
+    }
     .cs-panel {
       position:fixed; z-index:9100;
       background:var(--surface2); border:1px solid var(--border);
@@ -1536,17 +1540,72 @@
       <div class="page hidden" id="page-activity">
         <div class="page-header" style="gap:12px;flex-wrap:wrap;">
           <h2 style="margin-right:auto;">Activity &amp; Events</h2>
-          <input type="search" id="audit-search" placeholder="Filter — text / user / hostname / target…"
-                 oninput="_auditSetFilter(this.value)"
-                 style="flex:1;min-width:220px;max-width:420px;padding:6px 10px;font-size:13px;
-                        background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);
-                        color:var(--text);outline:none;">
-          <button class="btn btn-ghost btn-sm" onclick="loadAudit()">↻ Refresh</button>
+          <!-- Controls for the Activity & Events tab -->
+          <div id="act-events-controls" style="display:flex;gap:8px;align-items:center;flex:1;justify-content:flex-end;">
+            <input type="search" id="audit-search" placeholder="Filter — text / user / hostname / target…"
+                   oninput="_auditSetFilter(this.value)"
+                   style="flex:1;min-width:220px;max-width:420px;padding:6px 10px;font-size:13px;
+                          background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);
+                          color:var(--text);outline:none;">
+            <button class="btn btn-ghost btn-sm" onclick="loadAudit()">↻ Refresh</button>
+          </div>
+          <!-- Controls for the journal tabs -->
+          <div id="act-journal-controls" style="display:none;gap:8px;align-items:center;">
+            <span style="font-size:12px;color:var(--text-3);">Level:</span>
+            <select id="journal-level" onchange="loadJournal()"
+                    title="Show this severity and anything more severe"
+                    style="padding:3px 8px;font-size:13px;line-height:1.5;height:30px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);outline:none;cursor:pointer;">
+              <option value="" selected>All levels</option>
+              <option value="2">Critical+</option>
+              <option value="3">Error+</option>
+              <option value="4">Warning+</option>
+              <option value="5">Notice+</option>
+              <option value="6">Info+</option>
+              <option value="7">Debug</option>
+            </select>
+            <span style="font-size:12px;color:var(--text-3);">Lines:</span>
+            <select id="journal-lines" onchange="loadJournal()"
+                    style="padding:3px 8px;font-size:13px;line-height:1.5;height:30px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);outline:none;cursor:pointer;">
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="75">75</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+              <option value="300">300</option>
+              <option value="400">400</option>
+              <option value="500">500</option>
+            </select>
+            <button class="btn btn-ghost btn-sm" id="jrnl-live-btn" onclick="toggleJournalLive()"
+                    title="Continuously refresh the latest lines">● Live</button>
+            <button class="btn btn-ghost btn-sm" onclick="loadJournal()">↻ Refresh</button>
+          </div>
         </div>
-        <div class="card" id="activity-list">
-          <div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>
+
+        <!-- Tab strip (journal tabs are revealed only when journalctl is available) -->
+        <div style="display:flex;gap:2px;margin-bottom:20px;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+          <button class="cap-tab active" data-atab="events" onclick="switchActivityTab('events')">Activity &amp; Events</button>
+          <button class="cap-tab" data-atab="kernel" id="act-tab-kernel" onclick="switchActivityTab('kernel')" style="display:none;">Kernel Logs</button>
+          <button class="cap-tab" data-atab="zfsnas" id="act-tab-zfsnas" onclick="switchActivityTab('zfsnas')" style="display:none;">ZFSNAS Service</button>
+          <button class="cap-tab" data-atab="incus"  id="act-tab-incus"  onclick="switchActivityTab('incus')"  style="display:none;">Virtualization Services</button>
+          <button class="cap-tab" data-atab="all"    id="act-tab-all"    onclick="switchActivityTab('all')"    style="display:none;">All Journals</button>
         </div>
-        <div id="audit-pagination" style="display:none;display:flex;align-items:center;justify-content:center;gap:12px;padding:16px 0;"></div>
+
+        <!-- Pane: Activity & Events -->
+        <div id="act-pane-events">
+          <div class="card" id="activity-list">
+            <div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>
+          </div>
+          <div id="audit-pagination" style="display:none;display:flex;align-items:center;justify-content:center;gap:12px;padding:16px 0;"></div>
+        </div>
+
+        <!-- Pane: Journal (shared across the kernel/zfsnas/incus/all tabs) -->
+        <div id="act-pane-journal" style="display:none;">
+          <div class="card" style="padding:0;overflow:hidden;">
+            <div id="journal-table-wrap" style="overflow:auto;">
+              <div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- PHYSICAL DISKS -->
@@ -2119,9 +2178,9 @@
                     <label class="form-label">CPU Limit % <span style="font-size:11px;color:var(--text-3);">(blank = unlimited)</span></label>
                     <input type="number" id="lxd-edit-cpu-limitpct" class="input" min="1" max="100" placeholder="e.g. 50">
                   </div>
-                  <!-- Container-only: CPU Priority -->
+                  <!-- CPU Priority (VM + container) -->
                   <div class="form-group" style="margin:0;display:none;" id="lxd-edit-cpu-priority-row">
-                    <label class="form-label">CPU Priority <span style="font-size:11px;color:var(--text-3);">(1–10)</span></label>
+                    <label class="form-label">CPU Priority <span style="font-size:11px;color:var(--text-3);">(1–10)</span> <i class="info-tip" data-tip="CPU Priority (1–10) — scheduling weight when the host's CPUs are oversubscribed (guests are assigned more vCPUs in total than the host physically has).&#10;&#10;Higher = this instance's vCPUs win a larger share of CPU time when guests compete for it; lower = it yields to busier neighbours.&#10;&#10;Only takes effect under contention. When the host has spare CPU, every guest runs at full speed regardless of this value. It does NOT reserve or cap cores — set the vCPU count (and, for containers, CPU Limit %) for hard limits.&#10;&#10;Default 5 is balanced. Maps to Incus limits.cpu.priority."></i></label>
                     <input type="number" id="lxd-edit-cpu-priority" class="input" value="5" min="1" max="10">
                   </div>
                 </div>
@@ -2653,7 +2712,7 @@
                   <span class="vm-hw-summary" id="vmhw-cpu-summary">2 vCPUs</span>
                 </div>
                 <div class="vm-hw-body" style="display:none;">
-                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px;">
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:10px;">
                     <div class="form-group" style="margin:0;">
                       <label>vCPU Count</label>
                       <input type="number" class="input" id="lxd-vm-vcpu" value="2" min="1" max="128"
@@ -2668,6 +2727,10 @@
                         <option value="4">4</option>
                         <option value="8">8</option>
                       </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                      <label>CPU Priority <span style="color:var(--text-3);font-size:11px;">(1–10)</span> <i class="info-tip" data-tip="CPU Priority (1–10) — scheduling weight when the host's CPUs are oversubscribed (guests are assigned more vCPUs in total than the host physically has).&#10;&#10;Higher = this instance's vCPUs win a larger share of CPU time when guests compete for it; lower = it yields to busier neighbours.&#10;&#10;Only takes effect under contention. When the host has spare CPU, every guest runs at full speed regardless of this value. It does NOT reserve or cap cores — set the vCPU count for hard limits.&#10;&#10;Default 5 is balanced. Maps to Incus limits.cpu.priority."></i></label>
+                      <input type="number" class="input" id="lxd-vm-cpu-priority" value="5" min="1" max="10">
                     </div>
                   </div>
                   <div class="form-group" style="margin:0 0 10px 0;">
@@ -3118,7 +3181,7 @@
                       <input type="number" class="input" id="lxd-ct-cpu-limit" min="1" max="100" placeholder="e.g. 50">
                     </div>
                     <div class="form-group" style="margin:0;">
-                      <label>CPU Priority <span style="color:var(--text-3);font-size:11px;">(1–10)</span></label>
+                      <label>CPU Priority <span style="color:var(--text-3);font-size:11px;">(1–10)</span> <i class="info-tip" data-tip="CPU Priority (1–10) — scheduling weight when the host's CPUs are oversubscribed (guests are assigned more vCPUs in total than the host physically has).&#10;&#10;Higher = this instance's vCPUs win a larger share of CPU time when guests compete for it; lower = it yields to busier neighbours.&#10;&#10;Only takes effect under contention. When the host has spare CPU, every guest runs at full speed regardless of this value. It does NOT reserve or cap cores — set the vCPU count (and CPU Limit %) for hard limits.&#10;&#10;Default 5 is balanced. Maps to Incus limits.cpu.priority."></i></label>
                       <input type="number" class="input" id="lxd-ct-cpu-shares" value="5" min="1" max="10">
                     </div>
                   </div>
@@ -12327,7 +12390,8 @@ function showPage(name) {
   // Highlight topbar activity button when on activity page
   if (name === 'activity' && actBtn) { actBtn.style.color = 'var(--accent-2)'; actBtn.style.opacity = '1'; }
   if (name === 'users')     { showPage('settings'); switchSettingsTab('users'); return; }
-  if (name === 'activity')  loadAudit();
+  if (name !== 'activity')  _journalStopLive();
+  if (name === 'activity')  _activityPageEnter();
   if (name === 'prereqs')   loadPrereqs();
   if (name === 'disks')     { loadDisks(); _updateDiskPowerPrereqStatus(); }
   if (name === 'pool')      loadPool();
@@ -12623,6 +12687,10 @@ function toggleActivityBar() {
   }
   document.getElementById('ab-chevron').style.transform = abExpanded ? 'rotate(180deg)' : '';
   if (abExpanded) refreshActivityBar();
+  // Re-fit the journal table after the bar's height transition settles.
+  if (typeof _activityTab !== 'undefined' && _activityTab && _activityTab !== 'events') {
+    setTimeout(_journalFitHeight, 230);
+  }
   // Persist preference (fire-and-forget) — always send full merged prefs.
   if (currentUser) {
     const prefs = Object.assign({}, currentUser.preferences || {}, {activity_bar_collapsed: !abExpanded});
@@ -14855,6 +14923,170 @@ async function loadAudit() {
     _renderAuditPage();
   } catch {
     el.innerHTML = '<div style="color:var(--accent-danger);padding:24px;">Failed to load activity log.</div>';
+  }
+}
+
+// ===== Activity & Events — journal tabs =====
+// The Activity & Events page hosts the audit log plus a set of system-journal
+// tabs (Kernel Logs, ZFSNAS Service, Virtualization Services, All Journals).
+// The journal tabs are admin-only and only appear when `sudo journalctl` works;
+// the "Virtualization Services" tab additionally requires Incus to be installed.
+let _activityTab    = 'events';
+let _journalKind    = 'kernel';
+let _journalLive    = false;
+let _journalTimer   = null;
+let _journalAvail   = false;
+let _journalChecked = false;
+
+// Severity → [label colour, label text, message-text colour]. The message
+// colour is theme-safe (readable on both dark and light): errors red, warnings
+// amber, notice blue, info normal, debug dimmed.
+const _JRNL_PRIO = {
+  0:['#ff453a','EMERG','#ff453a'], 1:['#ff453a','ALERT','#ff453a'], 2:['#ff453a','CRIT','#ff453a'],
+  3:['#ff453a','ERR','#ff453a'],   4:['#ff9f0a','WARN','#ff9f0a'],  5:['#0a84ff','NOTICE','#0a84ff'],
+  6:['var(--text-3)','INFO','var(--text)'], 7:['var(--text-3)','DEBUG','var(--text-3)'],
+};
+
+async function _activityPageEnter() {
+  switchActivityTab('events');
+  loadAudit();
+  // Probe journal availability once per session and reveal the relevant tabs.
+  if (!_journalChecked) {
+    _journalChecked = true;
+    try {
+      const r = await fetch('/api/journal/available');
+      if (r.ok) {
+        const d = await r.json();
+        _journalAvail = !!d.available;
+        if (_journalAvail) {
+          ['kernel','zfsnas','all'].forEach(k => {
+            const b = document.getElementById('act-tab-' + k);
+            if (b) b.style.display = '';
+          });
+          const inc = document.getElementById('act-tab-incus');
+          if (inc) inc.style.display = d.incus ? '' : 'none';
+        }
+      }
+    } catch (_) {}
+  }
+}
+
+function switchActivityTab(tab) {
+  _activityTab = tab;
+  document.querySelectorAll('#page-activity .cap-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.atab === tab));
+  const isEvents = tab === 'events';
+  document.getElementById('act-pane-events').style.display   = isEvents ? '' : 'none';
+  document.getElementById('act-pane-journal').style.display  = isEvents ? 'none' : '';
+  document.getElementById('act-events-controls').style.display  = isEvents ? 'flex' : 'none';
+  document.getElementById('act-journal-controls').style.display = isEvents ? 'none' : 'flex';
+  if (isEvents) {
+    _journalStopLive();
+    return;
+  }
+  // Switching between journal tabs: stop any live loop, load the new source.
+  _journalStopLive();
+  _journalKind = tab;
+  loadJournal();
+}
+
+async function loadJournal() {
+  if (_activityTab === 'events') return;
+  const wrap  = document.getElementById('journal-table-wrap');
+  const lines = document.getElementById('journal-lines').value || '25';
+  const lvl   = document.getElementById('journal-level').value || '';
+  // Only show the big "Loading…" placeholder on a cold load, not on live ticks.
+  if (!_journalLive && wrap.querySelector('table') === null) {
+    wrap.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:24px;">Loading…</div>';
+  }
+  try {
+    const r = await fetch('/api/journal?kind=' + encodeURIComponent(_journalKind) + '&lines=' + lines + (lvl ? '&prio=' + lvl : ''));
+    if (!r.ok) {
+      const msg = (await r.json().catch(() => ({}))).error || ('HTTP ' + r.status);
+      wrap.innerHTML = '<div style="color:var(--accent-danger);padding:24px;">' + esc(msg) + '</div>';
+      return;
+    }
+    const d = await r.json();
+    _renderJournal(d.entries || []);
+  } catch (e) {
+    wrap.innerHTML = '<div style="color:var(--accent-danger);padding:24px;">Failed to load journal.</div>';
+  }
+}
+
+// Size the journal scroll area so it ends exactly at the top of the bottom
+// activity bar — no page-level (frame) scrollbar, just the table's own scroller.
+function _journalFitHeight() {
+  const wrap = document.getElementById('journal-table-wrap');
+  if (!wrap) return;
+  const wrapTop = wrap.getBoundingClientRect().top;     // real offset from viewport top
+  const ab = document.getElementById('activity-bar');
+  const abH = (ab && getComputedStyle(ab).display !== 'none') ? ab.offsetHeight : 0;
+  const h = Math.max(180, Math.floor(window.innerHeight - wrapTop - abH - 12));
+  wrap.style.maxHeight = h + 'px';
+}
+
+function _renderJournal(entries) {
+  const wrap = document.getElementById('journal-table-wrap');
+  _journalFitHeight();
+  if (!entries.length) {
+    wrap.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:24px;">No log entries.</div>';
+    return;
+  }
+  // Preserve scroll-at-bottom so live ticks keep tailing; if the user has
+  // scrolled up to read, leave their position alone.
+  const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 40;
+  let rows = '';
+  for (const e of entries) {
+    const [col, lbl, msgCol] = _JRNL_PRIO[e.prio] || _JRNL_PRIO[6];
+    rows += '<tr style="border-top:1px solid var(--border);">' +
+      '<td style="padding:5px 10px;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--text-2);font-size:12px;vertical-align:top;">' + esc(e.ts) + '</td>' +
+      '<td style="padding:5px 10px;white-space:nowrap;vertical-align:top;">' +
+        '<span style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;color:' + col + ';">' + lbl + '</span></td>' +
+      '<td style="padding:5px 10px;white-space:nowrap;color:var(--text);font-size:12px;vertical-align:top;max-width:200px;overflow:hidden;text-overflow:ellipsis;">' + esc(e.unit || '-') + (e.pid ? '<span style="color:var(--text-3);">[' + esc(e.pid) + ']</span>' : '') + '</td>' +
+      '<td style="padding:5px 10px;font-family:var(--mono,monospace);font-size:12px;color:' + msgCol + ';white-space:pre-wrap;word-break:break-word;vertical-align:top;">' + esc(e.message) + '</td>' +
+    '</tr>';
+  }
+  wrap.innerHTML =
+    '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+      '<thead><tr style="position:sticky;top:0;background:var(--surface2);z-index:1;">' +
+        '<th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-3);font-weight:600;white-space:nowrap;">Time</th>' +
+        '<th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-3);font-weight:600;white-space:nowrap;">Severity</th>' +
+        '<th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-3);font-weight:600;white-space:nowrap;">Service</th>' +
+        '<th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--text-3);font-weight:600;">Message</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+  // Entries are oldest-first; keep the newest visible by tailing to the bottom.
+  if (atBottom) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function toggleJournalLive() {
+  _journalLive = !_journalLive;
+  const btn = document.getElementById('jrnl-live-btn');
+  if (_journalLive) {
+    btn.classList.remove('btn-ghost');
+    btn.classList.add('btn-primary');
+    btn.innerHTML = '<span style="color:#30d158;">●</span> Live';
+    loadJournal();
+    _journalTimer = setInterval(loadJournal, 3000);
+  } else {
+    btn.classList.add('btn-ghost');
+    btn.classList.remove('btn-primary');
+    btn.innerHTML = '● Live';
+    if (_journalTimer) { clearInterval(_journalTimer); _journalTimer = null; }
+  }
+}
+
+// Keep the table fitted when the window resizes or the activity bar is
+// expanded/collapsed while a journal tab is open.
+window.addEventListener('resize', () => {
+  if (_activityTab && _activityTab !== 'events') _journalFitHeight();
+});
+
+function _journalStopLive() {
+  if (_journalTimer) { clearInterval(_journalTimer); _journalTimer = null; }
+  if (_journalLive) {
+    _journalLive = false;
+    const btn = document.getElementById('jrnl-live-btn');
+    if (btn) { btn.classList.add('btn-ghost'); btn.classList.remove('btn-primary'); btn.innerHTML = '● Live'; }
   }
 }
 
@@ -28936,7 +29168,10 @@ function _workloadBuildDatasets(top, sign, colorOffset) {
   top.forEach(t => t.samples.forEach(s => tsSet.add(s.ts)));
   const ts = [...tsSet].sort((a, b) => a - b);
   return top.map((t, i) => {
-    const byTs = new Map(t.samples.map(s => [s.ts, s.avg]));
+    // Honour the Avg/Min/Max selector — the samples carry all three (min/avg/max
+    // per bucket). This was hardcoded to .avg, so changing the aggregation had no
+    // visible effect on the workload charts. Fall back to avg if a field is absent.
+    const byTs = new Map(t.samples.map(s => [s.ts, s[_perfAgg] ?? s.avg]));
     const color = _WORKLOAD_PALETTE[(i + (colorOffset || 0)) % _WORKLOAD_PALETTE.length];
     const data  = ts.map(x => {
       const v = byTs.get(x);
@@ -33394,7 +33629,11 @@ function runReplicationTask(id, name) {
     [['hierarchy','▤ Hierarchy (compact)'],['radial','✷ Star / radial'],['grid','▦ Grid']].forEach(([val,label])=>{
       const it=document.createElement('div');
       it.textContent=(_netLayout===val?'● ':'   ')+label;
-      it.style.cssText='padding:6px 12px;border-radius:5px;white-space:nowrap;cursor:pointer;color:var(--text-1,#e2e2e6);';
+      // Use --text (the real primary-text var) — --text-1 is undefined in the SPA
+      // so the old dark fallback (#e2e2e6) rendered light-grey on the white
+      // theme's white surface, making the menu unreadable. --text is dark on
+      // light themes, light on dark themes.
+      it.style.cssText='padding:6px 12px;border-radius:5px;white-space:nowrap;cursor:pointer;color:var(--text,#e2e2e6);';
       it.onmouseenter=()=>{ it.style.background='rgba(124,124,255,0.18)'; };
       it.onmouseleave=()=>{ it.style.background='transparent'; };
       it.onclick=()=>{ close(); if(val!==_netLayout){ _netLayout=val;
@@ -39532,7 +39771,17 @@ function _bgPollJob(key, label, progressURL, onDone, opts) {
   const st = _bgJobs[key] || (_bgJobs[key] = {});
   // Idempotent: server-authoritative discovery and the localStorage re-attach
   // can both target the same job — only ever run one poll loop per key.
-  if (st._polling) { st.label = label; if (opts.cancelURL) st.cancelURL = opts.cancelURL; return; }
+  if (st._polling) {
+    st.label = label; if (opts.cancelURL) st.cancelURL = opts.cancelURL;
+    // Re-surface in the activity bar if it somehow isn't there — guarantees the
+    // server-authoritative discovery can always restore visibility of a running
+    // task even if a prior transient hiccup had dropped the bar entry.
+    if (typeof activeJobs === 'object' && activeJobs && !activeJobs[key]) {
+      addActiveJob(key, label, { clickFnName:'_openBgJobModal', clickArgs:[key],
+        cancelFnName: st.cancelURL ? '_bgCancelJobByURL' : undefined, cancelJobId: st.cancelURL || undefined });
+    }
+    return;
+  }
   st._polling = true;
   st.label = label; st.progressURL = progressURL; st.cancelURL = opts.cancelURL || '';
   // localOnly jobs (VM/CT backup & restore) belong to THIS host. They keep
@@ -39552,17 +39801,30 @@ function _bgPollJob(key, label, progressURL, onDone, opts) {
 
   let fails = 0;
   (async function poll() {
+    if (!st._polling) return; // job was finalized elsewhere — stop the loop
     if (_relayActive && !st.localOnly) { setTimeout(poll, 3000); return; } // paused: viewing another server
     try {
       const r = await fetch(progressURL, st.localOnly
         ? { credentials: 'same-origin', headers: { 'X-ZNAS-No-Relay': '1' } }
         : { credentials: 'same-origin' });
       if (!r.ok) {
-        if (++fails < 5) { setTimeout(poll, 3000); return; }
-        removeActiveJob(key); _bgJobModalClose(key);
-        showToast(label + ' — polling error', 'error'); return;
+        // v6.6.11 — NEVER drop a background task on a transient poll failure
+        // (network blip, relay hiccup, busy server). The job runs server-side
+        // independent of the browser; losing the activity-bar entry just blinds
+        // the user. So we keep it VISIBLE (degraded) and keep retrying with a
+        // gentle backoff. Only a definitive 404 (server no longer knows this job
+        // → it ended / the registry lost it) finalizes it, and only after a few
+        // consecutive 404s so a momentary blip during a restart can't drop it.
+        fails++;
+        if (r.status === 404) {
+          if (fails >= 4) { _bgFinishJobLost(key); return; }
+        }
+        _bgPollDegrade(st, key, label);
+        setTimeout(poll, _bgRetryDelay(fails));
+        return;
       }
       fails = 0;
+      _bgPollUndegrade(st, key, label);
       const d = await r.json();
       st.lines = d.lines || st.lines;
       st.status = d.status || 'running';
@@ -39571,6 +39833,7 @@ function _bgPollJob(key, label, progressURL, onDone, opts) {
       if (d.phase) st.phase = d.phase;
       if (d.status === 'done' || d.status === 'error' || d.status === 'canceled') {
         st.eta = null;
+        st._polling = false;                    // definitive end — stop the loop
         _bgJobModalRender(key);                 // final paint so an open modal shows the end state
         removeActiveJob(key);
         if (d.status === 'done')  showToast(label + ' — done', 'success');
@@ -39594,11 +39857,35 @@ function _bgPollJob(key, label, progressURL, onDone, opts) {
       _bgJobModalRender(key);
       setTimeout(poll, 3000);
     } catch (e) {
-      if (++fails < 5) { setTimeout(poll, 3000); return; }
-      removeActiveJob(key); _bgJobModalClose(key);
-      showToast(label + ' — ' + String(e), 'error');
+      // Network/parse blip — keep the job visible and keep retrying. We never
+      // remove a running task just because one poll failed.
+      fails++;
+      _bgPollDegrade(st, key, label);
+      setTimeout(poll, _bgRetryDelay(fails));
     }
   })();
+}
+
+// Gentle backoff: 3s, 5s, 7s … capped at 15s, so a long outage doesn't hammer.
+function _bgRetryDelay(fails) { return Math.min(15000, 3000 + Math.max(0, fails - 1) * 2000); }
+
+// Show a tracked job as "reconnecting" in the activity bar WITHOUT removing it,
+// so the user keeps seeing the task while the poller retries.
+function _bgPollDegrade(st, key, label) {
+  if (st) st._degraded = true;
+  if (typeof updateActiveJob === 'function') updateActiveJob(key, label + ' — ⏳ reconnecting…');
+}
+function _bgPollUndegrade(st, key, label) {
+  if (st && st._degraded) { st._degraded = false; if (typeof updateActiveJob === 'function') updateActiveJob(key, label); }
+}
+
+// A job the server no longer knows about (persistent 404). Remove it — but
+// release the _polling latch and the cache so server-side discovery can re-add
+// it if it actually reappears.
+function _bgFinishJobLost(key) {
+  const st = _bgJobs[key]; if (st) st._polling = false;
+  removeActiveJob(key); _bgJobModalClose(key);
+  delete _bgJobs[key];
 }
 
 // Opens (or refreshes) the progress modal for a background job.
@@ -39856,11 +40143,16 @@ async function _bgDiscoverServerJobs() {
       fetch('/api/incus/backup-jobs',  NORELAY).catch(() => null),
       fetch('/api/incus/restore-jobs', NORELAY).catch(() => null),
     ]);
+    // Re-attach any running job the server reports that is NOT currently visible
+    // in the activity bar. Keyed on activeJobs (the bar) — not _bgJobs — so a job
+    // whose bar entry was lost (e.g. a transient poll error in an older build, or
+    // any future regression) is always restored. _bgPollJob is idempotent.
+    const visible = (k) => (typeof activeJobs === 'object' && activeJobs && activeJobs[k]);
     if (br && br.ok) {
       const d = await br.json();
       for (const j of (d.jobs || [])) {
         if (j.status !== 'running' && j.status !== 'queued') continue;
-        if (_bgJobs['bkj-' + j.job_id]) continue; // already tracked here
+        if (visible('bkj-' + j.job_id)) continue;
         const dest = j.dest_kind === 'remote' ? (j.dest_host || 'remote') : 'local';
         _bgPollBackupJob(j.job_id, 'Backup ' + j.instance + ' → ' + dest + ':' + j.dest_pool, _bgJobBoardRefresh);
       }
@@ -39869,7 +40161,7 @@ async function _bgDiscoverServerJobs() {
       const d = await rr.json();
       for (const j of (d.jobs || [])) {
         if (j.status !== 'running' && j.status !== 'queued') continue;
-        if (_bgJobs['brj-' + j.job_id]) continue;
+        if (visible('brj-' + j.job_id)) continue;
         _bgPollRestoreJob(j.job_id, 'Restore ' + j.vm_id + ' → ' + j.clone_name, _bgJobBoardRefresh);
       }
     }
@@ -43956,12 +44248,13 @@ async function openLXDEditModal(name, type) {
     ? 'Assigned Memory'
     : 'Memory <span style="color:var(--text-3);font-size:11px;">(blank = unlimited)</span>';
   document.getElementById('lxd-edit-cpu').placeholder = 'e.g. 2';
-  // CPU grid: 3-col for containers (Cores + Limit% + Priority), 2-col for VMs (vCPUs + Sockets)
+  // CPU grid is 3-col either way: containers show Cores + Limit% + Priority,
+  // VMs show vCPUs + Sockets + Priority (CPU Priority applies to both).
   const cpuGrid = document.getElementById('lxd-edit-cpu-grid');
-  if (cpuGrid) cpuGrid.style.gridTemplateColumns = isVM ? '1fr 1fr' : '1fr 1fr 1fr';
+  if (cpuGrid) cpuGrid.style.gridTemplateColumns = '1fr 1fr 1fr';
   document.getElementById('lxd-edit-sockets-row').style.display = isVM ? '' : 'none';
   document.getElementById('lxd-edit-cpu-limitpct-row').style.display = isVM ? 'none' : '';
-  document.getElementById('lxd-edit-cpu-priority-row').style.display = isVM ? 'none' : '';
+  document.getElementById('lxd-edit-cpu-priority-row').style.display = '';
   // Memory grid: 2-col for containers (Memory + Swap), 1-col for VMs
   const memGrid = document.getElementById('lxd-edit-mem-grid');
   if (memGrid) memGrid.style.gridTemplateColumns = isVM ? '1fr' : '1fr 1fr';
@@ -44139,9 +44432,10 @@ async function openLXDEditModal(name, type) {
     if (!cfg.is_vm) {
       const limitPctEl = document.getElementById('lxd-edit-cpu-limitpct');
       if (limitPctEl) limitPctEl.value = cfg.cpu_limit_pct > 0 ? cfg.cpu_limit_pct : '';
-      const priorityEl = document.getElementById('lxd-edit-cpu-priority');
-      if (priorityEl) priorityEl.value = cfg.cpu_shares > 0 ? cfg.cpu_shares : '5';
     }
+    // CPU Priority applies to VMs and containers alike.
+    const priorityEl = document.getElementById('lxd-edit-cpu-priority');
+    if (priorityEl) priorityEl.value = cfg.cpu_shares > 0 ? cfg.cpu_shares : '5';
     // Container-specific: Swap (LXD only stores allow/disallow, no size).
     if (!cfg.is_vm) {
       const allowEl = document.getElementById('lxd-edit-swap-allow');
@@ -44348,7 +44642,7 @@ async function submitLXDEdit() {
     // Container-specific features
     apply_container_features: !_lxdEditIsVM,
     cpu_limit_pct:  !_lxdEditIsVM ? (parseInt(document.getElementById('lxd-edit-cpu-limitpct')?.value)||0) : 0,
-    cpu_shares:     !_lxdEditIsVM ? (parseInt(document.getElementById('lxd-edit-cpu-priority')?.value)||0) : 0,
+    cpu_shares:     (parseInt(document.getElementById('lxd-edit-cpu-priority')?.value)||0),
     swap_limit:     _editSwapLimit(),
     unprivileged:   !_lxdEditIsVM && (document.getElementById('lxd-edit-unprivileged')?.checked !== false),
     feature_keyctl: !_lxdEditIsVM && !!document.getElementById('lxd-edit-keyctl')?.checked,
@@ -45287,6 +45581,7 @@ async function openNewVMModal() {
   document.getElementById('lxd-vm-name').value        = _vmLabel;
   document.getElementById('lxd-vm-description').value = _vmLabel;
   document.getElementById('lxd-vm-vcpu').value        = '2';
+  { const cp = document.getElementById('lxd-vm-cpu-priority'); if (cp) cp.value = '5'; }
   document.getElementById('lxd-vm-mem').value         = '2';
   { const u = document.getElementById('lxd-vm-mem-unit'); if (u) u.value = 'GB'; }
   document.getElementById('lxd-vm-cpu-pin').value     = '';
@@ -47237,6 +47532,7 @@ async function submitCreateVM(e) {
     auto_start:       document.getElementById('lxd-vm-autostart').checked,
     force_running:    !!document.getElementById('lxd-vm-force-running')?.checked,
     vcpu:             parseInt(document.getElementById('lxd-vm-vcpu').value) || 2,
+    cpu_shares:       parseInt(document.getElementById('lxd-vm-cpu-priority')?.value) || 0,
     memory_mb:        memMB,
     memory_hugepages:   document.getElementById('lxd-vm-hugepages').checked,
     stateful_snapshots: document.getElementById('lxd-vm-stateful-snap').checked,

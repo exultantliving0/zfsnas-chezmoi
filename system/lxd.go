@@ -474,6 +474,7 @@ type LXDCreateVMRequest struct {
 	CDROMIso          string            `json:"cdrom_iso"`              // ISO filename within pool's .isos dir
 	CDROMs            []string          `json:"cdroms"`                 // handler-resolved absolute ISO paths (multi-drive)
 	CPUSockets        int               `json:"cpu_sockets"`            // QEMU socket topology (0 = auto)
+	CPUShares         int               `json:"cpu_shares"`             // 1-10 → limits.cpu.priority (0 = unset); scheduling weight under CPU contention
 	CPUPin            string            `json:"cpu_pin"`                // LXD limits.cpu range string for pinning
 	StatefulSnapshots bool              `json:"stateful_snapshots"`     // sets migration.stateful before first start
 	Firmware          string            `json:"firmware"`               // "uefi" (default) | "bios"
@@ -3616,6 +3617,19 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 		}
 	}
 
+	// CPU scheduling priority (limits.cpu.priority) applies to VMs too. The
+	// container path sets it inside the ApplyContainerFeatures block below, but
+	// that block is skipped for VMs — so handle VMs here. 0 = unset.
+	if cfg.IsVM {
+		priority := ""
+		if cfg.CPUShares > 0 && cfg.CPUShares <= 10 {
+			priority = strconv.Itoa(cfg.CPUShares)
+		}
+		if err := applyConf("limits.cpu.priority", priority); err != nil {
+			return err
+		}
+	}
+
 	// Container-specific features (CPU throttle, swap, security, FUSE).
 	// Skipped for VMs and when the frontend sends apply_container_features=false
 	// (preserves backwards compatibility with older frontend versions).
@@ -4847,6 +4861,11 @@ func LXDCreateVM(req LXDCreateVMRequest, logCh chan<- string) error {
 	}
 	if req.VCPU > 0 {
 		args = append(args, "-c", fmt.Sprintf("limits.cpu=%d", req.VCPU))
+	}
+	// CPU scheduling priority under host CPU contention (Incus accepts this on
+	// VMs as well as containers). 0 = leave unset (Incus default).
+	if req.CPUShares > 0 && req.CPUShares <= 10 {
+		args = append(args, "-c", fmt.Sprintf("limits.cpu.priority=%d", req.CPUShares))
 	}
 	if req.MemoryMB > 0 {
 		args = append(args, "-c", fmt.Sprintf("limits.memory=%dMiB", req.MemoryMB))
