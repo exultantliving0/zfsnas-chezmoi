@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -763,7 +764,17 @@ func runBackupJob(ctx context.Context, job *lxdBackupJob, p config.LXDBackupPoli
 	// SSH route. The peer advertises its real IPs in SSHHosts; probe
 	// each (plus the URL hostname as fallback) and use the first that
 	// authenticates.
-	remoteHost := system.PickReachableSSHHost(remoteInfo.SSHHosts, remoteURL.Hostname(), remoteInfo.ProcessUser)
+	// Pin the peer's SSH host keys (advertised over the authenticated InterLink
+	// channel) into a throwaway known_hosts so the transfer verifies the host
+	// out-of-band and self-heals after a peer reinstall/re-key. Empty when the
+	// peer is older and doesn't advertise keys — falls back to accept-new.
+	knownHosts := system.WriteInterlinkKnownHosts(
+		append(append([]string{}, remoteInfo.SSHHosts...), remoteURL.Hostname()),
+		remoteInfo.SSHHostKeys)
+	if knownHosts != "" {
+		defer os.Remove(knownHosts)
+	}
+	remoteHost := system.PickReachableSSHHost(remoteInfo.SSHHosts, remoteURL.Hostname(), remoteInfo.ProcessUser, knownHosts)
 	if remoteHost == "" {
 		return fmt.Errorf("no SSH-reachable address for peer %s — tried %v and %s. "+
 			"The InterLink URL may point at a reverse proxy; ensure the peer's LAN IP is reachable and its zfsnas SSH key is trusted.",
@@ -814,7 +825,7 @@ func runBackupJob(ctx context.Context, job *lxdBackupJob, p config.LXDBackupPoli
 		}
 		dstDataset := parent + "/" + part.DstBaseName
 		logFn(fmt.Sprintf("[%s] %s -> %s@%s:%s", part.Kind, part.SrcDataset, remoteInfo.ProcessUser, remoteHost, dstDataset))
-		if err := system.RunSyncoidRemote(ctx, part.SrcDataset, remoteHost, remoteInfo.ProcessUser, dstDataset, part.Recursive, part.Kind == "custom", logFn); err != nil {
+		if err := system.RunSyncoidRemote(ctx, part.SrcDataset, remoteHost, remoteInfo.ProcessUser, dstDataset, part.Recursive, part.Kind == "custom", knownHosts, logFn); err != nil {
 			return err
 		}
 	}

@@ -9,11 +9,13 @@ package system
 // registered as a backup instance).
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -496,10 +498,42 @@ func lxdIncusAdminRecoverInner(keepDataset string) ([]byte, error) {
 // lxdRunAdminRecover runs `incus admin recover` non-interactively: don't add
 // another pool, do scan, do recover the found volumes, accept the default for
 // anything else.
+//
+// A hard timeout guards against `incus admin recover` blocking forever on an
+// UNANTICIPATED interactive prompt. We feed a fixed answer script
+// ("no\nyes\nyes\n") for the three expected questions, but recover can ask more
+// — e.g. when it scans a leftover dataset whose name encodes a project that no
+// longer exists it prints "You are currently missing … Please create those
+// missing entries and then hit ENTER:" and waits indefinitely. Without a
+// timeout the restore job stays "running" forever with no error and the masked
+// datasets are never restored (the deferred unmask can't run). The masking in
+// LXDIncusAdminRecoverWithMask hides the known poison; this is the safety net
+// for anything new. On timeout we SIGKILL the whole process group (sudo + the
+// incus child) so nothing is left blocked on stdin.
 func lxdRunAdminRecover() ([]byte, error) {
 	cmd := exec.Command("sudo", "incus", "admin", "recover")
 	cmd.Stdin = strings.NewReader("no\nyes\nyes\n\n")
-	return cmd.CombinedOutput()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return buf.Bytes(), err
+	case <-time.After(5 * time.Minute):
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		<-done
+		return buf.Bytes(), fmt.Errorf("incus admin recover timed out after 5m — it is likely blocked on an "+
+			"unexpected interactive prompt (often a leftover/orphan dataset that references a deleted project); "+
+			"aborted. Output: %s", strings.TrimSpace(buf.String()))
+	}
 }
 
 // LXDIncusAdminRecoverWithMask is the restore-path recover. Beyond hiding other
@@ -512,8 +546,72 @@ func lxdRunAdminRecover() ([]byte, error) {
 func LXDIncusAdminRecoverWithMask(targetName string) ([]byte, error) {
 	renamed := lxdMaskBackupDatasets("")
 	renamed = append(renamed, lxdMaskNonTargetInstances(targetName)...)
+	renamed = append(renamed, lxdMaskStagingLeftovers()...)
 	defer lxdUnmaskBackupDatasets(renamed)
 	return lxdRunAdminRecover()
+}
+
+// lxdMaskStagingLeftovers hides leftover "incoming-restore-*" staging datasets
+// from a PRIOR aborted clone-restore so `incus admin recover` doesn't choke on
+// them. A failed restore can leave a half-pulled custom volume named
+//
+//	<pool-src>/custom/incoming-restore-<project>_<volume>
+//
+// recover then parses "incoming-restore-<project>" as a project that doesn't
+// exist and BLOCKS forever on an interactive "Please create those missing
+// entries and then hit ENTER:" prompt (observed on Incus 6.0.5). The live
+// restore renames its OWN staging datasets to their final names before recover
+// runs, so any dataset still carrying the "incoming-restore-" prefix at this
+// point is garbage from a different, aborted run and is always safe to hide.
+// Masked datasets are moved back by the deferred lxdUnmaskBackupDatasets.
+func lxdMaskStagingLeftovers() []lxdMaskRename {
+	const stagingPrefix = "incoming-restore-"
+	var moves []lxdMaskRename
+	pools, _ := LXDListStoragePools()
+	seen := map[string]bool{}
+	for _, p := range pools {
+		src := getLXDPoolSource(p)
+		if src == "" || seen[src] {
+			continue
+		}
+		seen[src] = true
+		maskParent := src + "/.znas-bkup-mask"
+		for _, sub := range []string{"custom", "virtual-machines", "containers"} {
+			parent := src + "/" + sub
+			out, lerr := exec.Command("zfs", "list", "-H", "-o", "name", "-r", "-d", "1", parent).Output()
+			if lerr != nil {
+				continue
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				ds := strings.TrimSpace(line)
+				if ds == "" || ds == parent {
+					continue
+				}
+				name := ds[strings.LastIndex(ds, "/")+1:]
+				if strings.HasSuffix(name, ".block") {
+					continue // moved together with its parent
+				}
+				if !strings.HasPrefix(name, stagingPrefix) {
+					continue
+				}
+				_ = exec.Command("sudo", "zfs", "create", "-p", maskParent).Run()
+				bucket := maskParent + "/staging_" + sub + "_" + name
+				_ = exec.Command("sudo", "zfs", "create", "-p", bucket).Run()
+				dst := bucket + "/" + name
+				if _, e := exec.Command("sudo", "zfs", "rename", ds, dst).CombinedOutput(); e != nil {
+					continue
+				}
+				moves = append(moves, lxdMaskRename{From: ds, To: dst})
+				if blockDS := ds + ".block"; datasetExists(blockDS) {
+					bdst := bucket + "/" + name + ".block"
+					if _, e := exec.Command("sudo", "zfs", "rename", blockDS, bdst).CombinedOutput(); e == nil {
+						moves = append(moves, lxdMaskRename{From: blockDS, To: bdst})
+					}
+				}
+			}
+		}
+	}
+	return moves
 }
 
 // lxdRegisteredInstanceNames returns the set of names Incus currently has

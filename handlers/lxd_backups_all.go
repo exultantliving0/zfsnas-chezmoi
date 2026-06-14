@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -518,12 +519,20 @@ func HandleCloneRestoreBackup(appCfg *config.AppConfig) http.HandlerFunc {
 								// Resolve a direct SSH transport — the InterLink URL may be a
 								// reverse proxy that forwards only HTTPS. The peer advertises
 								// its real IPs; probe each, fall back to the URL host.
-								sshHost := system.PickReachableSSHHost(remoteInfo.SSHHosts, u.Hostname(), remoteInfo.ProcessUser)
+								// Pin the peer's advertised SSH host keys (verified over the
+								// authenticated channel) so the pull self-heals after a re-key.
+								knownHosts := system.WriteInterlinkKnownHosts(
+									append(append([]string{}, remoteInfo.SSHHosts...), u.Hostname()),
+									remoteInfo.SSHHostKeys)
+								if knownHosts != "" {
+									defer os.Remove(knownHosts)
+								}
+								sshHost := system.PickReachableSSHHost(remoteInfo.SSHHosts, u.Hostname(), remoteInfo.ProcessUser, knownHosts)
 								if sshHost == "" {
 									err = fmt.Errorf("no SSH-reachable address for peer %s (tried %v and %s) — the InterLink URL may point at a reverse proxy that doesn't forward SSH", ls.Hostname, remoteInfo.SSHHosts, u.Hostname())
 								} else {
 									job.appendLine("SSH transport to peer: " + sshHost)
-									err = system.LXDCloneRestoreRemote(ctx, sshHost, remoteInfo.ProcessUser, srcDataset, req.DstDatastore, req.CloneName, req.SnapshotName, req.VMID, job.appendLine)
+									err = system.LXDCloneRestoreRemote(ctx, sshHost, remoteInfo.ProcessUser, srcDataset, req.DstDatastore, req.CloneName, req.SnapshotName, req.VMID, knownHosts, job.appendLine)
 								}
 							}
 						}

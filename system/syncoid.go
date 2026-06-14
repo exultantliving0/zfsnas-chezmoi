@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
@@ -42,7 +43,71 @@ import (
 // HTTPS endpoint behind a proxy, unusable as an SSH transport. The peer
 // advertises its real IPs via RemotePoolsResponse.SSHHosts; we probe
 // each and use the first that actually authenticates.
-func PickReachableSSHHost(candidates []string, urlHost, user string) string {
+// WriteInterlinkKnownHosts writes a throwaway known_hosts file pinning each of
+// `hosts` to every key in `hostKeys` (each "<type> <base64>"), and returns its
+// path. The caller passes this path to PickReachableSSHHost / the syncoid
+// runners so the peer's SSH host identity is verified against keys fetched over
+// the authenticated InterLink channel — not blind TOFU — and so a re-keyed peer
+// self-heals (the file is rebuilt from the current keys on every transfer).
+// Returns "" when hostKeys is empty (older peer that doesn't advertise keys);
+// callers then fall back to the legacy accept-new behaviour. The caller is
+// responsible for os.Remove-ing the returned path.
+func WriteInterlinkKnownHosts(hosts, hostKeys []string) string {
+	if len(hostKeys) == 0 || len(hosts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, h := range hosts {
+		if strings.TrimSpace(h) == "" {
+			continue
+		}
+		for _, k := range hostKeys {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			b.WriteString(h)
+			b.WriteByte(' ')
+			b.WriteString(k)
+			b.WriteByte('\n')
+		}
+	}
+	f, err := os.CreateTemp("", "znas-interlink-knownhosts-*")
+	if err != nil {
+		return ""
+	}
+	// World-readable: syncoid runs under sudo (root) while the probe runs as the
+	// zfsnas service user; both must be able to read it.
+	_ = f.Chmod(0o644)
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return ""
+	}
+	f.Close()
+	return f.Name()
+}
+
+// sshHostKeyOpts returns the ssh -o options selecting host-key verification.
+// With a managed known_hosts file (peer advertised its keys) we verify strictly
+// against it and ignore the system/user known_hosts entirely (which sidesteps a
+// stale entry in /root/.ssh/known_hosts left over from a previous host key).
+// Without one, we keep the legacy lenient accept-new behaviour.
+func sshHostKeyOpts(knownHostsFile string) []string {
+	if knownHostsFile != "" {
+		return []string{
+			"UserKnownHostsFile=" + knownHostsFile,
+			"GlobalKnownHostsFile=/dev/null",
+			"StrictHostKeyChecking=yes",
+		}
+	}
+	return []string{"StrictHostKeyChecking=accept-new"}
+}
+
+// PickReachableSSHHost returns the first host from `candidates` that
+// authenticates as `user`. When knownHostsFile is non-empty the peer's host key
+// is verified against it (see WriteInterlinkKnownHosts); otherwise accept-new.
+func PickReachableSSHHost(candidates []string, urlHost, user, knownHostsFile string) string {
 	tried := map[string]bool{}
 	probe := func(h string) bool {
 		if h == "" || tried[h] {
@@ -51,9 +116,11 @@ func PickReachableSSHHost(candidates []string, urlHost, user string) string {
 		tried[h] = true
 		args := []string{"-i", zfsnasSSHKey(),
 			"-o", "BatchMode=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
-			"-o", "ConnectTimeout=5",
-			user + "@" + h, "true"}
+			"-o", "ConnectTimeout=5"}
+		for _, o := range sshHostKeyOpts(knownHostsFile) {
+			args = append(args, "-o", o)
+		}
+		args = append(args, user+"@"+h, "true")
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		return exec.CommandContext(ctx, "ssh", args...).Run() == nil
@@ -119,10 +186,12 @@ func RunSyncoidLocal(ctx context.Context, src, dst string, recursive, ownSnap bo
 // RunSyncoidRemote replicates a local source dataset to a peer ZNAS over SSH.
 // host = remote IP/hostname; user = remote unix user (matches push-interlink
 // process user); dst = remote dataset path.
-func RunSyncoidRemote(ctx context.Context, src, host, remoteUser, dst string, recursive, ownSnap bool, logFn func(string)) error {
+func RunSyncoidRemote(ctx context.Context, src, host, remoteUser, dst string, recursive, ownSnap bool, knownHostsFile string, logFn func(string)) error {
 	args := []string{"syncoid", "--no-privilege-elevation",
-		"--sshoption=StrictHostKeyChecking=accept-new",
 		"--sshoption=BatchMode=yes"}
+	for _, o := range sshHostKeyOpts(knownHostsFile) {
+		args = append(args, "--sshoption="+o)
+	}
 	if !ownSnap {
 		// root-fs/.block carry an incus-made snapshot already; custom vdisks
 		// don't, so they let syncoid create+prune its own (see RunSyncoidLocal).
@@ -150,10 +219,12 @@ func RunSyncoidRemote(ctx context.Context, src, host, remoteUser, dst string, re
 // RunSyncoidRestore pulls a remote dataset back to a local destination
 // (inverse of RunSyncoidRemote). Used by the Restore/Clone flow when the
 // chosen backup lives on a remote datastore.
-func RunSyncoidRestore(ctx context.Context, srcHost, srcUser, srcDataset, dstDataset string, recursive bool, logFn func(string)) error {
+func RunSyncoidRestore(ctx context.Context, srcHost, srcUser, srcDataset, dstDataset string, recursive bool, knownHostsFile string, logFn func(string)) error {
 	args := []string{"syncoid", "--no-privilege-elevation", "--no-sync-snap",
-		"--sshoption=StrictHostKeyChecking=accept-new",
 		"--sshoption=BatchMode=yes"}
+	for _, o := range sshHostKeyOpts(knownHostsFile) {
+		args = append(args, "--sshoption="+o)
+	}
 	if key := zfsnasSSHKey(); key != "" {
 		args = append(args, "--sshkey="+key)
 	}

@@ -141,7 +141,13 @@ func SendPushSSHKey(remoteURL, sharedSecret, publicKey, tlsFP string) error {
 // pull/push) takes a ZFS hold on the snapshot for the duration of the
 // transfer. Without hold permission, "zfs send" reports
 // "cannot hold: permission denied" and the transfer fails immediately.
-const zfsInterlinkPerms = "snapshot,send,receive,create,mount,hold,release"
+// v6.6.13: added `destroy` because on an INCREMENTAL push syncoid prunes its
+// own previous sync snapshot on the DESTINATION (`zfs destroy <dst>@syncoid_*`).
+// Without destroy delegation the remote zfsnas user hits "cannot destroy
+// snapshots: permission denied" and stale syncoid_* snapshots accumulate on
+// the peer forever (each fire leaves another orphan), eventually bloating the
+// destination and confusing the incremental anchor bookkeeping.
+const zfsInterlinkPerms = "snapshot,send,receive,create,mount,hold,release,destroy"
 
 // GrantLocalZFSAccess grants the required interlink ZFS permissions to the current
 // process user on all local pools. Skipped when running as root (already has full access).
@@ -184,7 +190,11 @@ func CheckLocalZFSAccess() bool {
 	if err != nil || len(pools) == 0 {
 		return false
 	}
-	required := []string{"snapshot", "send", "receive", "create", "mount"}
+	// destroy is required so an existing peer granted before v6.6.13 (without
+	// destroy) fails this check and gets re-granted the fuller permission set
+	// the next time EnsureRemoteZFSAccess runs — self-healing the syncoid
+	// destination-prune "permission denied" on incremental backups.
+	required := []string{"snapshot", "send", "receive", "create", "mount", "destroy"}
 	for _, p := range pools {
 		out, err := exec.Command("zfs", "allow", p.Name).Output()
 		if err != nil {
@@ -341,6 +351,38 @@ type RemotePoolsResponse struct {
 	// peers running a pre-v6.5.19 binary — callers fall back to the
 	// URL hostname in that case.
 	SSHHosts []string `json:"ssh_hosts,omitempty"`
+	// SSHHostKeys (v6.6.13+) — this peer's SSH host PUBLIC keys, read from
+	// /etc/ssh/ssh_host_*_key.pub (each entry "<type> <base64> [comment]").
+	// The caller pins these into a managed known_hosts file used only for
+	// InterLink syncoid transfers, so the host key is verified out-of-band
+	// over the already-authenticated (HMAC + TLS-pinned) InterLink channel
+	// instead of blind TOFU. This also self-heals backups after a peer is
+	// reinstalled / re-keyed: accept-new refuses a CHANGED key, which used to
+	// break every backup to that peer until known_hosts was hand-edited.
+	// Empty on peers running an older binary — callers fall back to the
+	// legacy accept-new behaviour against the default known_hosts.
+	SSHHostKeys []string `json:"ssh_host_keys,omitempty"`
+}
+
+// LocalSSHHostKeys returns this host's SSH host public keys (the contents of
+// /etc/ssh/ssh_host_*_key.pub, one trimmed line each). Advertised to InterLink
+// peers so they can pin our identity for syncoid SSH transfers.
+func LocalSSHHostKeys() []string {
+	matches, _ := filepath.Glob("/etc/ssh/ssh_host_*_key.pub")
+	var keys []string
+	for _, f := range matches {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		// A .pub file is a single line: "<type> <base64> [comment]". Keep the
+		// type + base64; the comment is cosmetic.
+		fields := strings.Fields(strings.TrimSpace(string(b)))
+		if len(fields) >= 2 {
+			keys = append(keys, fields[0]+" "+fields[1])
+		}
+	}
+	return keys
 }
 
 // LocalSSHHosts returns this host's non-loopback IPv4 addresses, primary

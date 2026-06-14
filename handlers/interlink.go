@@ -866,7 +866,11 @@ func HandleInterlinkRemotePools(appCfg *config.AppConfig) http.HandlerFunc {
 			// v6.5.19+: advertise our own IPs so a peer's syncoid can
 			// reach us directly even when the InterLink URL points at
 			// a reverse proxy that doesn't forward SSH.
-			SSHHosts:    system.LocalSSHHosts(),
+			SSHHosts: system.LocalSSHHosts(),
+			// v6.6.13+: advertise our SSH host keys so the caller can pin
+			// them (verified over this authenticated channel) and self-heal
+			// after a reinstall/re-key instead of failing on a changed key.
+			SSHHostKeys: system.LocalSSHHostKeys(),
 		})
 	}
 }

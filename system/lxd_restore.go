@@ -398,7 +398,7 @@ func destroyDatasetSnapshots(dataset string, logFn func(string)) {
 // `snapshotName` works the same as in LXDCloneRestoreLocal — empty means
 // "latest"; otherwise the destination dataset is rolled back to that
 // snapshot after syncoid pull.
-func LXDCloneRestoreRemote(ctx context.Context, srcHost, srcUser, srcDataset, dstDatastore, cloneName, snapshotName, vmID string, logFn func(string)) error {
+func LXDCloneRestoreRemote(ctx context.Context, srcHost, srcUser, srcDataset, dstDatastore, cloneName, snapshotName, vmID, knownHostsFile string, logFn func(string)) error {
 	if !lxdNameRe.MatchString(cloneName) {
 		return fmt.Errorf("invalid clone name %q", cloneName)
 	}
@@ -440,7 +440,7 @@ func LXDCloneRestoreRemote(ctx context.Context, srcHost, srcUser, srcDataset, ds
 		if logFn != nil {
 			logFn(fmt.Sprintf("Pulling %s:%s -> %s", srcHost, remoteSrc, landing))
 		}
-		if err := RunSyncoidRestore(ctx, srcHost, srcUser, remoteSrc, landing, recursive, logFn); err != nil {
+		if err := RunSyncoidRestore(ctx, srcHost, srcUser, remoteSrc, landing, recursive, knownHostsFile, logFn); err != nil {
 			return "", err
 		}
 		if out, err := exec.Command("sudo", "zfs", "rename", landing, final).CombinedOutput(); err != nil {
