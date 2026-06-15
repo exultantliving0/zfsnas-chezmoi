@@ -1526,12 +1526,36 @@ func DeleteWorkloadBackup(zfsPool, vmID, snapshotName string) error {
 	if kind == "" {
 		return fmt.Errorf("workload backup %s not found on pool %s", bkup, zfsPool)
 	}
+	// Refuse to delete a backup that an Instant Independent Restore is still
+	// running off (a ZFS clone hangs off one of its snapshots). ZFS would block
+	// the destroy anyway; this gives the user a clear, actionable message.
+	if snapshotName == "" {
+		if deps := BackupDependents(zfsPool, vmID); len(deps) > 0 {
+			verb := "is"
+			if len(deps) > 1 {
+				verb = "are"
+			}
+			return fmt.Errorf("cannot delete — %s %s running off this backup as an Instant Independent Restore. "+
+				"Promote it to a Full Copy first (the yellow \"Backup Dependent\" button on the instance page)", strings.Join(deps, ", "), verb)
+		}
+	}
 	root := parent + "/" + kind + "/" + bkup
 	parts := []string{root}
 	if kind == "virtual-machines" {
 		block := root + ".block"
 		if datasetExists(block) {
 			parts = append(parts, block)
+		}
+	}
+	// Attached custom-volume backup datasets (<parent>/custom/bkup--<vm>.<vol>)
+	// must be deleted too, otherwise they orphan on the pool forever.
+	if out, err := exec.Command("zfs", "list", "-Hp", "-t", "filesystem,volume", "-o", "name", "-r", parent+"/custom").Output(); err == nil {
+		prefix := parent + "/custom/" + bkup + "."
+		for _, line := range strings.Split(string(out), "\n") {
+			n := strings.TrimSpace(line)
+			if strings.HasPrefix(n, prefix) && !strings.Contains(n[len(prefix):], "/") {
+				parts = append(parts, n)
+			}
 		}
 	}
 	if snapshotName != "" {
@@ -1558,6 +1582,71 @@ func DeleteWorkloadBackup(zfsPool, vmID, snapshotName string) error {
 		}
 	}
 	return anyErr
+}
+
+// BackupDependents returns the instance names currently running off a ZFS clone
+// of the workload backup `bkup--<vmID>` on `zfsPool` (Instant Independent
+// Restores). Empty when the backup is free to delete. Derived from the `clones`
+// property of every snapshot on the backup's datasets (root-fs, .block, customs).
+func BackupDependents(zfsPool, vmID string) []string {
+	bkup := LXDBackupPrefix + vmID
+	parent := LXDWorkloadBackupParent(zfsPool)
+	var datasets []string
+	for _, k := range []string{"virtual-machines", "containers"} {
+		root := parent + "/" + k + "/" + bkup
+		if datasetExists(root) {
+			datasets = append(datasets, root)
+			if datasetExists(root + ".block") {
+				datasets = append(datasets, root+".block")
+			}
+		}
+	}
+	if out, err := exec.Command("zfs", "list", "-Hp", "-t", "filesystem,volume", "-o", "name", "-r", parent+"/custom").Output(); err == nil {
+		prefix := parent + "/custom/" + bkup + "."
+		for _, line := range strings.Split(string(out), "\n") {
+			n := strings.TrimSpace(line)
+			if strings.HasPrefix(n, prefix) && !strings.Contains(n[len(prefix):], "/") {
+				datasets = append(datasets, n)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var insts []string
+	for _, ds := range datasets {
+		so, err := exec.Command("zfs", "list", "-Hp", "-t", "snapshot", "-o", "name", "-d", "1", ds).Output()
+		if err != nil {
+			continue
+		}
+		for _, sl := range strings.Split(string(so), "\n") {
+			snap := strings.TrimSpace(sl)
+			if !strings.HasPrefix(snap, ds+"@") {
+				continue
+			}
+			for _, clone := range ZfsSnapshotClones(snap) {
+				if inst := instanceNameFromCloneDataset(clone); inst != "" && !seen[inst] {
+					seen[inst] = true
+					insts = append(insts, inst)
+				}
+			}
+		}
+	}
+	return insts
+}
+
+// instanceNameFromCloneDataset extracts the instance name from a clone dataset
+// path under an Incus pool, e.g. "<src>/virtual-machines/myvm" → "myvm". Custom-
+// volume clones return "" (the matching root-fs clone already names the instance).
+func instanceNameFromCloneDataset(ds string) string {
+	for _, seg := range []string{"/virtual-machines/", "/containers/"} {
+		if i := strings.Index(ds, seg); i >= 0 {
+			name := ds[i+len(seg):]
+			if j := strings.IndexByte(name, '/'); j >= 0 {
+				name = name[:j]
+			}
+			return strings.TrimSuffix(name, ".block")
+		}
+	}
+	return ""
 }
 
 // ValidBackupCompressions is the closed list of compression values the UI

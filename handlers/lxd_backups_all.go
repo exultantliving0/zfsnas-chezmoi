@@ -61,6 +61,9 @@ func HandleListAllBackups(appCfg *config.AppConfig) http.HandlerFunc {
 					"backup_instance": w.Name,
 					"used_bytes":      w.UsedBytes,
 					"snapshots":       snapList,
+					// Instances running off a ZFS clone of this backup (Instant
+					// Independent Restores). Non-empty → backup can't be deleted.
+					"dependents": system.BackupDependents(w.ZFSPool, vmID),
 				})
 			}
 		}
@@ -359,15 +362,16 @@ func HandleDeleteBackup(appCfg *config.AppConfig) http.HandlerFunc {
 func HandleInstantRestoreBackup(w http.ResponseWriter, r *http.Request) {
 	sess := MustSession(r)
 	var req struct {
-		VMID      string `json:"vm_id"`
-		NewName   string `json:"new_name"`
-		Datastore string `json:"datastore"` // ZFS pool name (e.g. "BIGRAID5"); optional
+		VMID         string `json:"vm_id"`
+		NewName      string `json:"new_name"`
+		Datastore    string `json:"datastore"`     // ZFS pool name (e.g. "BIGRAID5"); optional
+		SnapshotName string `json:"snapshot_name"` // optional point-in-time; "" = latest
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := system.LXDInstantRestoreBackup(req.VMID, req.NewName, req.Datastore); err != nil {
+	if err := system.LXDInstantRestoreBackup(req.VMID, req.NewName, req.Datastore, req.SnapshotName); err != nil {
 		audit.Log(audit.Entry{
 			User: sess.Username, Role: sess.Role,
 			Action:  audit.ActionLXDBackupRestore,
@@ -385,6 +389,90 @@ func HandleInstantRestoreBackup(w http.ResponseWriter, r *http.Request) {
 		Result: audit.ResultOK,
 	})
 	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// HandleBackupDependency reports whether an instance is running off a backup
+// clone (an Instant Independent Restore) and, if so, which backup it pins.
+// GET /api/lxd/instances/{name}/backup-dependency
+func HandleBackupDependency(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	origins, err := system.LXDInstanceBackupOrigins(name)
+	if err != nil {
+		jsonOK(w, map[string]interface{}{"dependent": false})
+		return
+	}
+	resp := map[string]interface{}{"dependent": len(origins) > 0, "origins": origins}
+	if len(origins) > 0 {
+		resp["backup_vm_id"] = origins[0].BackupVMID
+		resp["datastore"] = origins[0].BackupPool
+		resp["snapshot"] = origins[0].Snapshot
+	}
+	jsonOK(w, resp)
+}
+
+// HandlePromoteFullCopy promotes a backup-dependent instance to an independent
+// full copy on the chosen datastore (frees the backup). Runs as a background
+// restore job; progress via /api/lxd/restore-jobs/{id}/progress.
+// POST /api/lxd/instances/{name}/promote-full-copy   body {datastore}
+func HandlePromoteFullCopy(appCfg *config.AppConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess := MustSession(r)
+		name := mux.Vars(r)["name"]
+		var req struct {
+			Datastore string `json:"datastore"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Datastore == "" {
+			jsonErr(w, http.StatusBadRequest, "datastore is required")
+			return
+		}
+		if !system.SyncoidPrereqsInstalled() {
+			jsonErr(w, http.StatusBadRequest, "syncoid is not installed (Prerequisites → ZFS Replication)")
+			return
+		}
+		if origins, _ := system.LXDInstanceBackupOrigins(name); len(origins) == 0 {
+			jsonErr(w, http.StatusBadRequest, name+" is not running off a backup clone — nothing to promote")
+			return
+		}
+		if st, err := system.LXDGetStatus(name); err == nil && !strings.EqualFold(st, "Stopped") {
+			jsonErr(w, http.StatusBadRequest, name+" must be Stopped before promoting to a Full Copy (current: "+st+")")
+			return
+		}
+
+		id := fmt.Sprintf("brj-%d", time.Now().UnixNano())
+		ctx, cancel := context.WithCancel(context.Background())
+		job := &lxdRestoreJob{Status: "running", VMID: name, CloneName: name, StartedAt: time.Now(), cancelFn: cancel}
+		lxdRestoreJobs.Store(id, job)
+
+		go func() {
+			err := system.LXDPromoteToFullCopy(ctx, name, req.Datastore, job.appendLine)
+			job.mu.Lock()
+			if err != nil && err != context.Canceled && job.Status != "canceled" {
+				job.Status = "error"
+				job.Error = err.Error()
+			} else if job.Status != "canceled" {
+				job.Status = "done"
+			}
+			job.mu.Unlock()
+			result := audit.ResultOK
+			details := ""
+			if err != nil && err != context.Canceled {
+				result = audit.ResultError
+				details = err.Error()
+			}
+			audit.Log(audit.Entry{
+				User: sess.Username, Role: sess.Role,
+				Action:  audit.ActionLXDBackupPromote,
+				Target:  name + " → Full Copy (" + req.Datastore + ")",
+				Result:  result,
+				Details: details,
+			})
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{"job_id": id})
+	}
 }
 
 // --- Clone-restore (background job) ---

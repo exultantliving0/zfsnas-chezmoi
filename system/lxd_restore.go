@@ -41,7 +41,25 @@ import (
 // The legacy code path (Incus-registered bkup--<vm>) is still attempted
 // first when no workload dataset is found, so older test data still
 // responds.
-func LXDInstantRestoreBackup(vmID, newName, zfsPool string) error {
+func LXDInstantRestoreBackup(vmID, newName, zfsPool, snapshotName string) error {
+	return LXDInstantCloneRestore(vmID, newName, zfsPool, snapshotName, nil)
+}
+
+// LXDInstantCloneRestore performs an INSTANT INDEPENDENT RESTORE: it `zfs clone`s
+// a LOCAL backup snapshot into the Incus storage pool backing the backup's ZFS
+// pool, then `incus admin recover`s the clone as a new instance <newName>. The
+// instance boots immediately off the clone and NEVER writes to the backup; the
+// clone's `origin` is the backup snapshot, so the backup cannot be deleted until
+// the instance is promoted to a full copy (see LXDPromoteToFullCopy).
+//
+// Constraints (vs the syncoid full-copy LXDCloneRestoreLocal):
+//   - LOCAL only — `zfs clone` needs the snapshot on this host.
+//   - The clone lands on the SAME ZFS pool as the backup (clones can't cross
+//     pools), specifically the Incus pool whose source is that ZFS pool. If no
+//     such Incus pool exists, instant restore is impossible here.
+//
+// snapshotName selects the point-in-time `snapshot-bkp-…` to clone; "" = latest.
+func LXDInstantCloneRestore(vmID, newName, zfsPool, snapshotName string, logFn func(string)) error {
 	if vmID == "" || newName == "" {
 		return fmt.Errorf("vm_id and new_name are required")
 	}
@@ -51,45 +69,329 @@ func LXDInstantRestoreBackup(vmID, newName, zfsPool string) error {
 	if IsBackupInstanceName(newName) {
 		return fmt.Errorf("new name cannot start with %q", LXDBackupPrefix)
 	}
-	src := LXDBackupPrefix + vmID
 	if _, err := LXDGetStatus(newName); err == nil {
 		return fmt.Errorf("instance %q already exists", newName)
 	}
 
-	// --- Workload layout (v6.5.19+ canonical) -----------------------------
-	if pool, _ := findWorkloadBackup(src, zfsPool); pool != "" {
-		incusPool, _ := findIncusPoolForZFSPool(pool)
-		if incusPool == "" {
-			return fmt.Errorf("ZFS pool %q has no Incus storage pool configured — cannot restore here", pool)
-		}
-		// Route through the safe clone-restore path. It replicates with syncoid
-		// (a COPY — it never renames or destroys snapshots on the backup itself),
-		// restores any attached custom-volume vdisks to <pool>/custom/default_<vol>
-		// and keeps their disk devices in backup.yaml, then `incus admin recover`
-		// registers the instance AND those volumes together.
-		//
-		// The previous in-place path moved the backup datasets into the Incus
-		// subtree and destroyed their snapshots before recover; on any recover
-		// failure that left the backup corrupted (snapshots gone, backup.yaml
-		// rewritten) and it never restored custom-volume vdisks at all — which is
-		// what produced `incus admin recover: … device "disk1": … Storage volume
-		// not found`.
-		return LXDCloneRestoreLocal(context.Background(), vmID, pool, incusPool, newName, "", nil)
+	backupName := LXDBackupPrefix + vmID
+	pool, _ := findWorkloadBackup(backupName, zfsPool)
+	if pool == "" {
+		return fmt.Errorf("backup %s not found locally — Instant Independent Restore only works for backups stored on this host", backupName)
+	}
+	incusPool, dstSource := findIncusPoolForZFSPool(pool)
+	if incusPool == "" || dstSource == "" {
+		return fmt.Errorf("ZFS pool %q has no Incus storage pool — Instant Independent Restore can't land here (use Restore / Clone instead)", pool)
 	}
 
-	// --- Legacy Incus-registered fallback ---------------------------------
-	if status, err := LXDGetStatus(src); err == nil {
-		if !strings.EqualFold(status, "Stopped") {
-			return fmt.Errorf("backup instance %s must be Stopped (current: %s)", src, status)
-		}
-		if out, err := exec.Command("incus", "rename", src, newName).CombinedOutput(); err != nil {
-			return fmt.Errorf("incus rename: %s", strings.TrimSpace(string(out)))
-		}
-		resetCloneVolatileState(newName, nil)
-		return nil
+	parts, kind, err := LXDBackupInstanceDatasets(backupName, pool)
+	if err != nil {
+		return fmt.Errorf("locate backup instance: %w", err)
 	}
 
-	return fmt.Errorf("backup %s not found on this host (workload nor Incus layout)", src)
+	// Resolve the canonical snapshot to clone from the root-fs part, then reuse
+	// that exact name on the sibling parts (they share one atomic instance
+	// snapshot). Fall back per-part if a custom volume lacks it.
+	rootSnap := resolveCloneSnapshot(parts[0].SrcDataset, snapshotName)
+	if rootSnap == "" {
+		return fmt.Errorf("backup %s has no snapshot to restore from", backupName)
+	}
+
+	// Map each captured custom volume's original name → its restored name.
+	volRemap := map[string]string{}
+	for _, pt := range parts {
+		if pt.Kind != "custom" {
+			continue
+		}
+		origVol := strings.TrimPrefix(pt.DstBaseName, backupName+".")
+		newVol := origVol
+		if strings.Contains(origVol, vmID) {
+			newVol = strings.Replace(origVol, vmID, newName, 1)
+		} else {
+			newVol = newName + "-" + origVol
+		}
+		volRemap[origVol] = newVol
+	}
+
+	dstParent := dstSource + "/" + kind
+	_ = exec.Command("sudo", "zfs", "create", "-p", dstParent).Run()
+	_ = exec.Command("sudo", "zfs", "create", "-p", dstSource+"/custom").Run()
+
+	for _, part := range parts {
+		finalBase := strings.Replace(part.DstBaseName, backupName, newName, 1)
+		parent := dstParent
+		if part.Kind == "custom" {
+			parent = dstSource + "/custom"
+			origVol := strings.TrimPrefix(part.DstBaseName, backupName+".")
+			finalBase = "default_" + volRemap[origVol]
+		}
+		finalDataset := parent + "/" + finalBase
+		// Pick the snapshot on THIS part: the canonical one if present, else its
+		// own latest (custom volumes carry an independent syncoid snapshot too).
+		snap := rootSnap
+		if !datasetExists(part.SrcDataset + "@" + snap) {
+			snap = resolveCloneSnapshot(part.SrcDataset, "")
+			if snap == "" {
+				return fmt.Errorf("backup part %s has no snapshot to clone", part.SrcDataset)
+			}
+		}
+		// Clear any orphan at the final path (newName proven not a live instance).
+		_ = exec.Command("sudo", "zfs", "destroy", "-r", finalDataset).Run()
+		if logFn != nil {
+			logFn(fmt.Sprintf("[%s] clone %s@%s -> %s", part.Kind, part.SrcDataset, snap, finalDataset))
+		}
+		if out, err := exec.Command("sudo", "zfs", "clone", part.SrcDataset+"@"+snap, finalDataset).CombinedOutput(); err != nil {
+			return fmt.Errorf("zfs clone %s@%s: %s", part.SrcDataset, snap, strings.TrimSpace(string(out)))
+		}
+		if part.Kind == "root-fs" {
+			if logFn != nil {
+				logFn(fmt.Sprintf("Rewriting backup.yaml: pool→%s, name %s→%s, snapshots→[]", incusPool, vmID, newName))
+			}
+			if err := LXDRewriteBackupYAMLForRestore(finalDataset, incusPool, dstSource, vmID, newName, volRemap); err != nil && logFn != nil {
+				logFn("rewrite backup.yaml: " + err.Error())
+			}
+		}
+	}
+
+	if logFn != nil {
+		logFn("Running incus admin recover on " + incusPool)
+	}
+	out, err := LXDIncusAdminRecoverWithMask(newName)
+	if logFn != nil {
+		for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if ln != "" {
+				logFn("  recover: " + ln)
+			}
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("incus admin recover: %s", strings.TrimSpace(string(out)))
+	}
+	resetCloneVolatileState(newName, logFn)
+	return nil
+}
+
+// resolveCloneSnapshot picks the snapshot short-name to clone from `dataset`.
+// `preferred` (if it exists) wins; otherwise the newest "snapshot-bkp-*"; else
+// the newest snapshot of any name. Returns "" when the dataset has none.
+func resolveCloneSnapshot(dataset, preferred string) string {
+	if preferred != "" && datasetExists(dataset+"@"+preferred) {
+		return preferred
+	}
+	out, err := exec.Command("zfs", "list", "-Hp", "-t", "snapshot", "-o", "name", "-s", "creation", "-d", "1", dataset).Output()
+	if err != nil {
+		return ""
+	}
+	var lastBkp, lastAny string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		name := strings.TrimSpace(line)
+		at := strings.IndexByte(name, '@')
+		if at < 0 {
+			continue
+		}
+		short := name[at+1:]
+		lastAny = short
+		// Backup fires land as "snapshot-bkp-to-<label>-<date>" on the backup
+		// dataset; prefer those over any stray syncoid_* sync snapshot.
+		if strings.Contains(short, "bkp-to-") {
+			lastBkp = short
+		}
+	}
+	if lastBkp != "" {
+		return lastBkp
+	}
+	return lastAny
+}
+
+// BackupOrigin describes one instance dataset that is a ZFS clone of a backup
+// snapshot (the hallmark of an Instant Independent Restore).
+type BackupOrigin struct {
+	Dataset    string `json:"dataset"`
+	Origin     string `json:"origin"`        // full "<ds>@<snap>" the clone hangs off
+	BackupVMID string `json:"backup_vm_id"`  // the bkup--<vm> name
+	BackupPool string `json:"backup_pool"`   // ZFS pool holding the backup
+	Snapshot   string `json:"snapshot"`      // short snapshot name
+}
+
+// LXDInstanceBackupOrigins returns the datasets of instance `name` whose ZFS
+// `origin` is a snapshot under the ZNAS-Backups-Workload tree — i.e. the
+// instance is running off a backup clone and is "backup dependent". Empty slice
+// (nil) means fully independent storage.
+func LXDInstanceBackupOrigins(name string) ([]BackupOrigin, error) {
+	parts, err := LXDInstanceBackupDatasets(name)
+	if err != nil {
+		return nil, err
+	}
+	marker := "/" + LXDBackupWorkloadMarker + "/"
+	var res []BackupOrigin
+	for _, p := range parts {
+		origin := ZfsOrigin(p.SrcDataset)
+		if origin == "" || !strings.Contains(origin, marker) {
+			continue
+		}
+		bo := BackupOrigin{Dataset: p.SrcDataset, Origin: origin}
+		if i := strings.Index(origin, marker); i > 0 {
+			bo.BackupPool = origin[:i]
+		}
+		if at := strings.LastIndexByte(origin, '@'); at >= 0 {
+			bo.Snapshot = origin[at+1:]
+		}
+		// origin path holds "…/bkup--<vm>[.<vol>]@<snap>"; extract <vm>.
+		if bi := strings.Index(origin, "/"+LXDBackupPrefix); bi >= 0 {
+			rest := origin[bi+len("/"+LXDBackupPrefix):]
+			if at := strings.IndexByte(rest, '@'); at >= 0 {
+				rest = rest[:at]
+			}
+			if dot := strings.IndexByte(rest, '.'); dot >= 0 {
+				rest = rest[:dot]
+			}
+			bo.BackupVMID = rest
+		}
+		res = append(res, bo)
+	}
+	return res, nil
+}
+
+// incusPoolNameForSource returns the Incus storage-pool NAME whose zfs `source`
+// is exactly `src`, or "" if none matches.
+func incusPoolNameForSource(src string) string {
+	pools, _ := LXDListStoragePools()
+	for _, p := range pools {
+		if LXDStoragePoolSource(p) == src {
+			return p
+		}
+	}
+	return ""
+}
+
+// LXDPromoteToFullCopy turns a backup-dependent instance (one running off a ZFS
+// clone of a backup — an Instant Independent Restore) into an independent full
+// copy on `dstDatastore`, freeing the backup. The instance MUST be Stopped. The
+// CURRENT (live) state is copied, so any changes made since the instant restore
+// are preserved.
+//
+// Steps: full-copy every live dataset (send/recv = independent) into a landing
+// dataset; delete the clone instance + its clone datasets/volumes (frees the
+// backup snapshot); move the landings into place; rewrite backup.yaml for the
+// new pool; `incus admin recover` to re-register under the SAME name.
+func LXDPromoteToFullCopy(ctx context.Context, name, dstDatastore string, logFn func(string)) error {
+	if !lxdNameRe.MatchString(name) {
+		return fmt.Errorf("invalid instance name %q", name)
+	}
+	status, err := LXDGetStatus(name)
+	if err != nil {
+		return fmt.Errorf("instance %q not found", name)
+	}
+	if !strings.EqualFold(status, "Stopped") {
+		return fmt.Errorf("%s must be Stopped before promoting to a Full Copy (current: %s)", name, status)
+	}
+	origins, _ := LXDInstanceBackupOrigins(name)
+	if len(origins) == 0 {
+		return fmt.Errorf("%s is not running off a backup clone — nothing to promote", name)
+	}
+	dstSource := getLXDPoolSource(dstDatastore)
+	if dstSource == "" {
+		return fmt.Errorf("destination datastore %q has no zfs source", dstDatastore)
+	}
+	parts, err := LXDInstanceBackupDatasets(name)
+	if err != nil {
+		return fmt.Errorf("enumerate instance datasets: %w", err)
+	}
+
+	kind := "virtual-machines"
+	for _, p := range parts {
+		if p.Kind == "root-fs" && strings.Contains(p.SrcDataset, "/containers/") {
+			kind = "containers"
+		}
+	}
+	dstParent := dstSource + "/" + kind
+	_ = exec.Command("sudo", "zfs", "create", "-p", dstParent).Run()
+	_ = exec.Command("sudo", "zfs", "create", "-p", dstSource+"/custom").Run()
+
+	type promoteMove struct {
+		landing, final, srcDs, kind string
+	}
+	type custVol struct{ pool, vol string }
+	var moves []promoteMove
+	var custVols []custVol
+	volRemap := map[string]string{} // name unchanged → identity
+
+	// 1) Full-copy each live (clone) dataset to an independent landing dataset.
+	//    ownSnap=true → syncoid snapshots the CURRENT state (keeps post-restore
+	//    changes); send/recv always yields a clone-free (origin "-") copy.
+	for _, part := range parts {
+		base := part.SrcDataset[strings.LastIndex(part.SrcDataset, "/")+1:]
+		parent := dstParent
+		if part.Kind == "custom" {
+			parent = dstSource + "/custom"
+			vol := strings.TrimPrefix(base, "default_")
+			volRemap[vol] = vol
+			srcRoot := part.SrcDataset[:strings.Index(part.SrcDataset, "/custom/")]
+			if pn := incusPoolNameForSource(srcRoot); pn != "" {
+				custVols = append(custVols, custVol{pool: pn, vol: vol})
+			}
+		}
+		landing := parent + "/incoming-restore-promote-" + base
+		final := parent + "/" + base
+		_ = exec.Command("sudo", "zfs", "destroy", "-r", landing).Run()
+		if logFn != nil {
+			logFn(fmt.Sprintf("[%s] full-copy %s -> %s", part.Kind, part.SrcDataset, final))
+		}
+		if err := RunSyncoidLocal(ctx, part.SrcDataset, landing, part.Recursive, true, logFn); err != nil {
+			return err
+		}
+		moves = append(moves, promoteMove{landing: landing, final: final, srcDs: part.SrcDataset, kind: part.Kind})
+	}
+
+	// 2) Remove the backup-dependent clone instance + its clone datasets/volumes
+	//    → the backup snapshot's last clone is gone, so the backup is free again.
+	if logFn != nil {
+		logFn("Removing the backup-dependent clone " + name + " …")
+	}
+	_ = exec.Command("incus", "delete", "-f", name).Run()
+	for _, cv := range custVols {
+		_ = exec.Command("incus", "storage", "volume", "delete", cv.pool, cv.vol).Run()
+	}
+	for _, m := range moves {
+		_ = exec.Command("sudo", "zfs", "destroy", "-r", m.srcDs).Run()
+	}
+
+	// 3) Move the independent copies into place + rewrite backup.yaml.
+	var rootFinal string
+	for _, m := range moves {
+		_ = exec.Command("sudo", "zfs", "destroy", "-r", m.final).Run()
+		if out, err := exec.Command("sudo", "zfs", "rename", m.landing, m.final).CombinedOutput(); err != nil {
+			return fmt.Errorf("zfs rename %s -> %s: %s", m.landing, m.final, strings.TrimSpace(string(out)))
+		}
+		destroyDatasetSnapshots(m.final, logFn)
+		if m.kind == "root-fs" {
+			rootFinal = m.final
+		}
+	}
+	if rootFinal != "" {
+		if logFn != nil {
+			logFn(fmt.Sprintf("Rewriting backup.yaml: pool→%s, snapshots→[]", dstDatastore))
+		}
+		if err := LXDRewriteBackupYAMLForRestore(rootFinal, dstDatastore, dstSource, name, name, volRemap); err != nil && logFn != nil {
+			logFn("rewrite backup.yaml: " + err.Error())
+		}
+	}
+
+	// 4) Re-register the now-independent instance under the same name.
+	if logFn != nil {
+		logFn("Running incus admin recover on " + dstDatastore)
+	}
+	out, err := LXDIncusAdminRecoverWithMask(name)
+	if logFn != nil {
+		for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if ln != "" {
+				logFn("  recover: " + ln)
+			}
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("incus admin recover: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // findWorkloadBackup locates the workload-layout backup for `bkup--<vm>`.
@@ -302,16 +604,32 @@ func LXDCloneRestoreLocal(ctx context.Context, vmID, srcDatastore, dstDatastore,
 	return nil
 }
 
-// resetCloneVolatileState clears NIC-related `volatile.*` keys on the
-// restored instance so Incus regenerates fresh MAC addresses on next
-// start. Keys like volatile.uuid are NOT touched — Incus parses them on
-// load and refuses an empty value.
+// resetCloneVolatileState prepares a freshly restored instance to live
+// alongside the original it was copied from. It:
+//   - turns OFF auto-start on boot (boot.autostart) and ZNAS force-running
+//     (user.zfsnas.force_running) — a restore is a COPY and must not race the
+//     original to auto-start on host boot or be auto-restarted by ZNAS; the
+//     user re-enables them deliberately if they want.
+//   - clears NIC-related `volatile.*` keys so Incus regenerates fresh MAC
+//     addresses on next start (volatile.uuid is NOT touched — Incus parses it
+//     on load and refuses an empty value).
 //
-// The targeted keys: anything matching volatile.*.hwaddr (NIC MACs),
+// The targeted volatile keys: anything matching volatile.*.hwaddr (NIC MACs),
 // volatile.vsock_id (would collide with the source VM), and
 // volatile.cloud-init.instance-id (so cloud-init treats the clone as a
 // new instance).
 func resetCloneVolatileState(instance string, logFn func(string)) {
+	// Disable auto-start-on-boot and force-running up front, before the
+	// volatile-key scan below (which can return early once the config section
+	// ends), so a restored copy never fights the original instance.
+	for _, kv := range [][2]string{{"boot.autostart", "false"}, {"user.zfsnas.force_running", "false"}} {
+		if err := exec.Command("incus", "config", "set", instance, kv[0], kv[1]).Run(); err == nil {
+			if logFn != nil {
+				logFn("  set " + kv[0] + "=" + kv[1] + " (restored copy)")
+			}
+		}
+	}
+
 	out, err := exec.Command("incus", "config", "show", instance).Output()
 	if err != nil {
 		return

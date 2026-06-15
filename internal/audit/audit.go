@@ -174,8 +174,9 @@ const (
 	ActionLXDScheduledSnapshot  = "lxd_scheduled_snapshot"   // scheduler fired a per-instance snapshot
 	ActionLXDBackup             = "lxd_backup"               // backup run (scheduled or "Backup Now")
 	ActionLXDBackupSchedule     = "lxd_backup_schedule"      // user changed a backup policy
-	ActionLXDBackupRestore      = "lxd_backup_restore"       // instant restore (rename bkup--<vm> in place)
+	ActionLXDBackupRestore      = "lxd_backup_restore"       // Instant Independent Restore (zfs clone of a backup)
 	ActionLXDBackupCloneRestore = "lxd_backup_clone_restore" // clone-restore via syncoid
+	ActionLXDBackupPromote      = "lxd_backup_promote"       // promote a backup-dependent clone to a full copy
 
 	// Compose stack management.
 	ActionComposeUpdate   = "compose_update"   // podman-compose pull + up -d on a stack

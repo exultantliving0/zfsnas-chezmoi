@@ -16,7 +16,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -357,9 +356,43 @@ func (s *Store) drainPTY(sess *Session) {
 	}
 }
 
-// markTerminated flips the session's terminated bit, drops the final notice
-// into scrollback, kicks any attached WS, then schedules eviction after a
-// grace period so a reconnecting browser still sees the death message.
+// endedFrame is the structured "session ended" message the UI turns into a
+// single "[…closed — press Enter to start a new session]" line (instead of a
+// raw "[session ended]" text notice that lived in the scrollback and got
+// replayed in a loop on every reconnect).
+//
+// It is sent as type:"error" ON PURPOSE so that ANY client — including one that
+// predates the dedicated handling, or a stale browser window loaded before an
+// upgrade — renders it as a readable "[error: …]" line rather than dumping the
+// raw JSON. The ended:true flag + reason let an updated client recognise it,
+// show the clean closed-notice, stop the reconnect loop, and offer Enter to
+// start a new session. The notice text contains no " or \, so it embeds in JSON
+// without escaping. reason is one of the Reason* constants.
+func endedFrame(reason string) []byte {
+	return []byte(`{"type":"error","ended":true,"reason":"` + reason + `","error":"` + closedNoticeText(reason) + `"}`)
+}
+
+// closedNoticeText is the human-readable one-liner for a closed session, also
+// used as the fallback text older clients display.
+func closedNoticeText(reason string) string {
+	switch reason {
+	case ReasonUserClose:
+		return "This terminal session was closed from another window. Press Enter to start a new session."
+	case ReasonProcessExit:
+		return "This terminal session ended (the shell or process exited). Press Enter to start a new session."
+	case ReasonSessionExpire:
+		return "This terminal session expired. Press Enter to start a new session."
+	case ReasonShutdown:
+		return "This terminal session ended (the server restarted). Press Enter to start a new session."
+	default:
+		return "This terminal session has been closed. Press Enter to start a new session."
+	}
+}
+
+// markTerminated flips the session's terminated bit, notifies any attached WS
+// with the structured ended frame, kills the PTY, then schedules eviction after
+// a grace period so a reconnecting browser still gets the ended frame (and not
+// a "session not found") for a few minutes.
 func (s *Store) markTerminated(sess *Session, reason string) {
 	sess.mu.Lock()
 	if sess.terminated {
@@ -368,10 +401,8 @@ func (s *Store) markTerminated(sess *Session, reason string) {
 	}
 	sess.terminated = true
 	sess.termReason = reason
-	notice := []byte(fmt.Sprintf("\r\n\x1b[33m[session ended: %s]\x1b[0m\r\n", reason))
-	sess.scrollback.Write(notice) //nolint:errcheck
-	// Snapshot the viewers so we can write the death notice + close them OUTSIDE
-	// the lock, then drop the set.
+	// Snapshot the viewers so we can notify + close them OUTSIDE the lock, then
+	// drop the set.
 	vs := make([]*viewer, 0, len(sess.viewers))
 	for v := range sess.viewers {
 		vs = append(vs, v)
@@ -391,8 +422,9 @@ func (s *Store) markTerminated(sess *Session, reason string) {
 		s.mu.Unlock()
 	})
 	sess.mu.Unlock()
+	end := endedFrame(reason)
 	for _, v := range vs {
-		v.write(websocket.BinaryMessage, notice) //nolint:errcheck
+		v.write(websocket.TextMessage, end) //nolint:errcheck
 		v.ws.Close()
 	}
 }
@@ -479,12 +511,24 @@ func (s *Store) Attach(sess *Session, ws *websocket.Conn, cols, rows uint16, win
 
 	sess.mu.Lock()
 	if sess.terminated {
-		// Still send the scrollback (which contains the death notice) so the
-		// user sees what happened, then close.
-		scroll := sess.scrollback.Snapshot()
+		// A reconnect (or a new window) landing on an already-terminated session
+		// during its grace period. Send the ended frame once, then HOLD the
+		// socket open instead of closing it. Closing here is what made the
+		// client's auto-reconnect fire again and re-deliver the notice forever
+		// (the infinite "[…session was closed…]" loop). Holding it open means the
+		// client never sees an onclose, so it never reconnects — the notice shows
+		// once. We block reading until the client closes the socket itself (the
+		// updated UI tears it down when the user presses Enter to start a new
+		// session) or the connection drops; a read deadline bounds the wait so an
+		// abandoned socket is still reclaimed.
+		reason := sess.termReason
 		sess.mu.Unlock()
-		if len(scroll) > 0 {
-			ws.WriteMessage(websocket.BinaryMessage, stripScrollbackQueries(scroll)) //nolint:errcheck
+		ws.WriteMessage(websocket.TextMessage, endedFrame(reason)) //nolint:errcheck
+		ws.SetReadDeadline(time.Now().Add(6 * time.Minute))        //nolint:errcheck
+		for {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				break
+			}
 		}
 		ws.Close()
 		return

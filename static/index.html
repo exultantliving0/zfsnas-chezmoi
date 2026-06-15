@@ -4306,17 +4306,18 @@
             <thead>
               <tr>
                 <th style="width:34px;"></th>
-                <th style="text-align:left;">VM-ID</th>
-                <th style="width:70px;text-align:left;">Type</th>
-                <th style="width:130px;text-align:left;">Hostname</th>
-                <th style="text-align:left;">Datastore</th>
-                <th style="width:110px;text-align:right;padding-right:14px;" title="Each backup fire writes one ZFS incremental snapshot — this count is how many incrementals exist on the destination dataset.">#Incrementals</th>
-                <th style="width:110px;text-align:right;padding-right:14px;">Size</th>
+                <th style="text-align:left;cursor:pointer;user-select:none;" onclick="_sortBackups('vm_id')">VM-ID<span id="bksort-vm_id"></span></th>
+                <th style="width:70px;text-align:left;cursor:pointer;user-select:none;" onclick="_sortBackups('type')">Type<span id="bksort-type"></span></th>
+                <th style="width:130px;text-align:left;cursor:pointer;user-select:none;" onclick="_sortBackups('host')">BKP Host<span id="bksort-host"></span></th>
+                <th style="text-align:left;cursor:pointer;user-select:none;" onclick="_sortBackups('datastore')">Datastore<span id="bksort-datastore"></span></th>
+                <th style="width:150px;text-align:left;cursor:pointer;user-select:none;" onclick="_sortBackups('last')">Last Backup<span id="bksort-last"></span></th>
+                <th style="width:110px;text-align:right;padding-right:14px;cursor:pointer;user-select:none;" title="Each backup fire writes one ZFS incremental snapshot — this count is how many incrementals exist on the destination dataset." onclick="_sortBackups('incr')">#Incrementals<span id="bksort-incr"></span></th>
+                <th style="width:110px;text-align:right;padding-right:14px;cursor:pointer;user-select:none;" onclick="_sortBackups('size')">Size<span id="bksort-size"></span></th>
                 <th style="width:160px;text-align:right;padding-right:14px;">Actions</th>
               </tr>
             </thead>
             <tbody id="lxd-backups-tbody">
-              <tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
+              <tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -4434,6 +4435,20 @@
           </span>
           <!-- Spacer -->
           <span style="flex:1;"></span>
+          <!-- Backup Dependent (v6.6.15) — shown when this instance is running
+               off a ZFS clone of a backup (an Instant Independent Restore). -->
+          <div style="position:relative;display:none;" id="ci-bkdep-wrap">
+            <button id="ci-bkdep-btn" onclick="ciToggleBkDepMenu(event)" title="This instance is running off a ZFS clone of a backup"
+              style="display:flex;align-items:center;gap:5px;padding:5px 12px;font-size:13px;border-radius:5px;border:1px solid var(--accent-warn,#f0b429);background:rgba(240,180,41,0.16);color:var(--accent-warn,#f0b429);cursor:pointer;white-space:nowrap;font-weight:700;">
+              ⚠ Backup Dependent <span style="font-size:9px;opacity:0.8;">▾</span>
+            </button>
+            <div id="ci-bkdep-menu" class="hidden" style="position:absolute;left:0;top:115%;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.35);min-width:320px;z-index:300;overflow:hidden;">
+              <div style="padding:11px 14px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--border);line-height:1.55;">Running off backup <b id="ci-bkdep-backup" style="color:var(--text-2);font-family:monospace;"></b>. That backup <b>cannot be deleted</b> until this instance is promoted to a full, independent copy.</div>
+              <button onclick="ciOpenPromote()" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:11px 14px;background:none;border:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--text);">
+                🗎 Promote to Full Copy VM…
+              </button>
+            </div>
+          </div>
           <!-- Status / power button -->
           <button id="ci-status-badge" onclick='ciTogglePowerMenu(event)'
             style="display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border-radius:4px;font-weight:600;border:1px solid transparent;background:transparent;cursor:pointer;">
@@ -5267,60 +5282,95 @@ Select the Console tab to load.</pre>
 
       <!-- ── v6.5.19: Restore Backup modal (shared by Backups page + per-VM dropdown) -->
       <div class="modal-backdrop hidden" id="modal-restore-backup" onclick="if(event.target===this)document.getElementById('modal-restore-backup').classList.add('hidden')">
-        <div class="modal" style="max-width:560px;width:96vw;">
+        <div class="modal" style="max-width:780px;width:96vw;">
           <div class="modal-header">
             <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">
               🛠 Restore Backup
-              <i class="info-tip tip-down" data-tip="Two restore modes:&#10;&#10;Instant restore — renames the bkup--&#x3C;vm&#x3E; instance to a new name in place. No data is copied — the backup IS the new VM. Reversible. Only works for backups stored on THIS host.&#10;&#10;Restore / Clone — copies the backup via syncoid into a chosen local datastore as a new instance. The original backup stays untouched. Use this to inspect a backup without disturbing it, or when restoring from a remote backup."></i>
               <span id="rb-target-label" style="font-family:monospace;font-weight:500;font-size:13px;color:var(--text-2);"></span>
             </h3>
             <button class="modal-close" onclick="document.getElementById('modal-restore-backup').classList.add('hidden')">✕</button>
           </div>
-          <div style="padding:20px 24px 24px;">
+          <div style="padding:18px 24px 24px;">
             <div id="rb-alert" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
-            <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
-              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;" id="rb-radio-instant-wrap">
-                <input type="radio" name="rb-mode" value="instant" checked onchange="rbOnModeChange()" style="margin-top:3px;">
-                <div>
-                  <div style="font-weight:600;color:var(--text);">Instant restore</div>
-                  <div style="font-size:12px;color:var(--text-3);margin-top:3px;">Rename the backup in place — no data copy. Greyed out for remote backups.</div>
+
+            <!-- Backup summary -->
+            <div id="rb-summary" style="display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text-2);margin-bottom:16px;"></div>
+
+            <!-- Mode cards -->
+            <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+              <label id="rb-card-instant" style="flex:1;min-width:250px;display:flex;flex-direction:column;gap:7px;cursor:pointer;padding:14px;border:1.5px solid var(--border);border-radius:10px;transition:border-color .15s,background .15s;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <input type="radio" name="rb-mode" value="instant" onchange="rbOnModeChange()">
+                  <span style="font-weight:700;color:var(--text);font-size:14px;">⚡ Instant Independent Restore</span>
                 </div>
+                <div style="font-size:12px;color:var(--text-3);line-height:1.5;">Boots immediately from a ZFS clone of this backup. Changes run on the clone and are <b>never written to the backup</b>. The backup stays <b>locked</b> until you promote this instance to a Full Copy.</div>
+                <div id="rb-card-instant-note" style="font-size:11px;color:var(--accent-warn);display:none;"></div>
               </label>
-              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;">
-                <input type="radio" name="rb-mode" value="clone" onchange="rbOnModeChange()" style="margin-top:3px;">
-                <div>
-                  <div style="font-weight:600;color:var(--text);">Restore / Clone from this backup</div>
-                  <div style="font-size:12px;color:var(--text-3);margin-top:3px;">Copy via syncoid into a chosen datastore as a new instance.</div>
+              <label id="rb-card-clone" style="flex:1;min-width:250px;display:flex;flex-direction:column;gap:7px;cursor:pointer;padding:14px;border:1.5px solid var(--border);border-radius:10px;transition:border-color .15s,background .15s;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <input type="radio" name="rb-mode" value="clone" onchange="rbOnModeChange()">
+                  <span style="font-weight:700;color:var(--text);font-size:14px;">🗎 Restore / Clone</span>
                 </div>
+                <div style="font-size:12px;color:var(--text-3);line-height:1.5;">Full <b>independent</b> copy via syncoid into a datastore you choose. The backup is untouched and stays deletable. Works for local <b>and</b> remote backups.</div>
               </label>
             </div>
 
-            <div id="rb-instant-fields" class="form-group">
-              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
-                New name
-                <i class="info-tip" data-tip="What the renamed instance will be called. Incus names allow letters, digits and dashes; must start with a letter; cannot collide with an existing instance."></i>
-              </label>
-              <input type="text" id="rb-new-name" class="form-control" maxlength="63" style="font-family:monospace;width:100%;">
+            <!-- Instant fields -->
+            <div id="rb-instant-fields">
+              <div class="form-group" style="margin-bottom:6px;">
+                <label class="form-label">New instance name</label>
+                <input type="text" id="rb-new-name" class="form-control" maxlength="63" style="font-family:monospace;width:100%;">
+              </div>
+              <div style="font-size:12px;color:var(--text-3);">Lands on datastore <b id="rb-instant-pool" style="color:var(--text-2);font-family:monospace;">—</b> <span style="opacity:.7;">(fixed — a ZFS clone can't cross pools)</span></div>
             </div>
 
-            <div id="rb-clone-fields" class="form-group" style="display:none;">
-              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
-                Clone name
-                <i class="info-tip" data-tip="Name for the new instance created from the backup. Often 'Clone of &#x3C;vm&#x3E;' or '&#x3C;vm&#x3E;-restored'."></i>
-              </label>
-              <input type="text" id="rb-clone-name" class="form-control" maxlength="63" style="font-family:monospace;width:100%;margin-bottom:14px;">
-              <label class="form-label" style="display:flex;align-items:center;gap:6px;">
-                Destination datastore (local)
-                <i class="info-tip" data-tip="Local Incus storage pool that will host the restored clone. Best practice: pick a different datastore from the source if you're investigating a corruption — that way the clone never touches the live VM's pool."></i>
-              </label>
-              <select id="rb-dst-datastore" class="form-control" style="width:100%;">
-                <option value="">Loading…</option>
-              </select>
+            <!-- Clone fields -->
+            <div id="rb-clone-fields" style="display:none;">
+              <div class="form-group">
+                <label class="form-label">Clone name</label>
+                <input type="text" id="rb-clone-name" class="form-control" maxlength="63" style="font-family:monospace;width:100%;">
+              </div>
+              <div class="form-group" style="margin-bottom:0;">
+                <label class="form-label">Destination datastore (local)</label>
+                <select id="rb-dst-datastore" class="form-control" style="width:100%;">
+                  <option value="">Loading…</option>
+                </select>
+              </div>
             </div>
+
+            <!-- Explanation panel (updates per selected mode) -->
+            <div id="rb-explain" style="margin-top:16px;font-size:12px;color:var(--text-3);background:rgba(10,132,255,0.06);border:1px solid rgba(10,132,255,0.18);border-radius:8px;padding:11px 14px;line-height:1.55;"></div>
 
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
               <button class="btn btn-ghost" onclick="document.getElementById('modal-restore-backup').classList.add('hidden')">Cancel</button>
               <button class="btn btn-primary" id="rb-submit-btn" onclick="rbSubmit()">Restore</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Promote to Full Copy modal (v6.6.15) ─────────────────────────── -->
+      <div class="modal-backdrop hidden" id="modal-promote-fullcopy" onclick="if(event.target===this)document.getElementById('modal-promote-fullcopy').classList.add('hidden')">
+        <div class="modal" style="max-width:520px;width:96vw;">
+          <div class="modal-header">
+            <h3 class="modal-title" style="display:flex;align-items:center;gap:8px;">🗎 Promote to Full Copy <span id="pf-target" style="font-family:monospace;font-weight:500;font-size:13px;color:var(--text-2);"></span></h3>
+            <button class="modal-close" onclick="document.getElementById('modal-promote-fullcopy').classList.add('hidden')">✕</button>
+          </div>
+          <div style="padding:18px 24px 24px;">
+            <div id="pf-alert" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
+            <div style="font-size:12px;color:var(--text-3);line-height:1.6;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:11px 14px;margin-bottom:16px;">
+              Makes a <b>full independent copy</b> of this instance’s <b>current</b> state into the datastore you choose, then frees the backup it depends on. Any changes made since the instant restore are kept.
+            </div>
+            <div id="pf-stopwarn" style="display:none;background:rgba(240,180,41,0.10);border:1px solid rgba(240,180,41,0.30);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--accent-warn,#f0b429);margin-bottom:16px;">
+              ⚠ The instance must be <b>Stopped</b> before it can be promoted. Stop it first.
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Destination datastore</label>
+              <select id="pf-datastore" class="form-control" style="width:100%;"><option value="">Loading…</option></select>
+            </div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+              <button class="btn btn-ghost" onclick="document.getElementById('modal-promote-fullcopy').classList.add('hidden')">Cancel</button>
+              <button class="btn btn-primary" id="pf-submit-btn" onclick="ciSubmitPromote()">Promote to Full Copy</button>
             </div>
           </div>
         </div>
@@ -37227,6 +37277,10 @@ function openComputeInstance(name, type) {
   _ciCurrentName = name;
   _ciCurrentType = type;
 
+  // Hide the Backup Dependent button until the async check confirms a clone.
+  { const w = document.getElementById('ci-bkdep-wrap'); if (w) w.style.display = 'none'; }
+  ciRefreshBkDep();
+
   const isVM = type === 'virtual-machine';
   const _ciVGABtn = document.getElementById('ci-vga-btn');
   const _ciVGASep = document.getElementById('ci-vga-sep');
@@ -39353,6 +39407,102 @@ function _ciCloseBackupMenu() {
   document.getElementById('ci-bkup-menu').classList.add('hidden');
   _ciBkupMenuOpen = false;
 }
+
+// ===== Backup Dependent / Promote to Full Copy (v6.6.15) =====
+function ciToggleBkDepMenu(e) {
+  e.stopPropagation();
+  const menu = document.getElementById('ci-bkdep-menu');
+  const wasOpen = !menu.classList.contains('hidden');
+  if (typeof _ciCloseAllTopMenus === 'function') _ciCloseAllTopMenus('ci-bkdep-menu');
+  if (wasOpen) { menu.classList.add('hidden'); return; }
+  menu.classList.remove('hidden');
+  const close = (ev) => {
+    if (!document.getElementById('ci-bkdep-wrap').contains(ev.target)) {
+      menu.classList.add('hidden');
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+// Checks whether the current instance is running off a backup clone and
+// shows/hides the yellow "Backup Dependent" button accordingly.
+async function ciRefreshBkDep() {
+  const wrap = document.getElementById('ci-bkdep-wrap');
+  if (!wrap || !_ciCurrentName) return;
+  const name = _ciCurrentName;
+  try {
+    const r = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/backup-dependency');
+    if (!r.ok) { wrap.style.display = 'none'; return; }
+    const d = await r.json();
+    if (name !== _ciCurrentName) return; // navigated away during the fetch
+    if (d && d.dependent) {
+      wrap.style.display = '';
+      const lbl = document.getElementById('ci-bkdep-backup');
+      if (lbl) lbl.textContent = (d.backup_vm_id || name) + (d.datastore ? ' @ ' + d.datastore : '');
+    } else {
+      wrap.style.display = 'none';
+    }
+  } catch (_) { wrap.style.display = 'none'; }
+}
+
+async function ciOpenPromote() {
+  document.getElementById('ci-bkdep-menu').classList.add('hidden');
+  document.getElementById('pf-alert').classList.add('hidden');
+  document.getElementById('pf-target').textContent = '— ' + _ciCurrentName;
+  // Stop-guard: promotion swaps the instance's storage, so it must be Stopped.
+  const status = (document.getElementById('ci-status-badge').dataset.status || '').toLowerCase();
+  const stopped = status === 'stopped';
+  document.getElementById('pf-stopwarn').style.display = stopped ? 'none' : '';
+  const btn = document.getElementById('pf-submit-btn');
+  btn.disabled = !stopped;
+  btn.style.opacity = stopped ? '' : '0.5';
+  btn.style.cursor = stopped ? '' : 'not-allowed';
+  const sel = document.getElementById('pf-datastore');
+  try {
+    const r = await fetch('/api/incus/backup-datastores');
+    if (r.ok) {
+      const all = await r.json() || [];
+      const usable = all.filter(d => d.kind === 'local' && d.incus_datastore);
+      sel.innerHTML = usable.length
+        ? usable.map(l => `<option value="${esc(l.incus_datastore)}">${esc(l.incus_datastore)} (ZFS pool: ${esc(l.datastore)})</option>`).join('')
+        : '<option value="">No Incus datastores available</option>';
+    }
+  } catch (_) {}
+  document.getElementById('modal-promote-fullcopy').classList.remove('hidden');
+  if (typeof initAllCustomSelects === 'function') initAllCustomSelects(document.getElementById('modal-promote-fullcopy'));
+  _v6519_refreshCS('pf-datastore');
+}
+
+async function ciSubmitPromote() {
+  const alertEl = document.getElementById('pf-alert');
+  alertEl.classList.add('hidden');
+  const ds = document.getElementById('pf-datastore').value;
+  if (!ds) { alertEl.textContent = 'Choose a destination datastore'; alertEl.classList.remove('hidden'); return; }
+  const name = _ciCurrentName;
+  const btn = document.getElementById('pf-submit-btn');
+  btn.disabled = true; btn.textContent = 'Promoting…';
+  try {
+    const r = await fetch('/api/lxd/instances/' + encodeURIComponent(name) + '/promote-full-copy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ datastore: ds }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.job_id) {
+      alertEl.textContent = d.error || 'Promote failed to start'; alertEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Promote to Full Copy'; return;
+    }
+    document.getElementById('modal-promote-fullcopy').classList.add('hidden');
+    _bgPollRestoreJob(d.job_id, '🗎 Promoting ' + name + ' → Full Copy (' + ds + ')', () => {
+      ciRefreshBkDep();
+      if (typeof loadAllBackups === 'function') loadAllBackups();
+      if (typeof loadLXDInstances === 'function') loadLXDInstances();
+    });
+  } catch (e) {
+    alertEl.textContent = String(e); alertEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Promote to Full Copy';
+  }
+}
 // Anchor the dropdown so it never falls off the right edge of the viewport.
 // Default anchor is left-aligned (left:0). If the dropdown would overflow
 // right, flip to right:0 (anchors the menu's right edge to the button's
@@ -39997,6 +40147,9 @@ async function _ciRefreshBackupAndScheduleBadges() {
 // ====== Shared Restore modal (Feature 2 dropdown + Feature 3 page) ===========
 let _rbCtx = null; // { vm_id, scope, server_id, datastore, hostname }
 
+let _rbInstantPool = '';  // Incus datastore the instant clone lands on ('' = unavailable)
+let _rbInstantOK = false; // whether Instant Independent Restore is offered
+
 async function openRestoreBackupModal(ctx) {
   // Accept either object or stringified JSON (the dropdown calls with object,
   // the Backups page calls with string).
@@ -40005,35 +40158,38 @@ async function openRestoreBackupModal(ctx) {
   }
   _rbCtx = ctx || {};
   document.getElementById('rb-alert').classList.add('hidden');
-  // Label encodes target + which snapshot the user picked (or "(latest)"
-  // when they clicked the collapsed-row Restore button on the Backups page,
-  // or any entry under a backup's header in the per-VM dropdown).
   const snapLabel = _rbCtx.snapshot ? _rbCtx.snapshot : '(latest snapshot)';
-  document.getElementById('rb-target-label').textContent = '— ' + (_rbCtx.vm_id || '') +
-    ' (' + (_rbCtx.scope === 'remote' ? ('remote · ' + (_rbCtx.hostname || '')) : 'local') +
-    ' · ' + (_rbCtx.datastore || '') + ' · ' + snapLabel + ')';
-  // Default radio: instant if local, clone if remote.
-  if (_rbCtx.scope === 'remote') {
-    document.querySelector('input[name="rb-mode"][value="clone"]').checked = true;
-    document.getElementById('rb-radio-instant-wrap').style.opacity = '0.5';
-    document.getElementById('rb-radio-instant-wrap').title = 'Instant restore is only available for backups on this host.';
-    document.querySelector('input[name="rb-mode"][value="instant"]').disabled = true;
-  } else {
-    document.getElementById('rb-radio-instant-wrap').style.opacity = '1';
-    document.getElementById('rb-radio-instant-wrap').title = '';
-    document.querySelector('input[name="rb-mode"][value="instant"]').disabled = false;
-    document.querySelector('input[name="rb-mode"][value="instant"]').checked = true;
+  document.getElementById('rb-target-label').textContent = '— ' + (_rbCtx.vm_id || '');
+
+  // Backup summary — enrich from the backups cache when available.
+  let b = null;
+  try {
+    b = (_allBackupsCache || []).find(x =>
+      x.vm_id === _rbCtx.vm_id && (x.scope||'local') === (_rbCtx.scope||'local') &&
+      (x.datastore||'') === (_rbCtx.datastore||'') && (x.server_id||'') === (_rbCtx.server_id||''));
+  } catch(_) {}
+  const chip = (txt) => `<span>${txt}</span>`;
+  const sum = [
+    chip('<b style="color:var(--text);">'+esc(_rbCtx.vm_id||'')+'</b>'),
+    chip(b ? (b.type === 'virtual-machine' ? 'VM' : 'LXC') : (_rbCtx.scope==='remote'?'remote':'local')),
+    chip('🖥 ' + (_rbCtx.scope === 'remote' ? esc(_rbCtx.hostname||'?') : 'this host')),
+    chip('🗄 ' + esc(_rbCtx.datastore||'—')),
+  ];
+  if (b) {
+    sum.push(chip('🗂 ' + ((b.snapshots||[]).length) + ' snapshot' + (((b.snapshots||[]).length)===1?'':'s')));
+    if (b.used_bytes) sum.push(chip('💾 ' + _v6519_bytes(b.used_bytes)));
   }
+  sum.push(chip('⏱ ' + esc(snapLabel)));
+  document.getElementById('rb-summary').innerHTML = sum.join('');
+
   // Defaults
-  document.getElementById('rb-new-name').value = _rbCtx.vm_id || '';
+  document.getElementById('rb-new-name').value = (_rbCtx.vm_id || '') + '-now';
   document.getElementById('rb-clone-name').value = 'clone-of-' + (_rbCtx.vm_id || '');
-  // Populate datastore picker for clone mode. Restore registers the
-  // resulting instance with Incus, so the destination MUST be a pool
-  // Incus already manages — pools without an Incus datastore are
-  // excluded with a tooltip. The option value carries the Incus
-  // storage-pool name (e.g. "default"), since that's what
-  // `incus admin recover` and `getLXDPoolSource` expect; the ZFS pool
-  // name is rendered alongside for clarity.
+
+  // Populate the clone-mode datastore picker AND figure out whether Instant
+  // Independent Restore is possible (local backup whose ZFS pool has an Incus
+  // pool — a zfs clone can only land on that same pool).
+  _rbInstantPool = ''; _rbInstantOK = false;
   try {
     const r = await fetch('/api/incus/backup-datastores');
     if (r.ok) {
@@ -40048,17 +40204,56 @@ async function openRestoreBackupModal(ctx) {
           `<option value="${esc(l.incus_datastore)}">${esc(l.incus_datastore)} (ZFS pool: ${esc(l.datastore)})</option>`
         ).join('');
       }
+      if (_rbCtx.scope !== 'remote') {
+        const match = usable.find(l => (l.datastore||'') === (_rbCtx.datastore||''));
+        if (match) { _rbInstantPool = match.incus_datastore; _rbInstantOK = true; }
+      }
     }
   } catch(_) {}
+
+  // Card availability + note.
+  const note = document.getElementById('rb-card-instant-note');
+  const instRadio = document.querySelector('input[name="rb-mode"][value="instant"]');
+  const card = document.getElementById('rb-card-instant');
+  document.getElementById('rb-instant-pool').textContent = _rbInstantPool || '—';
+  if (_rbInstantOK) {
+    instRadio.disabled = false; card.style.opacity = '1'; card.style.cursor = 'pointer';
+    note.style.display = 'none';
+    instRadio.checked = true;
+  } else {
+    instRadio.disabled = true; card.style.opacity = '0.5'; card.style.cursor = 'not-allowed';
+    note.style.display = '';
+    note.textContent = (_rbCtx.scope === 'remote')
+      ? 'Unavailable for remote backups — use Restore / Clone.'
+      : 'Unavailable — this backup’s ZFS pool has no Incus storage pool.';
+    document.querySelector('input[name="rb-mode"][value="clone"]').checked = true;
+  }
+
   rbOnModeChange();
   document.getElementById('modal-restore-backup').classList.remove('hidden');
   if (typeof initAllCustomSelects === 'function') initAllCustomSelects(document.getElementById('modal-restore-backup'));
   _v6519_refreshCS('rb-dst-datastore');
 }
+
 function rbOnModeChange() {
-  const mode = document.querySelector('input[name="rb-mode"]:checked').value;
+  const sel = document.querySelector('input[name="rb-mode"]:checked');
+  const mode = sel ? sel.value : 'clone';
   document.getElementById('rb-instant-fields').style.display = (mode === 'instant') ? '' : 'none';
   document.getElementById('rb-clone-fields').style.display   = (mode === 'clone') ? '' : 'none';
+  // Highlight the selected card.
+  const accent = (id, on) => {
+    const c = document.getElementById(id);
+    c.style.borderColor = on ? 'var(--accent-2,#0a84ff)' : 'var(--border)';
+    c.style.background  = on ? 'rgba(10,132,255,0.06)' : 'transparent';
+  };
+  accent('rb-card-instant', mode === 'instant');
+  accent('rb-card-clone', mode === 'clone');
+  const ex = document.getElementById('rb-explain');
+  if (mode === 'instant') {
+    ex.innerHTML = '⚡ <b>Instant Independent Restore</b> creates a ZFS <b>clone</b> of the backup snapshot on <b>' + esc(_rbInstantPool||'—') + '</b> and boots it right away — no data copy, so it’s near-instant even for large disks. The running instance writes only to the clone; the backup is never modified. While the clone exists the backup <b>cannot be deleted</b>. A yellow <b>Backup Dependent</b> button will appear on the new instance’s page — use it to <b>Promote to Full Copy</b> (a real independent copy) whenever you’re ready, which frees the backup.';
+  } else {
+    ex.innerHTML = '🗎 <b>Restore / Clone</b> makes a <b>full independent copy</b> of the backup with syncoid into the datastore you pick. It takes as long as the data is large, but the result depends on nothing — the backup stays completely untouched and remains deletable. Use this for remote backups, or when you want a clean standalone instance immediately.';
+  }
 }
 async function rbSubmit() {
   const alertEl = document.getElementById('rb-alert');
@@ -40069,6 +40264,7 @@ async function rbSubmit() {
   try {
     if (mode === 'instant') {
       const newName = document.getElementById('rb-new-name').value.trim();
+      if (!newName) { alertEl.textContent = 'New instance name is required'; alertEl.classList.remove('hidden'); return; }
       const r = await fetch('/api/incus/backups/restore-instant', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
@@ -40078,11 +40274,12 @@ async function rbSubmit() {
           // the right workload dataset when the same vm-id is backed up
           // to multiple pools.
           datastore: _rbCtx.datastore || '',
+          snapshot_name: _rbCtx.snapshot || '',
         }),
       });
       const d = await r.json();
       if (!r.ok) { alertEl.textContent = d.error || 'Restore failed'; alertEl.classList.remove('hidden'); return; }
-      showToast('Restored ' + _rbCtx.vm_id + ' → ' + newName, 'success');
+      showToast('⚡ Instant restore: ' + _rbCtx.vm_id + ' → ' + newName + ' (backup now locked until promoted)', 'success');
       document.getElementById('modal-restore-backup').classList.add('hidden');
       if (typeof loadLXDInstances === 'function') loadLXDInstances();
       if (typeof loadAllBackups === 'function') loadAllBackups();
@@ -40183,7 +40380,7 @@ async function loadAllBackups() {
   const tbody = document.getElementById('lxd-backups-tbody');
   const al = document.getElementById('lxd-backups-alert');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
   al.classList.add('hidden');
   try {
     const r = await fetch('/api/incus/backups');
@@ -40192,7 +40389,7 @@ async function loadAllBackups() {
     _renderAllBackups();
   } catch(e) {
     al.textContent = String(e); al.classList.remove('hidden');
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:32px;">' + esc(String(e)) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:32px;">' + esc(String(e)) + '</td></tr>';
   }
 }
 function _backupRowKey(b) { return (b.scope || 'local') + '::' + (b.server_id || '') + '::' + (b.datastore || '') + '::' + (b.vm_id || ''); }
@@ -40201,15 +40398,60 @@ function _toggleBackupRow(key) {
   else _expandedBackupKeys.add(key);
   _renderAllBackups();
 }
+// Current sort column + direction for the Backups table (1 = asc, -1 = desc).
+let _backupSort = { key: 'vm_id', dir: 1 };
+
+// Extract the comparable value for a backup row under the given sort key.
+// Numbers for the numeric columns, lowercased strings for the rest.
+function _backupSortVal(b, key) {
+  switch (key) {
+    case 'type':      return (b.type || '');
+    case 'host':      return (b.scope === 'local') ? '' : (b.hostname || '').toLowerCase();
+    case 'datastore': return (b.datastore || '').toLowerCase();
+    case 'last': {
+      let m = -1;
+      for (const s of (b.snapshots || [])) { const t = Date.parse(s.created_at); if (!isNaN(t) && t > m) m = t; }
+      return m;
+    }
+    case 'incr':      return (b.snapshots || []).length;
+    case 'size':      return (b.used_bytes && b.used_bytes > 0) ? b.used_bytes : (b.snapshots || []).reduce((a, s) => a + (s.used || 0), 0);
+    case 'vm_id':
+    default:          return (b.vm_id || '').toLowerCase();
+  }
+}
+
+// Toggle/set the Backups table sort column. Clicking the active column flips
+// direction; clicking a new column sorts it ascending.
+function _sortBackups(key) {
+  if (_backupSort.key === key) _backupSort.dir = -_backupSort.dir;
+  else _backupSort = { key, dir: 1 };
+  _renderAllBackups();
+}
+
+function _updateBackupSortIndicators() {
+  for (const k of ['vm_id', 'type', 'host', 'datastore', 'last', 'incr', 'size']) {
+    const el = document.getElementById('bksort-' + k);
+    if (el) el.textContent = (_backupSort.key === k) ? (_backupSort.dir === 1 ? ' ▲' : ' ▼') : '';
+  }
+}
+
 function _renderAllBackups() {
   const tbody = document.getElementById('lxd-backups-tbody');
+  _updateBackupSortIndicators();
   if (!_allBackupsCache.length) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-3);padding:32px;">No backups exist yet. Configure a Backup Schedule on a VM or Container, or click Backup Now.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">No backups exist yet. Configure a Backup Schedule on a VM or Container, or click Backup Now.</td></tr>';
     return;
   }
-  // Sort: VM-ID then scope (local first) then datastore.
-  const sorted = _allBackupsCache.slice().sort((a,b) =>
-    (a.vm_id||'').localeCompare(b.vm_id||'') || (a.scope||'').localeCompare(b.scope||'') || (a.datastore||'').localeCompare(b.datastore||''));
+  // Sort by the active column, with VM-ID as a stable tiebreaker.
+  const sk = _backupSort.key, dir = _backupSort.dir;
+  const sorted = _allBackupsCache.slice().sort((a, b) => {
+    const va = _backupSortVal(a, sk), vb = _backupSortVal(b, sk);
+    let c;
+    if (typeof va === 'number' && typeof vb === 'number') c = va - vb;
+    else c = String(va).localeCompare(String(vb));
+    if (c !== 0) return c * dir;
+    return (a.vm_id || '').localeCompare(b.vm_id || '');
+  });
   const rows = [];
   for (const b of sorted) {
     const key = _backupRowKey(b);
@@ -40219,10 +40461,16 @@ function _renderAllBackups() {
       ? '<span style="background:rgba(88,166,255,0.15);color:#58a6ff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">VM</span>'
       : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">LXC</span>';
     const host = (b.scope === 'local') ? '<span style="color:#3fb950;">this host</span>' : esc(b.hostname || '?');
+    const deps = b.dependents || [];
     const ctx = JSON.stringify({
       vm_id: b.vm_id, scope: b.scope, server_id: b.server_id || '',
-      hostname: b.hostname || '', datastore: b.datastore,
+      hostname: b.hostname || '', datastore: b.datastore, dependents: deps,
     });
+    // 🔒 when an Instant Independent Restore is running off this backup — it
+    // can't be deleted until that instance is promoted to a Full Copy.
+    const lock = deps.length
+      ? ` <span title="Locked — ${esc(deps.join(', '))} ${deps.length>1?'are':'is'} running off this backup (Instant Independent Restore). Promote to Full Copy to unlock." style="cursor:help;">🔒</span>`
+      : '';
     // Total Size = the backup dataset's ZFS `used` (root + .block sibling,
     // snapshots included) reported by the backend. Summing per-snapshot
     // `used` undercounts badly — a received-only backup's data is referenced
@@ -40232,12 +40480,21 @@ function _renderAllBackups() {
     const totalUsed = (b.used_bytes && b.used_bytes > 0)
       ? b.used_bytes
       : (b.snapshots||[]).reduce((acc,s) => acc + (s.used || 0), 0);
+    // Last Backup = the most-recent snapshot's creation time (snapshots may
+    // arrive in any order / mixed timezone offsets, so compare parsed millis).
+    let lastTs = null, lastMs = -1;
+    for (const s of (b.snapshots || [])) {
+      if (!s.created_at) continue;
+      const ms = Date.parse(s.created_at);
+      if (!isNaN(ms) && ms > lastMs) { lastMs = ms; lastTs = s.created_at; }
+    }
     rows.push(`<tr style="cursor:pointer;" onclick='_toggleBackupRow(${JSON.stringify(key)})'>
       <td style="text-align:center;color:var(--text-3);">${chev}</td>
-      <td style="font-weight:600;font-family:monospace;">${esc(b.vm_id)}</td>
+      <td style="font-weight:600;font-family:monospace;">${esc(b.vm_id)}${lock}</td>
       <td>${typeBadge}</td>
       <td>${host}</td>
       <td style="font-family:monospace;color:var(--text-2);font-size:12px;">${esc(b.datastore || '—')}</td>
+      <td style="color:var(--text-2);font-size:12px;white-space:nowrap;" title="${lastTs ? esc(_v6519_timeAgo(lastTs)) : ''}">${lastTs ? esc(_v6519_dateShort(lastTs)) : '—'}</td>
       <td style="text-align:right;padding-right:14px;color:var(--text-2);">${(b.snapshots||[]).length}</td>
       <td style="text-align:right;padding-right:14px;color:var(--text-2);font-family:monospace;font-size:12px;">${_v6519_bytes(totalUsed)}</td>
       <td style="text-align:right;padding-right:14px;white-space:nowrap;" onclick="event.stopPropagation()">
@@ -40249,9 +40506,9 @@ function _renderAllBackups() {
     if (expanded) {
       const snaps = (b.snapshots || []);
       if (!snaps.length) {
-        rows.push('<tr><td></td><td colspan="7" style="color:var(--text-3);font-style:italic;padding:6px 0 14px;font-size:12px;">No snapshots in this backup yet.</td></tr>');
+        rows.push('<tr><td></td><td colspan="8" style="color:var(--text-3);font-style:italic;padding:6px 0 14px;font-size:12px;">No snapshots in this backup yet.</td></tr>');
       } else {
-        rows.push('<tr><td></td><td colspan="7" style="padding:0 0 12px;">' +
+        rows.push('<tr><td></td><td colspan="8" style="padding:0 0 12px;">' +
           '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
           '<thead><tr style="color:var(--text-3);">' +
             '<th style="text-align:left;padding:4px 8px;">Snapshot</th>' +
@@ -40286,6 +40543,16 @@ function _renderAllBackups() {
   tbody.innerHTML = rows.join('');
 }
 
+// Compact local date-time "YYYY-MM-DD HH:MM" for the Last Backup column.
+function _v6519_dateShort(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return '—';
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+         ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
 // Human-friendly byte size. Uses 1024-based units (KiB/MiB/GiB) which
 // match what ZFS reports.
 function _v6519_bytes(n) {
@@ -40308,14 +40575,25 @@ function _bkupBurger(e, ctx) {
   const dd = document.createElement('div');
   dd.className = 'row-menu-dropdown';
   const isSnap = !!ctx.snapshot;
+  const deps = ctx.dependents || [];
   const label = isSnap ? '🗑 Delete Snapshot' : '🗑 Delete Backup';
   const btn = document.createElement('button');
   btn.textContent = label;
   btn.className = 'danger';
-  btn.addEventListener('click', () => {
-    _closeBkupBurger();
-    _bkupConfirmDelete(ctx);
-  });
+  if (!isSnap && deps.length) {
+    // Locked — an Instant Independent Restore is running off this backup.
+    btn.textContent = '🔒 Delete Backup';
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    btn.style.cursor = 'not-allowed';
+    btn.title = deps.join(', ') + (deps.length > 1 ? ' are' : ' is') +
+      ' running off this backup. Promote it to a Full Copy first.';
+  } else {
+    btn.addEventListener('click', () => {
+      _closeBkupBurger();
+      _bkupConfirmDelete(ctx);
+    });
+  }
   dd.appendChild(btn);
   const rect = e.currentTarget.getBoundingClientRect();
   dd.style.cssText = `position:fixed;top:${rect.bottom+2}px;right:${window.innerWidth-rect.right}px;`;
@@ -41931,7 +42209,7 @@ function _ciTermOpenTab(name) {
 // dead session doesn't reconnect in a loop forever.
 function _ciTermScheduleReconnect(key) {
   const tab = _ciTermTabs.get(key);
-  if (!tab || tab.closing) return;
+  if (!tab || tab.closing || tab.terminated) return;
   // If we just got kicked by another browser, don't ping-pong — leave
   // the session attached to whoever has it. The user can take it back
   // by clicking the tab or refreshing.
@@ -42451,6 +42729,19 @@ function _ciTermBindWS(name, ws) {
           _ciTermRenderTabs();
           return;
         }
+        if (m && (m.ended || m.type === 'ended' || (m.type === 'error' && m.error === 'session not found'))) {
+          // Session closed (here, another window, process exit, or evicted after
+          // its grace period). Show ONE line + Enter-to-restart; stop the
+          // reconnect loop so the death notice isn't replayed over and over.
+          tab.terminated = true;
+          if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }
+          _ciTermRenderTabs();
+          if (!tab._closedNoticeShown) {
+            tab._closedNoticeShown = true;
+            try { tab.term.write('\r\n\x1b[33m' + _ciTermClosedNotice(m.reason) + '\x1b[0m\r\n'); } catch(_) {}
+          }
+          return;
+        }
         if (m && m.type === 'error') { tab.term.write('\r\n\x1b[31m[error: ' + (m.error||'unknown') + ']\x1b[0m\r\n'); return; }
       } catch (_) {}
       tab.term.write(e.data);
@@ -42461,6 +42752,12 @@ function _ciTermBindWS(name, ws) {
   ws.onclose   = () => { _ciTermScheduleReconnect(name); _ciTermRenderTabs(); };
   ws.onerror   = () => { /* onclose will fire too — auto-reconnect is owned there */ };
   tab.onDataDisp   = tab.term.onData(data => {
+    if (tab.terminated) {
+      // Session was closed server-side — Enter starts a fresh session in this
+      // tab (same target), dropping the dead session_id.
+      if (data === '\r' || data === '\n') _ciTermStartFreshSession(name);
+      return;
+    }
     // OLD-peer single-active kick → first Enter takes the session back here.
     if (tab.kicked) {
       if (data === '\r' || data === '\n') _ciTermReopenTab(name);
@@ -42501,6 +42798,39 @@ function _ciTermReopenTab(key) {
   tab.reconnectAttempt = 0;
   _ciTermTearDownWS(tab);
   tab.term.write('\r\n\x1b[33m[reconnecting…]\x1b[0m\r\n');
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsPath = tab.wsPath || ('/ws/incus-console?name=' + encodeURIComponent(key));
+  const ws = new WebSocket(proto + '//' + location.host + wsPath);
+  _ciTermBindWS(key, ws);
+  _ciTermRenderTabs();
+}
+
+// Wording for the single line shown when a session has been closed.
+function _ciTermClosedNotice(reason) {
+  let why;
+  switch (reason) {
+    case 'user_close':      why = 'was closed from another window'; break;
+    case 'process_exit':    why = 'ended — the shell or process exited'; break;
+    case 'session_expired': why = 'expired'; break;
+    case 'server_shutdown': why = 'ended — the server restarted'; break;
+    default:                why = 'has been closed';
+  }
+  return '[This terminal session ' + why + '. Press Enter to start a new session.]';
+}
+
+// Start a BRAND-NEW session in a tab whose previous session was closed: drop the
+// dead session_id from the path so the server spawns a fresh PTY (same target).
+function _ciTermStartFreshSession(key) {
+  const tab = _ciTermTabs.get(key);
+  if (!tab) return;
+  tab.terminated = false;
+  tab._closedNoticeShown = false;
+  tab.kicked = false;
+  tab.sessionId = '';
+  tab.reconnectAttempt = 0;
+  if (tab.wsPath) tab.wsPath = tab.wsPath.replace(/[?&]session_id=[^&]*/, '');
+  _ciTermTearDownWS(tab);
+  try { tab.term.write('\r\n\x1b[36m[starting a new session…]\x1b[0m\r\n'); } catch (_) {}
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsPath = tab.wsPath || ('/ws/incus-console?name=' + encodeURIComponent(key));
   const ws = new WebSocket(proto + '//' + location.host + wsPath);
@@ -54614,7 +54944,7 @@ async function loadLXDDatastores() {
   const tbody = document.getElementById('lxd-datastores-tbody');
   const al = document.getElementById('lxd-datastores-alert');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
   al.classList.add('hidden');
   try {
     const res = await fetch('/api/incus/storage-pools-detail');

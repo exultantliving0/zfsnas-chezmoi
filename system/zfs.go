@@ -2375,6 +2375,38 @@ func CloneSnapshot(snapName, target string) error {
 	return nil
 }
 
+// ZfsOrigin returns the `origin` property of a dataset — the snapshot it was
+// cloned from — or "" when the dataset is not a clone (ZFS reports "-") or the
+// query fails. Used to detect instances whose storage is a ZFS clone of a
+// backup snapshot (an Instant Independent Restore).
+func ZfsOrigin(dataset string) string {
+	out, err := exec.Command("zfs", "get", "-H", "-o", "value", "origin", dataset).Output()
+	if err != nil {
+		return ""
+	}
+	v := strings.TrimSpace(string(out))
+	if v == "-" {
+		return ""
+	}
+	return v
+}
+
+// ZfsSnapshotClones returns the dataset names cloned from a snapshot (the
+// `clones` property), or nil when none. A snapshot with clones cannot be
+// destroyed, which is how an Instant Independent Restore keeps its backup
+// pinned until promoted to a full copy.
+func ZfsSnapshotClones(snapshot string) []string {
+	out, err := exec.Command("zfs", "get", "-H", "-o", "value", "clones", snapshot).Output()
+	if err != nil {
+		return nil
+	}
+	v := strings.TrimSpace(string(out))
+	if v == "-" || v == "" {
+		return nil
+	}
+	return strings.Split(v, ",")
+}
+
 // DestroySnapshot deletes a snapshot.
 func DestroySnapshot(snapName string) error {
 	out, err := exec.Command("sudo", "zfs", "destroy", snapName).CombinedOutput()

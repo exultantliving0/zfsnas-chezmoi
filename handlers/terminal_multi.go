@@ -618,6 +618,9 @@ function activateTab(i) {
     if (!tab.closing && (!tab.ws || tab.ws.readyState >= WebSocket.CLOSING)) {
       tab.kicked = false;
       tab.reconnectAttempt = 0;
+      // A closed (terminated) session can't be re-attached — clicking it starts
+      // a brand-new session in the tab, same as pressing Enter.
+      if (tab.terminated) { tab.terminated = false; tab._closedNoticeShown = false; tab.id = ''; }
       attachTab(tab, {reset:false});
     }
   }));
@@ -922,6 +925,19 @@ function attachTab(tab, opts) {
           setTabControl(tab, 'mirror');
           try { term.write('\r\n\x1b[33m[another browser took over — press Enter to resume here]\x1b[0m\r\n'); } catch(_) {}
           return;
+        } else if (msg.ended || msg.type === 'ended' || (msg.type === 'error' && msg.error === 'session not found')) {
+          // The session was closed — either an "ended" frame (here, from another
+          // window, or the process exited) or, after the grace period, a
+          // "session not found" on reconnect. Show ONE clear line + grey the
+          // tab + offer Enter to start a fresh session; never loop or replay.
+          tab.terminated = true;
+          if (tab.reconnectTimer) { clearTimeout(tab.reconnectTimer); tab.reconnectTimer = null; }
+          updateTabDot(tab);
+          if (!tab._closedNoticeShown) {
+            tab._closedNoticeShown = true;
+            try { term.write('\r\n\x1b[33m' + termClosedNotice(msg.reason) + '\x1b[0m\r\n'); } catch(_) {}
+          }
+          return;
         } else if (msg.type === 'error') {
           if (msg.fatal) {
             // Unrecoverable (e.g. peer lacks the endpoint). Show it plainly and
@@ -953,7 +969,20 @@ function attachTab(tab, opts) {
   // Dispose the previous onData binding so reconnects don't stack handlers.
   if (tab._onDataDisp) { try { tab._onDataDisp.dispose(); } catch (_) {} }
   tab._onDataDisp = term.onData(d => {
-    if (tab.terminated) return;              // dead session — ignore typing
+    if (tab.terminated) {
+      // Session was closed server-side — Enter starts a fresh one in this tab
+      // (same kind/target), dropping the dead session_id so the server spawns
+      // a brand-new session instead of failing to re-attach.
+      if (d === '\r' || d === '\n') {
+        tab.terminated = false;
+        tab._closedNoticeShown = false;
+        tab.id = '';
+        tab.reconnectAttempt = 0;
+        try { term.write('\r\n\x1b[36m[starting a new session…]\x1b[0m\r\n'); } catch (_) {}
+        attachTab(tab, { reset: false });
+      }
+      return;
+    }
     if (tab.kicked) {
       // OLD-peer single-active: another browser took over and closed our conn.
       // First Enter takes it back HERE (re-attach kicks the other browser).
@@ -979,8 +1008,22 @@ function attachTab(tab, opts) {
   ws.addEventListener('open', () => { sendResize(tab); });
 }
 
+// termClosedNotice builds the single line shown when a session has been closed,
+// worded to the reason the server reported.
+function termClosedNotice(reason) {
+  let why;
+  switch (reason) {
+    case 'user_close':      why = 'was closed from another window'; break;
+    case 'process_exit':    why = 'ended — the shell or process exited'; break;
+    case 'session_expired': why = 'expired'; break;
+    case 'server_shutdown': why = 'ended — the server restarted'; break;
+    default:                why = 'has been closed';
+  }
+  return '[This terminal session ' + why + '. Press Enter to start a new session.]';
+}
+
 function scheduleReconnect(tab) {
-  if (!tab || tab.closing || tab.kicked || tab.fatal) return;
+  if (!tab || tab.closing || tab.kicked || tab.fatal || tab.terminated) return;
   const attempt = (tab.reconnectAttempt || 0);
   if (attempt > 8) {
     try { tab.term.write('\r\n\x1b[33m[disconnected — click tab to retry]\x1b[0m\r\n'); } catch (_) {}

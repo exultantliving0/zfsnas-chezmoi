@@ -1134,6 +1134,11 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleDeleteBackup(appCfg))))).Methods("POST")
 	r.Handle("/api/lxd/backups/restore-clone",
 		RequireAuth(RequirePermission("manage_protection")(http.HandlerFunc(HandleCloneRestoreBackup(appCfg))))).Methods("POST")
+	// Instant Independent Restore dependency + promote-to-full-copy (v6.6.15).
+	r.Handle("/api/lxd/instances/{name}/backup-dependency",
+		RequireAuth(http.HandlerFunc(HandleBackupDependency))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/promote-full-copy",
+		RequireAuth(RequirePermission("manage_protection")(HandlePromoteFullCopy(appCfg)))).Methods("POST")
 	r.Handle("/api/lxd/restore-jobs",
 		RequireAuth(http.HandlerFunc(HandleListRestoreJobs))).Methods("GET")
 	r.Handle("/api/lxd/restore-jobs/{job_id}/progress",
