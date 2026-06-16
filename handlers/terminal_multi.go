@@ -637,8 +637,14 @@ function closeTab(i) {
   // pane unloads it, which closes /ws/lxd-vga; the server's grace timer then
   // releases the SPICE op. Non-vga tabs close their server-side PTY session.
   if (t.kind !== 'vga') {
-    fetch('/api/terminal-sessions/' + encodeURIComponent(t.id) + '/close', {method:'POST', credentials:'same-origin'})
-      .catch(()=>{});
+    // Terminate the server-side PTY. A peer tab lives on a linked server, so its
+    // close must be routed through the InterLink endpoint — calling the LOCAL
+    // close with the peer's session id is a no-op, which left the peer session
+    // running and let a newly-opened window re-list it.
+    const closeURL = t.serverId
+      ? '/api/interlink/terminal-sessions/' + encodeURIComponent(t.serverId) + '/' + encodeURIComponent(t.id) + '/close'
+      : '/api/terminal-sessions/' + encodeURIComponent(t.id) + '/close';
+    fetch(closeURL, {method:'POST', credentials:'same-origin'}).catch(()=>{});
     if (t.ws) try { t.ws.close(); } catch{}
     if (t.term) try { t.term.dispose(); } catch{}
   }

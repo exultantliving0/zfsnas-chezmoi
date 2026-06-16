@@ -470,7 +470,15 @@ func (s *Store) ListForUser(userID string) []Snapshot {
 	sort.Slice(owned, func(i, j int) bool { return owned[i].createdAt.Before(owned[j].createdAt) })
 	out := make([]Snapshot, 0, len(owned))
 	for _, sess := range owned {
-		out = append(out, sess.snapshot())
+		snap := sess.snapshot()
+		// Don't list terminated sessions. They linger briefly (the grace period
+		// lets a reconnecting window still receive the "closed" notice by id),
+		// but a newly-opened terminal window must NOT resurrect them as tabs —
+		// e.g. a session the user just closed with the tab's X.
+		if snap.Terminated {
+			continue
+		}
+		out = append(out, snap)
 	}
 	return out
 }
