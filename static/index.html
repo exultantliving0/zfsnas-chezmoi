@@ -33390,6 +33390,21 @@ function runReplicationTask(id, name) {
   function startMapPoll(){ stopMapPoll(); _mapSyncLayerUI(); _mapEnsureZoom(_mapCtx.svg, _mapCtx.viewport); mapWireClicks(); pollMap(); _mapTimer = setInterval(pollMap, 3000); }
   function stopMapPoll(){ if (_mapTimer){ clearInterval(_mapTimer); _mapTimer = null; } mapHoverHide(); }
 
+  // Called on an InterLink server switch. The full Topology is "pinned" to the
+  // first server's object set (so live SMB/NFS churn can't reshuffle it), and
+  // that pin survives a relay switch because switchCapTab('map') isn't re-run —
+  // leaving the topology showing the PREVIOUS server's pools/datasets. Drop the
+  // pin + caches so the next poll re-pins the newly-selected server, and restart
+  // the poll immediately when the Topology tab is on screen.
+  window._mapResetForServerSwitch = function() {
+    _capTopoPinned = null;
+    _mapData = null;
+    _mapSig = '';
+    mapHoverHide();
+    const panel = document.getElementById(_MAP_CTX_CAP.panel);
+    if (panel && panel.offsetParent !== null) { setMapCtx(_MAP_CTX_CAP); startMapPoll(); }
+  };
+
   // Delegated click handling on the persistent <svg> (innerHTML is replaced each
   // render, but the element — and this listener — stays). Dataset/zvol → detail
   // popup (same as the capacity bar); share → its edit modal; VM/CT → its view.
@@ -40401,7 +40416,11 @@ async function loadAllBackups() {
   const tbody = document.getElementById('lxd-backups-tbody');
   const al = document.getElementById('lxd-backups-alert');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">' +
+    '<div style="display:flex;flex-direction:column;align-items:center;gap:12px;">' +
+    '<span class="spinner" style="width:26px;height:26px;border-width:3px;"></span>' +
+    '<span>Scanning all local and remote ZFS pools for backups…</span></div>' +
+    '</td></tr>';
   al.classList.add('hidden');
   try {
     const r = await fetch('/api/incus/backups');
@@ -50697,6 +50716,10 @@ async function _softRelayRefresh() {
     // the #nav-compute-instances list. The cache was cleared above, so this
     // forces a fresh API call rather than reusing the previous server's VMs.
     if (typeof refreshComputeNav      === 'function') refreshComputeNav();
+    // Storage Topology is pinned to the first server's object set; drop the pin
+    // so it re-renders the newly-selected server instead of re-projecting the
+    // old server's pools/datasets.
+    if (typeof window._mapResetForServerSwitch === 'function') window._mapResetForServerSwitch();
 
     // Activity & Events bottom bar (v6.5.43): the entries section
     // (`ab-entries`, fed by /api/audit) and the running-jobs section
@@ -54407,7 +54430,7 @@ async function loadBridgeMembers() {
       const actionsCell = `<td class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'>&#x22EE;</span></td>`;
       const dsLabel = _dsLabel(m.root_pool);
-      return `<tr id="lxd-row-${esc(m.name)}">
+      return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})'>
         <td>${typeBadge}</td>
         <td>${esc(m.description || m.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></td>
         <td style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
@@ -54415,7 +54438,7 @@ async function loadBridgeMembers() {
         <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
         <td style="text-align:center;color:var(--text-2);">${esc(m.cpu_limit || '—')}</td>
         <td style="color:var(--text-2);">${esc(fmtIncusMemory(m.memory_limit))}</td>
-        <td style="text-align:center;">${powerBtn}</td>
+        <td style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
         ${actionsCell}
       </tr>`;
     }).join('');
@@ -54943,7 +54966,7 @@ async function loadDatastoreMembers() {
       const actionsCell = `<td class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'>&#x22EE;</span></td>`;
       const dsLabel = _dsLabel(m.root_pool);
-      return `<tr id="lxd-row-${esc(m.name)}">
+      return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})'>
         <td>${typeBadge}</td>
         <td>${esc(m.description || m.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></td>
         <td style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
@@ -54951,7 +54974,7 @@ async function loadDatastoreMembers() {
         <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
         <td style="text-align:center;color:var(--text-2);">${esc(m.cpu_limit || '—')}</td>
         <td style="color:var(--text-2);">${esc(fmtIncusMemory(m.memory_limit))}</td>
-        <td style="text-align:center;">${powerBtn}</td>
+        <td style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
         ${actionsCell}
       </tr>`;
     }).join('');

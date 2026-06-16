@@ -46,6 +46,11 @@ var relayWSForwardPaths = []string{
 	"/ws/replication/",
 	"/ws/lxd-console",
 	"/ws/lxd-vga",
+	// Live `zpool iostat` for the storage Topology hover bandwidth graphs must
+	// run on the server being viewed — otherwise hovering a remote pool/dataset
+	// opened the stream on the LOCAL portal (which has no such pool) and the
+	// bandwidth/ops charts stayed empty.
+	"/ws/zpool-iostat",
 	"/ws/compose-logs",
 	"/ws/compose-console",
 	"/ws/docker-console",
