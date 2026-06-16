@@ -28481,7 +28481,28 @@ document.addEventListener('mousemove', (e) => {
   // tooltip up and it never dismissed until the modal closed. Hide them
   // the instant the mouse moves while a modal is open. Cheap: the modal
   // lookup only runs when a gauge currently thinks it's hovered.
-  if ((_cpuGaugeHovered || _memGaugeHovered || _swapGaugeHovered) && _anyModalOpen()) {
+  if (_cpuGaugeHovered || _memGaugeHovered || _swapGaugeHovered) {
+    // Hide the gauge tooltips when a modal is open (they float above it), OR
+    // when the pointer is no longer over ANY gauge panel. The latter is the
+    // real safety net: if the mouse left the window through the top edge, the
+    // panel's own mouseleave saw a stale cursor position (still "inside" the
+    // panel) and skipped the hide — so the tooltip hung around. The moment the
+    // mouse moves anywhere outside the three gauges (e.g. re-entering the page
+    // from another area), this dismisses it.
+    if (_anyModalOpen() ||
+        !(_pointerOverGauge('cpu-gauge-panel') ||
+          _pointerOverGauge('mem-gauge-panel') ||
+          _pointerOverGauge('swap-gauge-panel'))) {
+      _hideAllGaugeTooltips();
+    }
+  }
+}, { passive: true });
+
+// Pointer left the document/window entirely → drop any open gauge tooltip
+// immediately, so it isn't left hanging when the mouse exits past the window
+// edge (e.g. out the top) and returns elsewhere.
+document.addEventListener('mouseout', (e) => {
+  if (!e.relatedTarget && (_cpuGaugeHovered || _memGaugeHovered || _swapGaugeHovered)) {
     _hideAllGaugeTooltips();
   }
 }, { passive: true });
