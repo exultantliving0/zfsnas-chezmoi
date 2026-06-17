@@ -336,6 +336,18 @@ func scrapeLXDMetricsOnce(now time.Time) error {
 	memActiveAnon := map[string]float64{}
 	memAvail      := map[string]float64{}
 	memTotal      := map[string]float64{}
+	// Per-filesystem usage, keyed "instance|mountpoint". Real disk filesystems
+	// only — pseudo mounts (tmpfs, overlay, squashfs/loop, proc/sys, lxcfs…) are
+	// dropped so they never enter the RRD or the % chart.
+	fsSize  := map[string]float64{}
+	fsAvail := map[string]float64{}
+	fsFree  := map[string]float64{}
+	// Per-instance mountpoint sets used to prune stale pseudo-FS series an older
+	// collector may have stored (tmpfs/loop/dm/flash …). allFsMounts = every
+	// mountpoint reported this scrape; realFsMounts = those that passed the
+	// real-FS filter. The difference is definitively pseudo → DeleteKey.
+	allFsMounts  := map[string]map[string]bool{}
+	realFsMounts := map[string]map[string]bool{}
 	for _, s := range samples {
 		instance := s.labels["name"]
 		if instance == "" {
@@ -379,6 +391,32 @@ func scrapeLXDMetricsOnce(now time.Time) error {
 			if dev := s.labels["device"]; dev != "" {
 				recs = append(recs, rec{seriesKey{instance, "disk_w:" + dev, true}, s.value})
 			}
+		case "lxd_filesystem_size_bytes", "lxd_filesystem_avail_bytes", "lxd_filesystem_free_bytes":
+			mp := s.labels["mountpoint"]
+			if mp != "" {
+				if allFsMounts[instance] == nil {
+					allFsMounts[instance] = map[string]bool{}
+				}
+				allFsMounts[instance][mp] = true
+			}
+			if !isRealGuestFilesystem(s.labels["device"], s.labels["fstype"], mp) {
+				continue
+			}
+			if realFsMounts[instance] == nil {
+				realFsMounts[instance] = map[string]bool{}
+			}
+			realFsMounts[instance][mp] = true
+			k := instance + "|" + mp
+			switch s.metric {
+			case "lxd_filesystem_size_bytes":
+				if s.value > fsSize[k] {
+					fsSize[k] = s.value
+				}
+			case "lxd_filesystem_avail_bytes":
+				fsAvail[k] = s.value
+			default: // lxd_filesystem_free_bytes
+				fsFree[k] = s.value
+			}
 		}
 	}
 	// Memory: compute derived "used" so VMs without lxd-agent still get
@@ -403,6 +441,27 @@ func scrapeLXDMetricsOnce(now time.Time) error {
 	// Fold the per-instance CPU totals in as a counter; rate becomes %CPU.
 	for instance, total := range cpuSums {
 		recs = append(recs, rec{seriesKey{instance, "cpu", true}, total})
+	}
+	// Per-filesystem: record used + total bytes (gauges). The frontend graphs
+	// the % (used/total) and shows used-vs-total in the hover popup.
+	for k, size := range fsSize {
+		if size <= 0 {
+			continue
+		}
+		avail := fsAvail[k]
+		if avail == 0 {
+			avail = fsFree[k] // fall back to total-free when avail isn't emitted
+		}
+		used := size - avail
+		if used < 0 {
+			used = 0
+		}
+		instance, mp, ok := strings.Cut(k, "|")
+		if !ok {
+			continue
+		}
+		recs = append(recs, rec{seriesKey{instance, "fs_used:" + mp, false}, used})
+		recs = append(recs, rec{seriesKey{instance, "fs_size:" + mp, false}, size})
 	}
 
 	instanceSet := map[string]bool{}
@@ -435,6 +494,28 @@ func scrapeLXDMetricsOnce(now time.Time) error {
 		}
 		db.Record(r.key.series, val, now)
 		seriesCount++
+	}
+
+	// Prune pseudo-FS series an older collector recorded. A mountpoint reported
+	// this scrape but rejected by isRealGuestFilesystem is definitively pseudo
+	// (tmpfs/loop/dm/flash/snap …) — drop its fs_used/fs_size history so it
+	// disappears from BOTH the table popup and the Monitor chart. Only mounts
+	// actually seen this scrape are touched, so a transiently-absent real disk
+	// is never deleted.
+	for instance, mounts := range allFsMounts {
+		var db *capacityrrd.DB
+		for mp := range mounts {
+			if realFsMounts[instance][mp] {
+				continue
+			}
+			if db == nil {
+				if db = GetLXDInstanceMetricsDB(instance); db == nil {
+					break
+				}
+			}
+			db.DeleteKey("fs_used:" + mp)
+			db.DeleteKey("fs_size:" + mp)
+		}
 	}
 
 	// Flush every dirty DB. Iterate the map under the lock.
@@ -551,6 +632,56 @@ func parsePromText(body string) []promSample {
 		out = append(out, s)
 	}
 	return out
+}
+
+// pseudoFstypes are virtual/in-memory filesystems that must never enter the
+// per-instance filesystem RRD or % chart — they aren't real disk capacity.
+var pseudoFstypes = map[string]bool{
+	"tmpfs": true, "devtmpfs": true, "ramfs": true, "overlay": true, "overlayfs": true,
+	"squashfs": true, "proc": true, "sysfs": true, "cgroup": true, "cgroup2": true,
+	"devpts": true, "mqueue": true, "hugetlbfs": true, "debugfs": true, "tracefs": true,
+	"securityfs": true, "selinuxfs": true, "pstore": true, "bpf": true, "configfs": true,
+	"fusectl": true, "binfmt_misc": true, "autofs": true, "nsfs": true, "efivarfs": true,
+	"rpc_pipefs": true, "fuse.lxcfs": true,
+}
+
+// isRealGuestFilesystem reports whether a filesystem metric describes a real
+// disk-backed mount of the instance (ext4/xfs/btrfs/zfs/vfat/…) rather than a
+// pseudo mount we want excluded (tmpfs, overlay, squashfs over loop devices,
+// proc/sys/cgroup, lxcfs, etc.).
+func isRealGuestFilesystem(device, fstype, mountpoint string) bool {
+	if mountpoint == "" {
+		return false
+	}
+	// Pseudo mount trees. tmpfs/ramfs/proc/sysfs live here, and Incus sometimes
+	// reports them with an opaque hex statfs magic (e.g. "0x-7a7ba70a") instead
+	// of a name, so a fstype-name denylist alone misses them — match by path too.
+	for _, pre := range []string{"/proc", "/sys", "/dev", "/run"} {
+		if mountpoint == pre || strings.HasPrefix(mountpoint, pre+"/") {
+			return false
+		}
+	}
+	// snap/loop-squashfs and other container-runtime pseudo trees by mountpoint.
+	for _, pre := range []string{"/snap", "/var/snap", "/var/lib/docker", "/var/lib/lxcfs"} {
+		if mountpoint == pre || strings.HasPrefix(mountpoint, pre+"/") {
+			return false
+		}
+	}
+	if pseudoFstypes[fstype] || strings.HasPrefix(fstype, "fuse.") {
+		return false
+	}
+	// Device-name denylist. Normalize a leading /dev/ so both "loop0" and
+	// "/dev/loop0" match. Excludes loopback, device-mapper / LVM (dm-*,
+	// /dev/mapper/*), QEMU firmware flash (system.flash*), overlay, none.
+	base := strings.TrimPrefix(strings.ToLower(device), "/dev/")
+	if strings.Contains(base, "loop") ||
+		strings.HasPrefix(base, "dm-") ||
+		strings.HasPrefix(base, "mapper/") || strings.Contains(base, "/mapper/") ||
+		strings.Contains(base, "flash") ||
+		base == "overlay" || base == "none" {
+		return false
+	}
+	return true
 }
 
 // parseLabels parses the inside of a {…} label set: name="value",name="value".

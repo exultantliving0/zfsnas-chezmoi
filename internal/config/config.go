@@ -491,6 +491,7 @@ type UserPreferences struct {
 	CapSelectedKeys      map[string][]string `json:"cap_selected_keys,omitempty"`      // capacity trend selection keyed by "local" or relay hostname
 	TreemapSelectedDS    map[string]string   `json:"treemap_selected_ds,omitempty"`    // treemap selected pool/dataset keyed by "local" or relay hostname
 	BottomTerminalHeight int                 `json:"bottom_terminal_height,omitempty"` // remembered pixel height of the bottom terminal panel; 0 = default
+	LXDColumns           []string            `json:"lxd_columns,omitempty"`            // selected toggleable columns for VM/Container tables; nil = default set
 }
 
 // User represents a portal or SMB-only user.

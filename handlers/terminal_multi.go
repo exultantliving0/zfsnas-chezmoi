@@ -1067,9 +1067,48 @@ function _resumeTerminals() {
       attachTab(tab, {reset:false});
     }
   });
+  // v6.6.16 — return keyboard focus to the active terminal so the on-screen
+  // keyboard reappears on iPad/iOS WITHOUT the user having to tap the screen
+  // first. On iOS the soft keyboard only pops on a focus() that lands in a
+  // window-focus / visibility gesture, which is exactly when this runs.
+  _focusActiveTerm();
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _resumeTerminals(); });
-window.addEventListener('pageshow', _resumeTerminals); // bfcache restore (iPad)
+// Focus the visible tab's terminal (or VGA iframe) so a CONNECTED hardware
+// keyboard works the instant the window is shown/refocused — no screen tap.
+// iPadOS is fussy: term.focus() alone is often ignored on visibility/focus
+// restore, so we ALSO focus xterm's hidden helper <textarea> directly, and we
+// retry across a few frames/timeouts because the resume path may rebuild the
+// pane or reconnect the socket after we first try.
+function _focusActiveTermOnce() {
+  const tab = TABS[activeIdx];
+  if (!tab || tab.closing) return;
+  try {
+    if (tab.kind === 'vga') { tab.iframeEl && tab.iframeEl.focus(); return; }
+    if (tab.term) {
+      tab.term.focus();
+      const ta = tab.term.textarea
+        || (tab.paneEl && tab.paneEl.querySelector('textarea.xterm-helper-textarea'));
+      if (ta) { try { ta.focus({ preventScroll: true }); } catch (_) { ta.focus(); } }
+    }
+  } catch (_) {}
+}
+function _focusActiveTerm() {
+  _focusActiveTermOnce();
+  requestAnimationFrame(_focusActiveTermOnce);
+  setTimeout(_focusActiveTermOnce, 120);
+  setTimeout(_focusActiveTermOnce, 400);
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { _resumeTerminals(); _focusActiveTerm(); } });
+window.addEventListener('pageshow', () => { _resumeTerminals(); _focusActiveTerm(); }); // bfcache restore (iPad)
+window.addEventListener('focus', _focusActiveTerm);     // tab/app switch back → grab keyboard
+// Safety net: if a hardware key arrives while focus is on the body (not a
+// field), redirect focus to the active terminal so the NEXT keystrokes land
+// there. Costs nothing when the terminal is already focused.
+window.addEventListener('keydown', (e) => {
+  const t = e.target;
+  const inField = t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable);
+  if (!inField) _focusActiveTermOnce();
+}, true);
 
 // ── Bootstrap: list existing sessions, build tabs ──────────────────────────
 
@@ -1115,6 +1154,9 @@ async function loadExistingSessions() {
         }) === key);
       }
       activateTab(pickIdx >= 0 ? pickIdx : 0);
+      // Initial window open: grab keyboard focus so a connected hardware
+      // keyboard works immediately, without the user tapping the screen.
+      _focusActiveTerm();
     }
   } catch{}
 }

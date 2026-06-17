@@ -991,6 +991,37 @@ input::placeholder { color: var(--text-3); }
   transition: opacity .15s;
 }
 .lxd-power-badge.lxd-tbl-icon-busy { opacity: 0.45; cursor: default; pointer-events: none; }
+
+/* v6.6.16 — metric columns (VCPU/RAM/Filesystem) "%used + bar". */
+.lxd-metric-wrap { display: inline-flex; align-items: center; gap: 6px; width: 100%; }
+.lxd-metric-pct { min-width: 30px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.lxd-bar {
+  flex: 1 1 auto;
+  height: 7px;
+  min-width: 28px;
+  background: var(--surface2, rgba(255,255,255,0.08));
+  border-radius: 4px;
+  overflow: hidden;
+}
+.lxd-bar > i { display: block; height: 100%; border-radius: 4px; transition: width .3s ease; }
+.lxd-metric-cell { vertical-align: middle; }
+
+/* Per-cell hover popup (filesystems / NICs / disks breakdown). */
+#lxd-cell-popup {
+  position: fixed;
+  z-index: 5000;
+  display: none;
+  max-width: min(92vw, 420px);
+  background: var(--surface, #1c2128);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  pointer-events: auto;
+}
 /* VMs & Containers list — make the table area independently scrollable.
    Pages-container handles outer scroll for tall pages, but the LXD table
    has 10 columns and many rows; on short or narrow viewports the action

@@ -818,6 +818,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// can render top-N stacked charts without N HTTP requests.
 	r.Handle("/api/lxd/workload-perf",
 		RequireAuth(http.HandlerFunc(HandleLXDWorkloadPerf))).Methods("GET")
+	// VM/Container table metric columns — latest-sample rollup per instance
+	// (cpu%/mem%/top-fs%/net Mb-s/disk-IO MB-s) in one request.
+	r.Handle("/api/lxd/instances-metrics",
+		RequireAuth(http.HandlerFunc(HandleLXDInstancesMetrics))).Methods("GET")
 	r.Handle("/api/lxd/instance-realtime",
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceRealtime))).Methods("GET")
 	r.Handle("/api/lxd/instances",

@@ -281,12 +281,13 @@ type LXDInstanceRealtime struct {
 // metrics endpoint sources from cgroup + the host-side QEMU blockio
 // counters and works uniformly for VMs and containers.
 type realtimeSnapshot struct {
-	ts            time.Time
-	cpuSeconds    float64 // sum across cpu/mode pairs, in seconds
-	netRXBytes    float64
-	netTXBytes    float64
-	diskReadBytes float64
-	diskWriteBytes float64
+	ts time.Time
+	// Per-metric change-based rate state, keyed "cpu"/"netrx"/"nettx"/
+	// "diskr"/"diskw". Each tracks the cumulative value at the last observed
+	// CHANGE plus the rate computed then, so we can hold a steady rate across
+	// the ~8 s Incus metrics-cache gaps instead of emitting a zero/spike
+	// sawtooth against a 3 s poll. See deriveRate.
+	states map[string]*rateState
 	// lastResult is the LXDInstanceRealtime returned by the most recent
 	// non-throttled call. Returned again for any call that arrives
 	// within realtimeReuseWindow of `ts` so two concurrent pollers
@@ -294,6 +295,55 @@ type realtimeSnapshot struct {
 	// alternate between "real rate" and "≈0" by clobbering each
 	// other's baseline 100 ms apart.
 	lastResult *LXDInstanceRealtime
+}
+
+// rateState holds the change-based baseline for one cumulative counter.
+type rateState struct {
+	baseVal  float64   // cumulative value at the last observed change
+	baseTS   time.Time // time of that change
+	lastRate float64   // rate computed at the last change (held across cache gaps)
+	haveRate bool
+}
+
+// rateStaleAfter is how long deriveRate keeps holding the last computed rate
+// while the counter is unchanged (an Incus metrics-cache gap). It must exceed
+// the cache interval (~8 s) plus a poll period; once a counter stays flat
+// longer than this we assume the activity genuinely stopped and report 0.
+const rateStaleAfter = 15 * time.Second
+
+// deriveRate turns a cumulative counter into a smooth instantaneous rate that
+// survives Incus's metrics cache. Incus refreshes the Prometheus counters only
+// every ~8 s, so a naive (now-prev)/dt over a 3 s poll yields 0 for the polls
+// inside a cache gap and a 2-3× spike on the poll that catches the jump.
+// Instead we measure each rate over the interval since the counter last
+// CHANGED, and between changes we hold that rate (until rateStaleAfter, after
+// which we decay to 0 so a stopped workload doesn't read busy forever).
+// Returns nil on the first sample / after a counter reset (frontend discards).
+func deriveRate(st *rateState, cur float64, now time.Time, scale float64) *float64 {
+	if st.baseTS.IsZero() {
+		st.baseVal, st.baseTS = cur, now
+		return nil // first sample — no baseline yet
+	}
+	switch {
+	case cur > st.baseVal: // counter advanced — rate over the real interval
+		dt := now.Sub(st.baseTS).Seconds()
+		if dt <= 0 {
+			return nil
+		}
+		r := (cur - st.baseVal) / dt * scale
+		st.baseVal, st.baseTS, st.lastRate, st.haveRate = cur, now, r, true
+		return &r
+	case cur < st.baseVal: // counter reset (instance restarted) — rebaseline
+		st.baseVal, st.baseTS, st.haveRate = cur, now, false
+		return nil
+	default: // unchanged: hold the last rate across the cache gap, else 0
+		if st.haveRate && now.Sub(st.baseTS) <= rateStaleAfter {
+			r := st.lastRate
+			return &r
+		}
+		z := 0.0
+		return &z
+	}
 }
 
 // realtimeReuseWindow throttles repeated GetLXDInstanceRealtime calls
@@ -432,54 +482,24 @@ func GetLXDInstanceRealtime(instance string) (*LXDInstanceRealtime, error) {
 	}
 
 	lxdRealtimeMu.Lock()
+	defer lxdRealtimeMu.Unlock()
 	prev, hadPrev := lxdRealtimeCache[instance]
-	// Drop stale baselines so a paused page coming back doesn't see a
-	// suspiciously huge "rate".
-	if hadPrev && now.Sub(prev.ts) > 30*time.Second {
-		hadPrev = false
-	}
-	// Stash the rt pointer alongside the cumulative baseline so a
-	// throttled second caller within realtimeReuseWindow returns the
-	// same result instead of computing a near-zero rate against this
-	// just-written baseline.
-	snap := realtimeSnapshot{
-		ts:             now,
-		cpuSeconds:     cpuTotal,
-		netRXBytes:     netRX,
-		netTXBytes:     netTX,
-		diskReadBytes:  diskR,
-		diskWriteBytes: diskW,
-		lastResult:     rt,
-	}
-	lxdRealtimeCache[instance] = snap
-	lxdRealtimeMu.Unlock()
-
-	if hadPrev {
-		dt := now.Sub(prev.ts).Seconds()
-		if dt > 0 {
-			// CPU rate: seconds-of-CPU per second → % of one host CPU.
-			if d := cpuTotal - prev.cpuSeconds; d >= 0 {
-				v := (d / dt) * 100
-				rt.CPUPct = &v
-			}
-			if d := netRX - prev.netRXBytes; d >= 0 {
-				v := d / dt
-				rt.NetRX = &v
-			}
-			if d := netTX - prev.netTXBytes; d >= 0 {
-				v := d / dt
-				rt.NetTX = &v
-			}
-			if d := diskR - prev.diskReadBytes; d >= 0 {
-				v := d / dt
-				rt.DiskRead = &v
-			}
-			if d := diskW - prev.diskWriteBytes; d >= 0 {
-				v := d / dt
-				rt.DiskWrite = &v
-			}
+	states := prev.states
+	// Fresh start: first ever poll, or the page was paused long enough that
+	// an old baseline would yield a bogus rate — rebuild empty state.
+	if !hadPrev || states == nil || now.Sub(prev.ts) > 30*time.Second {
+		states = map[string]*rateState{
+			"cpu": {}, "netrx": {}, "nettx": {}, "diskr": {}, "diskw": {},
 		}
 	}
+	// CPU: seconds-of-CPU per second → % of one host CPU (scale 100). The rest
+	// are bytes/s (scale 1). deriveRate smooths over the Incus cache gaps.
+	rt.CPUPct = deriveRate(states["cpu"], cpuTotal, now, 100)
+	rt.NetRX = deriveRate(states["netrx"], netRX, now, 1)
+	rt.NetTX = deriveRate(states["nettx"], netTX, now, 1)
+	rt.DiskRead = deriveRate(states["diskr"], diskR, now, 1)
+	rt.DiskWrite = deriveRate(states["diskw"], diskW, now, 1)
+	lxdRealtimeCache[instance] = realtimeSnapshot{ts: now, states: states, lastResult: rt}
 	return rt, nil
 }
 

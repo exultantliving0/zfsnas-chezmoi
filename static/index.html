@@ -2039,6 +2039,7 @@
           <button class="btn btn-primary btn-sm" id="lxd-btn-new-vm" onclick="openNewVMModal()">+ New VM</button>
           <button class="btn btn-secondary btn-sm" id="lxd-btn-new-container" onclick="openNewContainerModal()">+ New Container</button>
           <button class="btn btn-secondary btn-sm" id="lxd-btn-new-compose" onclick="openComposeModal()">+ Compose</button>
+          <button class="btn btn-secondary btn-sm" onclick="_lxdToggleColsMenu(event)" title="Choose table columns">&#9881; Columns &#9662;</button>
           <div style="position:relative;" id="lxd-tools-wrap">
             <span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="More options"
               onclick="_lxdToolsToggle(event)">&#x22EE;</span>
@@ -2053,20 +2054,23 @@
           <table class="table" id="lxd-table">
             <thead>
               <tr>
-                <th class="lxd-sortable" style="width:34px;padding-left:10px;padding-right:4px;" onclick="_lxdSortBy('type')">Type<span class="sort-arrow"></span></th>
-                <th class="lxd-sortable" style="padding-left:6px;" onclick="_lxdSortBy('name')">Name<span class="sort-arrow"></span></th>
-                <th class="lxd-sortable" style="width:130px;" onclick="_lxdSortBy('ipv4')">IPv4<span class="sort-arrow"></span></th>
-                <th id="lxd-main-th-image" class="lxd-sortable" onclick="_lxdSortBy('image')">Image<span class="sort-arrow"></span></th>
-                <th class="lxd-sortable" onclick="_lxdSortBy('datastore')">Datastore<span class="sort-arrow"></span></th>
-                <th class="lxd-sortable" style="width:60px;" onclick="_lxdSortBy('cpu')">vCPU<span class="sort-arrow"></span></th>
-                <th class="lxd-sortable" style="width:80px;" onclick="_lxdSortBy('ram')">RAM<span class="sort-arrow"></span></th>
-                <th class="lxd-sortable" style="width:110px;" onclick="_lxdSortBy('status')">Status<span class="sort-arrow"></span></th>
-                <th class="lxd-sortable" style="width:72px;" onclick="_lxdSortBy('autostart')">Autostart<span class="sort-arrow"></span></th>
-                <th style="width:64px;"></th>
+                <th data-col="type" data-sort="type" class="lxd-sortable" style="width:34px;padding-left:10px;padding-right:4px;" onclick="_lxdSortBy('type')">Type<span class="sort-arrow"></span></th>
+                <th data-col="name" data-sort="name" class="lxd-sortable" style="padding-left:6px;" onclick="_lxdSortBy('name')">Name<span class="sort-arrow"></span></th>
+                <th data-col="ipv4" data-sort="ipv4" class="lxd-sortable" style="width:130px;" onclick="_lxdSortBy('ipv4')">IPv4<span class="sort-arrow"></span></th>
+                <th data-col="image" data-sort="image" id="lxd-main-th-image" class="lxd-sortable" onclick="_lxdSortBy('image')">Image<span class="sort-arrow"></span></th>
+                <th data-col="datastore" data-sort="datastore" class="lxd-sortable" onclick="_lxdSortBy('datastore')">Datastore<span class="sort-arrow"></span></th>
+                <th data-col="cpu" data-sort="cpu" class="lxd-sortable" style="width:96px;" onclick="_lxdSortBy('cpu')">vCPU<span class="sort-arrow"></span></th>
+                <th data-col="ram" data-sort="ram" class="lxd-sortable" style="width:96px;" onclick="_lxdSortBy('ram')">RAM<span class="sort-arrow"></span></th>
+                <th data-col="fs" data-sort="fs" class="lxd-sortable" style="width:104px;" onclick="_lxdSortBy('fs')">Filesystem<span class="sort-arrow"></span></th>
+                <th data-col="net" data-sort="net" class="lxd-sortable" style="width:82px;" onclick="_lxdSortBy('net')">Net<span class="sort-arrow"></span></th>
+                <th data-col="diskio" data-sort="diskio" class="lxd-sortable" style="width:92px;" onclick="_lxdSortBy('diskio')">Disk-IO<span class="sort-arrow"></span></th>
+                <th data-col="status" data-sort="status" class="lxd-sortable" style="width:110px;" onclick="_lxdSortBy('status')">Status<span class="sort-arrow"></span></th>
+                <th data-col="autostart" data-sort="autostart" class="lxd-sortable" style="width:72px;" onclick="_lxdSortBy('autostart')">Autostart<span class="sort-arrow"></span></th>
+                <th data-col="actions" style="width:64px;"></th>
               </tr>
             </thead>
             <tbody id="lxd-table-body">
-              <tr><td colspan="10" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
+              <tr><td colspan="13" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -3992,20 +3996,26 @@
         </div>
         <div id="bridge-tab-members">
           <div id="bridge-detail-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+          <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="_lxdToggleColsMenu(event)" title="Choose table columns">&#9881; Columns &#9662;</button>
+          </div>
           <table class="table" id="bridge-members-table">
             <thead><tr>
-              <th style="width:60px;">Type</th>
-              <th>Name</th>
-              <th style="width:130px;">IPv4</th>
-              <th id="bridge-members-th-image">Image</th>
-              <th>Datastore</th>
-              <th style="width:60px;">vCPU</th>
-              <th style="width:80px;">RAM</th>
-              <th style="width:110px;">Status</th>
-              <th style="width:64px;"></th>
+              <th data-col="type" style="width:60px;">Type</th>
+              <th data-col="name">Name</th>
+              <th data-col="ipv4" style="width:130px;">IPv4</th>
+              <th data-col="image" id="bridge-members-th-image">Image</th>
+              <th data-col="datastore">Datastore</th>
+              <th data-col="cpu" style="width:96px;">vCPU</th>
+              <th data-col="ram" style="width:96px;">RAM</th>
+              <th data-col="fs" style="width:104px;">Filesystem</th>
+              <th data-col="net" style="width:82px;">Net</th>
+              <th data-col="diskio" style="width:92px;">Disk-IO</th>
+              <th data-col="status" style="width:110px;">Status</th>
+              <th data-col="actions" style="width:64px;"></th>
             </tr></thead>
             <tbody id="bridge-members-tbody">
-              <tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
+              <tr><td colspan="12" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -4271,20 +4281,26 @@
           </span>
         </div>
         <div id="datastore-detail-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="_lxdToggleColsMenu(event)" title="Choose table columns">&#9881; Columns &#9662;</button>
+        </div>
         <table class="table" id="datastore-members-table">
           <thead><tr>
-            <th style="width:60px;">Type</th>
-            <th>Name</th>
-            <th style="width:130px;">IPv4</th>
-            <th id="ds-members-th-image">Image</th>
-            <th>Datastore</th>
-            <th style="width:60px;">vCPU</th>
-            <th style="width:80px;">RAM</th>
-            <th style="width:110px;">Status</th>
-            <th style="width:64px;"></th>
+            <th data-col="type" style="width:60px;">Type</th>
+            <th data-col="name">Name</th>
+            <th data-col="ipv4" style="width:130px;">IPv4</th>
+            <th data-col="image" id="ds-members-th-image">Image</th>
+            <th data-col="datastore">Datastore</th>
+            <th data-col="cpu" style="width:96px;">vCPU</th>
+            <th data-col="ram" style="width:96px;">RAM</th>
+            <th data-col="fs" style="width:104px;">Filesystem</th>
+            <th data-col="net" style="width:82px;">Net</th>
+            <th data-col="diskio" style="width:92px;">Disk-IO</th>
+            <th data-col="status" style="width:110px;">Status</th>
+            <th data-col="actions" style="width:64px;"></th>
           </tr></thead>
           <tbody id="datastore-members-tbody">
-            <tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
+            <tr><td colspan="12" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -4801,6 +4817,16 @@
                 </div>
               </div>
               <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-disk"></canvas><div id="ci-mon-zoom-sel-disk" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+            </div>
+            <div class="card-sm" id="ci-mon-fs-card" style="margin-top:16px;display:none;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Filesystem usage %</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span id="ci-mon-max-fs" style="font-size:11px;color:var(--text-3);"></span>
+                  <i class="info-tip tip-left" data-tip="Source: incus_filesystem_size_bytes / incus_filesystem_avail_bytes per mountpoint from the Incus Prometheus endpoint, scraped every 5 min.&#10;&#10;One line per REAL disk filesystem the guest mounts (/, /boot/efi, attached data disks…). Pseudo mounts — tmpfs, overlay, squashfs over loop devices, proc / sys / cgroup, lxcfs — are excluded from BOTH the graph and the stored history.&#10;&#10;The axis is % used; hover a point to see the used vs total space for each filesystem."></i>
+                </div>
+              </div>
+              <div style="position:relative;height:160px;"><canvas id="ci-mon-chart-fs"></canvas><div id="ci-mon-zoom-sel-fs" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
             </div>
           </div>
         </div><!-- /ci-tab-content-monitor -->
@@ -31171,6 +31197,7 @@ function _znasExternalTooltip(context) {
   const items = tooltip.dataPoints || [];
   if (!items.length) { tip.style.display = 'none'; return; }
   const sortByMag = !!(tooltip.options && tooltip.options._znasSortByMag);
+  const sortDesc  = !!(tooltip.options && tooltip.options._znasSortDesc);
   // Pair each dataPoint with its index so we can find the right entry in
   // tooltip.body[] / tooltip.labelColors[] even after a sort/filter pass.
   let rows = items
@@ -31179,6 +31206,11 @@ function _znasExternalTooltip(context) {
   if (sortByMag) {
     rows = rows.filter(o => Math.abs(o.p.parsed.y) >= 0.0005);
     rows.sort((a, b) => Math.abs(b.p.parsed.y) - Math.abs(a.p.parsed.y));
+  } else if (sortDesc) {
+    // Highest value first, no filtering — used by the filesystem-usage chart so
+    // the fullest filesystems sit at the top of the overlay (every filesystem,
+    // including near-empty ones, is still listed).
+    rows.sort((a, b) => b.p.parsed.y - a.p.parsed.y);
   }
   if (!rows.length) { tip.style.display = 'none'; return; }
   // Title — prefer Chart.js's pre-computed tooltip.title (from the chart's
@@ -31198,6 +31230,10 @@ function _znasExternalTooltip(context) {
   const textColor  = isLight ? '#1c1c1e' : '#f5f5f7';
   tip.style.background  = tipBg;
   tip.style.borderColor = tipBorder;
+  // Dynamic width: the box grows to fit its (nowrap) content up to a generous
+  // ceiling, instead of the static 340px that the long filesystem-path rows
+  // overflowed. Overrides the element's inline max-width per render.
+  tip.style.maxWidth = 'min(92vw, 640px)';
   let html = '';
   if (titleText) html += `<div style="font-size:11px;color:${titleColor};margin-bottom:6px;">${esc(titleText)}</div>`;
   rows.forEach(({ p, i }) => {
@@ -31221,7 +31257,7 @@ function _znasExternalTooltip(context) {
       const showSwatch = lineIdx === 0;
       html += `<div style="display:flex;align-items:center;gap:7px;padding:1px 0;">
         <span style="width:10px;height:2px;background:${showSwatch ? swatch : 'transparent'};flex-shrink:0;display:inline-block;border-radius:1px;"></span>
-        <span style="flex:1;color:${textColor};white-space:nowrap;${showSwatch ? '' : 'font-size:11px;color:' + titleColor + ';'}">${esc(String(line).trim())}</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;color:${textColor};white-space:nowrap;${showSwatch ? '' : 'font-size:11px;color:' + titleColor + ';'}">${esc(String(line).trim())}</span>
       </div>`;
     });
   });
@@ -37120,34 +37156,40 @@ function _lxdSortBy(col) {
     _lxdSortCol = col;
     _lxdSortDir = 1;
   }
-  // Update header arrows
+  // Update header arrows — select the active th by data-sort so the indicator
+  // stays correct regardless of column count/order (robust to the v6.6.16
+  // metric columns).
   document.querySelectorAll('#lxd-table th.lxd-sortable').forEach(th => {
     th.classList.remove('sort-asc', 'sort-desc');
     const arrow = th.querySelector('.sort-arrow');
     if (arrow) arrow.textContent = '';
   });
-  const colMap = {type:0, name:1, ipv4:2, image:3, cpu:4, ram:5, status:6};
-  const idx = colMap[col];
-  if (idx !== undefined) {
-    const ths = document.querySelectorAll('#lxd-table th.lxd-sortable');
-    const th = ths[Object.keys(colMap).indexOf(col)];
-    if (th) {
-      th.classList.add(_lxdSortDir === 1 ? 'sort-asc' : 'sort-desc');
-      const arrow = th.querySelector('.sort-arrow');
-      if (arrow) arrow.textContent = _lxdSortDir === 1 ? '↑' : '↓';
-    }
+  const th = document.querySelector('#lxd-table th[data-sort="' + col + '"]');
+  if (th) {
+    th.classList.add(_lxdSortDir === 1 ? 'sort-asc' : 'sort-desc');
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = _lxdSortDir === 1 ? '↑' : '↓';
   }
   _lxdRenderSorted();
 }
 
 function _lxdGetSortKey(inst, col) {
+  // Metric columns sort by the live value shown in the cell (from the metrics
+  // cache); offline/unscraped instances sort as 0.
+  const m = (_lxdMetricsCache.instances || {})[inst.name] || {};
   switch (col) {
     case 'type':   return inst.type || '';
     case 'name':   return (inst.description || inst.name || '').toLowerCase();
     case 'ipv4':   return inst.ipv4 || '';
     case 'image':  return inst.image || '';
-    case 'cpu':    return parseInt(inst.cpu_limit) || 0;
-    case 'ram':    return parseIncusMemoryBytes(inst.memory_limit) || 0;
+    // For the live rate/usage columns, stopped/unscraped instances (which show
+    // a muted limit or "—") sort to the bottom via -1.
+    case 'cpu':    return (inst.status === 'Running' && m.cpu_pct != null)
+        ? Math.min(100, (m.cpu_pct || 0) / Math.max(1, _lxdVcpuCount(inst.cpu_limit))) : -1;
+    case 'ram':    return (inst.status === 'Running' && m.mem_total > 0) ? (m.mem_pct || 0) : -1;
+    case 'fs':     return m.top_fs_pct || 0; // filesystem persists even offline
+    case 'net':    return (inst.status === 'Running') ? (m.net_mbps || 0) : -1;
+    case 'diskio': return (inst.status === 'Running') ? (m.diskio_mbps || 0) : -1;
     case 'status':    return inst.status || '';
     case 'autostart': return inst.autostart ? 1 : 0;
     default:          return '';
@@ -41144,7 +41186,7 @@ function _ciMonResetZoom() {
 function _initCIMonZoom() {
   if (_ciMonZoomReady) return;
   _ciMonZoomReady = true;
-  for (const metric of ['cpu', 'mem', 'net', 'disk']) {
+  for (const metric of ['cpu', 'mem', 'net', 'disk', 'fs']) {
     const canvas = document.getElementById('ci-mon-chart-' + metric);
     const sel    = document.getElementById('ci-mon-zoom-sel-' + metric);
     if (!canvas || !sel) continue;
@@ -41218,6 +41260,17 @@ async function _ciMonLoadHistory() {
     });
     const diskLabelMap = _buildDiskLabelMap(_ciLastCfg);
     _ciMonRenderHistChart('disk', series, diskKeys, 'B/s', 1, diskLabelMap);
+    // Filesystem usage % — one line per real mountpoint (fs_used:<mp> paired
+    // with fs_size:<mp>). Hidden when the instance reports no real filesystems.
+    const fsKeys = keys.filter(k => k.startsWith('fs_used:')).sort();
+    const fsCard = document.getElementById('ci-mon-fs-card');
+    if (fsKeys.length) {
+      if (fsCard) fsCard.style.display = '';
+      _ciMonRenderFsChart(series, fsKeys);
+    } else {
+      if (fsCard) fsCard.style.display = 'none';
+      if (_ciMonHist['fs']) { _ciMonHist['fs'].destroy(); _ciMonHist['fs'] = null; }
+    }
     _initCIMonZoom();
   } catch (e) {
     empty.style.display = ''; charts.style.display = 'none';
@@ -41453,6 +41506,107 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor, labelMap) 
     },
     // _perfTooltipPlugin keeps the overlay visible while the cursor is
     // anywhere over the chart area, matching the global Performance page.
+    plugins: [_perfTooltipPlugin],
+  });
+}
+
+// _ciMonRenderFsChart draws the per-filesystem usage chart. The Y axis is
+// strictly % used (0–100); each line is one mountpoint, computed from the
+// paired fs_used:<mp> / fs_size:<mp> series. The hover tooltip additionally
+// shows the absolute used-vs-total space for that filesystem at that point.
+function _ciMonRenderFsChart(series, fsUsedKeys) {
+  const slot = 'fs';
+  const canvas = document.getElementById('ci-mon-chart-fs');
+  if (!canvas) return;
+  if (_ciMonHist[slot]) { _ciMonHist[slot].destroy(); _ciMonHist[slot] = null; }
+  const palette = ['#0a84ff','#bf5af2','#30d158','#ff9f0a','#ff453a','#64d2ff','#ffd60a','#5e5ce6'];
+  const datasets = fsUsedKeys.map((uk, i) => {
+    const mp = uk.slice('fs_used:'.length);
+    const usedS = series[uk] || [];
+    const sizeS = series['fs_size:' + mp] || [];
+    const sizeByTs = {};
+    for (const s of sizeS) sizeByTs[s.ts] = s[_ciMonAgg];
+    const color = palette[i % palette.length];
+    const data = usedS.map(s => {
+      const used = s[_ciMonAgg], total = sizeByTs[s.ts];
+      if (used == null || total == null || total <= 0) return { x: s.ts * 1000, y: null };
+      return { x: s.ts * 1000, y: (used / total) * 100, _used: used, _total: total };
+    });
+    return { label: mp || '/', borderColor: color, backgroundColor: color + '1a',
+             borderWidth: 1.2, pointRadius: 0, tension: 0.3, fill: 'origin', spanGaps: true, data };
+  });
+  let peak = 0;
+  for (const ds of datasets) for (const pt of ds.data) { const a = pt.y ?? 0; if (a > peak) peak = a; }
+  const maxEl = document.getElementById('ci-mon-max-fs');
+  if (maxEl) maxEl.textContent = peak > 0 ? ('max ' + peak.toFixed(1) + '%') : '';
+  const style     = getComputedStyle(document.body);
+  const isLight   = document.body.classList.contains('light') || document.body.classList.contains('dawn');
+  const tickColor = style.getPropertyValue('--text-3').trim() || (isLight ? '#6c6c70' : '#8e8e93');
+  const gridColor = isLight ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.07)';
+  const tipBg     = isLight ? 'rgba(255,255,255,0.85)' : 'rgba(28,28,30,0.85)';
+  const tipBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)';
+  const tipTitle  = style.getPropertyValue('--text-2').trim() || (isLight ? '#3a3a3c' : '#c7c7cc');
+  const tipBody   = style.getPropertyValue('--text').trim()   || (isLight ? '#1c1c1e' : '#f5f5f7');
+  _ciMonHist[slot] = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'xDedup', intersect: false },
+      layout: { padding: { top: 24, right: 16, left: 4, bottom: 4 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: tipBg, borderColor: tipBorder, borderWidth: 1,
+          titleColor: tipTitle, bodyColor: tipBody, padding: 10,
+          // Sort the overlay rows by % used, fullest filesystem on top.
+          _znasSortDesc: true,
+          filter: item => item.parsed.y != null,
+          callbacks: {
+            title: items => {
+              if (!items.length) return '';
+              const d = new Date(items[0].parsed.x); const pad = n => String(n).padStart(2, '0');
+              return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+                   + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+            },
+            // % used + absolute used / total for that filesystem. The box
+            // auto-sizes to the content (Chart.js), but a very long mountpoint
+            // would make a row wider than the canvas and get clipped — so show
+            // only the END of long paths ("…/long/path/data1").
+            label: ctx => {
+              if (ctx.parsed.y == null) return null;
+              const raw = ctx.raw || {};
+              const used = raw._used != null ? fmtBytes(raw._used) : '?';
+              const tot  = raw._total != null ? fmtBytes(raw._total) : '?';
+              const mp = ctx.dataset.label || '/';
+              const mpShort = mp.length > 30 ? ('…' + mp.slice(-29)) : mp;
+              return '  ' + mpShort + ': ' + ctx.parsed.y.toFixed(1) + '%  (' + used + ' / ' + tot + ')';
+            },
+          },
+        },
+      },
+      scales: {
+        x: (() => {
+          const nowMs = Date.now(); let xMin, xMax;
+          if (_ciMonZoom) { xMin = _ciMonZoom.min; xMax = _ciMonZoom.max; }
+          else {
+            const since = _ciMonSinceTs(); xMax = nowMs;
+            if (since > 0) xMin = since * 1000;
+            else {
+              let earliest = Infinity;
+              for (const ds of datasets) for (const pt of (ds.data || [])) if (pt && pt.x != null && pt.x < earliest) earliest = pt.x;
+              xMin = earliest === Infinity ? nowMs - 7 * 86400 * 1000 : earliest;
+            }
+          }
+          return { type: 'linear', min: xMin, max: xMax,
+            ticks: { color: tickColor, font: { size: 10 }, maxTicksLimit: 8, callback: v => new Date(v).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) },
+            grid: { color: gridColor } };
+        })(),
+        y: { beginAtZero: true, min: 0, max: 100,
+          ticks: { color: tickColor, font: { size: 10 }, callback: v => v + '%' },
+          grid: { color: gridColor } },
+      },
+    },
     plugins: [_perfTooltipPlugin],
   });
 }
@@ -43395,7 +43549,7 @@ function _fmtBytes(b) {
   if (b < 1024) return b + ' B';
   if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
   if (b < 1024*1024*1024) return (b/1024/1024).toFixed(1) + ' MB';
-  return (b/1024/1024/1024).toFixed(2) + ' GB';
+  return (b/1024/1024/1024).toFixed(1) + ' GB';
 }
 
 // parseIncusMemoryBytes parses any limits.memory string (e.g. "8GB", "8GiB",
@@ -43621,6 +43775,321 @@ function _dsLabel(poolName) {
   return poolName;
 }
 
+// ===== v6.6.16: VM/Container table metric columns + column picker ===========
+//
+// Three tables (main list, bridge members, datastore members) share one column
+// set. Toggleable columns are shown/hidden by their data-col attribute; the
+// selection is persisted server-side in UserPreferences.lxd_columns. The
+// VCPU/RAM/Filesystem cells render a "%used + bar"; Net/Disk-IO render a single
+// rate number. All five read a latest-sample rollup fetched once from
+// /api/lxd/instances-metrics and cached. Per-cell hover popups show the full
+// breakdown (every filesystem, every NIC, every disk device).
+
+// Toggleable columns only — Type/Name/Status/Actions are always shown. 'image'
+// is toggleable but additionally auto-hides when no instance in the table has
+// an image (see _lxdApplyColVisibility).
+const _LXD_TOGGLE_COLS = [
+  {id:'ipv4',      label:'IPv4'},
+  {id:'image',     label:'Image'},
+  {id:'datastore', label:'Datastore'},
+  {id:'cpu',       label:'VCPU'},
+  {id:'ram',       label:'RAM'},
+  {id:'fs',        label:'Filesystem'},
+  {id:'net',       label:'Net'},
+  {id:'diskio',    label:'Disk-IO'},
+  {id:'autostart', label:'Autostart'},
+];
+const _LXD_DEFAULT_COLS = _LXD_TOGGLE_COLS.map(c => c.id); // all on by default
+
+// Live per-instance fallback info (status + limits), keyed by instance name.
+// Populated by the row renderers; consumed by the metric-cell builders.
+const _lxdInstInfo = {};
+
+// Latest-sample metric rollup cache.
+let _lxdMetricsCache = {instances:{}, host_cpus:0};
+let _lxdMetricsTS = 0;
+let _lxdMetricsInflight = null;
+let _lxdLastSortMetricsTS = 0; // guards the metric-driven re-sort against render loops
+const _LXD_METRIC_SORT_COLS = ['cpu','ram','fs','net','diskio'];
+
+function _lxdColSel() {
+  const p = currentUser && currentUser.preferences && currentUser.preferences.lxd_columns;
+  if (!Array.isArray(p)) return new Set(_LXD_DEFAULT_COLS);
+  return new Set(p);
+}
+function _lxdSaveCols(sel) {
+  const arr = _LXD_TOGGLE_COLS.map(c => c.id).filter(id => sel.has(id));
+  if (currentUser) {
+    currentUser.preferences = currentUser.preferences || {};
+    currentUser.preferences.lxd_columns = arr;
+  }
+  fetch('/api/prefs', {method:'PUT', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({lxd_columns: arr})}).catch(()=>{});
+}
+
+// Show/hide toggleable th/td across every VM/Container table (or a scope el).
+function _lxdApplyColVisibility(scope) {
+  const sel = _lxdColSel();
+  const root = scope || document;
+  root.querySelectorAll('[data-col]').forEach(el => {
+    const col = el.getAttribute('data-col');
+    if (!_LXD_TOGGLE_COLS.some(c => c.id === col)) return; // always-on (type/name/status/actions)
+    let show = sel.has(col);
+    // Image is selectable but still auto-hides when the table has no images
+    // (the image <td> is only emitted for rows that have one).
+    if (col === 'image' && show) {
+      const tbl = el.closest('table');
+      show = !!(tbl && tbl.querySelector('tbody td[data-col="image"]'));
+    }
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+// Fetch the metric rollup (cached ~20s) then re-paint visible tables.
+function _lxdEnsureMetrics(force) {
+  const now = Date.now();
+  if (!force && (now - _lxdMetricsTS) < 20000 && Object.keys(_lxdMetricsCache.instances || {}).length) {
+    return Promise.resolve(_lxdMetricsCache);
+  }
+  if (_lxdMetricsInflight) return _lxdMetricsInflight;
+  _lxdMetricsInflight = fetch('/api/lxd/instances-metrics', {credentials:'same-origin'})
+    .then(r => r.ok ? r.json() : null)
+    .then(j => { if (j && j.instances) { _lxdMetricsCache = j; _lxdMetricsTS = Date.now(); } _lxdMetricsInflight = null; return _lxdMetricsCache; })
+    .catch(() => { _lxdMetricsInflight = null; return _lxdMetricsCache; });
+  return _lxdMetricsInflight;
+}
+
+// Parse limits.cpu ("2", "0-3", "") into an effective vCPU count.
+function _lxdVcpuCount(cpuLimit) {
+  if (cpuLimit && /^\d+$/.test(String(cpuLimit).trim())) return parseInt(cpuLimit, 10) || 1;
+  const hc = _lxdMetricsCache.host_cpus;
+  return hc && hc > 0 ? hc : 1;
+}
+
+// Compact "NN% + bar". Colour-bands green / amber(≥75) / red(≥90).
+function _lxdPctBar(pct) {
+  const p = Math.max(0, Math.min(100, pct || 0));
+  const col = p >= 90 ? '#ff453a' : p >= 75 ? '#f0b429' : '#3fb950';
+  return `<span class="lxd-metric-wrap"><span class="lxd-metric-pct">${Math.round(p)}%</span>`
+       + `<span class="lxd-bar"><i style="width:${p.toFixed(1)}%;background:${col};"></i></span></span>`;
+}
+function _lxdMuted(s) { return `<span style="color:var(--text-3);">${esc(String(s))}</span>`; }
+
+// Mb/s and MB/s number formatters (input already in those units).
+function _lxdFmtRate(v) {
+  if (!v || v <= 0) return '0';
+  return v < 10 ? v.toFixed(1) : String(Math.round(v));
+}
+
+// Inner HTML for a metric cell, from cache + fallback info.
+function _lxdMetricInner(col, name) {
+  const m = (_lxdMetricsCache.instances || {})[name];
+  const info = _lxdInstInfo[name] || {};
+  const running = info.status === 'Running';
+  switch (col) {
+    case 'cpu': {
+      if (running && m) {
+        const vc = _lxdVcpuCount(info.cpu_limit);
+        return _lxdPctBar(Math.min(100, (m.cpu_pct || 0) / Math.max(1, vc)));
+      }
+      return _lxdMuted(info.cpu_limit || '—');
+    }
+    case 'ram': {
+      if (running && m && m.mem_total > 0) return _lxdPctBar(m.mem_pct);
+      return _lxdMuted(fmtIncusMemory(info.memory_limit));
+    }
+    case 'fs': {
+      // Filesystem persists even offline (last-known from RRD).
+      if (m && m.top_fs_mount) return _lxdPctBar(m.top_fs_pct);
+      return _lxdMuted('—');
+    }
+    case 'net':
+      if (running && m) return `<span style="color:var(--text-2);">${_lxdFmtRate(m.net_mbps)} <span style="font-size:10px;color:var(--text-3);">Mb/s</span></span>`;
+      return _lxdMuted('—');
+    case 'diskio':
+      if (running && m) return `<span style="color:var(--text-2);">${_lxdFmtRate(m.diskio_mbps)} <span style="font-size:10px;color:var(--text-3);">MB/s</span></span>`;
+      return _lxdMuted('—');
+  }
+  return '—';
+}
+
+// A full <td> for a metric column, used by all three row renderers.
+function _lxdMetricTd(col, name) {
+  const align = (col === 'cpu' || col === 'ram' || col === 'fs') ? 'left' : 'center';
+  return `<td data-col="${col}" data-inst="${esc(name)}" data-lxd-pop="${col}" class="lxd-metric-cell" `
+       + `style="text-align:${align};font-size:12px;">${_lxdMetricInner(col, name)}</td>`;
+}
+
+// Repaint every metric cell within a scope (tbody el) from the current cache.
+function _lxdPaintMetrics(scope) {
+  const root = scope || document;
+  root.querySelectorAll('td.lxd-metric-cell').forEach(td => {
+    td.innerHTML = _lxdMetricInner(td.getAttribute('data-col'), td.getAttribute('data-inst'));
+  });
+}
+
+// Called after a table render: ensure fresh metrics, then paint + apply cols.
+function _lxdAfterTableRender(scope) {
+  // Apply visibility to the WHOLE table (thead + tbody): the headers live in
+  // <thead>, outside the tbody scope, so passing just the tbody would hide the
+  // body cells of a deselected column while leaving its header visible →
+  // header/body misalignment. closest('table') covers both.
+  const tbl = (scope && scope.closest) ? (scope.closest('table') || document) : document;
+  _lxdApplyColVisibility(tbl);
+  _lxdEnsureMetrics().then(() => {
+    _lxdPaintMetrics(scope || document);
+    // When fresh metric data arrives and the main table is sorted by a metric
+    // column, re-sort once so the order reflects the live values. The TS guard
+    // stops the re-render (which calls back here) from looping.
+    if (scope && scope.id === 'lxd-table-body'
+        && _LXD_METRIC_SORT_COLS.includes(_lxdSortCol)
+        && _lxdMetricsTS !== _lxdLastSortMetricsTS) {
+      _lxdLastSortMetricsTS = _lxdMetricsTS;
+      _lxdRenderSorted();
+    }
+  });
+}
+
+// ---- Columns dropdown -------------------------------------------------------
+let _lxdColsMenuEl = null;
+function _lxdCloseColsMenu() { if (_lxdColsMenuEl) { _lxdColsMenuEl.remove(); _lxdColsMenuEl = null; document.removeEventListener('mousedown', _lxdColsMenuOutside, true); } }
+function _lxdColsMenuOutside(e) { if (_lxdColsMenuEl && !_lxdColsMenuEl.contains(e.target)) _lxdCloseColsMenu(); }
+function _lxdToggleColsMenu(e) {
+  e.stopPropagation();
+  if (_lxdColsMenuEl) { _lxdCloseColsMenu(); return; }
+  const btn = e.currentTarget;
+  const sel = _lxdColSel();
+  const dd = document.createElement('div');
+  dd.className = 'row-menu-dropdown';
+  dd.style.position = 'fixed';
+  dd.style.minWidth = '180px';
+  dd.style.padding = '6px 0';
+  dd.style.zIndex = '4000';
+  dd.addEventListener('click', ev => ev.stopPropagation());
+  const title = document.createElement('div');
+  title.textContent = 'Show columns';
+  title.style.cssText = 'padding:4px 12px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);';
+  dd.appendChild(title);
+  _LXD_TOGGLE_COLS.forEach(c => {
+    const lab = document.createElement('label');
+    lab.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;font-size:13px;color:var(--text);';
+    lab.addEventListener('mouseover', () => lab.style.background = 'var(--bg-3)');
+    lab.addEventListener('mouseout', () => lab.style.background = '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = sel.has(c.id);
+    cb.style.cursor = 'pointer';
+    cb.addEventListener('change', () => {
+      const cur = _lxdColSel();
+      if (cb.checked) cur.add(c.id); else cur.delete(c.id);
+      _lxdSaveCols(cur);
+      _lxdApplyColVisibility(document);
+    });
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(c.label));
+    dd.appendChild(lab);
+  });
+  document.body.appendChild(dd);
+  const r = btn.getBoundingClientRect();
+  dd.style.top = (r.bottom + 4) + 'px';
+  dd.style.left = Math.max(8, Math.min(r.left, window.innerWidth - dd.offsetWidth - 8)) + 'px';
+  _lxdColsMenuEl = dd;
+  setTimeout(() => document.addEventListener('mousedown', _lxdColsMenuOutside, true), 0);
+}
+
+// ---- Per-cell hover popups --------------------------------------------------
+let _lxdPopEl = null, _lxdPopCell = null;
+function _lxdPopHide() { if (_lxdPopEl) _lxdPopEl.style.display = 'none'; _lxdPopCell = null; }
+// Byte formatter for the table popups: pre-rounds to 1 decimal so fmtBytes'
+// "< 1 KB" branch (which otherwise echoes the raw float) can never show more
+// than one decimal place for small byte-rates.
+function _lxdBytes1(n) { return fmtBytes(Math.round((Number(n) || 0) * 10) / 10); }
+function _lxdPopRows(rows) {
+  return rows.map(r => `<div style="display:flex;justify-content:space-between;gap:14px;padding:2px 0;">`
+    + `<span style="color:var(--text-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r[0]}</span>`
+    + `<span style="color:var(--text);white-space:nowrap;font-variant-numeric:tabular-nums;">${r[1]}</span></div>`).join('');
+}
+function _lxdPopContent(col, name) {
+  const m = (_lxdMetricsCache.instances || {})[name];
+  const info = _lxdInstInfo[name] || {};
+  const running = info.status === 'Running';
+  const head = `<div style="font-weight:700;margin-bottom:6px;color:var(--text);">${esc(name)}</div>`;
+  const note = (txt) => `<div style="color:var(--text-3);font-size:11px;margin-top:6px;">${txt}</div>`;
+  if (col === 'fs') {
+    if (!m || !m.filesystems || !m.filesystems.length) return head + _lxdMuted('No filesystem data');
+    const rows = m.filesystems.map(f => {
+      const mp = f.mountpoint.length > 34 ? '…' + f.mountpoint.slice(-33) : f.mountpoint;
+      return [esc(mp), `${esc(_lxdBytes1(f.used))} / ${esc(_lxdBytes1(f.size))} &nbsp; <b>${Math.round(f.pct)}%</b>`];
+    });
+    return head + _lxdPopRows(rows) + (running ? '' : note('offline — last known'));
+  }
+  if (col === 'net') {
+    if (!m || !m.nics || !m.nics.length) return head + _lxdMuted(running ? 'No interfaces' : 'Instance not running');
+    const rows = m.nics.map(n => [esc(n.device), `&#9660; ${esc(fmtBitsPerSec(n.rx_bps))} &nbsp; &#9650; ${esc(fmtBitsPerSec(n.tx_bps))}`]);
+    if (info.ipv4) rows.unshift(['IP', esc(info.ipv4)]);
+    return head + _lxdPopRows(rows) + (running ? '' : note('rates are 0 while stopped'));
+  }
+  if (col === 'diskio') {
+    if (!m || !m.disks || !m.disks.length) return head + _lxdMuted(running ? 'No disk activity' : 'Instance not running');
+    const rows = m.disks.map(d => [esc(d.device), `&#9660; ${esc(_lxdBytes1(d.r_bps))}/s &nbsp; &#9650; ${esc(_lxdBytes1(d.w_bps))}/s`]);
+    return head + _lxdPopRows(rows) + (running ? '' : note('rates are 0 while stopped'));
+  }
+  if (col === 'cpu') {
+    if (!running || !m) return head + _lxdMuted('Instance not running') + note(`Allocated: ${esc(info.cpu_limit || 'unlimited')} vCPU`);
+    const vc = _lxdVcpuCount(info.cpu_limit);
+    const norm = Math.min(100, (m.cpu_pct || 0) / Math.max(1, vc));
+    return head + _lxdPopRows([
+      ['Usage', `${norm.toFixed(1)}% of ${vc} vCPU`],
+      ['Raw', `${(m.cpu_pct || 0).toFixed(0)}% of one host CPU`],
+    ]);
+  }
+  if (col === 'ram') {
+    if (!running || !m || !(m.mem_total > 0)) return head + _lxdMuted('Instance not running') + note(`Limit: ${esc(fmtIncusMemory(info.memory_limit))}`);
+    return head + _lxdPopRows([
+      ['Used', `${esc(_lxdBytes1(m.mem_used))} (${Math.round(m.mem_pct)}%)`],
+      ['Total', esc(_lxdBytes1(m.mem_total))],
+    ]);
+  }
+  return '';
+}
+function _lxdPopShow(td) {
+  const name = td.getAttribute('data-inst'), col = td.getAttribute('data-lxd-pop');
+  const html = _lxdPopContent(col, name);
+  if (!html) { _lxdPopHide(); return; }
+  if (!_lxdPopEl) {
+    _lxdPopEl = document.createElement('div');
+    _lxdPopEl.id = 'lxd-cell-popup';
+    document.body.appendChild(_lxdPopEl);
+    _lxdPopEl.addEventListener('mouseleave', _lxdPopHide);
+  }
+  _lxdPopEl.innerHTML = html;
+  _lxdPopEl.style.display = 'block';
+  _lxdPopEl.style.left = '0px'; _lxdPopEl.style.top = '0px';
+  _lxdPopCell = td;
+  const r = td.getBoundingClientRect();
+  const pw = _lxdPopEl.offsetWidth, ph = _lxdPopEl.offsetHeight;
+  let left = r.left, top = r.bottom + 6;
+  if (left + pw > window.innerWidth - 8) left = window.innerWidth - 8 - pw;
+  if (left < 8) left = 8;
+  if (top + ph > window.innerHeight - 8) top = r.top - 6 - ph;
+  if (top < 8) top = 8;
+  _lxdPopEl.style.left = left + 'px';
+  _lxdPopEl.style.top = top + 'px';
+}
+// Delegated show; dismiss on any mouse activity outside the cell + popup
+// (mirrors the gauge-popup dismissal so it never sticks when leaving the frame).
+document.addEventListener('mouseover', (e) => {
+  const td = e.target.closest && e.target.closest('td[data-lxd-pop]');
+  if (td && td !== _lxdPopCell) _lxdPopShow(td);
+});
+document.addEventListener('mousemove', (e) => {
+  if (!_lxdPopEl || _lxdPopEl.style.display === 'none') return;
+  const overCell = _lxdPopCell && _lxdPopCell.contains(e.target);
+  const overPop = _lxdPopEl.contains(e.target);
+  if (!overCell && !overPop) _lxdPopHide();
+});
+window.addEventListener('scroll', _lxdPopHide, true);
+
 function _lxdRenderRows(instances) {
   const tbody = document.getElementById('lxd-table-body');
   if (!tbody) return;
@@ -43643,13 +44112,14 @@ function _lxdRenderRows(instances) {
   const hasImg = (instances || []).some(i => i.image);
   const imgTh = document.getElementById('lxd-main-th-image');
   if (imgTh) imgTh.style.display = hasImg ? '' : 'none';
-  const colCount = hasImg ? 11 : 10;
+  const colCount = (hasImg ? 11 : 10) + 3;
   if (!instances || instances.length === 0) {
     tbody.innerHTML = `<tr><td colspan="${colCount}" style="text-align:center;color:var(--text-3);padding:32px;">No VMs or containers found.</td></tr>`;
     return;
   }
   tbody.innerHTML = instances.map(inst => {
     const isVM = inst.type === 'virtual-machine';
+    _lxdInstInfo[inst.name] = {status: inst.status, type: inst.type, cpu_limit: inst.cpu_limit, memory_limit: inst.memory_limit, ipv4: inst.ipv4};
     const typeBadge = isVM
       ? '<span style="background:rgba(88,166,255,0.15);color:#58a6ff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">VM</span>'
       : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">LXC</span>';
@@ -43657,25 +44127,29 @@ function _lxdRenderRows(instances) {
     const busy = inst.status !== 'Running' && inst.status !== 'Stopped' && inst.status !== 'Error';
     const powerBtn = _lxdPowerBadgeHTML(inst.name, inst.status, statusColor, busy);
     const imgTrunc = inst.image && inst.image.length > 25 ? inst.image.slice(0, 25) + '…' : (inst.image || '');
-    const imgCell = hasImg ? `<td style="color:var(--text-2);font-size:12px;" title="${esc(inst.image || '')}">${esc(imgTrunc || '—')}</td>` : '';
+    const imgCell = hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(inst.image || '')}">${esc(imgTrunc || '—')}</td>` : '';
     const dsLabel = _dsLabel(inst.root_pool);
     // Row click opens the instance view; per-cell action buttons (power
     // badge, terminal icon, burger menu) call e.stopPropagation() so they
     // don't double-trigger.
     return `<tr id="lxd-row-${esc(inst.name)}" style="cursor:pointer;" onclick='openComputeInstance(${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>
-      <td style="padding-left:10px;padding-right:4px;text-align:center;">${typeBadge}</td>
-      <td style="padding-left:6px;">${esc(inst.description || inst.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(inst.name)}</span></td>
-      <td style="font-family:monospace;color:var(--text-2);">${esc(inst.ipv4 || '—')}</td>
+      <td data-col="type" style="padding-left:10px;padding-right:4px;text-align:center;">${typeBadge}</td>
+      <td data-col="name" style="padding-left:6px;">${esc(inst.description || inst.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(inst.name)}</span></td>
+      <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(inst.ipv4 || '—')}</td>
       ${imgCell}
-      <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
-      <td style="text-align:center;color:var(--text-2);">${esc(inst.cpu_limit || '—')}</td>
-      <td style="color:var(--text-2);">${esc(fmtIncusMemory(inst.memory_limit))}</td>
-      <td style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
-      <td style="text-align:center;">${inst.autostart ? '<span style="color:#3fb950;font-size:13px;font-weight:600;">&#x2714;</span>' : '<span style="color:var(--text-3);font-size:13px;">&#x2014;</span>'}</td>
-      <td class="lxd-row-actions" onclick="event.stopPropagation()"><span class="lxd-tbl-icon${inst.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${inst.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${inst.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      <td data-col="datastore" style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
+      ${_lxdMetricTd('cpu', inst.name)}
+      ${_lxdMetricTd('ram', inst.name)}
+      ${_lxdMetricTd('fs', inst.name)}
+      ${_lxdMetricTd('net', inst.name)}
+      ${_lxdMetricTd('diskio', inst.name)}
+      <td data-col="status" style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
+      <td data-col="autostart" style="text-align:center;">${inst.autostart ? '<span style="color:#3fb950;font-size:13px;font-weight:600;">&#x2714;</span>' : '<span style="color:var(--text-3);font-size:13px;">&#x2014;</span>'}</td>
+      <td data-col="actions" class="lxd-row-actions" onclick="event.stopPropagation()"><span class="lxd-tbl-icon${inst.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${inst.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${inst.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>&#x22EE;</span></td>
     </tr>`;
   }).join('');
+  _lxdAfterTableRender(tbody);
 }
 
 function toggleLXDTermMenu(e, name, type) {
@@ -45152,7 +45626,8 @@ async function lxdPowerAction(name, action) {
   // Update table row if visible
   const row = document.getElementById('lxd-row-' + name);
   if (row) {
-    row.cells[6].innerHTML = `<span class="lxd-tbl-icon lxd-tbl-icon-busy" title="${transLabel}" style="color:${transColor};"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 1v7h1V1h-1z"/><path d="M3 8.812a4.999 4.999 0 0 1 2.578-4.375l-.485-.874A6 6 0 1 0 11 3.616l-.501.865A5 5 0 1 1 3 8.812z"/></svg></span>`;
+    const sc = row.querySelector('td[data-col="status"]');
+    if (sc) sc.innerHTML = `<span class="lxd-tbl-icon lxd-tbl-icon-busy" title="${transLabel}" style="color:${transColor};"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 1v7h1V1h-1z"/><path d="M3 8.812a4.999 4.999 0 0 1 2.578-4.375l-.485-.874A6 6 0 1 0 11 3.616l-.501.865A5 5 0 1 1 3 8.812z"/></svg></span>`;
   }
 
   // Update CI detail header if this instance is open
@@ -45200,7 +45675,8 @@ async function pollLXDInstanceStatus(name, targetStatus, jobId) {
       if (row) {
         const color = _lxdStatusColor(data.status);
         const busy2 = data.status !== 'Running' && data.status !== 'Stopped';
-        row.cells[6].innerHTML = _lxdPowerBadgeHTML(name, data.status, color, busy2);
+        const sc = row.querySelector('td[data-col="status"]');
+        if (sc) sc.innerHTML = _lxdPowerBadgeHTML(name, data.status, color, busy2);
       }
 
       // Update CI detail header if open
@@ -45246,7 +45722,7 @@ async function lxdShutdownOrKillConfirm() {
 
   // Update table row to busy state
   const row = document.getElementById('lxd-row-' + name);
-  if (row) row.cells[6].innerHTML = `<span class="lxd-tbl-icon lxd-tbl-icon-busy" title="Shutting down" style="color:#58a6ff;"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 1v7h1V1h-1z"/><path d="M3 8.812a4.999 4.999 0 0 1 2.578-4.375l-.485-.874A6 6 0 1 0 11 3.616l-.501.865A5 5 0 1 1 3 8.812z"/></svg></span>`;
+  if (row) { const sc = row.querySelector('td[data-col="status"]'); if (sc) sc.innerHTML = `<span class="lxd-tbl-icon lxd-tbl-icon-busy" title="Shutting down" style="color:#58a6ff;"><svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 1v7h1V1h-1z"/><path d="M3 8.812a4.999 4.999 0 0 1 2.578-4.375l-.485-.874A6 6 0 1 0 11 3.616l-.501.865A5 5 0 1 1 3 8.812z"/></svg></span>`; }
   if (name === _ciCurrentName) _ciUpdateStatusBadge('Shutting down', '#58a6ff');
 
   // Fire-and-forget graceful shutdown. Do NOT await — lxc stop blocks on the
@@ -45268,7 +45744,8 @@ async function lxdShutdownOrKillConfirm() {
         const row2 = document.getElementById('lxd-row-' + name);
         if (row2) {
           const c = _lxdStatusColor(d.status);
-          row2.cells[6].innerHTML = _lxdPowerBadgeHTML(name, d.status, c, d.status !== 'Running' && d.status !== 'Stopped');
+          const sc = row2.querySelector('td[data-col="status"]');
+          if (sc) sc.innerHTML = _lxdPowerBadgeHTML(name, d.status, c, d.status !== 'Running' && d.status !== 'Stopped');
         }
         if (name === _ciCurrentName) _ciUpdateStatusBadge(d.status, _lxdStatusColor(d.status));
         if (d.status === 'Stopped') { _finishLXDPoll(name, jobId); return; }
@@ -54420,6 +54897,7 @@ async function loadBridgeMembers() {
     const imgTh = document.getElementById('bridge-members-th-image');
     if (imgTh) imgTh.style.display = hasImg ? '' : 'none';
     tbody.innerHTML = members.slice().sort(_byInstName).map(m => {
+      _lxdInstInfo[m.name] = {status: m.status, type: m.type, cpu_limit: m.cpu_limit, memory_limit: m.memory_limit, ipv4: m.ipv4};
       const typeBadge = m.type === 'virtual-machine'
         ? '<span style="background:rgba(88,166,255,0.15);color:#58a6ff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">VM</span>'
         : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">LXC</span>';
@@ -54427,24 +54905,28 @@ async function loadBridgeMembers() {
       const busy = m.status !== 'Running' && m.status !== 'Stopped' && m.status !== 'Error';
       const powerBtn = _lxdPowerBadgeHTML(m.name, m.status, statusColor, busy);
       const imgTrunc = m.image && m.image.length > 25 ? m.image.slice(0, 25) + '…' : (m.image || '');
-      const actionsCell = `<td class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      const actionsCell = `<td data-col="actions" class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'>&#x22EE;</span></td>`;
       const dsLabel = _dsLabel(m.root_pool);
       return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})'>
-        <td>${typeBadge}</td>
-        <td>${esc(m.description || m.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></td>
-        <td style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
-        ${hasImg ? `<td style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}">${esc(imgTrunc || '—')}</td>` : ''}
-        <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
-        <td style="text-align:center;color:var(--text-2);">${esc(m.cpu_limit || '—')}</td>
-        <td style="color:var(--text-2);">${esc(fmtIncusMemory(m.memory_limit))}</td>
-        <td style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
+        <td data-col="type">${typeBadge}</td>
+        <td data-col="name">${esc(m.description || m.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></td>
+        <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
+        ${hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}">${esc(imgTrunc || '—')}</td>` : ''}
+        <td data-col="datastore" style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
+        ${_lxdMetricTd('cpu', m.name)}
+        ${_lxdMetricTd('ram', m.name)}
+        ${_lxdMetricTd('fs', m.name)}
+        ${_lxdMetricTd('net', m.name)}
+        ${_lxdMetricTd('diskio', m.name)}
+        <td data-col="status" style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
         ${actionsCell}
       </tr>`;
     }).join('');
+    _lxdAfterTableRender(tbody);
   } catch(e) {
     al.textContent = e.message; al.classList.remove('hidden');
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">'+esc(e.message)+'</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--danger);padding:24px;">'+esc(e.message)+'</td></tr>';
   }
 }
 
@@ -54956,6 +55438,7 @@ async function loadDatastoreMembers() {
     const imgTh = document.getElementById('ds-members-th-image');
     if (imgTh) imgTh.style.display = hasImg ? '' : 'none';
     tbody.innerHTML = members.slice().sort(_byInstName).map(m => {
+      _lxdInstInfo[m.name] = {status: m.status, type: m.type, cpu_limit: m.cpu_limit, memory_limit: m.memory_limit, ipv4: m.ipv4};
       const typeBadge = m.type === 'virtual-machine'
         ? '<span style="background:rgba(88,166,255,0.15);color:#58a6ff;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">VM</span>'
         : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">LXC</span>';
@@ -54963,24 +55446,28 @@ async function loadDatastoreMembers() {
       const busy = m.status !== 'Running' && m.status !== 'Stopped' && m.status !== 'Error';
       const powerBtn = _lxdPowerBadgeHTML(m.name, m.status, statusColor, busy);
       const imgTrunc = m.image && m.image.length > 25 ? m.image.slice(0, 25) + '…' : (m.image || '');
-      const actionsCell = `<td class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
+      const actionsCell = `<td data-col="actions" class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'>&#x22EE;</span></td>`;
       const dsLabel = _dsLabel(m.root_pool);
       return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})'>
-        <td>${typeBadge}</td>
-        <td>${esc(m.description || m.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></td>
-        <td style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
-        ${hasImg ? `<td style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}">${esc(imgTrunc || '—')}</td>` : ''}
-        <td style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
-        <td style="text-align:center;color:var(--text-2);">${esc(m.cpu_limit || '—')}</td>
-        <td style="color:var(--text-2);">${esc(fmtIncusMemory(m.memory_limit))}</td>
-        <td style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
+        <td data-col="type">${typeBadge}</td>
+        <td data-col="name">${esc(m.description || m.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></td>
+        <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
+        ${hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}">${esc(imgTrunc || '—')}</td>` : ''}
+        <td data-col="datastore" style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
+        ${_lxdMetricTd('cpu', m.name)}
+        ${_lxdMetricTd('ram', m.name)}
+        ${_lxdMetricTd('fs', m.name)}
+        ${_lxdMetricTd('net', m.name)}
+        ${_lxdMetricTd('diskio', m.name)}
+        <td data-col="status" style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
         ${actionsCell}
       </tr>`;
     }).join('');
+    _lxdAfterTableRender(tbody);
   } catch(e) {
     al.textContent = e.message; al.classList.remove('hidden');
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">'+esc(e.message)+'</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--danger);padding:24px;">'+esc(e.message)+'</td></tr>';
   }
 }
 
