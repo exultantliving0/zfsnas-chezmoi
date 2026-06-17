@@ -16334,7 +16334,7 @@ function fmtBytes(n) {
   if (!n || n <= 0) return '0 B';
   const useGib = appSettings.storage_unit === 'gib';
   const base = useGib ? 1024 : 1000;
-  if (n < base) return n + ' B';
+  if (n < base) return (n % 1 === 0 ? n : n.toFixed(1)) + ' B';
   const suffixes = useGib
     ? ['KiB', 'MiB', 'GiB', 'TiB', 'PiB']
     : ['KB',  'MB',  'GB',  'TB',  'PB'];
@@ -16360,7 +16360,7 @@ function fmtBytesInt(n) {
   if (!n || n <= 0) return '0 B';
   const useGib = appSettings.storage_unit === 'gib';
   const base = useGib ? 1024 : 1000;
-  if (n < base) return n + ' B';
+  if (n < base) return (n % 1 === 0 ? n : n.toFixed(1)) + ' B';
   const suffixes = useGib
     ? ['KiB', 'MiB', 'GiB', 'TiB', 'PiB']
     : ['KB',  'MB',  'GB',  'TB',  'PB'];
@@ -34810,7 +34810,6 @@ function runReplicationTask(id, name) {
     svg.dataset.natW = W; svg.dataset.natH = H; // base size for the zoom controller
     svg.innerHTML =
       netDefs() +
-      `<text class="net-title" x="20" y="28">${isVm ? mapEsc('⛓ '+(instances[0].name||'')+' · Network') : '⛓ Networking Layer'}</text>` +
       `<g class="net-hubs">${hubsSvg}</g>` +
       `<g class="net-spokes">${spokesSvg}</g>` +
       `<g class="net-nodes">${nodesSvg}</g>`;
@@ -34959,7 +34958,11 @@ function runReplicationTask(id, name) {
     const dsConsumers = {};
     data.consumers.forEach(c=> (c.dataset_ids||[]).forEach(id=> dsConsumers[id]=(dsConsumers[id]||0)+1));
 
-    const layerTop = []; { let y = MAP.PAD + MAP.HEADER;
+    // Header band is now only the optional peer indicator — reclaim its space
+    // for the topology when there are no peers (0), keep a slim line when there
+    // are. (Was a fixed MAP.HEADER=54 for the removed hostname/CPU/RAM/net row.)
+    const _mapHeaderH = (data.remotes||[]).some(r=>r.kind==='peer') ? 26 : 0;
+    const layerTop = []; { let y = MAP.PAD + _mapHeaderH;
       for (let l=0;l<5;l++){ layerTop[l]=y; y += nodeH(l) + MAP.ROW_GAP; } }
     const rowWidth = (arr)=> arr.length ? arr.reduce((s,n)=>s+n.__w,0) + (arr.length-1)*MAP.COL_GAP : 0;
 
@@ -35094,14 +35097,13 @@ function runReplicationTask(id, name) {
   }
 
   function mapHeaderMarkup(data, W){
-    const s = data.server || {};
+    // Hostname + CPU/RAM/network stats removed (v6.6.16) so the topology gets
+    // the full canvas. Only the linked-peer indicator remains, top-right, and
+    // only when peers exist.
     const peers = (data.remotes||[]).filter(r=>r.kind==='peer');
-    const peerTxt = peers.length ? ('⇄ ' + peers.map(p=>mapEsc(p.label)).join('  ·  ')) : '';
-    return `<g class="map-header">
-      <text class="map-host" x="22" y="34">${mapEsc(s.hostname||'server')}</text>
-      <text class="map-host-stats" data-role="hdr" x="22" y="50"></text>
-      <text class="map-peers" x="${W-22}" y="34" text-anchor="end">${peerTxt}</text>
-    </g>`;
+    if (!peers.length) return '';
+    const peerTxt = '⇄ ' + peers.map(p=>mapEsc(p.label)).join('  ·  ');
+    return `<g class="map-header"><text class="map-peers" x="${W-22}" y="22" text-anchor="end">${peerTxt}</text></g>`;
   }
 
   function mapDiskFlow(d){
@@ -35182,12 +35184,8 @@ function runReplicationTask(id, name) {
     mapResolveGroups(data);
     const set = (g,role,txt)=>{ const e=g&&g.querySelector(`[data-role="${role}"]`); if(e) e.textContent=txt; };
 
-    // header
-    const s = data.server||{};
-    const hdr = svg.querySelector('.map-header [data-role="hdr"]');
-    if (hdr) hdr.textContent =
-      `CPU ${Math.round(s.cpu_pct||0)}%  ·  RAM ${Math.round(s.mem_pct||0)}%  ·  `
-      + `↓${(s.net_rx_mbps||0).toFixed(1)} ↑${(s.net_tx_mbps||0).toFixed(1)} Mb/s`;
+    // (v6.6.16) Server hostname + CPU/RAM/network header removed — nothing to
+    // update here anymore.
 
     const node = id => svg.querySelector(`.map-node[data-id="${cssEsc(id)}"]`);
 
@@ -41026,8 +41024,8 @@ async function _ciMonTick() {
     // Update numeric readouts.
     document.getElementById('ci-mon-rt-cpu').textContent  = s.cpu_pct.toFixed(1) + '%';
     document.getElementById('ci-mon-rt-mem').textContent  = (s.mem_total > 0)
-      ? (fmtBytes(s.mem_used) + ' / ' + fmtBytes(s.mem_total))
-      : fmtBytes(s.mem_used);
+      ? (_fmtMemBytes(s.mem_used) + ' / ' + _fmtMemBytes(s.mem_total))
+      : _fmtMemBytes(s.mem_used);
     document.getElementById('ci-mon-rt-disk').textContent = '↓ ' + fmtBytes(s.disk_r||0) + '/s · ↑ ' + fmtBytes(s.disk_w||0) + '/s';
     // Network displayed in bits/sec (with dynamic Kbit/Mbit/Gbit) per the
     // standard networking convention; the API still returns bytes/sec, so
@@ -41387,7 +41385,8 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor, labelMap) 
     if (peak <= 0) maxEl.textContent = '';
     else if (unit === '%') maxEl.textContent = 'max ' + peak.toFixed(1) + '%';
     else if (unit === 'bit/s') maxEl.textContent = 'max ' + fmtBitsPerSec(peak);
-    else if (unit === 'B' || unit === 'B/s') maxEl.textContent = 'max ' + fmtBytes(peak) + (unit === 'B/s' ? '/s' : '');
+    else if (unit === 'B') maxEl.textContent = 'max ' + _fmtMemBytes(peak);
+    else if (unit === 'B/s') maxEl.textContent = 'max ' + fmtBytes(peak) + '/s';
     else maxEl.textContent = 'max ' + peak.toFixed(1) + ' ' + unit;
   }
   // Tooltip + tick colours read from the active theme's CSS vars so custom
@@ -41445,7 +41444,8 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor, labelMap) 
               const v = Math.abs(ctx.parsed.y);
               if (unit === '%')      return '  ' + ctx.dataset.label + ': ' + v.toFixed(1) + '%';
               if (unit === 'bit/s')  return '  ' + ctx.dataset.label + ': ' + fmtBitsPerSec(v);
-              if (unit === 'B' || unit === 'B/s') return '  ' + ctx.dataset.label + ': ' + fmtBytes(v) + (unit === 'B/s' ? '/s' : '');
+              if (unit === 'B')      return '  ' + ctx.dataset.label + ': ' + _fmtMemBytes(v);
+              if (unit === 'B/s')    return '  ' + ctx.dataset.label + ': ' + fmtBytes(v) + '/s';
               return '  ' + ctx.dataset.label + ': ' + v.toFixed(1) + ' ' + unit;
             },
           },
@@ -41491,9 +41491,10 @@ function _ciMonRenderHistChart(slot, series, keys, unit, scaleFactor, labelMap) 
         y: { beginAtZero: !(slot === 'net' || slot === 'disk'), ticks: { color: tickColor, font: { size: 10 },
           callback: v => {
             const a = Math.abs(v);
-            return unit === '%'     ? a + '%'
+            return unit === '%'     ? (a % 1 === 0 ? a : a.toFixed(1)) + '%'
                  : unit === 'bit/s' ? fmtBitsPerSec(a)
-                 : (unit === 'B' || unit === 'B/s') ? fmtBytes(a)
+                 : unit === 'B'     ? _fmtMemBytes(a)
+                 : unit === 'B/s'   ? fmtBytes(a)
                  : a.toFixed(1);
           }
         }, grid: {
@@ -43546,11 +43547,15 @@ async function _ciOpenDataset(zfsPath) {
 
 function _fmtBytes(b) {
   if (!b || b <= 0) return '—';
-  if (b < 1024) return b + ' B';
+  if (b < 1024) return (b % 1 === 0 ? b : b.toFixed(1)) + ' B';
   if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
   if (b < 1024*1024*1024) return (b/1024/1024).toFixed(1) + ' MB';
   return (b/1024/1024/1024).toFixed(1) + ' GB';
 }
+// Memory formatter for the Monitor tab: base-1024 (so 8 GiB reads "8.0 GB",
+// matching the config / Live Info / Virtual Hardware cards instead of the
+// base-1000 "8.6 GB"), max 1 decimal, 0 → "0 B".
+function _fmtMemBytes(b) { b = Number(b) || 0; return b <= 0 ? '0 B' : _fmtBytes(b); }
 
 // parseIncusMemoryBytes parses any limits.memory string (e.g. "8GB", "8GiB",
 // "8192MiB") into bytes using BINARY semantics for both GB and GiB. Matches
@@ -44046,8 +44051,8 @@ function _lxdPopContent(col, name) {
   if (col === 'ram') {
     if (!running || !m || !(m.mem_total > 0)) return head + _lxdMuted('Instance not running') + note(`Limit: ${esc(fmtIncusMemory(info.memory_limit))}`);
     return head + _lxdPopRows([
-      ['Used', `${esc(_lxdBytes1(m.mem_used))} (${Math.round(m.mem_pct)}%)`],
-      ['Total', esc(_lxdBytes1(m.mem_total))],
+      ['Used', `${esc(_fmtMemBytes(m.mem_used))} (${Math.round(m.mem_pct)}%)`],
+      ['Total', esc(_fmtMemBytes(m.mem_total))],
     ]);
   }
   return '';
