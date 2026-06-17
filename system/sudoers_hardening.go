@@ -12,15 +12,22 @@ import (
 )
 
 // experimentalSudoersAliases lists Cmnd_Aliases that are only required when
-// the portal runs with --experimental. Memory compression lives inside
-// ZFSNAS_VMSETUP today, so it gates with the rest of the VM-setup block.
+// the portal runs with --experimental (i.e. for the virtualization feature).
 // When --experimental is off these sections are stripped from the required
-// template (and from the trailing User_Alias spec) so they never surface as
-// missing/red lines in Sudoers Review.
+// template (and from the trailing User_Alias spec), together with their
+// preceding comment blocks, so a non-virtualization host never sees any
+// virtualization-related command or explanation.
+//
+// NOTE: the one-time *install* of virtualization (ZFSNAS_VMSETUP, removed in
+// v6.6.16) no longer has any sudoers entries: enabling the feature now requires
+// full passwordless sudo ("sudo all"), so the install commands run under that
+// grant and never need a dedicated hardened rule. Memory compression (zram /
+// ZFSNAS_MEMCOMP) is part of the virtualization feature set and is gated here
+// too, so its commands never appear on a host without virtualization enabled.
 var experimentalSudoersAliases = map[string]bool{
+	"ZFSNAS_MEMCOMP":  true, // zram memory compression — part of the virtualization feature
 	"ZFSNAS_INCUSNET": true,
 	"ZFSNAS_INCUS":    true,
-	"ZFSNAS_VMSETUP":  true,
 	"ZFSNAS_SYNCOID":  true, // v6.5.19 — VM/Container Backup
 }
 
@@ -66,9 +73,9 @@ var sudoersSectionInfoMap = map[string]sudoersSectionInfo{
 	"ZFSNAS_SYSTEM":    {Label: "System Management"},
 	"ZFSNAS_JOURNAL":   {Label: "System Journal Log Viewer"},
 	"ZFSNAS_NTP":       {Label: "Network Time (chrony NTP)", Optional: true},
+	"ZFSNAS_MEMCOMP":   {Label: "Memory Compression (zram)", Optional: true},
 	"ZFSNAS_INCUSNET":  {Label: "Incus Network Bridges (VLAN interfaces)", Optional: true},
 	"ZFSNAS_INCUS":     {Label: "Incus Compute (Proxmox Import + ISO Management)", Optional: true},
-	"ZFSNAS_VMSETUP":   {Label: "VMs & Containers Feature Setup", Optional: true},
 	"ZFSNAS_SYNCOID":   {Label: "ZFS Replication (syncoid)", Optional: true},
 	"ZFSNAS_APT":       {Label: "OS Updates & Installation"},
 	"ZFSNAS_SECURITY":  {Label: "Sudoers Self-Management"},
@@ -203,6 +210,14 @@ func stripExperimentalSudoersSections(content string) string {
 		if strings.HasPrefix(trimmed, "Cmnd_Alias ") {
 			parts := strings.Fields(trimmed)
 			if len(parts) >= 2 && experimentalSudoersAliases[parts[1]] {
+				// Also drop this block's preceding comment lines so a
+				// non-virtualization host's sudoers file carries no leftover
+				// virtualization wording (the comment block runs from its
+				// "# ──" header down to this Cmnd_Alias, with no blank line
+				// between). Stops at the blank separator before the header.
+				for len(out) > 0 && strings.HasPrefix(strings.TrimSpace(out[len(out)-1]), "#") {
+					out = out[:len(out)-1]
+				}
 				if endsContinuation {
 					skip = true
 				}
@@ -330,13 +345,6 @@ func widenWildcardsForSudoRS(s string) string {
 		// ZFSNAS_INCUS — journalctl --since=<ts> for the OOM-kill attribution
 		// in the VMs & Containers state watcher. `--since=` prefix before *.
 		{"/usr/bin/journalctl --since=*", "/usr/bin/journalctl *"},
-		// ZFSNAS_VMSETUP — netplan→ifupdown migration commands.
-		{"/usr/bin/rm -f /run/systemd/network/*.network", "/usr/bin/rm -f *"},
-		{"/usr/bin/ip addr flush dev * scope global", "/usr/bin/ip *"},
-		{"/usr/bin/ip route flush dev * scope global", "/usr/bin/ip *"},
-		{"/usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled", "/usr/bin/mv *"},
-		{"/usr/bin/cat /etc/netplan/*.yaml", "/usr/bin/cat *"},
-		{"/usr/bin/tee /etc/network/interfaces.pre-znas-*", "/usr/bin/tee *"},
 		// ZFSNAS_SYNCOID — VM/Container backup mounts a snapshot read-only into
 		// a private /tmp dir to read its files. The "/tmp/znas-bkup-mount-*"
 		// argument has a prefix before the `*`, which sudo-rs rejects. Path
@@ -938,7 +946,7 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/chmod +x /usr/local/bin/mc":                                   "Makes the downloaded MinIO client (mc) binary executable.",
 	"/usr/bin/mkdir -p /var/lib/minio":                                      "Creates the MinIO data directory.",
 	"/usr/bin/mkdir -p /var/lib/minio/.minio/certs":                         "Creates the MinIO TLS certificate directory.",
-	"/usr/bin/mkdir -p *":                                                   "Creates a required directory during feature setup (MinIO data dirs, ISO storage dirs, etc.).",
+	"/usr/bin/mkdir -p *":                                                   "Creates directories on demand for the File Browser — the 'New Folder' action and the destination directory when uploading files. Also used by other features that provision their own directories (e.g. the MinIO/S3 object server's data directories). Path validation enforced in Go (SafeJoin against dataset/share roots).",
 	"/usr/bin/chown minio-user\\:minio-user /var/lib/minio":                 "Transfers ownership of the MinIO data directory to the minio-user account.",
 	"/usr/bin/chown -R minio-user\\:minio-user /var/lib/minio/.minio/certs": "Transfers ownership of the MinIO TLS certificate directory to minio-user.",
 	"/usr/bin/chown -R minio-user\\:minio-user *":                           "Transfers ownership of MinIO data directories to the minio-user account.",
@@ -999,7 +1007,7 @@ var sudoersExplanations = map[string]string{
 	"/usr/sbin/dmidecode *":                                                  "Reads DMI/SMBIOS firmware tables for motherboard, BIOS, and per-DIMM memory details (v6.5.3+ SysInfo popup).",
 	"/usr/bin/journalctl -k *":                                               "Reads the kernel ring buffer (read-only) so the VMs & Containers state watcher can attribute a Running→Stopped transition to a kernel OOM-kill (v6.5.3+, virtualization-only).",
 	"/usr/bin/journalctl --since=*":                                          "Reads the systemd journal (read-only) so the VMs & Containers state watcher can attribute a Running→Stopped transition to a kernel OOM-kill (v6.5.3+, virtualization-only).",
-	"/usr/bin/journalctl *":                                                  "sudo-rs fallback for `journalctl --since=*` (Ubuntu 26.04+): sudo-rs rejects the `--since=` prefix before `*`, so the rule is widened to `journalctl *`. Still read-only — journalctl never modifies state. Used by the VMs & Containers state watcher for OOM-kill attribution (v6.5.3+).",
+	"/usr/bin/journalctl *":                                                  "Read-only access to the systemd journal for the Log Viewer screen (Activity & Events → journal tabs). Runs `journalctl` with -n / -p / --since / -u / -k filters to display the kernel ring buffer and service logs from the portal. journalctl is read-only and never modifies system state.",
 	"/usr/bin/cat /proc/*/smaps_rollup":                                      "Reads /proc/<pid>/smaps_rollup so the MEM topbar gauge can show complete swap usage (incl. shmem) for QEMU/KVM workers — VmSwap in /proc/<pid>/status only counts anonymous private swap (v6.5.3+).",
 	"/usr/bin/apt-get *":                                                     "Package installation and OS updates. Used by the Prerequisites tab and the Settings > OS Updates page.",
 	"/usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get *":                  "OS package upgrade with debconf forced non-interactive (suppresses the 'unable to initialize frontend' warnings on the unattended Auto Update). Used by Settings > OS Updates.",
@@ -1033,6 +1041,7 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/dd *":                                                          "Proxmox Import: streams a raw disk image into a ZFS volume (zvol) backing an Incus VM disk (v6.4.21+; switched from LXD in v6.5.2). Broadened from `dd of=/dev/zd* *` because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing argument positions.",
 	"/usr/bin/partx *":                                                       "Proxmox Import: adds/removes partition block devices for a zvol (/dev/zdX → /dev/zdXp1 …) so the EFI System Partition can be mounted and the UEFI fallback boot path repaired after import (v6.4.21+). Broadened from `partx * /dev/zd*` for sudo-rs compatibility.",
 	"/usr/bin/ntfsfix *":                                                     "Proxmox Import (v6.5.2+): clears the NTFS dirty bit and journal on a Windows partition before its first Incus boot. Without this, a Windows guest captured during fast-startup arrives with the volume marked \"kept in cache\" and alternates between normal boot and Windows RE on every second start. Targets a /dev/loop* device that fixUEFIWindows() attaches with offset+sizelimit over a single partition of the imported zvol.",
+	"/usr/bin/ln -sf *":                                                      "Incus Compute (v6.6.16): creates the cross-distro OVMF UEFI firmware symlinks (Ubuntu's OVMF_CODE.4MB.fd ↔ Debian's OVMF_CODE_4M.fd) at portal startup, so a VM pushed between an Ubuntu host and a Debian host can find its firmware and boot on either. EnsureOVMFCompat() only ever links the /usr/share/OVMF/ pair; the broad trailing `*` is required because sudo-rs (Ubuntu 26.04+) accepts `*` only as a complete trailing argument and the command takes two path arguments.",
 	"/usr/bin/blkid -o value -s TYPE *":                                      "Proxmox Import (v6.5.2+): reads the filesystem type of a single zvol partition so fixUEFIWindows() only runs ntfsfix against NTFS volumes (skipping ESP/MSR partitions on the same disk).",
 	"/usr/bin/python3 - *":                                                   "Proxmox Import (v6.5.2+): runs a fixed-content libhivex (python3-hivex) script piped via stdin to patch the Windows BCD on the imported ESP — removes BootMgr's resumeobject and sets bootstatuspolicy=IgnoreAllFailures so first-boot doesn't loop into Windows RE. The trailing `-` forces python3 to read its program from stdin; the wildcard accepts only the BCD path argument. The script body is a Go string constant (system/proxmox_import.go patchWindowsBCD), not user input.",
 	"/usr/sbin/losetup *":                                                    "Proxmox Import (v6.5.2+): attaches/detaches loop devices over individual partitions of an imported zvol so fixUEFIWindows() can mount the ESP and each NTFS partition without relying on `partx -a` — partx fails on zvols whose 16 KiB volblocksize doesn't line up with the GPT's 512-byte sector arithmetic.",
@@ -1099,10 +1108,11 @@ var sudoersExplanations = map[string]string{
 	"/usr/bin/mount *":                                                       "Proxmox Import: mounts the EFI System Partition (FAT32) from an imported VM's root zvol into a private /tmp directory so grub.cfg can be installed for UEFI fallback boot repair (v6.4.21+). Broadened from `mount -t vfat * /dev/zd*p* /tmp/.znas-esp-*` for sudo-rs compatibility.",
 	"/usr/bin/umount *":                                                      "Proxmox Import: unmounts the EFI System Partition after the UEFI fallback boot repair is complete (v6.4.21+). Broadened from `umount * /tmp/.znas-esp-*` for sudo-rs compatibility.",
 	"/usr/bin/chmod 0775 *":                                                  "ISO Management: sets group-write permission on the .isos directory so the zfsnas process user can upload ISO files without requiring root on each transfer (v6.4.22+).",
-	"/usr/bin/rm -f *":                                                       "ISO Management: removes a partially-written ISO file if the upload is interrupted (v6.4.22+).",
-	"/usr/bin/mv -f *":                                                       "ISO Management URL fetch: atomic rename from <pool>/.isos/<name>.part to <pool>/.isos/<name> after the download completes and the ISO 9660 magic check passes (v6.5.8+). Single trailing wildcard required because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing positions; filename is regex-validated against isoNameRe (no path traversal, no shell metacharacters) before invocation.",
+	"/usr/bin/rm -f *":                                                       "File Browser: deletes a file, and removes a partially-written upload if it is interrupted (v6.4.3+). Path validated in Go (SafeJoin against dataset/share roots); broad trailing `*` required because sudo-rs (Ubuntu 26.04+) accepts `*` only as a complete trailing argument.",
+	"/usr/bin/mv -f *":                                                       "File Browser: atomic rename overwriting the destination — finalizing an uploaded file (temp name → final name) and the rename/move action when the user chooses to overwrite an existing target. Single trailing wildcard required because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing positions; the source/destination paths are validated in Go before invocation (no path traversal, no shell metacharacters).",
+	"/usr/bin/mv -n *":                                                       "Rename/move without overwriting an existing destination (`-n` = no-clobber). Used by the File Browser rename/move action when the user does not opt to overwrite the target. Single trailing wildcard required because sudo-rs (Ubuntu 26.04+) does not allow wildcards in non-trailing positions; the source/destination paths are validated in Go before invocation (no path traversal, no shell metacharacters).",
 	"/usr/bin/cat /var/log/incus/*/console.log":                              "Container Console tab: reads /var/log/incus/<name>/console.log (root-owned 0600) so the per-container Console pane can show the boot/console output (v6.4.28+). Pattern is locked to /var/log/incus/<single-segment>/console.log — sudo blocks every other path including /etc/shadow and traversal attempts (verified). Instance name is also regex-validated before invocation. (Used on classic sudo only; on sudo-rs hosts the wider `cat *` form is used because sudo-rs rejects any prefix before `*`.)",
-	"/usr/bin/cat *":                                                         "Container Console tab — sudo-rs fallback (Ubuntu 26.04+): reads /var/log/incus/<name>/console.log for the per-container Console pane. The narrower /var/log/incus/*/console.log form is preferred but rejected by sudo-rs's stricter wildcard parser (only `*` as a complete trailing argument is accepted). Path scoping is enforced server-side: the instance name is regex-validated against the live Incus instance list before invocation (system/lxd.go GetLXDInstanceConsoleLog).",
+	"/usr/bin/cat *":                                                         "File Browser: streams a previewable file's contents to the in-app viewer for the allow-listed text/image MIME types (after `stat`/`head` report its size and sniff its type). The path is validated in Go (SafeJoin against dataset/share roots) before invocation. Broad trailing `*` is required because sudo-rs (Ubuntu 26.04+) accepts `*` only as a complete trailing argument, so the narrower per-path forms cannot be expressed in sudoers.",
 	"/usr/sbin/partprobe *":                                                  "Refreshes the kernel partition table after disk changes.",
 	"/usr/bin/udevadm settle *":                                              "Waits for udev to settle after disk operations before proceeding.",
 	"/usr/sbin/blkid -o export":                                              "Reads disk UUIDs and filesystem types after partitioning.",
@@ -1365,11 +1375,10 @@ Cmnd_Alias ZFSNAS_SYSTEM = \
     /usr/bin/tee /sys/module/zfs/parameters/zfs_arc_min
 
 # ── System journal log viewer ─────────────────────────────────────────────────
-# since v6.6.12 — Activity & Events page journal tabs (Kernel Logs, ZFSNAS
-#   Service, Virtualization Services, All Journals). Read-only journalctl access
-#   so an admin can inspect kernel/service logs from the portal. Core (not
-#   virtualization-gated) because the kernel/service/all views are useful on any
-#   host; the journal tabs are simply hidden in the UI when this grant is absent.
+# since v6.6.12 — read-only journalctl access for the Log Viewer screen (the
+#   Activity & Events page journal tabs) so an admin can inspect the kernel ring
+#   buffer and service logs from the portal. A core feature, always present; the
+#   journal tabs are simply hidden in the UI when this grant is absent.
 Cmnd_Alias ZFSNAS_JOURNAL = \
     /usr/bin/journalctl *
 
@@ -1430,28 +1439,17 @@ Cmnd_Alias ZFSNAS_INCUS = \
     /usr/sbin/losetup *, \
     /usr/bin/journalctl -k *, \
     /usr/bin/journalctl --since=*, \
+    /usr/bin/ln -sf *, \
     {{LXD_CAT_LINE}}
 
-# ── VMs & Containers feature setup ───────────────────────────────────────────
-# since v6.5.2 — one-time enablement of Incus compute support (replaces the
-#   v6.4.24 LXD setup commands):
-#   incus admin init: initialises the Incus daemon from a preseed YAML.
-#   usermod:  adds the zfsnas service account to the incus-admin group.
-#   systemctl restart networking: applies bridge config after rewrite.
-#   systemctl {enable,start,restart} incus: service lifecycle during setup.
-#   ln -sf /usr/share/OVMF/*: creates cross-distro OVMF firmware symlinks so
-#       VMs pushed between Ubuntu (OVMF_CODE.4MB.fd) and Debian (OVMF_CODE_4M.fd)
-#       can start on either host without manual intervention.
-# /etc/network/interfaces edits and backups are performed in-process (root only);
-# no sudo entry is granted for that path.
-Cmnd_Alias ZFSNAS_VMSETUP = \
-    /usr/bin/incus admin init --preseed, \
-    /usr/sbin/incus admin init --preseed, \
-    /usr/sbin/usermod -a -G incus-admin zfsnas, \
-    /usr/bin/systemctl restart networking, \
-    /usr/bin/systemctl enable incus, \
-    /usr/bin/systemctl start incus, \
-    /usr/bin/systemctl restart incus, \
+# ── Memory Compression (zram) ─────────────────────────────────────────────────
+# since v6.5.3 — the "Memory Compression" feature, part of the VMs & Containers
+#   (virtualization) feature set: zram compressed swap raises guest memory density
+#   on the host. Toggles the zram-tools "zramswap" service and its device at
+#   runtime and writes the persistent config; swapoff + modprobe tear the device
+#   down when the feature is turned off. Gated with --experimental, so it is
+#   absent on a host without virtualization enabled.
+Cmnd_Alias ZFSNAS_MEMCOMP = \
     /usr/bin/systemctl start zramswap, \
     /usr/bin/systemctl stop zramswap, \
     /usr/bin/systemctl restart zramswap, \
@@ -1460,57 +1458,7 @@ Cmnd_Alias ZFSNAS_VMSETUP = \
     /usr/bin/systemctl reset-failed zramswap, \
     /usr/sbin/swapoff /dev/zram0, \
     /usr/sbin/modprobe -r zram, \
-    /usr/bin/tee /etc/default/zramswap, \
-    /usr/bin/systemctl enable systemd-networkd, \
-    /usr/bin/systemctl disable systemd-networkd, \
-    /usr/bin/systemctl start systemd-networkd, \
-    /usr/bin/systemctl stop systemd-networkd, \
-    /usr/bin/systemctl disable systemd-networkd.service, \
-    /usr/bin/systemctl stop systemd-networkd.service, \
-    /usr/bin/systemctl mask systemd-networkd.service, \
-    /usr/bin/systemctl unmask systemd-networkd.service, \
-    /usr/bin/systemctl disable systemd-networkd-wait-online.service, \
-    /usr/bin/systemctl stop systemd-networkd-wait-online.service, \
-    /usr/bin/systemctl mask systemd-networkd-wait-online.service, \
-    /usr/bin/systemctl unmask systemd-networkd-wait-online.service, \
-    /usr/bin/systemctl enable systemd-networkd-wait-online.service, \
-    /usr/bin/systemctl enable systemd-networkd.socket, \
-    /usr/bin/systemctl disable systemd-networkd.socket, \
-    /usr/bin/systemctl start systemd-networkd.socket, \
-    /usr/bin/systemctl stop systemd-networkd.socket, \
-    /usr/bin/systemctl enable systemd-networkd-varlink.socket, \
-    /usr/bin/systemctl disable systemd-networkd-varlink.socket, \
-    /usr/bin/systemctl start systemd-networkd-varlink.socket, \
-    /usr/bin/systemctl stop systemd-networkd-varlink.socket, \
-    /usr/bin/systemctl enable systemd-networkd-resolve-hook.socket, \
-    /usr/bin/systemctl disable systemd-networkd-resolve-hook.socket, \
-    /usr/bin/systemctl start systemd-networkd-resolve-hook.socket, \
-    /usr/bin/systemctl stop systemd-networkd-resolve-hook.socket, \
-    /usr/bin/rm -f /run/systemd/network/*.network, \
-    /usr/bin/rm -f /etc/resolv.conf, \
-    /usr/bin/tee /etc/resolv.conf, \
-    /usr/bin/tee /etc/dhcpcd.conf, \
-    /usr/bin/tee /etc/dhcpcd.exit-hook, \
-    /usr/bin/chmod 0755 /etc/dhcpcd.exit-hook, \
-    /usr/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf, \
-    /usr/bin/systemctl enable systemd-resolved, \
-    /usr/bin/systemctl start systemd-resolved, \
-    /usr/bin/chmod -x /etc/network/if-up.d/resolved, \
-    /usr/bin/chmod +x /etc/network/if-up.d/resolved, \
-    /usr/bin/systemctl mask ifup@.service, \
-    /usr/bin/systemctl unmask ifup@.service, \
-    /usr/bin/ip addr flush dev * scope global, \
-    /usr/bin/ip route flush dev * scope global, \
-    /usr/bin/systemctl enable networking, \
-    /usr/bin/systemctl disable networking, \
-    /usr/bin/systemctl start networking, \
-    /usr/bin/systemctl stop networking, \
-    /usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled, \
-    /usr/bin/cat /etc/netplan/*.yaml, \
-    /usr/bin/tee /etc/network/interfaces, \
-    /usr/bin/tee /etc/network/interfaces.pre-znas-*, \
-    /usr/bin/tee /etc/cloud/cloud.cfg.d/99-znas-disable-network-config.cfg, \
-    /usr/bin/ln -sf *
+    /usr/bin/tee /etc/default/zramswap
 
 # ── OS updates & service installation ────────────────────────────────────────
 # since v1.0.0 — prerequisite package install (apt-get install) and
@@ -1539,5 +1487,5 @@ Cmnd_Alias ZFSNAS_SECURITY = \
 
 # ── Grant all of the above, passwordless, to the service account ──────────────
 zfsnas ALL=(ALL) NOPASSWD: \
-    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_JOURNAL, ZFSNAS_NTP, ZFSNAS_INCUSNET, ZFSNAS_INCUS, ZFSNAS_VMSETUP, ZFSNAS_APT, ZFSNAS_SECURITY
+    ZFSNAS_ZFS, ZFSNAS_SMB, ZFSNAS_NFS, ZFSNAS_ISCSI, ZFSNAS_MINIO, ZFSNAS_UPS, ZFSNAS_DISKPOWER, ZFSNAS_SYSPOWER, ZFSNAS_MEMCOMP, ZFSNAS_SMART, ZFSNAS_DISK, ZFSNAS_SCAN, ZFSNAS_FILES, ZFSNAS_SYSTEM, ZFSNAS_JOURNAL, ZFSNAS_NTP, ZFSNAS_INCUSNET, ZFSNAS_INCUS, ZFSNAS_APT, ZFSNAS_SECURITY
 `

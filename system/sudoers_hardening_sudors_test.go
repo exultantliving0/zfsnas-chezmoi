@@ -16,15 +16,13 @@ func TestSudoRSSubstitutionsRemoveAllWildcardErrors(t *testing.T) {
 
 	// These patterns all have a `*` in a non-trailing position — sudo-rs
 	// refuses to parse them. After substitution none should remain.
+	// (The ZFSNAS_VMSETUP netplan→ifupdown migration entries — ip/mv/cat/tee/rm
+	// against /etc/netplan, /etc/network, /run/systemd — were removed in v6.6.16:
+	// virtualization install now runs under full "sudo all", so those one-shot
+	// commands no longer have hardened sudoers rules.)
 	bad := []string{
 		"/usr/bin/cat /proc/*/smaps_rollup",
 		"/usr/bin/journalctl --since=*",
-		"/usr/bin/rm -f /run/systemd/network/*.network",
-		"/usr/bin/ip addr flush dev * scope global",
-		"/usr/bin/ip route flush dev * scope global",
-		"/usr/bin/mv /etc/netplan/*.yaml /etc/netplan/*.yaml.znas-disabled",
-		"/usr/bin/cat /etc/netplan/*.yaml",
-		"/usr/bin/tee /etc/network/interfaces.pre-znas-*",
 		// ZFSNAS_SYNCOID backup-mount commands (prefix before `*`).
 		"/usr/bin/mkdir -p /tmp/znas-bkup-mount-*",
 		"/usr/bin/rmdir /tmp/znas-bkup-mount-*",
@@ -43,8 +41,6 @@ func TestSudoRSSubstitutionsRemoveAllWildcardErrors(t *testing.T) {
 		"/usr/bin/cat *",
 		"/usr/bin/journalctl *",
 		"/usr/bin/rm -f *",
-		"/usr/bin/ip *",
-		"/usr/bin/mv *",
 		"/usr/bin/mkdir -p *",
 		"/usr/bin/rmdir *",
 		"/usr/bin/umount *",
