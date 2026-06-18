@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>ZFS NAS Portal</title>
   <link rel="icon" href="/static/favicon.jpg?v=2" type="image/jpeg">
   <link rel="apple-touch-icon" href="/static/favicon.jpg?v=2">
@@ -606,7 +606,42 @@
   </style>
 </head>
 <body>
+<script>
+/* ===== Phone / iOS detection (set as early as possible to avoid a desktop-layout
+   flash on first paint). The resize/orientation listener is wired later in the main
+   script via _mInitChrome(). A phone = small viewport AND a coarse pointer, so a
+   narrow desktop window keeps the desktop layout (and the legacy 52px rail). */
+(function(){
+  try {
+    var phone = matchMedia('(max-width:760px)').matches && matchMedia('(pointer:coarse)').matches;
+    document.body.classList.toggle('is-phone', phone);
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) document.body.classList.add('is-ios');
+  } catch(e){}
+})();
+</script>
 <div id="tip-box"></div>
+
+<!-- ===== MOBILE SHELL — phone only (revealed via body.is-phone; desktop never sees it).
+     Slim top app bar + bottom tab bar + a backdrop for the off-canvas drawer (which is
+     the existing .sidebar, slid in on phone). All wiring is in the "Mobile shell" JS
+     section. ===== -->
+<header id="m-topbar" class="m-topbar">
+  <button class="m-iconbtn" id="m-menu-btn" onclick="toggleMobileDrawer()" aria-label="Open menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+  <span id="m-title" class="m-title">Performance</span>
+  <!-- Right slot: per-page primary action lands here in a later phase; balances the title. -->
+  <span id="m-topbar-right" class="m-topbar-right"></span>
+</header>
+<div id="m-backdrop" class="m-backdrop" onclick="closeMobileDrawer()"></div>
+<nav id="m-tabbar" class="m-tabbar" aria-label="Primary">
+  <button class="m-tab" id="m-tab-dashboard" onclick="mobileNav('dashboard')"><span class="m-tab-ic">🎛️</span><span class="m-tab-lbl">Perf</span></button>
+  <button class="m-tab" id="m-tab-storage"   onclick="mobileNav('pool')"><span class="m-tab-ic">🗄</span><span class="m-tab-lbl">Storage</span></button>
+  <button class="m-tab" id="m-tab-sharing"   onclick="mobileNav('shares')"><span class="m-tab-ic">🔗</span><span class="m-tab-lbl">Sharing</span></button>
+  <button class="m-tab" id="m-tab-vms"       onclick="mobileNav('lxd')" style="display:none"><span class="m-tab-ic">⬡</span><span class="m-tab-lbl">VMs</span></button>
+  <button class="m-tab" id="m-tab-more"      onclick="toggleMobileDrawer()"><span class="m-tab-ic">☰</span><span class="m-tab-lbl">More</span></button>
+</nav>
+
 <div class="app-layout" id="app">
 
   <!-- ===== SIDEBAR ===== -->
@@ -721,6 +756,14 @@
     <button class="nav-item" onclick="showPage('updates')"   id="nav-updates">  <span class="nav-icon">⬆</span><span class="nav-label"> Platform</span><span id="nav-updates-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:#f0b429;margin-left:auto;flex-shrink:0;box-shadow:0 0 4px rgba(240,180,41,0.6);"></span></button>
     <button class="nav-item" onclick="toggleTermPanel()" oncontextmenu="_showNavTermModeMenu(event); return false;" title="Click to open · right-click to choose where" id="nav-terminal"> <span class="nav-icon">🖥️</span><span class="nav-label"> Terminal</span><span id="nav-term-badge" style="display:none;margin-left:6px;padding:1px 6px;border-radius:10px;background:#15803d;color:#dcfce7;font-size:10px;font-weight:700;line-height:1;">0</span></button>
     <button class="nav-item" onclick="openAbout()"            id="nav-about">    <span class="nav-icon">ℹ</span><span class="nav-label"> About / Support</span></button>
+
+    <!-- Mobile-only drawer footer: account, theme + logout. On desktop these live in
+         the topbar (hidden on phone), so the drawer is where phone users reach them. -->
+    <div class="m-drawer-foot m-only">
+      <div class="m-drawer-user" id="m-drawer-user">—</div>
+      <button class="nav-item m-keep-open" onclick="_mCycleTheme()"><span class="nav-icon">🎨</span><span class="nav-label"> Switch Theme</span></button>
+      <button class="nav-item" onclick="logout()"><span class="nav-icon">⎋</span><span class="nav-label"> Log Out</span></button>
+    </div>
   </nav>
 
   <!-- ===== MAIN CONTENT ===== -->
@@ -2036,9 +2079,16 @@
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>
           </span>
           <span style="flex:1;"></span>
-          <button class="btn btn-primary btn-sm" id="lxd-btn-new-vm" onclick="openNewVMModal()">+ New VM</button>
-          <button class="btn btn-secondary btn-sm" id="lxd-btn-new-container" onclick="openNewContainerModal()">+ New Container</button>
-          <button class="btn btn-secondary btn-sm" id="lxd-btn-new-compose" onclick="openComposeModal()">+ Compose</button>
+          <!-- Single Create dropdown — replaces the former New VM / New Container /
+               Compose buttons (keeps the toolbar to one row, esp. on phone). -->
+          <div style="position:relative;" id="lxd-create-wrap">
+            <button class="btn btn-primary btn-sm" id="lxd-btn-create" onclick="_lxdCreateToggle(event)">+ Create &#9662;</button>
+            <div id="lxd-create-menu" class="row-menu-dropdown hidden" style="position:absolute;left:0;top:calc(100% + 4px);min-width:200px;z-index:300;">
+              <button type="button" onclick="_lxdCreatePick('vm')">🖥️ Virtual Machine</button>
+              <button type="button" onclick="_lxdCreatePick('container')">📦 LXC Container</button>
+              <button type="button" onclick="_lxdCreatePick('compose')">🧩 Compose Stack</button>
+            </div>
+          </div>
           <button class="btn btn-secondary btn-sm" onclick="_lxdToggleColsMenu(event)" title="Choose table columns">&#9881; Columns &#9662;</button>
           <div style="position:relative;" id="lxd-tools-wrap">
             <span style="cursor:pointer;padding:4px 8px;color:var(--text-2);font-size:18px;line-height:1;" title="More options"
@@ -2051,7 +2101,7 @@
         </div>
         <div id="lxd-alert" class="alert alert-error hidden" style="margin-bottom:12px;"></div>
         <div class="card lxd-table-card" style="padding:0;">
-          <table class="table" id="lxd-table">
+          <table class="table lxd-inst-table" id="lxd-table">
             <thead>
               <tr>
                 <th data-col="type" data-sort="type" class="lxd-sortable" style="width:34px;padding-left:10px;padding-right:4px;" onclick="_lxdSortBy('type')">Type<span class="sort-arrow"></span></th>
@@ -3999,7 +4049,8 @@
           <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
             <button class="btn btn-secondary btn-sm" onclick="_lxdToggleColsMenu(event)" title="Choose table columns">&#9881; Columns &#9662;</button>
           </div>
-          <table class="table" id="bridge-members-table">
+          <div class="lxd-inst-scroll">
+          <table class="table lxd-inst-table" id="bridge-members-table">
             <thead><tr>
               <th data-col="type" style="width:60px;">Type</th>
               <th data-col="name">Name</th>
@@ -4018,6 +4069,7 @@
               <tr><td colspan="12" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
         <div id="bridge-tab-monitor" style="display:none;padding-top:4px;">
           <!-- Live charts -->
@@ -4284,7 +4336,8 @@
         <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
           <button class="btn btn-secondary btn-sm" onclick="_lxdToggleColsMenu(event)" title="Choose table columns">&#9881; Columns &#9662;</button>
         </div>
-        <table class="table" id="datastore-members-table">
+        <div class="lxd-inst-scroll">
+        <table class="table lxd-inst-table" id="datastore-members-table">
           <thead><tr>
             <th data-col="type" style="width:60px;">Type</th>
             <th data-col="name">Name</th>
@@ -4303,6 +4356,7 @@
             <tr><td colspan="12" style="text-align:center;color:var(--text-3);padding:32px;">Loading…</td></tr>
           </tbody>
         </table>
+        </div>
       </div>
 
       <!-- ===== v6.5.19: Backups (Datastores → Backups) page ===== -->
@@ -11647,7 +11701,10 @@ let _upsPerfCostCents = null;   // electricity cost (¢/kWh) for $/yr in UPS too
     // Restore activity bar state from user preferences.
     {
       const bar = document.getElementById('activity-bar');
-      if (currentUser.preferences && currentUser.preferences.activity_bar_collapsed) {
+      // On phone always boot collapsed — the bar is a bottom strip there and an
+      // "expanded" desktop preference would otherwise eat the small screen.
+      if ((currentUser.preferences && currentUser.preferences.activity_bar_collapsed)
+          || document.body.classList.contains('is-phone')) {
         abExpanded = false;
         bar.classList.remove('expanded');
         bar.classList.add('collapsed');
@@ -11684,6 +11741,9 @@ let _upsPerfCostCents = null;   // electricity cost (¢/kWh) for $/yr in UPS too
     // Set user menu display name.
     const userNameEl = document.getElementById('user-menu-name');
     if (userNameEl) userNameEl.textContent = currentUser.username || '';
+    // Mirror the display name into the mobile drawer footer.
+    const mDrawerUser = document.getElementById('m-drawer-user');
+    if (mDrawerUser) mDrawerUser.textContent = 'Signed in as ' + (currentUser.username || '');
   } catch {
     try { sessionStorage.setItem('znas-intended-page', window.location.hash); } catch {}
     window.location.href = '/login'; return;
@@ -11797,6 +11857,209 @@ try {
     if (sidebar) sidebar.classList.add('sidebar-compact');
   }
 } catch {}
+
+// ===== Mobile shell (v6.7.0) =================================================
+// Phone-only chrome: top app bar, off-canvas drawer (the .sidebar), bottom tab
+// bar and per-page title sync. All gated behind body.is-phone — on desktop these
+// helpers are effectively inert (the elements are display:none and never toggled).
+
+// Per-page titles for the mobile app bar. Pages absent here fall back to the
+// matching nav-item's label, then to a humanised page name.
+const _M_TITLES = {
+  dashboard:'Performance', capacity:'Capacity Trend', disks:'Physical Disks',
+  pool:'ZFS Pools', datasets:'Datasets & Zvol', snapshots:'Protect',
+  shares:'SMB Shares', nfs:'NFS Shares', iscsi:'iSCSI Shares', s3:'S3 Buckets',
+  lxd:'VMs & Containers', 'lxd-networks':'Networking', 'lxd-datastores':'Datastores',
+  'lxd-backups':'Backups', 'compute-instance':'Instance', 'bridge-detail':'Bridge',
+  'datastore-detail':'Datastore', replication:'Replication', activity:'Activity',
+  settings:'Settings', prereqs:'Requisites', updates:'Platform'
+};
+// Per-page primary action surfaced in the top app bar's right slot. `ic` picks an
+// icon (plus = create, scan = refresh); `fn` is a global function name.
+const _M_ACTION = {
+  datasets:  { fn:'openCreateDataset',     ic:'plus', t:'New dataset' },
+  shares:    { fn:'openCreateShare',       ic:'plus', t:'New SMB share' },
+  nfs:       { fn:'openCreateNFSShare',    ic:'plus', t:'New NFS share' },
+  pool:      { fn:'openNewPool',           ic:'plus', t:'Create pool' },
+  snapshots: { fn:'openCreateSnapshot',    ic:'plus', t:'New snapshot' },
+  // lxd intentionally omitted: the VMs & Containers page has its own multi-choice
+  // "Create" dropdown in the page header, so a top-bar "+" would be redundant.
+  disks:     { fn:'scanDisks',             ic:'scan', t:'Scan for disks' }
+};
+const _M_ACTION_SVG = {
+  plus: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  scan: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>'
+};
+
+// Which bottom tab "owns" each page.
+const _M_TAB_OF = {
+  dashboard:'dashboard', capacity:'dashboard',
+  disks:'storage', pool:'storage', datasets:'storage', snapshots:'storage',
+  shares:'sharing', nfs:'sharing', iscsi:'sharing', s3:'sharing',
+  lxd:'vms', 'lxd-networks':'vms', 'lxd-datastores':'vms', 'lxd-backups':'vms',
+  'compute-instance':'vms', 'bridge-detail':'vms', 'datastore-detail':'vms'
+};
+
+function toggleMobileDrawer() {
+  document.body.classList.toggle('drawer-open');
+}
+function openMobileDrawer()  { document.body.classList.add('drawer-open'); }
+function closeMobileDrawer() { document.body.classList.remove('drawer-open'); }
+
+// Navigate from a bottom tab / drawer item, then close the drawer.
+function mobileNav(page) { closeMobileDrawer(); showPage(page); }
+
+// Cycle dark → light → auto for the drawer "Switch Theme" button (the full theme
+// picker lives in the desktop topbar, which is hidden on phone).
+function _mCycleTheme() {
+  const order = ['dark','light','auto'];
+  let cur = 'dark';
+  try { cur = localStorage.getItem('theme') || 'dark'; } catch {}
+  const next = order[(order.indexOf(cur) + 1) % order.length] || 'dark';
+  setTheme(next);
+}
+
+// Sync the VMs tab visibility with virtualization availability. The sidebar mode
+// selector (Storage/Compute/Networking) is shown exactly when virt is available
+// and the user is permitted, so it's the canonical DOM signal.
+function _mSyncVmsTab() {
+  const tab = document.getElementById('m-tab-vms');
+  if (!tab) return;
+  const sel = document.getElementById('sidebar-mode-selector');
+  const avail = !!sel && getComputedStyle(sel).display !== 'none';
+  tab.style.display = avail ? '' : 'none';
+}
+
+// Update the app-bar title + active bottom tab for the current page. Called at
+// the end of showPage().
+function _mSyncChrome(name) {
+  const titleEl = document.getElementById('m-title');
+  if (titleEl) {
+    let t = _M_TITLES[name];
+    if (!t) {
+      const lbl = document.querySelector('#nav-' + name + ' .nav-label');
+      t = (lbl && lbl.textContent.trim()) || (name ? name.charAt(0).toUpperCase() + name.slice(1) : '');
+    }
+    titleEl.textContent = t;
+  }
+  // Primary action in the app-bar right slot (if any + the function exists).
+  const slot = document.getElementById('m-topbar-right');
+  if (slot) {
+    const a = _M_ACTION[name];
+    if (a && typeof window[a.fn] === 'function') {
+      slot.innerHTML = '<button class="m-iconbtn" title="' + a.t + '" aria-label="' + a.t
+        + '" onclick="' + a.fn + '()">' + (_M_ACTION_SVG[a.ic] || '') + '</button>';
+    } else {
+      slot.innerHTML = '';
+    }
+  }
+  _mSyncVmsTab();
+  const owner = _M_TAB_OF[name] || null;
+  ['dashboard','storage','sharing','vms','more'].forEach(k => {
+    const b = document.getElementById('m-tab-' + k);
+    if (b) b.classList.toggle('active', k === owner);
+  });
+}
+
+// Recompute body.is-phone on resize / orientation change (boot-time detection runs
+// inline near <body>). Closes the drawer when leaving phone width.
+let _mWasPhone = null;
+function _mApplyPhoneClass() {
+  let phone = false;
+  try { phone = matchMedia('(max-width:760px)').matches && matchMedia('(pointer:coarse)').matches; } catch {}
+  document.body.classList.toggle('is-phone', phone);
+  if (!phone) closeMobileDrawer();
+  if (phone !== _mWasPhone) {
+    _mWasPhone = phone;
+    if (phone) {
+      // Start with the activity bar collapsed so it doesn't eat the small screen.
+      // Also sync the abExpanded state + clear any desktop-saved inline height so
+      // the first tap expands (not collapses) and the phone CSS height applies.
+      const ab = document.getElementById('activity-bar');
+      if (ab) {
+        ab.classList.remove('expanded'); ab.classList.add('collapsed');
+        ab.style.height = '';
+        try { abExpanded = false; } catch {}
+        const chev = document.getElementById('ab-chevron');
+        if (chev) chev.style.transform = '';
+      }
+    }
+    // Refresh chrome for the page currently shown.
+    const cur = (location.hash || '#dashboard').slice(1) || 'dashboard';
+    _mSyncChrome(cur);
+    // Cardify any tables already in the DOM when entering phone mode.
+    if (phone && typeof _mScheduleCardify === 'function') _mScheduleCardify();
+  }
+}
+
+// --- Table → card engine (Phase 2) -----------------------------------------
+// On phone, stamp each wide data table's <td> cells with data-label="<header>"
+// and tag the table .m-card-table; CSS then renders each row as a label:value
+// card. Idempotent (skips already-processed rows) so it's cheap to re-run.
+const _M_TABLE_SEL = 'table.data-table, table.table, table.disks-table, .table-wrap > table';
+function _mCardifyTables(root) {
+  if (!document.body.classList.contains('is-phone')) return;
+  (root || document).querySelectorAll(_M_TABLE_SEL).forEach(tbl => {
+    const ths = tbl.querySelectorAll(':scope > thead th');
+    if (!ths.length) return;
+    const labels = [...ths].map(th => th.textContent.trim());
+    tbl.classList.add('m-card-table');
+    tbl.querySelectorAll(':scope > tbody > tr').forEach(tr => {
+      if (tr.dataset.mCarded) return;
+      const cells = [...tr.children];
+      let col = 0;
+      cells.forEach(td => {
+        if (td.tagName !== 'TD') return;
+        const span = td.colSpan || 1;
+        if (span > 1 || cells.length === 1) { td.classList.add('m-cell-full'); col += span; return; }
+        // Only label cells whose column has a header; action/icon columns (blank
+        // header) render right-aligned with no empty label gutter.
+        if (labels[col] && !td.hasAttribute('data-label')) td.setAttribute('data-label', labels[col]);
+        col += span;
+      });
+      tr.dataset.mCarded = '1';
+    });
+  });
+}
+
+// Debounced observer so async page renders (loadDisks, loadDatasets, …) and modal
+// content get cardified without hooking every render site.
+let _mObserver = null, _mCardifyPending = false;
+function _mScheduleCardify() {
+  if (_mCardifyPending) return;
+  _mCardifyPending = true;
+  requestAnimationFrame(() => { _mCardifyPending = false; _mCardifyTables(document); });
+}
+function _mStartObserver() {
+  if (_mObserver) return;
+  _mObserver = new MutationObserver(muts => {
+    if (!document.body.classList.contains('is-phone')) return;
+    for (const m of muts) { if (m.addedNodes && m.addedNodes.length) { _mScheduleCardify(); break; } }
+  });
+  _mObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function _mInitChrome() {
+  window.addEventListener('resize', _mApplyPhoneClass);
+  window.addEventListener('orientationchange', _mApplyPhoneClass);
+  _mApplyPhoneClass();
+  _mStartObserver();
+  // On phone, tapping a nav/action item inside the open drawer should dismiss the
+  // drawer (the desktop nav handlers call showPage() etc. but don't close it).
+  // Keep it open for controls that only change the drawer's own contents:
+  // the storage/compute/networking mode switch, the host picker, and the theme
+  // cycle (so themes can be flipped without the drawer collapsing each tap).
+  const sb = document.getElementById('sidebar');
+  if (sb) sb.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('is-phone')) return;
+    if (!document.body.classList.contains('drawer-open')) return;
+    if (e.target.closest('.sidebar-mode-selector, #hostname-dropdown-wrapper, .m-keep-open')) return;
+    if (e.target.closest('.nav-item, .nav-compute-instance, .sidebar-section[onclick], button, a')) {
+      closeMobileDrawer();
+    }
+  });
+}
+document.addEventListener('DOMContentLoaded', _mInitChrome);
 
 // ===== Settings Tabs =====
 function switchPrereqTab(tab) {
@@ -12501,6 +12764,7 @@ function showPage(name) {
   // explicitly opted out, e.g. settings-timezone) are skipped.
   if (typeof initAllCustomSelects === 'function') initAllCustomSelects();
   history.replaceState(null, '', '#' + name);
+  if (typeof _mSyncChrome === 'function') _mSyncChrome(name);
 }
 
 // ===== Logout =====
@@ -38537,58 +38801,117 @@ function _ciComposeRowCtxMenu(ev, name, service, running) {
 // Items are {kind:'header'|'item'|'divider', label, onclick, enabled, dis_tip}.
 // Auto-flips above/left when near the viewport edge; dismisses on
 // click-outside or Esc.
-function _ciCtxBuild(x, y, items) {
-  // Close any other menu first.
-  document.querySelectorAll('.row-menu-dropdown[data-ci-ctx="1"]').forEach(el => el.remove());
+// Shared context-menu builder. Item shapes:
+//   {kind:'item', label, onclick, enabled?, dis_tip?, danger?}
+//   {kind:'divider'} | {kind:'header', label}
+//   {kind:'submenu', label, children:[...items]}   → flyout opened on hover/click
+// Optional `key`: re-invoking with the same key toggles the menu closed (used by
+// the ⋮ / power / terminal row buttons so a second click dismisses it).
+let _ciCtxMenus = [];   // every open menu element (root + any open submenus)
+let _ciCtxKey   = null;
+function _ciCtxCloseAll() {
+  _ciCtxMenus.forEach(m => { if (m.parentNode) m.parentNode.removeChild(m); });
+  _ciCtxMenus = [];
+  _ciCtxKey = null;
+  document.removeEventListener('click', _ciCtxOnOutside);
+  document.removeEventListener('keydown', _ciCtxOnKey);
+}
+function _ciCtxOnOutside(ev) { if (!_ciCtxMenus.some(m => m.contains(ev.target))) _ciCtxCloseAll(); }
+function _ciCtxOnKey(ev) { if (ev.key === 'Escape') _ciCtxCloseAll(); }
+function _ciCtxNewMenu() {
   const dd = document.createElement('div');
   dd.className = 'row-menu-dropdown';
   dd.dataset.ciCtx = '1';
   dd.style.cssText = 'position:fixed;min-width:200px;z-index:9500;';
-  items.forEach(it => {
+  return dd;
+}
+function _ciCtxFill(dd, items) {
+  (items || []).forEach(it => {
     if (it.kind === 'divider') {
-      const hr = document.createElement('hr');
-      hr.className = 'menu-sep';
-      dd.appendChild(hr);
-    } else if (it.kind === 'header') {
+      const hr = document.createElement('hr'); hr.className = 'menu-sep'; dd.appendChild(hr); return;
+    }
+    if (it.kind === 'header') {
       const h = document.createElement('div');
       h.style.cssText = 'padding:6px 14px 2px;font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;';
-      h.textContent = it.label;
-      dd.appendChild(h);
-    } else {
-      const b = document.createElement('button');
-      b.textContent = it.label;
-      if (it.enabled === false) {
-        b.disabled = true;
-        b.style.opacity = '0.4';
-        b.style.cursor = 'default';
-        if (it.dis_tip) b.title = it.dis_tip;
-      } else {
-        b.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          _ciCtxClose();
-          try { it.onclick(); } catch (_) {}
-        });
-      }
-      dd.appendChild(b);
+      h.textContent = it.label; dd.appendChild(h); return;
     }
+    if (it.kind === 'submenu') { dd.appendChild(_ciCtxSubButton(dd, it)); return; }
+    const b = document.createElement('button');
+    b.textContent = it.label;
+    if (it.danger) b.className = 'danger';
+    if (it.enabled === false) {
+      b.disabled = true; b.style.opacity = '0.4'; b.style.cursor = 'default';
+      if (it.dis_tip) b.title = it.dis_tip;
+    } else {
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); _ciCtxCloseAll(); try { it.onclick(); } catch (_) {} });
+    }
+    // Hovering a normal item collapses any sibling submenu that was open.
+    b.addEventListener('mouseenter', () => _ciCtxCloseChildrenOf(dd));
+    dd.appendChild(b);
   });
+}
+function _ciCtxSubButton(parentMenu, it) {
+  const b = document.createElement('button');
+  b.className = 'ci-ctx-sub';
+  b.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;';
+  const lab = document.createElement('span'); lab.textContent = it.label;
+  const arr = document.createElement('span'); arr.textContent = '▸'; arr.style.opacity = '.55';
+  b.appendChild(lab); b.appendChild(arr);
+  let timer = null;
+  const open = () => { clearTimeout(timer); if (b._ciChild) return; _ciCtxCloseChildrenOf(parentMenu); _ciCtxOpenChild(b, it.children || []); };
+  const scheduleClose = () => { clearTimeout(timer); timer = setTimeout(() => _ciCtxCloseChild(b), 220); };
+  b.addEventListener('mouseenter', open);
+  b.addEventListener('mouseleave', scheduleClose);
+  b.addEventListener('click', (ev) => { ev.stopPropagation(); open(); });
+  b._ciCancel = () => clearTimeout(timer);
+  return b;
+}
+function _ciCtxCloseChildrenOf(menu) {
+  menu.querySelectorAll('button.ci-ctx-sub').forEach(b => { if (b._ciChild) _ciCtxCloseChild(b); });
+}
+function _ciCtxCloseChild(b) {
+  if (!b._ciChild) return;
+  const c = b._ciChild;
+  _ciCtxCloseChildrenOf(c);
+  _ciCtxMenus = _ciCtxMenus.filter(m => m !== c);
+  if (c.parentNode) c.parentNode.removeChild(c);
+  b._ciChild = null;
+}
+function _ciCtxOpenChild(b, items) {
+  const c = _ciCtxNewMenu();
+  _ciCtxFill(c, items);
+  document.body.appendChild(c);
+  _ciCtxMenus.push(c);
+  b._ciChild = c;
+  const rb = b.getBoundingClientRect();
+  c.style.left = (rb.right - 2) + 'px';
+  c.style.top  = rb.top + 'px';
+  const rc = c.getBoundingClientRect();
+  if (rc.right  > window.innerWidth)  c.style.left = Math.max(4, rb.left - rc.width + 2) + 'px';
+  if (rc.bottom > window.innerHeight) c.style.top  = Math.max(4, window.innerHeight - rc.height - 4) + 'px';
+  c.addEventListener('mouseenter', () => { if (b._ciCancel) b._ciCancel(); });
+  c.addEventListener('mouseleave', () => _ciCtxCloseChild(b));
+}
+function _ciCtxBuild(x, y, items, key) {
+  // Toggle closed when re-invoked with the same key.
+  if (key && _ciCtxKey === key) { _ciCtxCloseAll(); return; }
+  _ciCtxCloseAll();
+  const dd = _ciCtxNewMenu();
+  _ciCtxFill(dd, items);
   document.body.appendChild(dd);
-  // Position; flip if it would clip viewport.
+  _ciCtxMenus.push(dd);
+  _ciCtxKey = key || null;
+  // Position; flip if it would clip the viewport.
   dd.style.left = x + 'px';
   dd.style.top  = y + 'px';
   const r = dd.getBoundingClientRect();
   if (r.right  > window.innerWidth)  dd.style.left = Math.max(4, x - r.width)  + 'px';
   if (r.bottom > window.innerHeight) dd.style.top  = Math.max(4, y - r.height) + 'px';
-  const onOutside = (ev) => { if (!dd.contains(ev.target)) _ciCtxClose(); };
-  const onKey     = (ev) => { if (ev.key === 'Escape') _ciCtxClose(); };
-  function _ciCtxClose() {
-    document.removeEventListener('click', onOutside);
-    document.removeEventListener('keydown', onKey);
-    if (dd.parentNode) dd.parentNode.removeChild(dd);
-  }
+  // Register the outside/escape closers on the NEXT tick so the opening click
+  // (bubbling up to document) doesn't immediately dismiss the menu.
   setTimeout(() => {
-    document.addEventListener('click', onOutside);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('click', _ciCtxOnOutside);
+    document.addEventListener('keydown', _ciCtxOnKey);
   }, 0);
 }
 
@@ -43647,6 +43970,7 @@ function _hideSidebarVirtBits() {
   if (sel) sel.style.display = 'none';
   const badge = document.getElementById('logo-lxd-badge');
   if (badge) badge.style.display = 'none';
+  if (typeof _mSyncVmsTab === 'function') _mSyncVmsTab();
 }
 
 async function initLXD() {
@@ -43683,6 +44007,7 @@ async function initLXD() {
       if (!_showCompute && !_showNet) {
         document.getElementById('sidebar-mode-selector').style.display = 'none';
       }
+      if (typeof _mSyncVmsTab === 'function') _mSyncVmsTab();
       // Show the glowing "+" badge on the logo to signal Compute is available.
       const badge = document.getElementById('logo-lxd-badge');
       if (badge) badge.style.display = _showCompute ? 'inline' : 'none';
@@ -43770,6 +44095,8 @@ async function loadLXDInstances() {
 let _openLXDMenu = null;
 function _closeLXDMenus() {
   if (_openLXDMenu) { _openLXDMenu.remove(); _openLXDMenu = null; }
+  // The VM/container row menus now go through the shared context-menu builder.
+  if (typeof _ciCtxCloseAll === 'function') _ciCtxCloseAll();
 }
 
 // Returns the display label for a storage pool: description if set, otherwise name.
@@ -44131,18 +44458,19 @@ function _lxdRenderRows(instances) {
     const statusColor = inst.status === 'Running' ? '#3fb950' : inst.status === 'Stopped' ? '#6e7681' : inst.status === 'Error' ? '#ff453a' : '#f0b429';
     const busy = inst.status !== 'Running' && inst.status !== 'Stopped' && inst.status !== 'Error';
     const powerBtn = _lxdPowerBadgeHTML(inst.name, inst.status, statusColor, busy);
-    const imgTrunc = inst.image && inst.image.length > 25 ? inst.image.slice(0, 25) + '…' : (inst.image || '');
-    const imgCell = hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(inst.image || '')}">${esc(imgTrunc || '—')}</td>` : '';
+    // Image wraps to 2 lines (then ellipsis) via the .lxd-img clamp in CSS, so no
+    // JS truncation here — the full value is available for the clamp + the title.
+    const imgCell = hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(inst.image || '')}"><span class="lxd-img">${esc(inst.image || '—')}</span></td>` : '';
     const dsLabel = _dsLabel(inst.root_pool);
     // Row click opens the instance view; per-cell action buttons (power
     // badge, terminal icon, burger menu) call e.stopPropagation() so they
     // don't double-trigger.
-    return `<tr id="lxd-row-${esc(inst.name)}" style="cursor:pointer;" onclick='openComputeInstance(${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>
+    return `<tr id="lxd-row-${esc(inst.name)}" style="cursor:pointer;" onclick='openComputeInstance(${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})' oncontextmenu='_lxdRowContextMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)},${JSON.stringify(inst.status)})'>
       <td data-col="type" style="padding-left:10px;padding-right:4px;text-align:center;">${typeBadge}</td>
-      <td data-col="name" style="padding-left:6px;">${esc(inst.description || inst.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(inst.name)}</span></td>
+      <td data-col="name" style="padding-left:6px;" title="${esc((inst.description ? inst.description + ' · ' : '') + inst.name)}"><span class="lxd-name-cell"><span class="lxd-name-1">${esc(inst.description || inst.name)}</span><span class="lxd-name-2" style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(inst.name)}</span></span></td>
       <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(inst.ipv4 || '—')}</td>
       ${imgCell}
-      <td data-col="datastore" style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
+      <td data-col="datastore" style="color:var(--text-2);font-size:12px;" title="${esc(dsLabel)}">${esc(dsLabel)}</td>
       ${_lxdMetricTd('cpu', inst.name)}
       ${_lxdMetricTd('ram', inst.name)}
       ${_lxdMetricTd('fs', inst.name)}
@@ -44157,175 +44485,104 @@ function _lxdRenderRows(instances) {
   _lxdAfterTableRender(tbody);
 }
 
+// ---- Shared menu item builders for VM/container rows ----
+// One source of truth for the Power, Terminal and "burger" action lists, used by
+// the in-row badge/icon/⋮ buttons AND the right-click context menu (where Power
+// and Terminal appear as fly-out submenus). All return _ciCtxBuild item arrays.
+function _lxdPowerItems(name, status) {
+  if (!hasPerm('control_instances')) return [];
+  const running = status === 'Running';
+  const stopped = status === 'Stopped';
+  return [
+    { kind:'item', label:'▶ Start',    enabled:stopped, onclick:() => lxdPowerAction(name, 'start') },
+    { kind:'item', label:'↻ Restart',  enabled:running, onclick:() => lxdPowerAction(name, 'restart') },
+    { kind:'item', label:'■ Shutdown', enabled:running, onclick:() => lxdPowerAction(name, 'shutdown') },
+    { kind:'divider' },
+    { kind:'item', label:'⏻ Shutdown (or kill)', enabled:running, onclick:() => openShutdownOrKillModal(name) },
+    { kind:'divider' },
+    { kind:'item', label:'⏏ Power Off (force)', danger:true, enabled:!stopped, onclick:() => lxdPowerAction(name, 'poweroff') },
+  ];
+}
+function _lxdTermItems(name, type, status) {
+  const running = status === 'Running';
+  const tip = 'Instance must be running';
+  const items = [];
+  if (type === 'virtual-machine') {
+    items.push({ kind:'item', label:'🖥 VGA Console', enabled:running, dis_tip:tip, onclick:() => openTermTab('vga:' + name) });
+    items.push({ kind:'divider' });
+  }
+  items.push({ kind:'item', label:'💻 LXD Bottom Terminal', enabled:running, dis_tip:tip, onclick:() => {
+    if (_ciTermTabs.has(name)) { _ciTermActivateTab(name); _ciTermEnsureVisible(); return; }
+    _ciTermEnsureVisible(); _ciTermOpenTab(name);
+  }});
+  items.push({ kind:'item', label:'💻 LXD Tab Terminal',    enabled:running, dis_tip:tip, onclick:() => openLXDConsole(name) });
+  items.push({ kind:'item', label:'💻 LXD Window Terminal', enabled:running, dis_tip:tip, onclick:() => openTermWindow('lxd:' + name) });
+  return items;
+}
+function _lxdActionItems(name, type) {
+  const items = [];
+  const isStopped = ((_lxdInstInfo[name] || {}).status || '').toLowerCase() === 'stopped';
+  const isVM = type === 'virtual-machine';
+  if (hasPerm('edit_instances')) items.push({ kind:'item', label:'✏️ Edit', onclick:() => openLXDEditModal(name, type) });
+  if (hasPerm('manage_instance_backups')) {
+    items.push({ kind:'divider' });
+    items.push({ kind:'item', label:'📸 Snapshot Now', onclick:() => openLXDQuickSnapshot(name, type) });
+    items.push({ kind:'item', label:'⧉ Clone', onclick:() => openLXDCloneModal(name) });
+  }
+  if (hasPerm('edit_instances')) {
+    items.push({ kind:'item', label:'📦 Move Storage', enabled:isStopped,
+      dis_tip:'Instance must be stopped before moving storage', onclick:() => openLXDMoveStorageModal(name) });
+  }
+  if (isVM) {
+    const lxdPeers = (_interlinkServersCache || []).filter(s => s.lxd_enabled);
+    if (lxdPeers.length > 0) {
+      items.push({ kind:'divider' });
+      items.push({ kind:'item', label:'⬆ Push InterLink', enabled:isStopped,
+        dis_tip:'VM must be stopped before pushing', onclick:() => openVMPushModal(name) });
+    }
+    items.push({ kind:'divider' });
+    items.push({ kind:'item', label:'🔧 Repair EFI Boot', enabled:isStopped,
+      dis_tip:'VM must be stopped to reset NVRAM', onclick:() => _lxdResetNVRAM(name) });
+  }
+  if (hasPerm('delete_instances')) {
+    items.push({ kind:'divider' });
+    items.push({ kind:'item', label:'🗑 Delete', danger:true, onclick:() => confirmLXDDelete(name) });
+  }
+  return items;
+}
+
+// Right-click a VM/container row → context menu. The first two entries are
+// fly-out submenus: Power (status choices) and Terminal (terminal types),
+// followed by the same actions as the ⋮ menu.
+function _lxdRowContextMenu(ev, name, type, status) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const items = [];
+  const power = _lxdPowerItems(name, status);
+  if (power.length) items.push({ kind:'submenu', label:'⏻ Power', children: power });
+  items.push({ kind:'submenu', label:'🖥 Terminal', children: _lxdTermItems(name, type, status) });
+  const actions = _lxdActionItems(name, type);
+  if (actions.length) { items.push({ kind:'divider' }); actions.forEach(a => items.push(a)); }
+  _ciCtxBuild(ev.clientX, ev.clientY, items);
+}
+
 function toggleLXDTermMenu(e, name, type) {
   e.stopPropagation();
-  const btn = e.currentTarget;
-  if (_openLXDMenu && _openLXDMenu._lxdKey === 'term-' + name) { _closeLXDMenus(); return; }
-  _closeLXDMenus();
-  const dd = document.createElement('div');
-  dd.className = 'row-menu-dropdown';
-  dd._lxdKey = 'term-' + name;
-  dd.addEventListener('click', ev => ev.stopPropagation());
-  const mkItem = (label, action) => {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.addEventListener('click', () => { _closeLXDMenus(); action(); });
-    dd.appendChild(b);
-  };
-  const isVM = type === 'virtual-machine';
-  if (isVM) {
-    mkItem('VGA Console', () => openTermTab('vga:' + name));
-    const sep = document.createElement('hr'); sep.className = 'menu-sep'; dd.appendChild(sep);
-  }
-  mkItem('LXD Bottom Terminal', () => {
-    if (_ciTermTabs.has(name)) { _ciTermActivateTab(name); _ciTermEnsureVisible(); return; }
-    _ciTermEnsureVisible();
-    _ciTermOpenTab(name);
-  });
-  mkItem('LXD Tab Terminal',    () => openLXDConsole(name));
-  mkItem('LXD Window Terminal', () => openTermWindow('lxd:' + name));
-  document.body.appendChild(dd);
-  const rect = btn.getBoundingClientRect();
-  dd.style.position = 'fixed';
-  dd.style.top  = (rect.bottom + 4) + 'px';
-  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
-  _openLXDMenu = dd;
+  const r = e.currentTarget.getBoundingClientRect();
+  const status = (_lxdInstInfo[name] || {}).status;
+  _ciCtxBuild(r.left, r.bottom + 4, _lxdTermItems(name, type, status), 'term-' + name);
 }
 
 function toggleLXDPowerMenu(e, name, status) {
   e.stopPropagation();
-  const btn = e.currentTarget;
-  if (_openLXDMenu && _openLXDMenu._lxdKey === 'power-' + name) { _closeLXDMenus(); return; }
-  _closeLXDMenus();
-  const running = status === 'Running';
-  const stopped = status === 'Stopped';
-  const dd = document.createElement('div');
-  dd.className = 'row-menu-dropdown';
-  dd._lxdKey = 'power-' + name;
-  dd.addEventListener('click', ev => ev.stopPropagation());
-  const mkItem = (label, action, danger, disabled) => {
-    const b = document.createElement('button');
-    b.textContent = label;
-    if (danger) b.className = 'danger';
-    if (disabled) { b.disabled = true; b.style.opacity = '0.4'; b.style.cursor = 'default'; }
-    else b.addEventListener('click', () => { _closeLXDMenus(); lxdPowerAction(name, action); });
-    dd.appendChild(b);
-  };
-  mkItem('Start',             'start',    false, !stopped);
-  mkItem('Restart',           'restart',  false, !running);
-  mkItem('Shutdown',          'shutdown', false, !running);
-  const sep = document.createElement('hr'); sep.className = 'menu-sep'; dd.appendChild(sep);
-  // Shutdown or kill: graceful with configurable timeout then force stop.
-  const sokBtn = document.createElement('button');
-  sokBtn.textContent = 'Shutdown (or kill)';
-  if (!running) { sokBtn.disabled = true; sokBtn.style.opacity = '0.4'; sokBtn.style.cursor = 'default'; }
-  else sokBtn.addEventListener('click', () => { _closeLXDMenus(); openShutdownOrKillModal(name); });
-  dd.appendChild(sokBtn);
-  const sep2 = document.createElement('hr'); sep2.className = 'menu-sep'; dd.appendChild(sep2);
-  // Enable force poweroff for running OR error state (any non-stopped state).
-  mkItem('Power Off (force)', 'poweroff', true, stopped);
-  document.body.appendChild(dd);
-  const rect = btn.getBoundingClientRect();
-  dd.style.position = 'fixed';
-  const spaceBelow = window.innerHeight - rect.bottom;
-  if (spaceBelow < dd.offsetHeight + 8 && rect.top > dd.offsetHeight + 8) {
-    dd.style.top = (rect.top - dd.offsetHeight - 4) + 'px';
-  } else {
-    dd.style.top = (rect.bottom + 4) + 'px';
-  }
-  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
-  _openLXDMenu = dd;
+  const r = e.currentTarget.getBoundingClientRect();
+  _ciCtxBuild(r.left, r.bottom + 4, _lxdPowerItems(name, status), 'power-' + name);
 }
 
 function toggleLXDBurger(e, name, type) {
   e.stopPropagation();
-  const span = e.currentTarget;
-  if (_openLXDMenu && _openLXDMenu._lxdKey === 'burger-' + name) { _closeLXDMenus(); return; }
-  _closeLXDMenus();
-  const dd = document.createElement('div');
-  dd.className = 'row-menu-dropdown';
-  dd._lxdKey = 'burger-' + name;
-  dd.addEventListener('click', ev => ev.stopPropagation());
-  const mkItem = (label, fn, danger) => {
-    const b = document.createElement('button');
-    b.textContent = label;
-    if (danger) b.className = 'danger';
-    b.addEventListener('click', () => { _closeLXDMenus(); fn(); });
-    dd.appendChild(b);
-  };
-  if (hasPerm('edit_instances')) mkItem('✏️ Edit', () => openLXDEditModal(name, type));
-  if (hasPerm('manage_instance_backups')) {
-    const sep1 = document.createElement('hr'); sep1.className = 'menu-sep'; dd.appendChild(sep1);
-    mkItem('📸 Snapshot Now', () => openLXDQuickSnapshot(name, type));
-    mkItem('⧉ Clone', () => openLXDCloneModal(name));
-  }
-  const inst = (_lxdInstancesCache || []).find(i => i.name === name);
-  const isStopped = inst && inst.status && inst.status.toLowerCase() === 'stopped';
-  // Move Storage: disabled for non-stopped instances. Edit-class capability.
-  if (hasPerm('edit_instances')) {
-    const moveBtn = document.createElement('button');
-    moveBtn.textContent = '📦 Move Storage';
-    if (!isStopped) {
-      moveBtn.disabled = true;
-      moveBtn.style.opacity = '0.4';
-      moveBtn.style.cursor = 'default';
-      moveBtn.title = 'Instance must be stopped before moving storage';
-    } else {
-      moveBtn.addEventListener('click', () => { _closeLXDMenus(); openLXDMoveStorageModal(name); });
-    }
-    dd.appendChild(moveBtn);
-  }
-  // Push InterLink + Reset NVRAM: only relevant for VMs (type === 'virtual-machine').
-  if (type === 'virtual-machine') {
-    // Push InterLink: show when at least one linked server has LXD.
-    const lxdPeers = (_interlinkServersCache || []).filter(s => s.lxd_enabled);
-    if (lxdPeers.length > 0) {
-      const sep3 = document.createElement('hr'); sep3.className = 'menu-sep'; dd.appendChild(sep3);
-      const pushBtn = document.createElement('button');
-      pushBtn.textContent = '⬆ Push InterLink';
-      if (!isStopped) {
-        pushBtn.disabled = true;
-        pushBtn.style.opacity = '0.4';
-        pushBtn.style.cursor = 'default';
-        pushBtn.title = 'VM must be stopped before pushing';
-      } else {
-        pushBtn.addEventListener('click', () => { _closeLXDMenus(); openVMPushModal(name); });
-      }
-      dd.appendChild(pushBtn);
-    }
-    // Reset NVRAM: fixes "UEFI cannot find a boot target" after cross-version migration.
-    const sepNvram = document.createElement('hr'); sepNvram.className = 'menu-sep'; dd.appendChild(sepNvram);
-    const nvramBtn = document.createElement('button');
-    nvramBtn.textContent = '🔧 Repair EFI Boot';
-    nvramBtn.title = 'Fixes "UEFI: cannot find boot target" after cross-version migration.\nResets the EFI variable store and installs the fallback GRUB config on the EFI partition.';
-    if (!isStopped) {
-      nvramBtn.disabled = true;
-      nvramBtn.style.opacity = '0.4';
-      nvramBtn.style.cursor = 'default';
-      nvramBtn.title = 'VM must be stopped to reset NVRAM';
-    } else {
-      nvramBtn.addEventListener('click', () => {
-        _closeLXDMenus();
-        _lxdResetNVRAM(name);
-      });
-    }
-    dd.appendChild(nvramBtn);
-  }
-  if (hasPerm('delete_instances')) {
-    const sep2 = document.createElement('hr'); sep2.className = 'menu-sep'; dd.appendChild(sep2);
-    mkItem('🗑 Delete', () => confirmLXDDelete(name), true);
-  }
-  document.body.appendChild(dd);
-  const rect = span.getBoundingClientRect();
-  dd.style.position = 'fixed';
-  const spaceBelow = window.innerHeight - rect.bottom;
-  if (spaceBelow < dd.offsetHeight + 8 && rect.top > dd.offsetHeight + 8) {
-    dd.style.top = (rect.top - dd.offsetHeight - 4) + 'px';
-  } else {
-    dd.style.top = (rect.bottom + 4) + 'px';
-  }
-  dd.style.left = Math.max(0, rect.right - dd.offsetWidth) + 'px';
-  _openLXDMenu = dd;
+  const r = e.currentTarget.getBoundingClientRect();
+  _ciCtxBuild(r.left, r.bottom + 4, _lxdActionItems(name, type), 'burger-' + name);
 }
 
 let _lxdEditName = '';
@@ -46583,6 +46840,37 @@ function _editSyncSectionVisibility() {
   set('lxd-edit-cdrom-section',     vm  && (_lxdEditCDROMs || []).length > 0);
   set('lxd-edit-ctdev-section',     !vm && (_lxdEditCTDevs || []).length > 0);
   set('lxd-edit-bindmount-section', (_lxdEditBindMounts || []).length > 0);
+}
+
+// Create dropdown (VM / Container / Compose) — mirrors _lxdToolsToggle.
+function _lxdCreateToggle(evt) {
+  evt && evt.stopPropagation();
+  const menu = document.getElementById('lxd-create-menu');
+  if (!menu) return;
+  const open = !menu.classList.contains('hidden');
+  if (open) { menu.classList.add('hidden'); return; }
+  menu.classList.remove('hidden');
+  // Edge-aware: the toolbar buttons are right-aligned (flex spacer), so the Create
+  // button can sit near the right edge. Default to left-anchored, but flip to
+  // right-anchored if a left-anchored menu would spill off the right of the screen.
+  menu.style.left = '0'; menu.style.right = 'auto';
+  const r = menu.getBoundingClientRect();
+  if (r.right > window.innerWidth - 8) { menu.style.left = 'auto'; menu.style.right = '0'; }
+  setTimeout(() => {
+    const close = (e) => {
+      if (!document.getElementById('lxd-create-wrap')?.contains(e.target)) {
+        menu.classList.add('hidden');
+        document.removeEventListener('click', close);
+      }
+    };
+    document.addEventListener('click', close);
+  }, 0);
+}
+function _lxdCreatePick(kind) {
+  document.getElementById('lxd-create-menu')?.classList.add('hidden');
+  if (kind === 'vm')             openNewVMModal();
+  else if (kind === 'container') openNewContainerModal();
+  else if (kind === 'compose')   openComposeModal();
 }
 
 function _lxdToolsToggle(evt) {
@@ -51341,6 +51629,10 @@ function _zRowContextMenu(ev) {
   // exact purpose.
   const row = ev.target.closest('tr, [data-row-context]');
   if (!row) return;
+  // Rows that define their own context menu (e.g. the VM/container instance rows,
+  // which show Power/Terminal fly-out submenus) handle right-click themselves —
+  // don't override them with the generic burger menu.
+  if (row.hasAttribute && row.hasAttribute('oncontextmenu')) return;
   // Find the burger trigger. The codebase uses `.row-menu-btn` for
   // <button>s and free-standing <span>⋮</span> for inline ones — both
   // carry an `onclick` attribute.
@@ -51476,9 +51768,14 @@ function _navContextMenuFor(ev, section, name) {
     case 'compute': {
       const inst = (typeof _lxdInstancesCache !== 'undefined' ? _lxdInstancesCache : []).find(i => i.name === name);
       if (!inst) return;
-      if (typeof toggleLXDBurger !== 'function') return;
-      opener = (synthEv) => toggleLXDBurger(synthEv, inst.name, inst.type);
-      break;
+      if (typeof _lxdRowContextMenu !== 'function') return;
+      // Make sure the submenu/action builders can read this instance's status.
+      _lxdInstInfo[inst.name] = _lxdInstInfo[inst.name] ||
+        { status: inst.status, type: inst.type, cpu_limit: inst.cpu_limit, memory_limit: inst.memory_limit, ipv4: inst.ipv4 };
+      // Open the exact same menu as a right-click in the VMs & Containers table:
+      // Power ▸ and Terminal ▸ submenus followed by the instance actions.
+      _lxdRowContextMenu(ev, inst.name, inst.type, inst.status);
+      return;
     }
     case 'networking': {
       const n = (typeof _lxdNetworksCache !== 'undefined' ? _lxdNetworksCache : []).find(x => x.name === name);
@@ -54909,15 +55206,15 @@ async function loadBridgeMembers() {
       const statusColor = m.status === 'Running' ? '#3fb950' : m.status === 'Stopped' ? '#6e7681' : m.status === 'Error' ? '#ff453a' : '#f0b429';
       const busy = m.status !== 'Running' && m.status !== 'Stopped' && m.status !== 'Error';
       const powerBtn = _lxdPowerBadgeHTML(m.name, m.status, statusColor, busy);
-      const imgTrunc = m.image && m.image.length > 25 ? m.image.slice(0, 25) + '…' : (m.image || '');
+      // image truncation is handled by the .lxd-img 2-line clamp in CSS
       const actionsCell = `<td data-col="actions" class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'>&#x22EE;</span></td>`;
       const dsLabel = _dsLabel(m.root_pool);
-      return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})'>
+      return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})' oncontextmenu='_lxdRowContextMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)},${JSON.stringify(m.status)})'>
         <td data-col="type">${typeBadge}</td>
-        <td data-col="name">${esc(m.description || m.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></td>
+        <td data-col="name" title="${esc((m.description ? m.description + ' · ' : '') + m.name)}"><span class="lxd-name-cell"><span class="lxd-name-1">${esc(m.description || m.name)}</span><span class="lxd-name-2" style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></span></td>
         <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
-        ${hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}">${esc(imgTrunc || '—')}</td>` : ''}
+        ${hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}"><span class="lxd-img">${esc(m.image || '—')}</span></td>` : ''}
         <td data-col="datastore" style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
         ${_lxdMetricTd('cpu', m.name)}
         ${_lxdMetricTd('ram', m.name)}
@@ -55450,15 +55747,15 @@ async function loadDatastoreMembers() {
       const statusColor = m.status === 'Running' ? '#3fb950' : m.status === 'Stopped' ? '#6e7681' : m.status === 'Error' ? '#ff453a' : '#f0b429';
       const busy = m.status !== 'Running' && m.status !== 'Stopped' && m.status !== 'Error';
       const powerBtn = _lxdPowerBadgeHTML(m.name, m.status, statusColor, busy);
-      const imgTrunc = m.image && m.image.length > 25 ? m.image.slice(0, 25) + '…' : (m.image || '');
+      // image truncation is handled by the .lxd-img 2-line clamp in CSS
       const actionsCell = `<td data-col="actions" class="lxd-row-actions"><span class="lxd-tbl-icon${m.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${m.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${m.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)})'>&#x22EE;</span></td>`;
       const dsLabel = _dsLabel(m.root_pool);
-      return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})'>
+      return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})' oncontextmenu='_lxdRowContextMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)},${JSON.stringify(m.status)})'>
         <td data-col="type">${typeBadge}</td>
-        <td data-col="name">${esc(m.description || m.name)}<br><span style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></td>
+        <td data-col="name" title="${esc((m.description ? m.description + ' · ' : '') + m.name)}"><span class="lxd-name-cell"><span class="lxd-name-1">${esc(m.description || m.name)}</span><span class="lxd-name-2" style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></span></td>
         <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
-        ${hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}">${esc(imgTrunc || '—')}</td>` : ''}
+        ${hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}"><span class="lxd-img">${esc(m.image || '—')}</span></td>` : ''}
         <td data-col="datastore" style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
         ${_lxdMetricTd('cpu', m.name)}
         ${_lxdMetricTd('ram', m.name)}

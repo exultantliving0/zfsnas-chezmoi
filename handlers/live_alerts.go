@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"zfsnas/internal/config"
+	"zfsnas/internal/version"
 	"zfsnas/system"
 )
 
@@ -126,11 +127,18 @@ func deriveLiveAlerts(appCfg *config.AppConfig) []LiveAlert {
 		}
 	}
 
-	// --- Update available (read from version-check cache) ---
-	if appCfg.VersionCheckCache != nil && appCfg.VersionCheckCache.UpdateAvailable {
+	// --- Update available ---
+	// Recompute against the *live* running version rather than trusting the
+	// VersionCheckCache.UpdateAvailable bool, which is computed at check time
+	// against the then-current version. After this server is updated the process
+	// runs the new version but that stored flag stays true until the cache
+	// refreshes — so a freshly-updated interlink peer would otherwise report a
+	// phantom "update available" in the aggregated Live Alerts even though
+	// latest == current. Mirrors the recompute in HandleCheckBinaryUpdate.
+	if vc := appCfg.VersionCheckCache; vc != nil && semverGreater(vc.Latest, version.Version) {
 		msg := ""
-		if v := appCfg.VersionCheckCache.Latest; v != "" {
-			msg = "v" + v
+		if vc.Latest != "" {
+			msg = "v" + vc.Latest
 		}
 		alerts = append(alerts, LiveAlert{
 			ID: "update-available", Severity: "warn",
