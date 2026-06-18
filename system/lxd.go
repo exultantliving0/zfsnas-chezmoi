@@ -135,6 +135,12 @@ type LXDBindMount struct {
 	Source     string `json:"source"`
 	Path       string `json:"path"`
 	ReadOnly   bool   `json:"readonly"`
+	// Shift sets up an idmapped mount (shift=true) so the host directory's
+	// ownership is remapped to match an unprivileged container's idmap —
+	// otherwise host files appear as nobody:nogroup inside the container.
+	// Container-only: meaningless for a VM's VirtIO-FS share, so it is never
+	// emitted on a VM device.
+	Shift bool `json:"shift"`
 }
 
 // isHostDirShareSource reports whether a "disk"-type device with the given
@@ -2979,6 +2985,7 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 					Source:     devCfg["source"],
 					Path:       devCfg["path"],
 					ReadOnly:   devCfg["readonly"] == "true",
+					Shift:      devCfg["shift"] == "true",
 				})
 				continue
 			}
@@ -4388,11 +4395,17 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 			}
 			wantBind[devName] = true
 			cur, exists := rawDev.Devices[devName]
+			// shift (idmapped mount) only applies to containers — a VM's
+			// VirtIO-FS share has no idmap to remap onto.
+			wantShift := bm.Shift && !cfg.IsVM
 			if !exists {
 				bmArgs := []string{"config", "device", "add", name, devName, "disk",
 					"source=" + src, "path=" + ctPath}
 				if bm.ReadOnly {
 					bmArgs = append(bmArgs, "readonly=true")
+				}
+				if wantShift {
+					bmArgs = append(bmArgs, "shift=true")
 				}
 				if out, err := exec.Command("incus", bmArgs...).CombinedOutput(); err != nil {
 					return fmt.Errorf("add bind mount %s: %s", devName, strings.TrimSpace(string(out)))
@@ -4411,6 +4424,13 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 					exec.Command("incus", "config", "device", "set", name, devName, "readonly", "true").Run() //nolint:errcheck
 				} else {
 					exec.Command("incus", "config", "device", "unset", name, devName, "readonly").Run() //nolint:errcheck
+				}
+			}
+			if (cur["shift"] == "true") != wantShift {
+				if wantShift {
+					exec.Command("incus", "config", "device", "set", name, devName, "shift", "true").Run() //nolint:errcheck
+				} else {
+					exec.Command("incus", "config", "device", "unset", name, devName, "shift").Run() //nolint:errcheck
 				}
 			}
 		}
@@ -5681,6 +5701,9 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 			devName, "disk", "source=" + src, "path=" + ctPath}
 		if bm.ReadOnly {
 			bmArgs = append(bmArgs, "readonly=true")
+		}
+		if bm.Shift {
+			bmArgs = append(bmArgs, "shift=true")
 		}
 		if out, err := exec.Command("incus", bmArgs...).CombinedOutput(); err != nil {
 			log("WARNING: add bind mount " + devName + ": " + strings.TrimSpace(string(out)))

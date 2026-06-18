@@ -3,6 +3,7 @@ package system
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"sort"
@@ -934,7 +935,14 @@ func LXDListStoragePoolInfos() ([]LXDStoragePool, error) {
 func GetStoragePoolMembers(pool string) ([]BridgeMember, error) {
 	poolOut, err := exec.Command("incus", "query", "/1.0/storage-pools/"+pool).Output()
 	if err != nil {
-		return nil, fmt.Errorf("lxc query storage-pool: %w", err)
+		// The datastore may be a ZFS pool with no matching Incus storage pool
+		// (e.g. a backup-only destination), or a pool on a server that has no
+		// instances at all. Either way there are no VM/container members to show —
+		// return an empty list rather than surfacing a raw "exit status 1" error.
+		if DebugMode {
+			log.Printf("[lxd] storage-pool %q has no queryable Incus pool (%v) — returning no members", pool, err)
+		}
+		return []BridgeMember{}, nil
 	}
 	var poolData struct {
 		UsedBy []string `json:"used_by"`

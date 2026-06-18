@@ -45231,7 +45231,7 @@ function lxdEditAddBindMount() {
   const used = new Set(_lxdEditBindMounts.map(b => b.device_name));
   let n = 1;
   while (used.has('bind' + n)) n++;
-  _lxdEditBindMounts.push({ device_name: 'bind' + n, source: '/mnt/', path: '/data' + n, readonly: false });
+  _lxdEditBindMounts.push({ device_name: 'bind' + n, source: '/mnt/', path: '/data' + n, readonly: false, shift: false });
   lxdEditRenderBindMounts();
 }
 
@@ -45265,6 +45265,10 @@ function lxdEditRenderBindMounts() {
         <input type="checkbox" ${b.readonly?'checked':''} onchange="_lxdEditBindMounts[${i}].readonly=this.checked">
         Read-only
       </label>
+      ${_lxdEditIsVM ? '' : `<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-2);flex-shrink:0;cursor:pointer;" title="Shift ownership (idmapped mount) so host files don't appear as nobody:nogroup inside an unprivileged container">
+        <input type="checkbox" ${b.shift?'checked':''} onchange="_lxdEditBindMounts[${i}].shift=this.checked">
+        Shift IDs
+      </label>`}
       <button type="button" class="btn btn-ghost btn-sm" style="padding:4px 8px;flex-shrink:0;color:var(--danger);"
         onclick="_lxdEditBindMounts.splice(${i},1);lxdEditRenderBindMounts()">✕</button>
     </div>`).join('');
@@ -45924,7 +45928,7 @@ async function submitLXDEdit() {
   // backend field; sent for both instance types.
   body.bind_mounts = _lxdEditBindMounts
     .filter(b => (b.source || '').trim() && (b.path || '').trim())
-    .map(b => ({ device_name: b.device_name, source: (b.source || '').trim(), path: (b.path || '').trim(), readonly: !!b.readonly }));
+    .map(b => ({ device_name: b.device_name, source: (b.source || '').trim(), path: (b.path || '').trim(), readonly: !!b.readonly, shift: !_lxdEditIsVM && !!b.shift }));
   try {
     const res = await fetch('/api/incus/instances/' + encodeURIComponent(_lxdEditName) + '/config', {
       method: 'PUT',
@@ -49508,7 +49512,7 @@ function _ctAddHW(type) {
     const usedNames = new Set(_lxdCTBindMounts.map(b => b.device_name));
     let n = 1;
     while (usedNames.has('bind' + n)) n++;
-    _lxdCTBindMounts.push({ device_name: 'bind' + n, source: '/mnt/', path: '/data' + n, readonly: false });
+    _lxdCTBindMounts.push({ device_name: 'bind' + n, source: '/mnt/', path: '/data' + n, readonly: false, shift: false });
     _renderCTBindMounts();
     _ctShowBindMountSection();
   } else if (type === 'existingdisk') {
@@ -49608,6 +49612,10 @@ function _renderCTBindMounts() {
       <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-2);flex-shrink:0;cursor:pointer;" title="Mount the directory read-only inside the container">
         <input type="checkbox" ${b.readonly?'checked':''} onchange="_lxdCTBindMounts[${i}].readonly=this.checked">
         Read-only
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-2);flex-shrink:0;cursor:pointer;" title="Shift ownership (idmapped mount) so host files don't appear as nobody:nogroup inside an unprivileged container">
+        <input type="checkbox" ${b.shift?'checked':''} onchange="_lxdCTBindMounts[${i}].shift=this.checked">
+        Shift IDs
       </label>
       <button type="button" class="btn btn-ghost btn-sm" style="padding:4px 8px;flex-shrink:0;color:var(--danger);"
         onclick="_lxdCTBindMounts.splice(${i},1);_renderCTBindMounts();_updateCTBindMountSummary()">✕</button>
@@ -49859,7 +49867,7 @@ async function submitCreateContainer(e) {
     existing_disks: _lxdCTExistingDisks.filter(d => d.dev_path).map(d => ({ device_name: d.device_name, dev_path: d.dev_path })),
     bind_mounts: _lxdCTBindMounts
       .filter(b => (b.source || '').trim() && (b.path || '').trim())
-      .map(b => ({ device_name: b.device_name, source: (b.source || '').trim(), path: (b.path || '').trim(), readonly: !!b.readonly })),
+      .map(b => ({ device_name: b.device_name, source: (b.source || '').trim(), path: (b.path || '').trim(), readonly: !!b.readonly, shift: !!b.shift })),
   };
   if (cpuLimit) body.cpu_limit_pct = parseInt(cpuLimit) || 0;
 
