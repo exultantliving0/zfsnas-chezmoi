@@ -644,13 +644,19 @@
 
 <div class="app-layout" id="app">
 
+  <!-- Backdrop shown only while the compact menu is temporarily expanded (overlay
+       mode); clicking it collapses the menu back to the rail. -->
+  <div id="sidebar-overlay-backdrop" onclick="_sidebarTempCollapse()"></div>
+
   <!-- ===== SIDEBAR ===== -->
   <nav class="sidebar" id="sidebar">
     <!-- Expand button — only visible in compact mode, sized like a nav icon for touch friendliness -->
-    <button id="sidebar-expand-btn" onclick="setSidebarCompact(false)" title="Expand sidebar"
+    <button id="sidebar-expand-btn" onclick="_sidebarTempExpand()" title="Expand menu"
       style="display:none;width:100%;background:none;border:none;border-bottom:1px solid var(--border);
-             padding:13px 0;cursor:pointer;color:var(--text-3);font-size:22px;line-height:1;
-             justify-content:center;align-items:center;">›</button>
+             padding:13px 0;cursor:pointer;color:var(--text-3);line-height:1;
+             justify-content:center;align-items:center;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
     <div class="sidebar-header">
       <div style="display:flex;flex-direction:column;align-items:flex-start;gap:0;line-height:1;">
         <div style="position:relative;display:inline-block;line-height:0;">
@@ -693,7 +699,7 @@
 
     <div class="sidebar-section sidebar-collapse-row" style="margin-top:0;display:flex;align-items:center;justify-content:space-between;">
       <span>Overview</span>
-      <button onclick="setSidebarCompact(true)" title="Collapse sidebar"
+      <button id="sidebar-collapse-arrow" onclick="_sidebarOverviewArrow()" title="Collapse menu"
         style="background:none;border:none;cursor:pointer;color:var(--text-3);font-size:17px;
                line-height:1;padding:2px 4px;opacity:0.5;transition:opacity .15s;border-radius:5px;margin-right:-2px;"
         onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.5'">‹</button>
@@ -725,6 +731,10 @@
         <span style="color:var(--text-3);font-size:14px;">+</span>
       </div>
       <div id="nav-compute-instances"></div>
+      <!-- Compact-mode stand-in: a single workload icon instead of the per-VM list.
+           Clicking it expands the full menu so the user can pick an instance. -->
+      <button class="nav-item compact-only" id="nav-compute-compact" onclick="_sidebarTempExpand()"
+        title="Workloads — expand to choose a VM / container"><span class="nav-icon">⬡</span></button>
     </div>
 
     <!-- Networking nav — shown only in networking mode -->
@@ -734,6 +744,9 @@
         <span style="color:var(--text-3);font-size:14px;">+</span>
       </div>
       <div id="nav-networking-bridges"></div>
+      <!-- Compact-mode stand-in: a single bridges icon; click to expand + pick one. -->
+      <button class="nav-item compact-only" id="nav-net-compact" onclick="_sidebarTempExpand()"
+        title="Bridges — expand to choose"><span class="nav-icon">🌉</span></button>
     </div>
 
     <!-- Datastores nav — shown only in networking mode -->
@@ -748,6 +761,12 @@
         <span style="flex-shrink:0;font-size:15px;line-height:1;width:15px;text-align:center;">💾</span>
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">Backups</span>
       </button>
+      <!-- Compact-mode stand-ins: single datastores + backups icons. Datastores
+           expands the full menu to pick one; Backups goes straight to its page. -->
+      <button class="nav-item compact-only" id="nav-ds-compact" onclick="_sidebarTempExpand()"
+        title="Datastores — expand to choose"><span class="nav-icon">🗃️</span></button>
+      <button class="nav-item compact-only" id="nav-backups-compact" onclick="showPage('lxd-backups')"
+        title="Backups"><span class="nav-icon">💾</span></button>
     </div>
 
     <div class="sidebar-section">System</div>
@@ -5352,7 +5371,6 @@ Select the Console tab to load.</pre>
             <div id="ci-bkup-sched-next" style="font-size:12px;color:var(--text-3);margin-top:8px;"></div>
 
             <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
-              <button class="btn btn-ghost" id="ci-bkup-sched-disable-btn" onclick="ciDeleteBackupSchedule()" style="margin-right:auto;color:var(--accent-danger);">Disable</button>
               <button class="btn btn-ghost" onclick="document.getElementById('modal-ci-backup-schedule').classList.add('hidden')">Cancel</button>
               <button class="btn btn-primary" id="ci-bkup-sched-save-btn" onclick="ciSubmitBackupSchedule()">Save</button>
             </div>
@@ -11840,15 +11858,49 @@ let _upsPerfCostCents = null;   // electricity cost (¢/kWh) for $/yr in UPS too
 })();
 
 // ===== Sidebar compact mode =====
+// Persistent compact toggle — saves the preference. Clears any temporary expand.
+let _sidebarTempExpanded = false;
 function setSidebarCompact(compact) {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
-  if (compact) {
-    sidebar.classList.add('sidebar-compact');
-  } else {
-    sidebar.classList.remove('sidebar-compact');
-  }
+  _sidebarTempExpanded = false;
+  document.body.classList.remove('sidebar-overlay');
+  sidebar.classList.toggle('sidebar-compact', !!compact);
   try { localStorage.setItem('sidebar-compact', compact ? '1' : '0'); } catch {}
+  _updateSidebarCollapseArrow();
+}
+// Temporarily reveal the full menu from compact mode WITHOUT changing the saved
+// preference — opened via the top burger or a compute/networking/datastore icon.
+// Clicking a nav entry collapses it back (handler in _mInitChrome); clicking the
+// Overview-section arrow instead pins it open (makes the full menu permanent).
+function _sidebarTempExpand() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  sidebar.classList.remove('sidebar-compact');
+  _sidebarTempExpanded = true;
+  document.body.classList.add('sidebar-overlay'); // float over content + show backdrop
+  _updateSidebarCollapseArrow();
+}
+function _sidebarTempCollapse() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  sidebar.classList.add('sidebar-compact');
+  _sidebarTempExpanded = false;
+  document.body.classList.remove('sidebar-overlay');
+  _updateSidebarCollapseArrow();
+}
+// Overview-section arrow: collapse when in the persistent full menu; "pin open"
+// (make the full menu permanent) when in the temporary expanded state.
+function _sidebarOverviewArrow() {
+  if (_sidebarTempExpanded) setSidebarCompact(false); // pin open → persistent full
+  else                      setSidebarCompact(true);  // collapse → compact
+}
+// The arrow flips side + meaning between the two states.
+function _updateSidebarCollapseArrow() {
+  const a = document.getElementById('sidebar-collapse-arrow');
+  if (!a) return;
+  if (_sidebarTempExpanded) { a.textContent = '›'; a.title = 'Keep menu open'; }
+  else                      { a.textContent = '‹'; a.title = 'Collapse menu'; }
 }
 // Restore compact preference on load
 try {
@@ -12058,6 +12110,16 @@ function _mInitChrome() {
       closeMobileDrawer();
     }
   });
+  // Desktop: when the menu was *temporarily* expanded from compact mode, clicking
+  // a nav entry collapses it back (like the phone drawer). The controls that
+  // open/maintain the temporary state (burger, compact icons, mode switch, host
+  // picker, the Overview arrow) don't collapse it.
+  // Capture phase so it still fires even if a row's own handler stops propagation.
+  if (sb) sb.addEventListener('click', (e) => {
+    if (!_sidebarTempExpanded) return;
+    if (e.target.closest('.sidebar-mode-selector, #hostname-dropdown-wrapper, .sidebar-collapse-row, .compact-only, #sidebar-expand-btn')) return;
+    if (e.target.closest('.nav-item, .nav-compute-instance, .sidebar-section[onclick]')) _sidebarTempCollapse();
+  }, true);
 }
 document.addEventListener('DOMContentLoaded', _mInitChrome);
 
@@ -38877,20 +38939,32 @@ function _ciCtxCloseChild(b) {
   if (c.parentNode) c.parentNode.removeChild(c);
   b._ciChild = null;
 }
-function _ciCtxOpenChild(b, items) {
+function _ciCtxOpenChild(b, children) {
   const c = _ciCtxNewMenu();
-  _ciCtxFill(c, items);
   document.body.appendChild(c);
   _ciCtxMenus.push(c);
   b._ciChild = c;
-  const rb = b.getBoundingClientRect();
-  c.style.left = (rb.right - 2) + 'px';
-  c.style.top  = rb.top + 'px';
-  const rc = c.getBoundingClientRect();
-  if (rc.right  > window.innerWidth)  c.style.left = Math.max(4, rb.left - rc.width + 2) + 'px';
-  if (rc.bottom > window.innerHeight) c.style.top  = Math.max(4, window.innerHeight - rc.height - 4) + 'px';
   c.addEventListener('mouseenter', () => { if (b._ciCancel) b._ciCancel(); });
   c.addEventListener('mouseleave', () => _ciCtxCloseChild(b));
+  const place = () => {
+    const rb = b.getBoundingClientRect();
+    c.style.left = (rb.right - 2) + 'px';
+    c.style.top  = rb.top + 'px';
+    const rc = c.getBoundingClientRect();
+    if (rc.right  > window.innerWidth)  c.style.left = Math.max(4, rb.left - rc.width + 2) + 'px';
+    if (rc.bottom > window.innerHeight) c.style.top  = Math.max(4, window.innerHeight - rc.height - 4) + 'px';
+  };
+  const render = (items) => { c.innerHTML = ''; _ciCtxFill(c, items || []); place(); };
+  // `children` may be a static array, or a function returning an array or a
+  // Promise (lazy submenus that fetch their data, e.g. snapshot/backup lists).
+  const resolved = (typeof children === 'function') ? children() : children;
+  if (resolved && typeof resolved.then === 'function') {
+    render([{ kind: 'item', label: 'Loading…', enabled: false }]);
+    resolved.then(items => { if (b._ciChild === c) render(items); })
+            .catch(() => { if (b._ciChild === c) render([{ kind: 'item', label: 'Failed to load', enabled: false }]); });
+  } else {
+    render(resolved);
+  }
 }
 function _ciCtxBuild(x, y, items, key) {
   // Toggle closed when re-invoked with the same key.
@@ -40094,7 +40168,10 @@ async function ciOpenBackupSchedule() {
   // If a policy exists, prefill.
   if (policy && policy.policy) {
     const p = policy.policy;
-    document.getElementById('ci-bkup-sched-enabled').checked = !!p.enabled;
+    // No schedule configured yet (the backend still returns a default policy
+    // object with exists:false) → default the enable checkbox ON. An existing
+    // schedule reflects its saved enabled state.
+    document.getElementById('ci-bkup-sched-enabled').checked = policy.exists ? !!p.enabled : true;
     document.getElementById('ci-bkup-sched-unit').value = p.unit || 'hour';
     _v6519_refreshCS('ci-bkup-sched-unit'); // sync the custom-dropdown display to the loaded unit
     _v6519_fillN('ci-bkup-sched-n', p.unit || 'hour', _v6519_allowedBackupUnits, p.every_n || 1);
@@ -40125,9 +40202,11 @@ async function ciOpenBackupSchedule() {
     if (policy.next_run && policy.exists) {
       document.getElementById('ci-bkup-sched-next').textContent = 'Next run: ' + new Date(policy.next_run).toLocaleString();
     }
-    document.getElementById('ci-bkup-sched-disable-btn').style.display = policy.exists ? '' : 'none';
   } else {
-    document.getElementById('ci-bkup-sched-disable-btn').style.display = 'none';
+    // First time opening the schedule for this instance — default the
+    // "Enable scheduled backups" checkbox on. (Disabling later is done by
+    // unchecking it and saving; there is no separate Disable button.)
+    document.getElementById('ci-bkup-sched-enabled').checked = true;
   }
   // syncoid availability hint — best-effort, treat 404 as "ok".
   fetch('/api/sysinfo/binaries').then(r => r.ok ? r.json() : null).then(d => {
@@ -44526,7 +44605,10 @@ function _lxdActionItems(name, type) {
   if (hasPerm('edit_instances')) items.push({ kind:'item', label:'✏️ Edit', onclick:() => openLXDEditModal(name, type) });
   if (hasPerm('manage_instance_backups')) {
     items.push({ kind:'divider' });
-    items.push({ kind:'item', label:'📸 Snapshot Now', onclick:() => openLXDQuickSnapshot(name, type) });
+    // Lazy children: fetch the snapshot/backup lists on submenu open so we can
+    // grey "Manage…" / "Revert/Restore Latest…" when there are none yet.
+    items.push({ kind:'submenu', label:'📸 Snapshots', children: () => _lxdSnapItems(name, type) });
+    items.push({ kind:'submenu', label:'💾 Backups',   children: () => _lxdBackupItems(name, type) });
     items.push({ kind:'item', label:'⧉ Clone', onclick:() => openLXDCloneModal(name) });
   }
   if (hasPerm('edit_instances')) {
@@ -44549,6 +44631,83 @@ function _lxdActionItems(name, type) {
     items.push({ kind:'item', label:'🗑 Delete', danger:true, onclick:() => confirmLXDDelete(name) });
   }
   return items;
+}
+
+// Snapshots submenu — fetches the instance's snapshots so "Manage" and "Revert
+// to Latest" can be greyed when there are none. Returns a Promise of menu items.
+async function _lxdSnapItems(name, type) {
+  let snaps = [];
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/snapshots');
+    if (r.ok) snaps = (await r.json()) || [];
+  } catch (_) {}
+  const has = Array.isArray(snaps) && snaps.length > 0;
+  const noTip = 'No snapshots yet';
+  return [
+    { kind:'item', label:'📸 Snapshot Now', onclick:() => openLXDQuickSnapshot(name, type) },
+    { kind:'item', label:'🗂 Manage Snapshots…', enabled:has, dis_tip:noTip, onclick:() => {
+        _ciCurrentName = name; _ciCurrentType = type || 'container'; _ciSnapshots = snaps; ciOpenManageSnapshots();
+    }},
+    { kind:'item', label:'↩ Revert to Latest Snapshot', enabled:has, dis_tip:noTip, onclick:() => _lxdRevertToLatest(name, type, snaps) },
+    { kind:'item', label:'📅 Snapshot Schedule…', onclick:() => { _ciCurrentName = name; _ciCurrentType = type || 'container'; ciOpenSnapSchedule(); } },
+  ];
+}
+function _lxdRevertToLatest(name, type, snaps) {
+  if (!snaps || !snaps.length) return;
+  const latest = snaps.slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0];
+  showConfirm({
+    title: 'Revert to Latest Snapshot',
+    body: 'Revert <strong>' + esc(name) + '</strong> to its most recent snapshot <strong>' + esc(latest.name)
+        + '</strong>?<br><br>Any changes made since then will be lost.',
+    confirmText: 'Revert', danger: true,
+    onConfirm: async () => {
+      try {
+        const res = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/snapshots/' + encodeURIComponent(latest.name) + '/restore', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ remove_subsequent: false })
+        });
+        const d = await res.json();
+        if (!res.ok) { showToast(d.error || 'Revert failed', 'error'); return; }
+        _bgPollSnapJob(d.job_id, 'Reverting ' + name + ' → ' + latest.name, () => {
+          if (typeof loadLXDInstances === 'function') loadLXDInstances();
+          if (typeof loadCISnapshots === 'function') loadCISnapshots(name);
+        });
+      } catch (e) { showToast(String(e), 'error'); }
+    }
+  });
+}
+
+// Backups submenu — fetches the instance's backups so "Manage" and "Restore
+// Latest" can be greyed when there are none.
+async function _lxdBackupItems(name, type) {
+  const groups = [];
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/backups-aggregate');
+    if (r.ok) {
+      const d = await r.json();
+      (d.local  || []).forEach(rp => groups.push({ scope:'local',  server_id:'',           hostname:'',          datastore:rp.datastore, snaps:rp.snapshots || [] }));
+      (d.remote || []).forEach(rp => groups.push({ scope:'remote', server_id:rp.server_id, hostname:rp.hostname, datastore:rp.datastore, snaps:rp.snapshots || [] }));
+    }
+  } catch (_) {}
+  const has = groups.some(g => (g.snaps || []).length > 0);
+  const noTip = 'No backups yet';
+  return [
+    { kind:'item', label:'💾 Backup Now', onclick:() => { _ciCurrentName = name; _ciCurrentType = type || 'container'; ciBackupNow(); } },
+    { kind:'item', label:'🗂 Manage Backups…', enabled:has, dis_tip:noTip, onclick:() => { _ciCurrentName = name; _ciCurrentType = type || 'container'; showPage('lxd-backups'); } },
+    { kind:'item', label:'🛠 Restore Latest Backup', enabled:has, dis_tip:noTip, onclick:() => _lxdRestoreLatestBackup(name, groups) },
+    { kind:'item', label:'📅 Backup Schedule…', onclick:() => { _ciCurrentName = name; _ciCurrentType = type || 'container'; ciOpenBackupSchedule(); } },
+  ];
+}
+function _lxdRestoreLatestBackup(name, groups) {
+  let best = null;
+  (groups || []).forEach(g => (g.snaps || []).forEach(s => {
+    const t = s.created_at ? new Date(s.created_at).getTime() : 0;
+    if (!best || t > best.t) best = { t, g, s };
+  }));
+  if (!best) { showToast('No backups to restore', 'error'); return; }
+  openRestoreBackupModal({
+    vm_id: name, scope: best.g.scope, server_id: best.g.server_id || '',
+    hostname: best.g.hostname || '', datastore: best.g.datastore, snapshot: best.s.name,
+  });
 }
 
 // Right-click a VM/container row → context menu. The first two entries are

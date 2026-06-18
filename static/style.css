@@ -2389,8 +2389,49 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .sidebar.sidebar-compact .nav-item.active .nav-icon { opacity: 1; }
 .sidebar.sidebar-compact .sidebar-footer { display: none; }
 .sidebar.sidebar-compact .nav-dot { display: none !important; }
-.sidebar.sidebar-compact .sidebar-collapse-row { display: none; }
+.sidebar.sidebar-compact .sidebar-collapse-row { display: none !important; } /* !important: the row carries an inline display:flex */
 .sidebar.sidebar-compact #sidebar-expand-btn { display: flex !important; }
+
+/* Compact sidebar — Compute/Networking collapse to single icons.
+   The dynamic per-VM / per-bridge / per-datastore lists and their section
+   headers are hidden; in their place a single icon (.compact-only) stands in.
+   Clicking it expands the full menu so the user can pick a precise entry.
+   Scoped to body:not(.is-phone): the phone drawer always shows the full tree,
+   never the compact rail. */
+.sidebar .compact-only { display: none; }
+body:not(.is-phone) .sidebar.sidebar-compact .compact-only { display: flex; justify-content: center; padding: 11px 0; gap: 0; }
+body:not(.is-phone) .sidebar.sidebar-compact .compact-only .nav-icon { width: auto; font-size: 20px; opacity: 0.85; }
+body:not(.is-phone) .sidebar.sidebar-compact .nav-compute-instance,
+body:not(.is-phone) .sidebar.sidebar-compact #nav-compute-instances,
+body:not(.is-phone) .sidebar.sidebar-compact #nav-networking-bridges,
+body:not(.is-phone) .sidebar.sidebar-compact #nav-datastores-list { display: none !important; }
+body:not(.is-phone) .sidebar.sidebar-compact #nav-compute-root,
+body:not(.is-phone) .sidebar.sidebar-compact #nav-networking-root,
+body:not(.is-phone) .sidebar.sidebar-compact #nav-datastores-root { display: none !important; }
+/* Terminal job-count badge is noise in the narrow rail. */
+body:not(.is-phone) .sidebar.sidebar-compact #nav-term-badge { display: none !important; }
+/* The storage/compute/networking switcher stacks vertically to fit the 52px rail. */
+body:not(.is-phone) .sidebar.sidebar-compact .sidebar-mode-selector { flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 2px; }
+
+/* Temporary expand = OVERLAY: the full menu floats over the page content (it does
+   not push it). The 52px rail's footprint is preserved so nothing shifts, and a
+   backdrop dims the rest (click it to collapse). */
+#sidebar-overlay-backdrop { display: none; }
+body.sidebar-overlay #sidebar-overlay-backdrop {
+  display: block;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 1100;
+}
+body.sidebar-overlay .app-layout { padding-left: 52px; }   /* keep the rail's space */
+body.sidebar-overlay #sidebar {
+  position: fixed; top: 0; left: 0;
+  height: 100dvh;
+  width: 190px; min-width: 190px;
+  z-index: 1200;
+  box-shadow: 6px 0 28px rgba(0,0,0,0.45);
+  overflow-y: auto;
+}
 
 /* ===== Capacity Trend page ===== */
 .cap-range-btn {
