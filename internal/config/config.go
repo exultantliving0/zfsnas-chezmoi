@@ -17,13 +17,13 @@ import (
 type ReplicationTask struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
-	SourceDataset string    `json:"source_dataset"` // full path: pool/dataset
-	RemoteHost    string    `json:"remote_host"`    // hostname or IP
-	RemoteUser    string    `json:"remote_user"`    // SSH user (default: root)
-	RemoteDataset string    `json:"remote_dataset"` // destination: pool/dataset
-	Recursive     bool      `json:"recursive"`      // -R flag: include child datasets
-	Compressed    bool      `json:"compressed"`     // -c flag: send compressed stream
-	LastSnap      string    `json:"last_snap,omitempty"`    // last successfully sent snapshot (for incremental)
+	SourceDataset string    `json:"source_dataset"`      // full path: pool/dataset
+	RemoteHost    string    `json:"remote_host"`         // hostname or IP
+	RemoteUser    string    `json:"remote_user"`         // SSH user (default: root)
+	RemoteDataset string    `json:"remote_dataset"`      // destination: pool/dataset
+	Recursive     bool      `json:"recursive"`           // -R flag: include child datasets
+	Compressed    bool      `json:"compressed"`          // -c flag: send compressed stream
+	LastSnap      string    `json:"last_snap,omitempty"` // last successfully sent snapshot (for incremental)
 	LastRun       time.Time `json:"last_run,omitempty"`
 	LastStatus    string    `json:"last_status,omitempty"` // "ok", "error", "never"
 	LastMessage   string    `json:"last_message,omitempty"`
@@ -90,25 +90,25 @@ func (p *StandardPermissions) InstanceVisible(instanceID string) bool {
 
 // S3Bucket is a MinIO bucket managed by ZFSNAS and tracked in portal config.
 type S3Bucket struct {
-	Name      string   `json:"name"`
-	Comment   string   `json:"comment"`
-	Versioning string  `json:"versioning"`  // "off", "enabled", "suspended"
-	ObjectLock bool    `json:"object_lock"` // immutable after creation
-	Quota     string   `json:"quota"`       // human string e.g. "50G", "" = unlimited
-	AnonAccess string  `json:"anon_access"` // "none", "download", "public"
-	UserKeys  []string `json:"user_keys"`
-	CreatedAt int64    `json:"created_at"`
+	Name       string   `json:"name"`
+	Comment    string   `json:"comment"`
+	Versioning string   `json:"versioning"`  // "off", "enabled", "suspended"
+	ObjectLock bool     `json:"object_lock"` // immutable after creation
+	Quota      string   `json:"quota"`       // human string e.g. "50G", "" = unlimited
+	AnonAccess string   `json:"anon_access"` // "none", "download", "public"
+	UserKeys   []string `json:"user_keys"`
+	CreatedAt  int64    `json:"created_at"`
 }
 
 // MinIOConfig holds all persistent MinIO / S3 Object Server settings.
 type MinIOConfig struct {
 	Enabled      bool       `json:"enabled"`
-	HideNav      bool       `json:"hide_nav"`     // hide nav item when not installed
-	DatasetPath  string     `json:"dataset_path"`  // ZFS dataset path used as backend
-	DataDir      string     `json:"data_dir"`       // absolute mountpoint of that dataset
-	Port         int        `json:"port"`           // API port, default 9000
-	ConsolePort  int        `json:"console_port"`   // web console port, default 9001
-	TLS          bool       `json:"tls"`            // enable TLS on both ports
+	HideNav      bool       `json:"hide_nav"`                // hide nav item when not installed
+	DatasetPath  string     `json:"dataset_path"`            // ZFS dataset path used as backend
+	DataDir      string     `json:"data_dir"`                // absolute mountpoint of that dataset
+	Port         int        `json:"port"`                    // API port, default 9000
+	ConsolePort  int        `json:"console_port"`            // web console port, default 9001
+	TLS          bool       `json:"tls"`                     // enable TLS on both ports
 	TLSCertName  string     `json:"tls_cert_name,omitempty"` // "" or "auto" = generate new self-signed
 	RootUser     string     `json:"root_user"`
 	RootPassword string     `json:"root_password"`
@@ -130,8 +130,8 @@ type ISCSIHost struct {
 type ISCSICredential struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	Method      string `json:"method"`                // "incoming" or "bidirectional"
-	InUsername  string `json:"in_username"`           // initiator → target authentication
+	Method      string `json:"method"`      // "incoming" or "bidirectional"
+	InUsername  string `json:"in_username"` // initiator → target authentication
 	InPassword  string `json:"in_password"`
 	OutUsername string `json:"out_username,omitempty"` // target → initiator (bidirectional only)
 	OutPassword string `json:"out_password,omitempty"`
@@ -151,7 +151,7 @@ type ISCSIShare struct {
 // ISCSIConfig holds all persistent iSCSI settings.
 type ISCSIConfig struct {
 	Enabled     bool              `json:"enabled"`
-	HideNav     bool              `json:"hide_nav"`    // hide nav item when not installed
+	HideNav     bool              `json:"hide_nav"` // hide nav item when not installed
 	BaseName    string            `json:"base_name"`
 	Port        int               `json:"port"`
 	Hosts       []ISCSIHost       `json:"hosts"`
@@ -161,11 +161,11 @@ type ISCSIConfig struct {
 
 // UPSShutdownPolicy defines when to automatically shut down the system.
 type UPSShutdownPolicy struct {
-	Enabled           bool   `json:"enabled"`
-	TriggerType       string `json:"trigger_type"`        // "time" | "percent" | "both"
-	RuntimeThreshold  int    `json:"runtime_threshold"`   // shut down when runtime < N seconds (0 = disabled)
-	PercentThreshold  int    `json:"percent_threshold"`   // shut down when charge < N% (0 = disabled)
-	PreShutdownCmd    string `json:"pre_shutdown_cmd,omitempty"`
+	Enabled          bool   `json:"enabled"`
+	TriggerType      string `json:"trigger_type"`      // "time" | "percent" | "both"
+	RuntimeThreshold int    `json:"runtime_threshold"` // shut down when runtime < N seconds (0 = disabled)
+	PercentThreshold int    `json:"percent_threshold"` // shut down when charge < N% (0 = disabled)
+	PreShutdownCmd   string `json:"pre_shutdown_cmd,omitempty"`
 }
 
 // NUTServerConfig holds settings for running this machine as a NUT network server
@@ -202,10 +202,10 @@ type NUTClientConfig struct {
 
 // UPSConfig holds all persistent UPS / NUT settings.
 type UPSConfig struct {
-	Enabled         bool              `json:"enabled"`
+	Enabled bool `json:"enabled"`
 	// Mode: "standalone" | "network_server" | "network_client"
 	// Default (empty) = "standalone" for backward compatibility.
-	Mode            string            `json:"mode,omitempty"`
+	Mode string `json:"mode,omitempty"`
 	// --- Standalone / Network Server fields (local hardware) ---
 	UPSName         string            `json:"ups_name"`
 	Driver          string            `json:"driver"`
@@ -217,11 +217,11 @@ type UPSConfig struct {
 	// CostCentsPerKWh is the user's electricity rate in cents per kWh
 	// (integer cents, e.g. 12 for $0.12/kWh). Used by the UI to surface a
 	// $/Year estimate next to the Load %; nil when the user hasn't set it.
-	CostCentsPerKWh *int              `json:"cost_cents_per_kwh,omitempty"`
+	CostCentsPerKWh *int `json:"cost_cents_per_kwh,omitempty"`
 	// --- Network Server extra fields ---
-	NUTServer       *NUTServerConfig  `json:"nut_server,omitempty"`
+	NUTServer *NUTServerConfig `json:"nut_server,omitempty"`
 	// --- Network Client fields ---
-	NUTClient       *NUTClientConfig  `json:"nut_client,omitempty"`
+	NUTClient *NUTClientConfig `json:"nut_client,omitempty"`
 }
 
 // DiskPowerConfig holds hdparm-based power management settings applied to all
@@ -256,47 +256,47 @@ type SystemPowerConfig struct {
 // One policy per instance; identified by Instance. Stored as a slice on
 // AppConfig so a single JSON write covers all changes.
 type LXDSnapshotPolicy struct {
-	Instance     string `json:"instance"`               // Incus instance name (the only key)
+	Instance     string `json:"instance"` // Incus instance name (the only key)
 	Enabled      bool   `json:"enabled"`
-	EveryN       int    `json:"every_n"`                // 1..N
-	Unit         string `json:"unit"`                   // "minute"|"hour"|"day"|"week"|"month"
-	HourOfDay    int    `json:"hour_of_day,omitempty"`  // 0-23, used only when Unit>="day"
-	MinuteOfHour int    `json:"minute_of_hour"`         // 0-59, used at all granularities
+	EveryN       int    `json:"every_n"`               // 1..N
+	Unit         string `json:"unit"`                  // "minute"|"hour"|"day"|"week"|"month"
+	HourOfDay    int    `json:"hour_of_day,omitempty"` // 0-23, used only when Unit>="day"
+	MinuteOfHour int    `json:"minute_of_hour"`        // 0-59, used at all granularities
 	// Weekday: 0=Sun..6=Sat. Used only when Unit=="week". v6.5.19+.
-	Weekday      int    `json:"weekday,omitempty"`
+	Weekday int `json:"weekday,omitempty"`
 	// DayOfMonth: 1..31. Used only when Unit=="month". Clamped to the
 	// month's last calendar day when the chosen day doesn't exist (e.g.
 	// DOM=31 on a 30-day month fires on day 30). v6.5.19+.
-	DayOfMonth   int    `json:"day_of_month,omitempty"`
-	NamePrefix   string `json:"name_prefix"`            // e.g. "auto" → "auto-2026-05-19-1300"
-	KeepLast     int    `json:"keep_last"`              // retention by count
+	DayOfMonth int    `json:"day_of_month,omitempty"`
+	NamePrefix string `json:"name_prefix"` // e.g. "auto" → "auto-2026-05-19-1300"
+	KeepLast   int    `json:"keep_last"`   // retention by count
 
-	LastRun     time.Time `json:"last_run,omitempty"`
-	LastStatus  string    `json:"last_status,omitempty"` // "ok" | "error" | ""
-	LastError   string    `json:"last_error,omitempty"`
-	LastSnap    string    `json:"last_snap,omitempty"`
+	LastRun    time.Time `json:"last_run,omitempty"`
+	LastStatus string    `json:"last_status,omitempty"` // "ok" | "error" | ""
+	LastError  string    `json:"last_error,omitempty"`
+	LastSnap   string    `json:"last_snap,omitempty"`
 }
 
 // LXDBackupPolicy is a per-instance scheduled backup (syncoid replication)
 // policy (v6.5.19). One policy per instance; the destination can be a local
 // or a remote (interlink) datastore.
 type LXDBackupPolicy struct {
-	Instance     string `json:"instance"`
-	Enabled      bool   `json:"enabled"`
+	Instance string `json:"instance"`
+	Enabled  bool   `json:"enabled"`
 
 	DestKind     string `json:"dest_kind"`                // "local" | "remote"
 	DestServerID string `json:"dest_server_id,omitempty"` // populated when DestKind=="remote"
 	DestPool     string `json:"dest_pool"`                // Incus storage-pool name on the destination side
 
 	EveryN       int    `json:"every_n"`
-	Unit         string `json:"unit"`                     // "minute"|"hour"|"day"|"week"|"month"
+	Unit         string `json:"unit"` // "minute"|"hour"|"day"|"week"|"month"
 	HourOfDay    int    `json:"hour_of_day,omitempty"`
 	MinuteOfHour int    `json:"minute_of_hour"`
 	// v6.5.19+: same semantics as on LXDSnapshotPolicy.
-	Weekday      int    `json:"weekday,omitempty"`
-	DayOfMonth   int    `json:"day_of_month,omitempty"`
+	Weekday    int `json:"weekday,omitempty"`
+	DayOfMonth int `json:"day_of_month,omitempty"`
 
-	RetentionKind  string `json:"retention_kind"`         // "count" | "age"
+	RetentionKind  string `json:"retention_kind"` // "count" | "age"
 	RetentionCount int    `json:"retention_count,omitempty"`
 	RetentionAgeN  int    `json:"retention_age_n,omitempty"`
 	RetentionAgeU  string `json:"retention_age_unit,omitempty"` // "hours"|"days"|"weeks"|"months"
@@ -321,12 +321,12 @@ type LXDBackupPolicy struct {
 type ComposeUpdatePolicy struct {
 	Instance     string `json:"instance"`
 	Enabled      bool   `json:"enabled"`
-	EveryN       int    `json:"every_n"`               // 1..N
-	Unit         string `json:"unit"`                  // "minute"|"hour"|"day"|"week"|"month"
-	HourOfDay    int    `json:"hour_of_day,omitempty"` // 0-23, used when Unit>="day"
-	MinuteOfHour int    `json:"minute_of_hour"`        // 0-59
-	Weekday      int    `json:"weekday,omitempty"`     // 0=Sun..6=Sat, Unit=="week"
-	DayOfMonth   int    `json:"day_of_month,omitempty"`// 1..31, Unit=="month"
+	EveryN       int    `json:"every_n"`                // 1..N
+	Unit         string `json:"unit"`                   // "minute"|"hour"|"day"|"week"|"month"
+	HourOfDay    int    `json:"hour_of_day,omitempty"`  // 0-23, used when Unit>="day"
+	MinuteOfHour int    `json:"minute_of_hour"`         // 0-59
+	Weekday      int    `json:"weekday,omitempty"`      // 0=Sun..6=Sat, Unit=="week"
+	DayOfMonth   int    `json:"day_of_month,omitempty"` // 1..31, Unit=="month"
 
 	LastRun    time.Time `json:"last_run,omitempty"`
 	LastStatus string    `json:"last_status,omitempty"` // "ok" | "error" | ""
@@ -335,12 +335,12 @@ type ComposeUpdatePolicy struct {
 
 // LinkedServer represents a remote ZNAS instance trusted for single-click SSO switching.
 type LinkedServer struct {
-	ID             string    `json:"id"`              // our local UUID for this link
-	URL            string    `json:"url"`             // e.g. "https://nas.example.com:8443"
-	Hostname       string    `json:"hostname"`        // remote hostname, fetched at link time
-	SharedSecret   string    `json:"shared_secret"`   // 32-byte hex; HMAC signing key for SSO tokens
-	RemoteID       string    `json:"remote_id"`       // the ID the remote server uses for this link (sent in redirect)
-	LinkedBy       string    `json:"linked_by"`       // admin username who created the link
+	ID             string    `json:"id"`            // our local UUID for this link
+	URL            string    `json:"url"`           // e.g. "https://nas.example.com:8443"
+	Hostname       string    `json:"hostname"`      // remote hostname, fetched at link time
+	SharedSecret   string    `json:"shared_secret"` // 32-byte hex; HMAC signing key for SSO tokens
+	RemoteID       string    `json:"remote_id"`     // the ID the remote server uses for this link (sent in redirect)
+	LinkedBy       string    `json:"linked_by"`     // admin username who created the link
 	LinkedAt       time.Time `json:"linked_at"`
 	TLSFingerprint string    `json:"tls_fingerprint,omitempty"` // SHA-256 hex of peer TLS cert (TOFU pin)
 	LXDTrusted     bool      `json:"lxd_trusted,omitempty"`     // true once LXD cert exchange completed successfully
@@ -349,7 +349,7 @@ type LinkedServer struct {
 // VersionCacheEntry holds the last fetched GitHub release check result,
 // cached server-side to avoid hitting the API on every page load.
 type VersionCacheEntry struct {
-	CheckedAt        int64  `json:"checked_at"`         // Unix timestamp (seconds)
+	CheckedAt        int64  `json:"checked_at"` // Unix timestamp (seconds)
 	Latest           string `json:"latest"`
 	UpdateAvailable  bool   `json:"update_available"`
 	SigValid         bool   `json:"sig_valid"`
@@ -370,15 +370,15 @@ type PoolScrubPolicy struct {
 
 // AppConfig holds top-level application settings.
 type AppConfig struct {
-	ConfigDir         string    `json:"-"` // runtime-only, not persisted
-	Port              int       `json:"port"`
+	ConfigDir string `json:"-"` // runtime-only, not persisted
+	Port      int    `json:"port"`
 	// BindPort443, when true, also listens on the standard HTTPS port 443 in
 	// addition to Port. Binding the privileged port from the non-root service
 	// account is granted via a systemd CAP_NET_BIND_SERVICE drop-in.
-	BindPort443       bool      `json:"bind_port_443,omitempty"`
+	BindPort443 bool `json:"bind_port_443,omitempty"`
 	// ComposeBaseImage is the LXC base image used for Compose stacks
 	// ("alpine" | "debian" | "ubuntu"). Empty defaults to "debian".
-	ComposeBaseImage  string    `json:"compose_base_image,omitempty"`
+	ComposeBaseImage string `json:"compose_base_image,omitempty"`
 	// Docker Detection (v6.5.26) — when enabled, the portal probes each
 	// VM or LXC the user opens for a running Docker daemon and renders
 	// a Docker card listing the containers/stacks found. Pointers so an
@@ -387,58 +387,58 @@ type AppConfig struct {
 	// is preserved. Read via DockerDetectVMsOn / DockerDetectContainersOn.
 	DockerDetectVMs        *bool     `json:"docker_detect_vms,omitempty"`
 	DockerDetectContainers *bool     `json:"docker_detect_containers,omitempty"`
-	StorageUnit       string    `json:"storage_unit,omitempty"`        // "gb" (1000-based) or "gib" (1024-based)
-	LoginTheme        string    `json:"login_theme,omitempty"`         // "dark" | "light" | "auto"
-	SMARTLastRefresh  time.Time `json:"smart_last_refresh,omitempty"`
-	WeeklyScrub       bool      `json:"weekly_scrub"`                  // deprecated: migrated to ScrubSchedule
-	ScrubSchedule     string    `json:"scrub_schedule,omitempty"`      // legacy global (pre-v6.5.26): default for pools without an entry in ScrubPolicies
-	ScrubHour         int       `json:"scrub_hour"`                    // legacy global hour, used the same way (default 2)
+	StorageUnit            string    `json:"storage_unit,omitempty"` // "gb" (1000-based) or "gib" (1024-based)
+	LoginTheme             string    `json:"login_theme,omitempty"`  // "dark" | "light" | "auto"
+	SMARTLastRefresh       time.Time `json:"smart_last_refresh,omitempty"`
+	WeeklyScrub            bool      `json:"weekly_scrub"`             // deprecated: migrated to ScrubSchedule
+	ScrubSchedule          string    `json:"scrub_schedule,omitempty"` // legacy global (pre-v6.5.26): default for pools without an entry in ScrubPolicies
+	ScrubHour              int       `json:"scrub_hour"`               // legacy global hour, used the same way (default 2)
 	// ScrubPolicies stores per-pool scrub schedules (v6.5.26+). Each
 	// entry overrides the legacy global ScrubSchedule/ScrubHour for that
 	// one pool. Pools with no entry inherit the global (or no scrub at
 	// all if the global is "" too). The slice is the authoritative store;
 	// the global fields are kept for back-compat with older configs and
 	// single-pool installs that never opened the new per-pool UI.
-	ScrubPolicies     []PoolScrubPolicy `json:"scrub_policies,omitempty"`
+	ScrubPolicies []PoolScrubPolicy `json:"scrub_policies,omitempty"`
 	// v6.5.30 — persistent terminal sessions
-	TerminalScrollbackKB      int `json:"terminal_scrollback_kb,omitempty"`      // per-session scrollback ring in KB; 0 = default (256)
+	TerminalScrollbackKB       int `json:"terminal_scrollback_kb,omitempty"`         // per-session scrollback ring in KB; 0 = default (256)
 	TerminalMaxSessionsPerUser int `json:"terminal_max_sessions_per_user,omitempty"` // cap of live PTYs per web user; 0 = default (20)
 
-	LiveUpdateEnabled      bool               `json:"live_update_enabled,omitempty"`       // enable in-place binary self-update
-	VersionCheckInterval   string             `json:"version_check_interval,omitempty"`    // daily (default) | weekly | monthly | manual
-	VersionCheckCache      *VersionCacheEntry `json:"version_check_cache,omitempty"`       // server-side cache of last GitHub check
-	AutoUpdateEnabled      bool               `json:"auto_update_enabled,omitempty"`       // automatically apply updates at scheduled hour
-	AutoUpdateHour         int                `json:"auto_update_hour"`                    // hour of day (0-23) to run auto-update, default 3
-	MaxSmbdProcesses   int    `json:"max_smbd_processes,omitempty"`   // Samba max smbd processes (0 = use default 100)
-	SMBHomeDataset     string `json:"smb_home_dataset,omitempty"`     // ZFS dataset path for SMB user home folders; "" = disabled
-	SMBCleanDefaults   bool   `json:"smb_clean_defaults,omitempty"`   // remove distro default [printers], [print$], [homes] sections
-	SMBWorkgroup       string `json:"smb_workgroup,omitempty"`        // Samba workgroup name (default "WORKGROUP")
-	SMBCustomGlobal    string `json:"smb_custom_global,omitempty"`    // extra lines appended to the managed [global] section
-	SMBSocketOptions   bool   `json:"smb_socket_options,omitempty"`   // enable socket options for throughput (TCP_NODELAY, buffers)
-	TreeMapSchedule    string      `json:"treemap_schedule,omitempty"`     // daily | weekly | biweekly | monthly | "" (off)
-	TreeMapHour        int         `json:"treemap_hour"`                   // hour of day to run treemap scan (0-23)
-	TreeMapMinute      int         `json:"treemap_minute"`                 // minute of hour to run treemap scan (0-59)
-	ISCSI              ISCSIConfig      `json:"iscsi,omitempty"`
-	MinIO              MinIOConfig      `json:"minio,omitempty"`
-	UPS                UPSConfig        `json:"ups,omitempty"`
-	DiskPower          DiskPowerConfig  `json:"disk_power,omitempty"`
-	SystemPower        SystemPowerConfig `json:"system_power,omitempty"`
-	ActiveCertName          string   `json:"active_cert_name,omitempty"`
-	PendingCertRestart      bool     `json:"pending_cert_restart,omitempty"`
-	SudoersHardeningEnabled  bool     `json:"sudoers_hardening_enabled,omitempty"`
-	SudoersSilencedLines     []string `json:"sudoers_silenced_lines,omitempty"`
-	SudoersSilencedMissing   []string `json:"sudoers_silenced_missing,omitempty"`
-	SudoersSilencedExtra     []string `json:"sudoers_silenced_extra,omitempty"`
-	SudoersAppliedHash       string   `json:"sudoers_applied_hash,omitempty"`
-	SudoersAppliedContent    string   `json:"sudoers_applied_content,omitempty"`
-	Replication          []ReplicationTask `json:"replication,omitempty"`
-	InterLink            []LinkedServer    `json:"inter_link,omitempty"`
-	InterlinkRelayMode   bool              `json:"interlink_relay_mode,omitempty"` // global relay mode: proxy API calls through local server
-	LXDMetricsEnabled    bool              `json:"lxd_metrics_enabled,omitempty"`  // turns on LXD's Prometheus endpoint on 127.0.0.1:9101 + portal scraper for VM/container Monitor tabs (v6.4.28)
-	WebSession           WebSessionPolicy  `json:"web_session,omitempty"`          // browser session lifetime policy (default 24h vs sliding inactivity timeout)
-	LXDSnapshotPolicies  []LXDSnapshotPolicy `json:"lxd_snapshot_policies,omitempty"` // v6.5.19 — per-instance scheduled snapshots
-	ComposeUpdatePolicies []ComposeUpdatePolicy `json:"compose_update_policies,omitempty"` // per-stack scheduled auto-updates
-	LXDBackupPolicies    []LXDBackupPolicy   `json:"lxd_backup_policies,omitempty"`   // v6.5.19 — per-instance scheduled syncoid backups
+	LiveUpdateEnabled       bool                  `json:"live_update_enabled,omitempty"`    // enable in-place binary self-update
+	VersionCheckInterval    string                `json:"version_check_interval,omitempty"` // daily (default) | weekly | monthly | manual
+	VersionCheckCache       *VersionCacheEntry    `json:"version_check_cache,omitempty"`    // server-side cache of last GitHub check
+	AutoUpdateEnabled       bool                  `json:"auto_update_enabled,omitempty"`    // automatically apply updates at scheduled hour
+	AutoUpdateHour          int                   `json:"auto_update_hour"`                 // hour of day (0-23) to run auto-update, default 3
+	MaxSmbdProcesses        int                   `json:"max_smbd_processes,omitempty"`     // Samba max smbd processes (0 = use default 100)
+	SMBHomeDataset          string                `json:"smb_home_dataset,omitempty"`       // ZFS dataset path for SMB user home folders; "" = disabled
+	SMBCleanDefaults        bool                  `json:"smb_clean_defaults,omitempty"`     // remove distro default [printers], [print$], [homes] sections
+	SMBWorkgroup            string                `json:"smb_workgroup,omitempty"`          // Samba workgroup name (default "WORKGROUP")
+	SMBCustomGlobal         string                `json:"smb_custom_global,omitempty"`      // extra lines appended to the managed [global] section
+	SMBSocketOptions        bool                  `json:"smb_socket_options,omitempty"`     // enable socket options for throughput (TCP_NODELAY, buffers)
+	TreeMapSchedule         string                `json:"treemap_schedule,omitempty"`       // daily | weekly | biweekly | monthly | "" (off)
+	TreeMapHour             int                   `json:"treemap_hour"`                     // hour of day to run treemap scan (0-23)
+	TreeMapMinute           int                   `json:"treemap_minute"`                   // minute of hour to run treemap scan (0-59)
+	ISCSI                   ISCSIConfig           `json:"iscsi,omitempty"`
+	MinIO                   MinIOConfig           `json:"minio,omitempty"`
+	UPS                     UPSConfig             `json:"ups,omitempty"`
+	DiskPower               DiskPowerConfig       `json:"disk_power,omitempty"`
+	SystemPower             SystemPowerConfig     `json:"system_power,omitempty"`
+	ActiveCertName          string                `json:"active_cert_name,omitempty"`
+	PendingCertRestart      bool                  `json:"pending_cert_restart,omitempty"`
+	SudoersHardeningEnabled bool                  `json:"sudoers_hardening_enabled,omitempty"`
+	SudoersSilencedLines    []string              `json:"sudoers_silenced_lines,omitempty"`
+	SudoersSilencedMissing  []string              `json:"sudoers_silenced_missing,omitempty"`
+	SudoersSilencedExtra    []string              `json:"sudoers_silenced_extra,omitempty"`
+	SudoersAppliedHash      string                `json:"sudoers_applied_hash,omitempty"`
+	SudoersAppliedContent   string                `json:"sudoers_applied_content,omitempty"`
+	Replication             []ReplicationTask     `json:"replication,omitempty"`
+	InterLink               []LinkedServer        `json:"inter_link,omitempty"`
+	InterlinkRelayMode      bool                  `json:"interlink_relay_mode,omitempty"`    // global relay mode: proxy API calls through local server
+	LXDMetricsEnabled       bool                  `json:"lxd_metrics_enabled,omitempty"`     // turns on LXD's Prometheus endpoint on 127.0.0.1:9101 + portal scraper for VM/container Monitor tabs (v6.4.28)
+	WebSession              WebSessionPolicy      `json:"web_session,omitempty"`             // browser session lifetime policy (default 24h vs sliding inactivity timeout)
+	LXDSnapshotPolicies     []LXDSnapshotPolicy   `json:"lxd_snapshot_policies,omitempty"`   // v6.5.19 — per-instance scheduled snapshots
+	ComposeUpdatePolicies   []ComposeUpdatePolicy `json:"compose_update_policies,omitempty"` // per-stack scheduled auto-updates
+	LXDBackupPolicies       []LXDBackupPolicy     `json:"lxd_backup_policies,omitempty"`     // v6.5.19 — per-instance scheduled syncoid backups
 }
 
 // WebSessionPolicy controls how long a browser-side login lasts and how it
@@ -492,17 +492,19 @@ type UserPreferences struct {
 	TreemapSelectedDS    map[string]string   `json:"treemap_selected_ds,omitempty"`    // treemap selected pool/dataset keyed by "local" or relay hostname
 	BottomTerminalHeight int                 `json:"bottom_terminal_height,omitempty"` // remembered pixel height of the bottom terminal panel; 0 = default
 	LXDColumns           []string            `json:"lxd_columns,omitempty"`            // selected toggleable columns for VM/Container tables; nil = default set
+	LXDGrouping          string              `json:"lxd_grouping,omitempty"`           // compute-tree grouping: "" | "none" | "tag" | "type"
+	LXDGroupCollapsed    map[string][]string `json:"lxd_group_collapsed,omitempty"`    // collapsed compute-tree group ids keyed by "local" or relay hostname
 }
 
 // User represents a portal or SMB-only user.
 type User struct {
-	ID           string          `json:"id"`
-	Username     string          `json:"username"`
-	Email        string          `json:"email"`
-	PasswordHash string          `json:"password_hash"`
-	Role         string          `json:"role"` // admin, read-only, smb-only
-	CreatedAt    time.Time       `json:"created_at"`
-	Preferences  UserPreferences `json:"preferences,omitempty"`
+	ID            string               `json:"id"`
+	Username      string               `json:"username"`
+	Email         string               `json:"email"`
+	PasswordHash  string               `json:"password_hash"`
+	Role          string               `json:"role"` // admin, read-only, smb-only
+	CreatedAt     time.Time            `json:"created_at"`
+	Preferences   UserPreferences      `json:"preferences,omitempty"`
 	TOTPSecret    string               `json:"totp_secret,omitempty"`     // base32-encoded TOTP secret
 	TOTPEnabled   bool                 `json:"totp_enabled,omitempty"`    // 2FA active
 	SMBHomeFolder bool                 `json:"smb_home_folder,omitempty"` // home dir under SMBHomeDataset

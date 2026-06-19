@@ -78,17 +78,18 @@ func lxdNormalizeSizeStr(s string) string {
 
 // LXDInstance represents a LXD virtual machine or container.
 type LXDInstance struct {
-	Name        string `json:"name"`
-	Description string `json:"description"` // human-readable display name
-	Type        string `json:"type"`        // "virtual-machine" | "container"
-	Status      string `json:"status"`      // "Running", "Stopped", "Starting", "Stopping", ...
-	IPv4        string `json:"ipv4"`
-	Image       string `json:"image"`
-	CPULimit    string `json:"cpu_limit"`
-	MemoryLimit string `json:"memory_limit"`
-	RootPool    string `json:"root_pool"`  // LXD storage pool name for the root disk
-	Autostart   bool   `json:"autostart"`  // boot.autostart=true on the instance or its profile
-	IsCompose   bool   `json:"is_compose"` // user.zfsnas.compose=true — a Podman Compose stack
+	Name        string   `json:"name"`
+	Description string   `json:"description"` // human-readable display name
+	Type        string   `json:"type"`        // "virtual-machine" | "container"
+	Status      string   `json:"status"`      // "Running", "Stopped", "Starting", "Stopping", ...
+	IPv4        string   `json:"ipv4"`
+	Image       string   `json:"image"`
+	CPULimit    string   `json:"cpu_limit"`
+	MemoryLimit string   `json:"memory_limit"`
+	RootPool    string   `json:"root_pool"`  // LXD storage pool name for the root disk
+	Autostart   bool     `json:"autostart"`  // boot.autostart=true on the instance or its profile
+	IsCompose   bool     `json:"is_compose"` // user.zfsnas.compose=true — a Podman Compose stack
+	Tags        []string `json:"tags"`       // tag names from user.zfsnas.tags (registry holds colors)
 }
 
 // LXDImage is an image available for instance creation.
@@ -1608,6 +1609,7 @@ func listLXDInstancesImpl() ([]LXDInstance, error) {
 			MemoryLimit: r.Config["limits.memory"],
 			Autostart:   autostartTrue(r.ExpandedConfig["boot.autostart"]),
 			IsCompose:   r.Config["user.zfsnas.compose"] == "true",
+			Tags:        parseInstanceTags(r.Config[tagInstanceConfigKey]),
 		}
 
 		// Derive image description from config.

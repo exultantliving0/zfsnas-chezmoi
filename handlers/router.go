@@ -826,6 +826,15 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceRealtime))).Methods("GET")
 	r.Handle("/api/lxd/instances",
 		RequireAuth(RequireVirtView(http.HandlerFunc(HandleListInstances)))).Methods("GET")
+	// VM/Container tags (v6.6.19). Registry read is view-gated (so non-admin
+	// instance editors aren't 403'd on relay); membership edit + recolor need
+	// edit_instances.
+	r.Handle("/api/lxd/tags",
+		RequireAuth(RequireVirtView(http.HandlerFunc(HandleLXDTags)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/tags",
+		RequireAuth(RequireInstancePerm("edit_instances")(http.HandlerFunc(HandleLXDSetInstanceTags)))).Methods("PUT")
+	r.Handle("/api/lxd/tags/{tag}/color",
+		RequireAuth(RequirePermission("edit_instances")(http.HandlerFunc(HandleLXDSetTagColor)))).Methods("PUT")
 	r.Handle("/api/lxd/instances/{name}/stats",
 		RequireAuth(http.HandlerFunc(HandleLXDInstanceStats))).Methods("GET")
 	r.Handle("/api/lxd/instances/{name}/status",

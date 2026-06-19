@@ -1201,6 +1201,149 @@ body:not(.is-phone) .lxd-inst-table td[data-col="name"] .lxd-name-2 {
   flex-shrink: 0 !important;
 }
 
+/* VM/Container tags (v6.6.19) — color bullets in the compute tree */
+.nav-tag-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 9px; /* clear the absolute status bar at right:5px */
+  flex-shrink: 0;
+}
+.nav-tag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.nav-tag-more {
+  font-size: 9px;
+  color: var(--text-3);
+  line-height: 1;
+}
+
+/* Collapsible group headers in the compute tree */
+.nav-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 20px 6px 16px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.nav-group-header:hover { color: var(--text-2); }
+.nav-group-caret {
+  font-size: 9px;
+  width: 9px;
+  flex-shrink: 0;
+  transition: transform .12s;
+}
+/* By-Tag rows: a single tag-colored triangle replacing the caret + dot.
+   Points right when collapsed, rotates to point down when open. */
+.nav-group-tri {
+  width: 0;
+  height: 0;
+  flex-shrink: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid currentColor; /* color set inline per tag */
+  transition: transform .12s;
+  transform-origin: 3px center;
+}
+.nav-group-tri.open { transform: rotate(90deg); }
+.nav-group-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.nav-group-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-group-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+.nav-group-body.collapsed { display: none; }
+
+/* Tag pills (instance detail header + table cells) */
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 10px;
+  color: #fff;
+  white-space: nowrap;
+}
+.tag-pill .tag-pill-x {
+  cursor: pointer;
+  opacity: 0.75;
+  font-size: 12px;
+  margin-left: 1px;
+}
+.tag-pill .tag-pill-x:hover { opacity: 1; }
+.tag-pill.tag-pill-clickable { cursor: pointer; }
+#ci-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tag-add-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  color: var(--text-3);
+  background: none;
+  cursor: pointer;
+}
+.tag-add-chip:hover { color: var(--text); border-color: var(--text-3); }
+.tag-cell-pills { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+/* Tag color-swatch popover */
+.tag-swatch-pop {
+  position: absolute;
+  z-index: 4000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.4);
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(6, 20px);
+  gap: 6px;
+}
+.tag-swatch-pop .sw {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+.tag-swatch-pop .sw:hover { border-color: var(--text); }
+
 /* Main content */
 .main-content {
   flex: 1;

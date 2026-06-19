@@ -726,7 +726,7 @@
 
     <!-- Compute nav — shown only in compute mode -->
     <div id="nav-compute-section" style="display:none;">
-      <div class="sidebar-section" id="nav-compute-root" style="margin-top:0;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;" onclick="switchToLXDTable()">
+      <div class="sidebar-section" id="nav-compute-root" style="margin-top:0;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;" onclick="switchToLXDTable()" oncontextmenu="_lxdComputeRootMenu(event)" title="Right-click to change grouping">
         <span>Compute</span>
         <span style="color:var(--text-3);font-size:14px;">+</span>
       </div>
@@ -2135,6 +2135,7 @@
                 <th data-col="diskio" data-sort="diskio" class="lxd-sortable" style="width:92px;" onclick="_lxdSortBy('diskio')">Disk-IO<span class="sort-arrow"></span></th>
                 <th data-col="status" data-sort="status" class="lxd-sortable" style="width:110px;" onclick="_lxdSortBy('status')">Status<span class="sort-arrow"></span></th>
                 <th data-col="autostart" data-sort="autostart" class="lxd-sortable" style="width:72px;" onclick="_lxdSortBy('autostart')">Autostart<span class="sort-arrow"></span></th>
+                <th data-col="tags" style="width:160px;">Tags</th>
                 <th data-col="actions" style="width:64px;"></th>
               </tr>
             </thead>
@@ -4082,6 +4083,7 @@
               <th data-col="net" style="width:82px;">Net</th>
               <th data-col="diskio" style="width:92px;">Disk-IO</th>
               <th data-col="status" style="width:110px;">Status</th>
+              <th data-col="tags" style="width:160px;">Tags</th>
               <th data-col="actions" style="width:64px;"></th>
             </tr></thead>
             <tbody id="bridge-members-tbody">
@@ -4269,6 +4271,15 @@
               </select>
               <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Page shown automatically after login</div>
             </div>
+            <div class="form-group" id="us-grouping-group" style="margin:16px 0 14px;display:none;">
+              <label class="form-label">Group VMs &amp; Containers by</label>
+              <select id="us-lxd-grouping" class="input" onchange="_lxdSetGrouping(this.value)">
+                <option value="none">No Grouping</option>
+                <option value="tag">By Tag</option>
+                <option value="type">By Type</option>
+              </select>
+              <div style="font-size:11px;color:var(--text-3);margin-top:4px;">How the Compute sidebar groups instances. By&nbsp;Tag lists each instance under every tag it carries.</div>
+            </div>
             <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin:16px 0 8px;">Auto Theme</div>
             <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;">When the theme is set to <strong>Auto</strong>, ZNAS uses the day theme during daylight hours (OS light mode) and the night theme otherwise.</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
@@ -4369,6 +4380,7 @@
             <th data-col="net" style="width:82px;">Net</th>
             <th data-col="diskio" style="width:92px;">Disk-IO</th>
             <th data-col="status" style="width:110px;">Status</th>
+            <th data-col="tags" style="width:160px;">Tags</th>
             <th data-col="actions" style="width:64px;"></th>
           </tr></thead>
           <tbody id="datastore-members-tbody">
@@ -4522,6 +4534,8 @@
           <span id="ci-refresh-btn" onclick="ciRefresh()" style="cursor:pointer;color:var(--text-2);padding:4px 6px;line-height:1;user-select:none;display:inline-flex;align-items:center;" title="Refresh">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>
           </span>
+          <!-- Tags editor (v6.6.19) — pills + recolor + add; right of the name -->
+          <div id="ci-tags"></div>
           <!-- Spacer -->
           <span style="flex:1;"></span>
           <!-- Backup Dependent (v6.6.15) — shown when this instance is running
@@ -37576,6 +37590,7 @@ function switchSidebarMode(mode) {
 }
 
 function refreshComputeNav() {
+  _lxdLoadTagRegistry(); // keep colors fresh; cheap, fire-and-forget
   if (_lxdInstancesCache.length > 0) {
     renderComputeNav(_lxdInstancesCache);
   } else {
@@ -37583,6 +37598,197 @@ function refreshComputeNav() {
       _lxdInstancesCache = instances || [];
       renderComputeNav(_lxdInstancesCache);
     }).catch(() => {});
+  }
+}
+
+// ===== VM/Container tags (v6.6.19) ==========================================
+// Tag membership lives on each instance (inst.tags); colors come from the
+// host registry fetched here. The palette + fnv-1a hash mirror system/
+// lxd_tags.go so a tag's default color is stable even before the registry
+// loads (and matches the server once it does).
+let _lxdTagRegistry = {};
+const _TAG_PALETTE = ['#e5484d','#f76808','#f5d90a','#46a758','#12a594','#0091ff',
+                      '#3e63dd','#8e4ec6','#d6409f','#e54666','#978365','#6e7681'];
+
+function _tagAutoColor(name) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < name.length; i++) { h ^= name.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return _TAG_PALETTE[h % _TAG_PALETTE.length];
+}
+function _tagColor(name) { return _lxdTagRegistry[name] || _tagAutoColor(name); }
+// Read-only tags table cell (used by the main + member tables).
+function _tagCellHTML(tags) {
+  return `<td data-col="tags">${(tags && tags.length)
+    ? `<span class="tag-cell-pills">${tags.map(t => _tagPillHTML(t, {})).join('')}</span>`
+    : '<span style="color:var(--text-3);">—</span>'}</td>`;
+}
+// Pick black/white text for legibility on a given background hex.
+function _tagTextColor(hex) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+  if (!m) return '#fff';
+  const r = parseInt(m[1],16), g = parseInt(m[2],16), b = parseInt(m[3],16);
+  // Relative luminance; threshold tuned so yellow gets black text.
+  return (0.299*r + 0.587*g + 0.114*b) > 150 ? '#000' : '#fff';
+}
+// Mirror server normalizeTag: trim + lowercase; commas/control chars dropped.
+function _tagNorm(s) {
+  s = (s || '').trim().toLowerCase();
+  if (s.indexOf(',') >= 0) s = s.replace(/,/g, '');
+  return s.slice(0, 32);
+}
+
+async function _lxdLoadTagRegistry() {
+  try {
+    const r = await fetch('/api/incus/tags', {credentials:'same-origin'});
+    if (!r.ok) return _lxdTagRegistry;
+    const j = await r.json();
+    _lxdTagRegistry = (j && j.registry) || {};
+  } catch(_) {}
+  return _lxdTagRegistry;
+}
+
+// Up to 4 color bullets for the tree, with "+n" overflow.
+function _tagDotsHTML(tags) {
+  if (!tags || !tags.length) return '';
+  const max = 4;
+  let html = '<span class="nav-tag-dots">';
+  tags.slice(0, max).forEach(t => {
+    html += `<i class="nav-tag-dot" style="background:${_tagColor(t)};" title="${esc(t)}"></i>`;
+  });
+  if (tags.length > max) html += `<span class="nav-tag-more">+${tags.length - max}</span>`;
+  return html + '</span>';
+}
+
+// A single pill. opts: {removable, clickable, inst} — removable shows ×,
+// clickable opens the recolor swatch.
+function _tagPillHTML(name, opts) {
+  opts = opts || {};
+  const c = _tagColor(name), tc = _tagTextColor(c);
+  const cls = 'tag-pill' + (opts.clickable ? ' tag-pill-clickable' : '');
+  const onclick = opts.clickable ? ` onclick='_tagOpenSwatch(event, ${JSON.stringify(name)})'` : '';
+  const x = opts.removable
+    ? `<span class="tag-pill-x" title="Remove tag" onclick='event.stopPropagation();_ciRemoveTag(${JSON.stringify(name)})'>×</span>`
+    : '';
+  return `<span class="${cls}" style="background:${c};color:${tc};"${onclick}>${esc(name)}${x}</span>`;
+}
+
+// Render the instance-detail header tag editor for the open instance.
+function _ciRenderTags() {
+  const el = document.getElementById('ci-tags');
+  if (!el) return;
+  const inst = (_lxdInstancesCache || []).find(i => i.name === _ciCurrentName);
+  const tags = (inst && inst.tags) || [];
+  const canEdit = hasPerm('edit_instances');
+  let html = tags.map(t => _tagPillHTML(t, {removable: canEdit, clickable: canEdit})).join('');
+  if (canEdit) {
+    html += `<button class="tag-add-chip" id="ci-tag-add-chip" onclick="_ciAddTagStart(event)">+ Tag</button>
+      <input id="ci-tag-add-input" class="input" list="ci-tag-datalist" placeholder="tag name"
+        style="display:none;width:120px;height:26px;padding:2px 8px;font-size:12px;"
+        onkeydown="_ciAddTagKey(event)" onblur="_ciAddTagCommit()">
+      <datalist id="ci-tag-datalist"></datalist>`;
+  }
+  el.innerHTML = html;
+}
+
+function _ciAddTagStart(ev) {
+  if (ev) ev.stopPropagation();
+  const chip = document.getElementById('ci-tag-add-chip');
+  const inp = document.getElementById('ci-tag-add-input');
+  if (!inp) return;
+  // Populate datalist with known registry tags not already on this instance.
+  const inst = (_lxdInstancesCache || []).find(i => i.name === _ciCurrentName);
+  const have = new Set((inst && inst.tags) || []);
+  const dl = document.getElementById('ci-tag-datalist');
+  if (dl) dl.innerHTML = Object.keys(_lxdTagRegistry).filter(t => !have.has(t))
+    .sort().map(t => `<option value="${esc(t)}">`).join('');
+  if (chip) chip.style.display = 'none';
+  inp.style.display = '';
+  inp.value = '';
+  inp.focus();
+}
+function _ciAddTagKey(ev) {
+  if (ev.key === 'Enter' || ev.key === ',') { ev.preventDefault(); _ciAddTagCommit(); }
+  else if (ev.key === 'Escape') { ev.preventDefault(); _ciRenderTags(); }
+}
+let _ciAddTagBusy = false;
+async function _ciAddTagCommit() {
+  if (_ciAddTagBusy) return;
+  const inp = document.getElementById('ci-tag-add-input');
+  if (!inp) return;
+  const name = _tagNorm(inp.value);
+  if (!name) { _ciRenderTags(); return; }
+  const inst = (_lxdInstancesCache || []).find(i => i.name === _ciCurrentName);
+  const tags = ((inst && inst.tags) || []).slice();
+  if (tags.includes(name)) { _ciRenderTags(); return; }
+  if (tags.length >= 12) { showToast('Max 12 tags per instance', 'error'); _ciRenderTags(); return; }
+  tags.push(name);
+  _ciAddTagBusy = true;
+  await _ciSaveTags(tags);
+  _ciAddTagBusy = false;
+}
+async function _ciRemoveTag(name) {
+  const inst = (_lxdInstancesCache || []).find(i => i.name === _ciCurrentName);
+  const tags = ((inst && inst.tags) || []).filter(t => t !== name);
+  await _ciSaveTags(tags);
+}
+async function _ciSaveTags(tags) {
+  const name = _ciCurrentName;
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(name) + '/tags', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({tags})
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    // Update the cache entry in place, refresh registry (new tag colors), re-render.
+    const inst = (_lxdInstancesCache || []).find(i => i.name === name);
+    if (inst) inst.tags = (j && j.tags) || tags;
+    await _lxdLoadTagRegistry();
+    _ciRenderTags();
+    renderComputeNav(_lxdInstancesCache);
+    if (typeof _lxdRenderRows === 'function' && _lxdInstancesCache) _lxdRenderRows(_lxdInstancesCache);
+  } catch(e) {
+    showToast('Failed to save tags: ' + e.message, 'error');
+    _ciRenderTags();
+  }
+}
+
+// ---- recolor swatch popover ----
+let _tagSwatchEl = null;
+function _tagCloseSwatch() { if (_tagSwatchEl) { _tagSwatchEl.remove(); _tagSwatchEl = null; document.removeEventListener('mousedown', _tagSwatchOutside, true); } }
+function _tagSwatchOutside(e) { if (_tagSwatchEl && !_tagSwatchEl.contains(e.target)) _tagCloseSwatch(); }
+function _tagOpenSwatch(ev, name) {
+  ev.stopPropagation();
+  _tagCloseSwatch();
+  const pop = document.createElement('div');
+  pop.className = 'tag-swatch-pop';
+  pop.innerHTML = _TAG_PALETTE.map(c =>
+    `<span class="sw" style="background:${c};" onclick='_tagApplyColor(${JSON.stringify(name)}, ${JSON.stringify(c)})'></span>`
+  ).join('') + `<input type="color" value="${_tagColor(name)}" title="Custom color"
+      style="grid-column:1 / -1;width:100%;height:24px;border:none;background:none;cursor:pointer;"
+      onchange='_tagApplyColor(${JSON.stringify(name)}, this.value)'>`;
+  document.body.appendChild(pop);
+  const r = ev.currentTarget.getBoundingClientRect();
+  pop.style.left = Math.min(r.left, window.innerWidth - pop.offsetWidth - 12) + 'px';
+  pop.style.top = (r.bottom + 6) + 'px';
+  _tagSwatchEl = pop;
+  setTimeout(() => document.addEventListener('mousedown', _tagSwatchOutside, true), 0);
+}
+async function _tagApplyColor(name, color) {
+  _tagCloseSwatch();
+  try {
+    const r = await fetch('/api/incus/tags/' + encodeURIComponent(name) + '/color', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({color})
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const j = await r.json();
+    _lxdTagRegistry = (j && j.registry) || _lxdTagRegistry;
+    _ciRenderTags();
+    renderComputeNav(_lxdInstancesCache);
+    if (typeof _lxdRenderRows === 'function' && _lxdInstancesCache) _lxdRenderRows(_lxdInstancesCache);
+  } catch(e) {
+    showToast('Failed to recolor tag: ' + e.message, 'error');
   }
 }
 
@@ -37595,7 +37801,7 @@ function renderComputeNav(instances) {
   instances = (instances || []).filter(i => !((i.name || '').startsWith('bkup--')));
   const vmIcon = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75;"><path d="M0 4s0-2 2-2h12s2 0 2 2v6s0 2-2 2h-4c0 .667.083 1.167.25 1.5H11a.5.5 0 0 1 0 1H5a.5.5 0 0 1 0-1h.75c.167-.333.25-.833.25-1.5H2s-2 0-2-2V4zm1.398-.855a.758.758 0 0 0-.254.302A1.46 1.46 0 0 0 1 4.01V10c0 .325.078.502.145.602.07.105.17.188.302.254a1.464 1.464 0 0 0 .538.143L2.01 11H14c.325 0 .502-.078.602-.145a.758.758 0 0 0 .254-.302 1.464 1.464 0 0 0 .143-.538L15 9.99V4c0-.325-.078-.502-.145-.602a.757.757 0 0 0-.302-.254A1.46 1.46 0 0 0 13.99 3H2c-.325 0-.502.078-.602.145z"/></svg>`;
   const ctIcon = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.75;"><path d="M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5l2.404.961L10.404 2l-2.218-.887zm3.564 1.426L5.596 5 8 5.961 14.154 3.5l-2.404-.961zm3.25 1.7-6.5 2.6v7.922l6.5-2.6V4.24zM7.5 14.762V6.838L1 4.239v7.923l6.5 2.6zM7.443.184a1.5 1.5 0 0 1 1.114 0l7.129 2.852A.5.5 0 0 1 16 3.5v8.662a1 1 0 0 1-.629.928l-7.185 2.874a.5.5 0 0 1-.372 0L.63 13.09a1 1 0 0 1-.63-.928V3.5a.5.5 0 0 1 .314-.464L7.443.184z"/></svg>`;
-  el.innerHTML = instances.slice().sort(_byInstName).map(inst => {
+  const instBtn = (inst) => {
     const isVM = inst.type === 'virtual-machine';
     const statusColor = inst.status === 'Running' ? '#3fb950' : inst.status === 'Stopped' ? '#6e7681' : inst.status === 'Error' ? '#ff453a' : '#f0b429';
     const label = inst.description || inst.name;
@@ -37605,9 +37811,115 @@ function renderComputeNav(instances) {
         oncontextmenu='event.preventDefault();_navContextMenuFor(event,"compute",${JSON.stringify(inst.name)})'>
       ${isVM ? vmIcon : ctIcon}
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${esc(label)}</span>
+      ${_tagDotsHTML(inst.tags)}
       <span class="nav-dot" style="background:${statusColor};"></span>
     </button>`;
-  }).join('');
+  };
+
+  const mode = _lxdGroupingMode();
+  const collapsed = new Set(_lxdCollapsedGroups());
+  const sorted = instances.slice().sort(_byInstName);
+
+  // Render one collapsible group. swatch = optional color (By-Tag).
+  const groupHTML = (id, label, items, swatch) => {
+    if (!items.length) return '';
+    const isCol = collapsed.has(id);
+    // Every group row uses the same triangle. By-Tag rows tint it with the
+    // tag color (caret + dot merged); Untagged and By-Type rows leave it the
+    // theme text color (currentColor).
+    const head = `<span class="nav-group-tri${isCol ? '' : ' open'}"${swatch ? ` style="border-left-color:${swatch};"` : ''}></span>`;
+    return `<div class="nav-group-header" onclick='_lxdToggleGroup(${JSON.stringify(id)})'>
+        ${head}
+        <span class="nav-group-label">${esc(label)}</span>
+        <span class="nav-group-count">${items.length}</span>
+      </div>
+      <div class="nav-group-body${isCol ? ' collapsed' : ''}" id="nav-grp-${esc(id)}">
+        ${items.map(instBtn).join('')}
+      </div>`;
+  };
+
+  if (mode === 'type') {
+    const vms = sorted.filter(i => i.type === 'virtual-machine' && !i.is_compose);
+    const cts = sorted.filter(i => i.type === 'container' && !i.is_compose);
+    const comp = sorted.filter(i => i.is_compose);
+    el.innerHTML = groupHTML('type:vm', 'Virtual Machines', vms)
+      + groupHTML('type:ct', 'LXC Containers', cts)
+      + groupHTML('type:compose', 'Compose Stacks', comp);
+  } else if (mode === 'tag') {
+    const tagNames = new Set();
+    sorted.forEach(i => (i.tags || []).forEach(t => tagNames.add(t)));
+    let html = '';
+    Array.from(tagNames).sort().forEach(t => {
+      html += groupHTML('tag:' + t, t, sorted.filter(i => (i.tags || []).includes(t)), _tagColor(t));
+    });
+    const untagged = sorted.filter(i => !(i.tags && i.tags.length));
+    html += groupHTML('tag:__untagged', 'Untagged', untagged);
+    el.innerHTML = html;
+  } else {
+    el.innerHTML = sorted.map(instBtn).join('');
+  }
+}
+
+// ---- compute-tree grouping preference + collapse state ----
+function _lxdGroupingMode() {
+  const m = currentUser && currentUser.preferences && currentUser.preferences.lxd_grouping;
+  return (m === 'tag' || m === 'type') ? m : 'none';
+}
+function _lxdHostKey() {
+  // Mirror _capHostKey: "local" or the selected relay peer hostname.
+  try { if (typeof _capHostKey === 'function') return _capHostKey(); } catch(_) {}
+  return 'local';
+}
+function _lxdCollapsedGroups() {
+  const p = currentUser && currentUser.preferences && currentUser.preferences.lxd_group_collapsed;
+  return (p && Array.isArray(p[_lxdHostKey()])) ? p[_lxdHostKey()] : [];
+}
+function _lxdToggleGroup(id) {
+  const key = _lxdHostKey();
+  if (!currentUser.preferences) currentUser.preferences = {};
+  if (!currentUser.preferences.lxd_group_collapsed) currentUser.preferences.lxd_group_collapsed = {};
+  const map = currentUser.preferences.lxd_group_collapsed;
+  const cur = new Set(Array.isArray(map[key]) ? map[key] : []);
+  if (cur.has(id)) cur.delete(id); else cur.add(id);
+  map[key] = Array.from(cur);
+  // Toggle DOM in place (no full re-render) for snappiness.
+  const body = document.getElementById('nav-grp-' + id);
+  if (body) {
+    const isCol = cur.has(id);
+    body.classList.toggle('collapsed', isCol);
+    const hdr = body.previousElementSibling;
+    if (hdr) {
+      const c = hdr.querySelector('.nav-group-caret'); if (c) c.textContent = isCol ? '▸' : '▾';
+      const t = hdr.querySelector('.nav-group-tri'); if (t) t.classList.toggle('open', !isCol);
+    }
+  }
+  fetch('/api/prefs', {method:'PUT', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({lxd_group_collapsed: map})}).catch(()=>{});
+}
+// Shared setter for the User Settings dropdown and the right-click menu.
+function _lxdSetGrouping(mode) {
+  if (mode !== 'tag' && mode !== 'type') mode = 'none';
+  if (!currentUser.preferences) currentUser.preferences = {};
+  currentUser.preferences.lxd_grouping = mode;
+  const sel = document.getElementById('us-lxd-grouping');
+  if (sel) sel.value = mode;
+  renderComputeNav(_lxdInstancesCache);
+  fetch('/api/prefs', {method:'PUT', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({lxd_grouping: mode})}).catch(()=>{});
+}
+// Right-click the Compute root → quick grouping switcher.
+function _lxdComputeRootMenu(ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  const cur = _lxdGroupingMode();
+  const opt = (mode, label) => ({label: (cur === mode ? '✓ ' : '    ') + label, onclick: () => _lxdSetGrouping(mode)});
+  _ciCtxBuild(ev.clientX, ev.clientY, [
+    {kind:'header', label:'Group VMs & Containers by'},
+    opt('none', 'No Grouping'),
+    opt('tag', 'By Tag'),
+    opt('type', 'By Type'),
+  ], 'compute-root-group');
 }
 
 function switchToLXDTable() {
@@ -37697,6 +38009,9 @@ function openComputeInstance(name, type) {
   _ciConsoleCache = null;
   const _ciInst = (_lxdInstancesCache || []).find(i => i.name === name);
   document.getElementById('ci-title').textContent = (_ciInst && _ciInst.description) ? _ciInst.description : name;
+  _ciRenderTags();
+  // Ensure tag colors are current even when reached straight from the table.
+  if (!Object.keys(_lxdTagRegistry).length) _lxdLoadTagRegistry().then(() => _ciRenderTags());
   document.getElementById('ci-status-label').textContent = '—';
   _ciUpdateTerminalBtn((_ciInst && _ciInst.status) || '');
   const typeBadge = document.getElementById('ci-type-badge');
@@ -44209,6 +44524,7 @@ const _LXD_TOGGLE_COLS = [
   {id:'net',       label:'Net'},
   {id:'diskio',    label:'Disk-IO'},
   {id:'autostart', label:'Autostart'},
+  {id:'tags',      label:'Tags'},
 ];
 const _LXD_DEFAULT_COLS = _LXD_TOGGLE_COLS.map(c => c.id); // all on by default
 
@@ -44523,7 +44839,7 @@ function _lxdRenderRows(instances) {
   const hasImg = (instances || []).some(i => i.image);
   const imgTh = document.getElementById('lxd-main-th-image');
   if (imgTh) imgTh.style.display = hasImg ? '' : 'none';
-  const colCount = (hasImg ? 11 : 10) + 3;
+  const colCount = (hasImg ? 11 : 10) + 4;
   if (!instances || instances.length === 0) {
     tbody.innerHTML = `<tr><td colspan="${colCount}" style="text-align:center;color:var(--text-3);padding:32px;">No VMs or containers found.</td></tr>`;
     return;
@@ -44557,6 +44873,7 @@ function _lxdRenderRows(instances) {
       ${_lxdMetricTd('diskio', inst.name)}
       <td data-col="status" style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
       <td data-col="autostart" style="text-align:center;">${inst.autostart ? '<span style="color:#3fb950;font-size:13px;font-weight:600;">&#x2714;</span>' : '<span style="color:var(--text-3);font-size:13px;">&#x2014;</span>'}</td>
+      <td data-col="tags">${(inst.tags && inst.tags.length) ? `<span class="tag-cell-pills">${inst.tags.map(t => _tagPillHTML(t, {})).join('')}</span>` : '<span style="color:var(--text-3);">—</span>'}</td>
       <td data-col="actions" class="lxd-row-actions" onclick="event.stopPropagation()"><span class="lxd-tbl-icon${inst.status !== 'Running' ? ' lxd-tbl-icon-busy' : ''}" title="${inst.status !== 'Running' ? 'Instance must be running' : 'Terminal'}" ${inst.status !== 'Running' ? '' : `onclick='toggleLXDTermMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'`}><span style="font-size:16px;">🖥️</span></span><span style="cursor:pointer;padding:4px 4px;color:var(--text-2);font-size:18px;line-height:1;" title="Actions"
         onclick='toggleLXDBurger(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})'>&#x22EE;</span></td>
     </tr>`;
@@ -54830,21 +55147,53 @@ document.addEventListener('DOMContentLoaded', () => {
   applyCompactHeader(enabled);
 });
 
+// Best-effort "is virtualization available" hint that's reliable the instant
+// the modal opens. The authoritative flag `_lxdAvailable` is only set after
+// initLXD()'s async /api/incus/status resolves, so right after a fresh login
+// it's still false — opening User Settings then would wrongly blank an "lxd"
+// landing page and hide the grouping dropdown (looked like "all settings
+// reset to default"). We OR in window._lxdAvailable (set earlier from
+// /api/version) and the localStorage cache (persists across logout/login,
+// available synchronously) so the modal never reads a transient false.
+function _lxdAvailableHint() {
+  if (_lxdAvailable || window._lxdAvailable) return true;
+  try { return localStorage.getItem('zfsnas_lxd_available') === '1'; } catch (_) { return false; }
+}
+
 function openUserSettingsModal() {
   const prefs = (currentUser && currentUser.preferences) || {};
-  const lp = document.getElementById('us-landing-page');
-  const td = document.getElementById('us-theme-day');
-  const tn = document.getElementById('us-theme-night');
-  if (lp) {
-    // Hide LXD-dependent pages when LXD is not available.
-    if (!_lxdAvailable) _hideLXDLandingOptions();
-    // If saved preference is for a now-unavailable page, reset to blank.
-    const savedVal = prefs.landing_page || '';
-    lp.value = (!_lxdAvailable && ['lxd','lxd-networks'].includes(savedVal)) ? '' : savedVal;
-  }
-  if (td) td.value = prefs.theme_day || '';
-  if (tn) tn.value = prefs.theme_night || '';
+  const lxdAvail = _lxdAvailableHint();
+  const gg = document.getElementById('us-grouping-group');
+  if (gg) gg.style.display = lxdAvail ? '' : 'none';
+  // Reveal the modal first.
   document.getElementById('modal-user-settings').classList.remove('hidden');
+  // Assign the <select> values on the NEXT animation frame, after the modal has
+  // had a full layout+paint cycle. Chromium paints a <select> that was first
+  // laid out inside a display:none modal with its DEFAULT option, and assigning
+  // .value in the same task (even after removing .hidden + forcing layout) does
+  // not repaint the collapsed label — the correct option only shows bold once
+  // the dropdown is opened. Setting the value once the control is already
+  // painted triggers the value-change repaint reliably across browsers.
+  requestAnimationFrame(() => {
+    const lp = document.getElementById('us-landing-page');
+    const td = document.getElementById('us-theme-day');
+    const tn = document.getElementById('us-theme-night');
+    if (lp) {
+      // Toggle LXD-dependent options by availability — must also UN-hide them
+      // when virt is available, since _hideLXDLandingOptions() never reverts and
+      // a hidden-but-selected option can't render in the closed select.
+      ['lxd', 'lxd-networks'].forEach(val => {
+        const opt = lp.querySelector(`option[value="${val}"]`);
+        if (opt) opt.hidden = !lxdAvail;
+      });
+      const savedVal = prefs.landing_page || '';
+      lp.value = (!lxdAvail && ['lxd','lxd-networks'].includes(savedVal)) ? '' : savedVal;
+    }
+    if (td) td.value = prefs.theme_day || '';
+    if (tn) tn.value = prefs.theme_night || '';
+    const gs = document.getElementById('us-lxd-grouping');
+    if (gs) gs.value = _lxdGroupingMode();
+  });
 }
 
 async function saveUserSettings() {
@@ -55389,6 +55738,7 @@ async function loadBridgeMembers() {
         ${_lxdMetricTd('net', m.name)}
         ${_lxdMetricTd('diskio', m.name)}
         <td data-col="status" style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
+        ${_tagCellHTML(m.tags)}
         ${actionsCell}
       </tr>`;
     }).join('');
@@ -55930,6 +56280,7 @@ async function loadDatastoreMembers() {
         ${_lxdMetricTd('net', m.name)}
         ${_lxdMetricTd('diskio', m.name)}
         <td data-col="status" style="text-align:center;" onclick="event.stopPropagation()">${powerBtn}</td>
+        ${_tagCellHTML(m.tags)}
         ${actionsCell}
       </tr>`;
     }).join('');
