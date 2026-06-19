@@ -194,6 +194,7 @@ For the full security model, sudo hardening guide, TLS configuration, and authen
 ---
 ## Important Contributors
   - Memeticsoup
+  - Exultantliving0
 
 ## License
 
