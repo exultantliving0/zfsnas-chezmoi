@@ -3386,6 +3386,20 @@
                     <button type="button" class="btn btn-ghost btn-sm" onclick="_ctNic0AddPFwd()"
                       style="font-size:12px;padding:2px 10px;margin-top:6px;">+ Add Port Forward</button>
                   </div>
+                  <!-- Static routes (collapsed sub-section) -->
+                  <div style="margin-top:12px;">
+                    <div onclick="_ctNic0ToggleRoutes()" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;user-select:none;">
+                      <span id="lxd-ct-nic0-routes-chev" style="font-size:10px;display:inline-block;transition:transform .15s;">▶</span>
+                      Static Routes
+                      <span style="color:var(--text-3);font-size:11px;font-weight:400;">(extra IPv4 routes)</span>
+                      <i class="info-tip" data-tip="Additional static IPv4 routes written into the container's network config. Each route sends traffic for a destination subnet (CIDR, e.g. 192.168.5.0/24) via a gateway."></i>
+                    </div>
+                    <div id="lxd-ct-nic0-routes-body" style="display:none;margin-top:8px;">
+                      <div id="lxd-ct-nic0-routes-list"></div>
+                      <button type="button" class="btn btn-ghost btn-sm" onclick="_ctNic0AddRoute()"
+                        style="font-size:12px;padding:2px 10px;margin-top:6px;">+ Add Route</button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -45199,6 +45213,28 @@ function lxdEditRenderNICs() {
         </div>`;
     }
 
+    // Static routes block (container NICs only) — a collapsed sub-section
+    // the operator can expand to add/remove extra IPv4 routes for this
+    // interface. Auto-expanded when routes already exist so they're visible.
+    let routesHTML = '';
+    if (!_lxdEditIsVM) {
+      const routesOpen = (nic.routes || []).length > 0;
+      routesHTML = `
+        <div style="margin-top:10px;">
+          <div onclick="_editNicToggleRoutes(${i})" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;user-select:none;">
+            <span id="lxd-edit-nic-routes-chev-${i}" style="font-size:10px;display:inline-block;transition:transform .15s;${routesOpen?'transform:rotate(90deg);':''}">▶</span>
+            Static Routes
+            <span style="color:var(--text-3);font-size:11px;font-weight:400;">(extra IPv4 routes)</span>
+            <i class="info-tip" data-tip="Additional static IPv4 routes written into the container's network config. Each route sends traffic for a destination subnet (CIDR, e.g. 192.168.5.0/24) via a gateway. Applied on Save."></i>
+          </div>
+          <div id="lxd-edit-nic-routes-body-${i}" style="display:${routesOpen?'':'none'};margin-top:8px;">
+            <div id="lxd-edit-nic-routes-list-${i}"></div>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="_editNicAddRoute(${i})"
+              style="font-size:12px;padding:2px 10px;margin-top:6px;">+ Add Route</button>
+          </div>
+        </div>`;
+    }
+
     // Port forwards block — visible only on host-nat (where the instance
     // has a private IP and forwarding from the host is meaningful).
     const showPFwd = nic.bridge === 'host-nat';
@@ -45236,10 +45272,12 @@ function lxdEditRenderNICs() {
           </div>
         </div>
         ${ipHTML}
+        ${routesHTML}
         ${pfwdHTML}
       </div>`;
     c.appendChild(section);
     _editNicRenderPFwds(i);
+    _editNicRenderRoutes(i);
   });
 
   // Update NIC section summary
@@ -45300,6 +45338,49 @@ function _editNicRenderPFwds(i) {
       </div>`).join('');
 }
 
+// ── Edit modal: per-NIC static routes ──────────────────────────────────
+function _editNicToggleRoutes(i) {
+  const body = document.getElementById('lxd-edit-nic-routes-body-' + i);
+  const chev = document.getElementById('lxd-edit-nic-routes-chev-' + i);
+  if (!body) return;
+  const show = body.style.display === 'none';
+  body.style.display = show ? '' : 'none';
+  if (chev) chev.style.transform = show ? 'rotate(90deg)' : '';
+}
+function _editNicAddRoute(i) {
+  if (!_lxdEditNICs[i].routes) _lxdEditNICs[i].routes = [];
+  _lxdEditNICs[i].routes.push({to:'', via:''});
+  _editNicRenderRoutes(i);
+}
+function _editNicRemoveRoute(i, idx) {
+  if (!_lxdEditNICs[i] || !_lxdEditNICs[i].routes) return;
+  _lxdEditNICs[i].routes.splice(idx, 1);
+  _editNicRenderRoutes(i);
+}
+function _editNicRouteEdit(i, idx, key, val) {
+  if (!_lxdEditNICs[i] || !_lxdEditNICs[i].routes[idx]) return;
+  _lxdEditNICs[i].routes[idx][key] = val;
+}
+function _editNicRenderRoutes(i) {
+  const box = document.getElementById('lxd-edit-nic-routes-list-' + i);
+  if (!box) return;
+  const list = (_lxdEditNICs[i] && _lxdEditNICs[i].routes) || [];
+  if (list.length === 0) {
+    box.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:4px 0;">No static routes. Use + Add to route a subnet via a gateway.</div>';
+    return;
+  }
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 30px;gap:8px;align-items:end;font-size:11px;color:var(--text-3);margin-bottom:4px;">
+      <div>Destination (CIDR)</div><div>Gateway (via)</div><div></div>
+    </div>` +
+    list.map((r, idx) => `
+      <div style="display:grid;grid-template-columns:1fr 1fr 30px;gap:8px;margin-bottom:6px;">
+        <input type="text" class="input" placeholder="192.168.5.0/24" value="${esc(String(r.to||''))}"  oninput="_editNicRouteEdit(${i},${idx},'to',this.value)">
+        <input type="text" class="input" placeholder="10.0.0.1"        value="${esc(String(r.via||''))}" oninput="_editNicRouteEdit(${i},${idx},'via',this.value)">
+        <button type="button" onclick="_editNicRemoveRoute(${i},${idx})" title="Remove" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:0;">✕</button>
+      </div>`).join('');
+}
+
 function _editNicToggleStatic(i) {
   const sel = document.getElementById('lxd-edit-nic-ipv4mode-' + i);
   if (!sel) return;
@@ -45318,6 +45399,7 @@ function lxdEditAddNIC() {
     nictype: (_lxdAvailBridges.managed || []).includes(defaultBridge) ? 'network' : 'bridged',
     vlan_id: 0, from_profile: false, _origBridge: '', _new: true, _deleted: false,
     ipv4_mode: '', ipv4_addr: '', ipv4_gw: '', dns1: '', dns2: '',
+    routes: [], _origRoutes: [],
     port_forwards: [], _origPortForwards: []});
   lxdEditRenderNICs();
 }
@@ -46053,6 +46135,9 @@ async function openLXDEditModal(name, type) {
       // submit handler can compute add/remove diffs against the live config.
       port_forwards: (n.port_forwards || []).map(f => ({src: String(f.source_port||''), dst: String(f.target_port||''), proto: (f.protocol||'tcp').toLowerCase()})),
       _origPortForwards: JSON.parse(JSON.stringify(n.port_forwards || [])),
+      // Extra static IPv4 routes read back from the container's network config.
+      routes: (n.routes || []).map(r => ({to: r.to || '', via: r.via || ''})),
+      _origRoutes: JSON.parse(JSON.stringify(n.routes || [])),
     }));
     _lxdEditDisks = (cfg.disks || []).map(d => ({...d, path: d.mount_path || '', _new: false, _deleted: false}));
     _lxdEditBindMounts = (cfg.bind_mounts || []).map(b => ({...b}));
@@ -46145,9 +46230,24 @@ async function submitLXDEdit() {
     for (let i=0; i<sa.length; i++) if (sa[i] !== sb[i]) return true;
     return false;
   };
-  // Collect NICs: include instance-level ones + profile NICs whose bridge, connection, or port forwards changed
+  // Detect whether a NIC's static-route set differs from the loaded state,
+  // so profile NICs with only route changes still get sent for the backend
+  // to re-apply.
+  const _routesChanged = (n) => {
+    const norm = (arr, tk, vk) => (arr || [])
+      .map(r => ({to:(r[tk]||'').trim(), via:(r[vk]||'').trim()}))
+      .filter(r => r.to && r.via);
+    const a = norm(n.routes, 'to', 'via');
+    const b = norm(n._origRoutes, 'to', 'via');
+    if (a.length !== b.length) return true;
+    const key = (r) => r.to+'/'+r.via;
+    const sa = a.map(key).sort(), sb = b.map(key).sort();
+    for (let i=0; i<sa.length; i++) if (sa[i] !== sb[i]) return true;
+    return false;
+  };
+  // Collect NICs: include instance-level ones + profile NICs whose bridge, connection, port forwards, or routes changed
   const nics = _lxdEditNICs
-    .filter(n => !n._deleted && (!n.from_profile || n.bridge !== n._origBridge || n.connected !== n._origConnected || _pfwdChanged(n)))
+    .filter(n => !n._deleted && (!n.from_profile || n.bridge !== n._origBridge || n.connected !== n._origConnected || _pfwdChanged(n) || _routesChanged(n)))
     .map(n => ({
       name: n.name,
       bridge: n.bridge,
@@ -46160,6 +46260,11 @@ async function submitLXDEdit() {
       ipv4_gw:   n.ipv4_gw  || '',
       dns1:      n.dns1     || '',
       dns2:      n.dns2     || '',
+      // Send routes (even when empty) so the backend can drop ones the user
+      // removed. Only complete to/via pairs are folded in.
+      routes: (n.routes || [])
+        .map(r => ({to: (r.to||'').trim(), via: (r.via||'').trim()}))
+        .filter(r => r.to && r.via),
       // Always send port_forwards (even when empty) so backend can drop
       // ones the user removed. Only fold-in entries where both ports are
       // sensible numbers.
@@ -48542,6 +48647,47 @@ function _ctNic0RenderPFwds() {
       </div>`).join('');
 }
 
+// ── NIC0 static routes state + rendering (container modal) ────────────────
+let _lxdCTNic0Routes = []; // [{to,via}]
+function _ctNic0ToggleRoutes() {
+  const body = document.getElementById('lxd-ct-nic0-routes-body');
+  const chev = document.getElementById('lxd-ct-nic0-routes-chev');
+  if (!body) return;
+  const show = body.style.display === 'none';
+  body.style.display = show ? '' : 'none';
+  if (chev) chev.style.transform = show ? 'rotate(90deg)' : '';
+}
+function _ctNic0AddRoute() {
+  _lxdCTNic0Routes.push({ to: '', via: '' });
+  _ctNic0RenderRoutes();
+}
+function _ctNic0RemoveRoute(i) {
+  _lxdCTNic0Routes.splice(i, 1);
+  _ctNic0RenderRoutes();
+}
+function _ctNic0RouteEdit(i, key, val) {
+  if (!_lxdCTNic0Routes[i]) return;
+  _lxdCTNic0Routes[i][key] = val;
+}
+function _ctNic0RenderRoutes() {
+  const box = document.getElementById('lxd-ct-nic0-routes-list');
+  if (!box) return;
+  if (_lxdCTNic0Routes.length === 0) {
+    box.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:4px 0;">No static routes. Use + Add to route a subnet via a gateway.</div>';
+    return;
+  }
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 30px;gap:8px;align-items:end;font-size:11px;color:var(--text-3);margin-bottom:4px;">
+      <div>Destination (CIDR)</div><div>Gateway (via)</div><div></div>
+    </div>` +
+    _lxdCTNic0Routes.map((r, i) => `
+      <div style="display:grid;grid-template-columns:1fr 1fr 30px;gap:8px;margin-bottom:6px;">
+        <input type="text" class="input" placeholder="192.168.5.0/24" value="${esc(String(r.to||''))}"  oninput="_ctNic0RouteEdit(${i},'to',this.value)">
+        <input type="text" class="input" placeholder="10.0.0.1"        value="${esc(String(r.via||''))}" oninput="_ctNic0RouteEdit(${i},'via',this.value)">
+        <button type="button" onclick="_ctNic0RemoveRoute(${i})" title="Remove" style="background:none;border:none;cursor:pointer;color:var(--accent-danger);font-size:16px;line-height:1;padding:0;">✕</button>
+      </div>`).join('');
+}
+
 function _editHwSyncResources() {
   const cpu = document.getElementById('lxd-edit-cpu').value || '—';
   const _memV = document.getElementById('lxd-edit-memory').value;
@@ -49710,6 +49856,12 @@ async function openNewContainerModal(opts) {
   document.getElementById('lxd-ct-nic0-gw').value         = '';
   document.getElementById('lxd-ct-nic0-ipv4mode').value   = 'dhcp';
   document.getElementById('lxd-ct-nic0-static-rows').style.display = 'none';
+  _lxdCTNic0Routes = [];
+  const _ctRoutesBody = document.getElementById('lxd-ct-nic0-routes-body');
+  if (_ctRoutesBody) _ctRoutesBody.style.display = 'none';
+  const _ctRoutesChev = document.getElementById('lxd-ct-nic0-routes-chev');
+  if (_ctRoutesChev) _ctRoutesChev.style.transform = '';
+  _ctNic0RenderRoutes();
   document.getElementById('lxd-ct-nics').innerHTML        = '';
   document.getElementById('lxd-ct-devices').innerHTML     = '';
   document.getElementById('lxd-ct-alert').classList.add('hidden');
@@ -49785,6 +49937,7 @@ async function openNewContainerModal(opts) {
   csRefresh('lxd-ct-nic0-bridge');
   _ctNic0BridgeChange();
   _ctNic0RenderPFwds();
+  _ctNic0RenderRoutes();
 
   // Load image source dropdown and auto-load local images
   await loadLXDImageSources('lxd-ct-image-source', 'lxd-ct-image', 'container');
@@ -50130,6 +50283,11 @@ async function submitCreateContainer(e) {
         .filter(f => f.source_port > 0 && f.target_port > 0);
       if (forwards.length) nic0.port_forwards = forwards;
     }
+    // Extra static IPv4 routes for this interface.
+    const routes = _lxdCTNic0Routes
+      .map(r => ({ to: (r.to||'').trim(), via: (r.via||'').trim() }))
+      .filter(r => r.to && r.via);
+    if (routes.length) nic0.routes = routes;
     allNICs.push(nic0);
   }
   allNICs.push(..._lxdCTNICs);
@@ -55163,37 +55321,37 @@ function _lxdAvailableHint() {
 function openUserSettingsModal() {
   const prefs = (currentUser && currentUser.preferences) || {};
   const lxdAvail = _lxdAvailableHint();
+  const lp = document.getElementById('us-landing-page');
+  const td = document.getElementById('us-theme-day');
+  const tn = document.getElementById('us-theme-night');
+  if (lp) {
+    // Toggle LXD-dependent options by availability — must also UN-hide them
+    // when virt is available, since _hideLXDLandingOptions() never reverts and
+    // a hidden-but-selected option can't be shown.
+    ['lxd', 'lxd-networks'].forEach(val => {
+      const opt = lp.querySelector(`option[value="${val}"]`);
+      if (opt) opt.hidden = !lxdAvail;
+    });
+    const savedVal = prefs.landing_page || '';
+    lp.value = (!lxdAvail && ['lxd','lxd-networks'].includes(savedVal)) ? '' : savedVal;
+  }
+  if (td) td.value = prefs.theme_day || '';
+  if (tn) tn.value = prefs.theme_night || '';
+  // Grouping dropdown — only meaningful when virtualization is available.
   const gg = document.getElementById('us-grouping-group');
+  const gs = document.getElementById('us-lxd-grouping');
   if (gg) gg.style.display = lxdAvail ? '' : 'none';
-  // Reveal the modal first.
-  document.getElementById('modal-user-settings').classList.remove('hidden');
-  // Assign the <select> values on the NEXT animation frame, after the modal has
-  // had a full layout+paint cycle. Chromium paints a <select> that was first
-  // laid out inside a display:none modal with its DEFAULT option, and assigning
-  // .value in the same task (even after removing .hidden + forcing layout) does
-  // not repaint the collapsed label — the correct option only shows bold once
-  // the dropdown is opened. Setting the value once the control is already
-  // painted triggers the value-change repaint reliably across browsers.
-  requestAnimationFrame(() => {
-    const lp = document.getElementById('us-landing-page');
-    const td = document.getElementById('us-theme-day');
-    const tn = document.getElementById('us-theme-night');
-    if (lp) {
-      // Toggle LXD-dependent options by availability — must also UN-hide them
-      // when virt is available, since _hideLXDLandingOptions() never reverts and
-      // a hidden-but-selected option can't render in the closed select.
-      ['lxd', 'lxd-networks'].forEach(val => {
-        const opt = lp.querySelector(`option[value="${val}"]`);
-        if (opt) opt.hidden = !lxdAvail;
-      });
-      const savedVal = prefs.landing_page || '';
-      lp.value = (!lxdAvail && ['lxd','lxd-networks'].includes(savedVal)) ? '' : savedVal;
-    }
-    if (td) td.value = prefs.theme_day || '';
-    if (tn) tn.value = prefs.theme_night || '';
-    const gs = document.getElementById('us-lxd-grouping');
-    if (gs) gs.value = _lxdGroupingMode();
+  if (gs) gs.value = _lxdGroupingMode();
+  // These <select>s are wrapped by the custom-select widget (initCustomSelect),
+  // which hides the native control and renders its own trigger label. Setting
+  // .value programmatically updates the hidden native select but NOT the custom
+  // label, so the closed dropdown keeps showing the default until re-synced.
+  // csRefresh() rebuilds the trigger label from the current selectedIndex; it's
+  // a safe no-op for any select not (yet) wrapped.
+  ['us-landing-page', 'us-theme-day', 'us-theme-night', 'us-lxd-grouping'].forEach(id => {
+    if (typeof csRefresh === 'function') csRefresh(id);
   });
+  document.getElementById('modal-user-settings').classList.remove('hidden');
 }
 
 async function saveUserSettings() {

@@ -411,10 +411,23 @@ type LXDNIC struct {
 	IPv4GW     string `json:"ipv4_gw,omitempty"`   // gateway IP
 	DNS1       string `json:"dns1,omitempty"`      // primary DNS (static mode only)
 	DNS2       string `json:"dns2,omitempty"`      // secondary DNS (static mode only)
+	// Routes are extra static IPv4 routes written into the container's
+	// persistent network config alongside the address/default-gateway.
+	// Applied for both static and dhcp modes (container NICs only).
+	Routes []LXDStaticRoute `json:"routes,omitempty"`
 	// PortForwards exposes ports on the host that proxy into this NIC's
 	// instance. Used primarily when Network is host-nat (so external clients
 	// can reach a service on a NAT'd instance), but accepted on any NIC.
 	PortForwards []NICPortForward `json:"port_forwards,omitempty"`
+}
+
+// LXDStaticRoute is one extra static IPv4 route for a container NIC: send
+// traffic destined for To (a CIDR like "192.168.5.0/24", or "default") out
+// via the gateway Via. Written into the same persistent network config
+// (netplan / systemd-networkd / ifupdown) as the interface address.
+type LXDStaticRoute struct {
+	To  string `json:"to"`  // destination CIDR, e.g. "192.168.5.0/24"
+	Via string `json:"via"` // gateway IP, e.g. "10.0.0.1"
 }
 
 // NICPortForward represents one host→instance port mapping. Implemented as
@@ -1828,6 +1841,9 @@ type LXDNICConfig struct {
 	IPv4GW      string `json:"ipv4_gw,omitempty"`    // gateway IP
 	DNS1        string `json:"dns1,omitempty"`       // primary DNS (static only)
 	DNS2        string `json:"dns2,omitempty"`       // secondary DNS (static only)
+	// Routes is the live list of extra static IPv4 routes read back from
+	// the container's persistent network config (container NICs only).
+	Routes []LXDStaticRoute `json:"routes,omitempty"`
 	// PortForwards is the live list of host→instance forwards attached to
 	// this NIC. Built by scanning the instance's `proxy` devices that ZNAS
 	// installs at create time and matching their listen/connect specs to
@@ -2960,12 +2976,13 @@ func LXDGetConfig(name string) (LXDInstanceConfig, error) {
 			// missing files (NIC never touched by ZNAS) leave the fields
 			// blank, which is the right default for the dropdown.
 			if raw.Type != "virtual-machine" {
-				m, a, g, d1, d2 := _readNICPersistentConfig(name, devName)
+				m, a, g, d1, d2, rt := _readNICPersistentConfig(name, devName)
 				n.IPv4Mode = m
 				n.IPv4Addr = a
 				n.IPv4GW = g
 				n.DNS1 = d1
 				n.DNS2 = d2
+				n.Routes = rt
 			}
 			cfg.NICs = append(cfg.NICs, n)
 		case "disk":
@@ -3989,7 +4006,7 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 					if nic.IPv4Addr == "" {
 						continue
 					}
-					n := LXDNIC{IPv4Mode: "static", IPv4Addr: nic.IPv4Addr, IPv4GW: nic.IPv4GW, DNS1: nic.DNS1, DNS2: nic.DNS2}
+					n := LXDNIC{IPv4Mode: "static", IPv4Addr: nic.IPv4Addr, IPv4GW: nic.IPv4GW, DNS1: nic.DNS1, DNS2: nic.DNS2, Routes: nic.Routes}
 					_pushNICPersistentConfig(name, nic.Name, n)
 					if isRunning {
 						_applyStaticIPCommands(name, nic.Name, n)
@@ -3997,10 +4014,11 @@ func LXDSetConfig(name string, cfg LXDInstanceConfig) error {
 					staticNICs = append(staticNICs, n)
 					changedDevs = append(changedDevs, nic.Name)
 				case "dhcp":
-					n := LXDNIC{IPv4Mode: "dhcp"}
+					n := LXDNIC{IPv4Mode: "dhcp", Routes: nic.Routes}
 					_pushNICPersistentConfig(name, nic.Name, n)
 					if isRunning {
 						_applyDHCPRuntime(name, nic.Name, changedDevs)
+						_applyStaticRoutes(name, n.Routes)
 					}
 					changedDevs = append(changedDevs, nic.Name)
 				}
@@ -5557,6 +5575,13 @@ func LXDCreateContainer(req LXDCreateContainerRequest, logCh chan<- string) erro
 		} else if nic.IPv4Mode == "dhcp" {
 			log("Pre-configuring DHCP for " + devName + "…")
 			_pushNICPersistentConfig(req.Name, devName, nic)
+		} else if len(nic.Routes) > 0 {
+			// Routes added without an explicit address mode: keep the image's
+			// default DHCP behaviour but write a config file so the routes
+			// persist (otherwise there's nowhere to record them).
+			log("Pre-configuring static routes for " + devName + "…")
+			nic.IPv4Mode = "dhcp"
+			_pushNICPersistentConfig(req.Name, devName, nic)
 		}
 
 		// Attach host→instance port-forward proxy devices. Idempotent at
@@ -6838,9 +6863,6 @@ func _pushNICPersistentConfig(ctName, devName string, nic LXDNIC) {
 			// the netplan parser on some container images, so always emit the
 			// dash-list shape.
 			y.WriteString("      addresses:\n        - " + nic.IPv4Addr + "\n")
-			if nic.IPv4GW != "" {
-				y.WriteString("      routes:\n        - to: default\n          via: " + nic.IPv4GW + "\n")
-			}
 			if nic.DNS1 != "" || nic.DNS2 != "" {
 				y.WriteString("      nameservers:\n        addresses:\n")
 				if nic.DNS1 != "" {
@@ -6849,6 +6871,26 @@ func _pushNICPersistentConfig(ctName, devName string, nic LXDNIC) {
 				if nic.DNS2 != "" {
 					y.WriteString("          - " + nic.DNS2 + "\n")
 				}
+			}
+		}
+		// Routes block: the default route (static + gateway) plus any extra
+		// static routes the operator added. Emitted for both modes — extra
+		// routes are valid on a DHCP interface too.
+		var routeLines []string
+		if nic.IPv4Mode == "static" && nic.IPv4GW != "" {
+			routeLines = append(routeLines, "        - to: default\n          via: "+nic.IPv4GW+"\n")
+		}
+		for _, r := range nic.Routes {
+			to, via := strings.TrimSpace(r.To), strings.TrimSpace(r.Via)
+			if to == "" || via == "" {
+				continue
+			}
+			routeLines = append(routeLines, "        - to: "+to+"\n          via: "+via+"\n")
+		}
+		if len(routeLines) > 0 {
+			y.WriteString("      routes:\n")
+			for _, l := range routeLines {
+				y.WriteString(l)
 			}
 		}
 		cmd := exec.Command("incus", "file", "push", "--mode=0600", "--create-dirs", "-",
@@ -6878,6 +6920,15 @@ func _pushNICPersistentConfig(ctName, devName string, nic LXDNIC) {
 			nd.WriteString("DNS=" + nic.DNS2 + "\n")
 		}
 	}
+	// Extra static routes as discrete [Route] sections (the default gateway
+	// for static mode is already the [Network] Gateway= above).
+	for _, r := range nic.Routes {
+		to, via := strings.TrimSpace(r.To), strings.TrimSpace(r.Via)
+		if to == "" || via == "" {
+			continue
+		}
+		nd.WriteString("\n[Route]\nDestination=" + to + "\nGateway=" + via + "\n")
+	}
 	cmd := exec.Command("incus", "file", "push", "--mode=0644", "--create-dirs", "-",
 		ctName+"/etc/systemd/network/"+devName+".network")
 	cmd.Stdin = strings.NewReader(nd.String())
@@ -6895,6 +6946,16 @@ func _pushNICPersistentConfig(ctName, devName string, nic LXDNIC) {
 		if nic.IPv4GW != "" {
 			ifd.WriteString("    gateway " + nic.IPv4GW + "\n")
 		}
+	}
+	// Extra static routes via post-up hooks (work in both dhcp and static
+	// stanzas). `|| true` keeps ifup from failing the whole interface if a
+	// route already exists or its gateway is momentarily unreachable.
+	for _, r := range nic.Routes {
+		to, via := strings.TrimSpace(r.To), strings.TrimSpace(r.Via)
+		if to == "" || via == "" {
+			continue
+		}
+		ifd.WriteString("    post-up ip route add " + to + " via " + via + " || true\n")
 	}
 	cmd2 := exec.Command("incus", "file", "push", "--mode=0644", "--create-dirs", "-",
 		ctName+"/etc/network/interfaces.d/"+devName)
@@ -6917,7 +6978,7 @@ func _pushNICPersistentConfig(ctName, devName string, nic LXDNIC) {
 // default DHCP, or was configured outside ZNAS). The frontend then shows
 // the mode dropdown unselected so the user makes an explicit choice on
 // save instead of us guessing.
-func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns2 string) {
+func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns2 string, routes []LXDStaticRoute) {
 	// Try netplan first — that's the source of truth on Ubuntu.
 	if y, _ := lxdReadFileInside(ctName, "/etc/netplan/99-znas-"+devName+".yaml"); y != "" {
 		if strings.Contains(y, "dhcp4: true") {
@@ -6934,21 +6995,15 @@ func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns
 				addr = strings.TrimSpace(rest[:j])
 			}
 		}
-		// "via: <ip>" appears on the default-route line we emit under routes.
-		if i := strings.Index(y, "via: "); i >= 0 {
-			line := y[i+len("via: "):]
-			if j := strings.IndexAny(line, "\r\n"); j > 0 {
-				line = line[:j]
-			}
-			gw = strings.TrimSpace(line)
-		}
 		// Section-aware scan for the block-sequence form we now emit. The
 		// interface address and the nameserver addresses are BOTH "- <ip>"
 		// list items, so we must track which block we're in: the interface
-		// `addresses:` key comes before `nameservers:`. Route items like
-		// "- to: default" contain a space and are skipped by the no-space check.
+		// `addresses:` key comes before `nameservers:`. The `routes:` block
+		// holds "- to: <dest>" / "via: <gw>" pairs — "to: default" maps to
+		// the default gateway, everything else to an extra static route.
 		var dnsList []string
-		inNameservers, inAddrBlock := false, false
+		var pendingTo string
+		inNameservers, inAddrBlock, inRoutes := false, false, false
 		for _, ln := range strings.Split(y, "\n") {
 			t := strings.TrimSpace(ln)
 			if t == "" {
@@ -6956,13 +7011,34 @@ func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns
 			}
 			switch {
 			case t == "nameservers:":
-				inNameservers, inAddrBlock = true, false
+				inNameservers, inAddrBlock, inRoutes = true, false, false
+				continue
+			case t == "routes:":
+				inRoutes, inNameservers, inAddrBlock = true, false, false
 				continue
 			case !inNameservers && t == "addresses:":
 				inAddrBlock = true
 				continue
 			case inNameservers && t == "addresses:":
 				continue // the nameservers' own addresses sub-key
+			}
+			if inRoutes {
+				if strings.HasPrefix(t, "- to:") {
+					pendingTo = strings.TrimSpace(strings.TrimPrefix(t, "- to:"))
+					continue
+				}
+				if strings.HasPrefix(t, "via:") {
+					v := strings.TrimSpace(strings.TrimPrefix(t, "via:"))
+					if pendingTo == "default" {
+						gw = v
+					} else if pendingTo != "" && v != "" {
+						routes = append(routes, LXDStaticRoute{To: pendingTo, Via: v})
+					}
+					pendingTo = ""
+					continue
+				}
+				// Any other key ends the routes block.
+				inRoutes = false
 			}
 			if strings.HasPrefix(t, "- ") {
 				v := strings.TrimSpace(strings.TrimPrefix(t, "-"))
@@ -6996,8 +7072,24 @@ func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns
 	// Fall back to systemd-networkd .network (non-Ubuntu).
 	if nd, _ := lxdReadFileInside(ctName, "/etc/systemd/network/"+devName+".network"); nd != "" {
 		var dnsList []string
+		// Track the current INI section: Gateway= means the default gateway
+		// inside [Network] but an extra route's gateway inside [Route]. A
+		// [Route] block carries one Destination= + Gateway= pair.
+		section := ""
+		var curTo, curVia string
+		flushRoute := func() {
+			if curTo != "" && curVia != "" {
+				routes = append(routes, LXDStaticRoute{To: curTo, Via: curVia})
+			}
+			curTo, curVia = "", ""
+		}
 		for _, ln := range strings.Split(nd, "\n") {
 			t := strings.TrimSpace(ln)
+			if strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]") {
+				flushRoute()
+				section = t
+				continue
+			}
 			switch {
 			case t == "DHCP=ipv4" || t == "DHCP=yes" || t == "DHCP=true":
 				mode = "dhcp"
@@ -7010,12 +7102,20 @@ func _readNICPersistentConfig(ctName, devName string) (mode, addr, gw, dns1, dns
 				if mode == "" {
 					mode = "static"
 				}
+			case strings.HasPrefix(t, "Destination="):
+				curTo = strings.TrimSpace(strings.TrimPrefix(t, "Destination="))
 			case strings.HasPrefix(t, "Gateway="):
-				gw = strings.TrimSpace(strings.TrimPrefix(t, "Gateway="))
+				v := strings.TrimSpace(strings.TrimPrefix(t, "Gateway="))
+				if section == "[Route]" {
+					curVia = v
+				} else {
+					gw = v
+				}
 			case strings.HasPrefix(t, "DNS="):
 				dnsList = append(dnsList, strings.TrimSpace(strings.TrimPrefix(t, "DNS=")))
 			}
 		}
+		flushRoute()
 		if len(dnsList) > 0 {
 			dns1 = dnsList[0]
 		}
@@ -7088,6 +7188,22 @@ func _applyStaticIPCommands(ctName, devName string, nic LXDNIC) {
 	exec.Command("incus", "exec", ctName, "--", "ip", "addr", "add", nic.IPv4Addr, "dev", devName).Run() //nolint:errcheck
 	if nic.IPv4GW != "" {
 		exec.Command("incus", "exec", ctName, "--", "ip", "route", "replace", "default", "via", nic.IPv4GW).Run() //nolint:errcheck
+	}
+	_applyStaticRoutes(ctName, nic.Routes)
+}
+
+// _applyStaticRoutes installs the operator's extra static routes immediately
+// in a running container via `ip route replace` (idempotent — replaces any
+// existing route to the same destination). Best-effort: a route whose
+// gateway isn't reachable yet still lands in the persistent config and
+// converges on the next network-manager reload.
+func _applyStaticRoutes(ctName string, routes []LXDStaticRoute) {
+	for _, r := range routes {
+		to, via := strings.TrimSpace(r.To), strings.TrimSpace(r.Via)
+		if to == "" || via == "" {
+			continue
+		}
+		exec.Command("incus", "exec", ctName, "--", "ip", "route", "replace", to, "via", via).Run() //nolint:errcheck
 	}
 }
 
