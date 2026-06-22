@@ -834,6 +834,26 @@ input::placeholder { color: var(--text-3); }
   display: inline-block;
 }
 
+/* ===== Compose deploy-target chooser (v6.6.22) ===== */
+.compose-target-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--bg-2, rgba(255,255,255,0.03));
+  transition: border-color .12s, background .12s;
+}
+.compose-target-card:hover { border-color: var(--accent-2); }
+.compose-target-card.selected { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 12%, transparent); }
+.compose-target-card .ctc-icon { font-size: 26px; line-height: 1; width: 32px; text-align: center; }
+.compose-target-card .ctc-title { font-weight: 600; font-size: 14px; color: var(--text); }
+.compose-target-card .ctc-desc { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.compose-rt-badge {
+  display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px;
+  border-radius: 10px; text-transform: uppercase; letter-spacing: .03em;
+}
+.compose-rt-badge.docker { background: rgba(62,99,221,0.18); color: #5b7cff; }
+.compose-rt-badge.podman { background: rgba(142,78,198,0.18); color: #b78be0; }
+
 /* ===== Divider ===== */
 .divider {
   height: 1px;

@@ -28,10 +28,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
+
+// composeStackNameRe validates a stack name used as a filesystem folder under
+// /opt and as the compose project name. Letters, digits, hyphen, underscore;
+// must start alphanumeric. Mirrors the frontend check.
+var composeStackNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+// ComposeTarget is one instance that can host a new compose stack (#2).
+type ComposeTarget struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`    // "container" | "virtual-machine"
+	Status  string `json:"status"`  // "Running" | ...
+	Runtime string `json:"runtime"` // "docker" | "podman"
+}
 
 // DockerContainer is one entry rendered into the Docker card.
 type DockerContainer struct {
@@ -51,17 +65,19 @@ type DockerContainer struct {
 // `Available` is the single bit the UI conditions on; the rest is
 // diagnostic so we can be helpful when the user wonders why nothing shows.
 type DockerProbeResult struct {
-	Available bool   `json:"available"`
-	AgentOK   bool   `json:"agent_ok"` // false on a VM whose incus-agent isn't responding
-	Reason    string `json:"reason,omitempty"`
+	Available  bool   `json:"available"`
+	AgentOK    bool   `json:"agent_ok"`              // false on a VM whose incus-agent isn't responding
+	Runtime    string `json:"runtime,omitempty"`     // "docker" | "podman" | ""
+	ComposeCLI string `json:"compose_cli,omitempty"` // "docker compose" | "docker-compose"
+	Reason     string `json:"reason,omitempty"`
 }
 
 // dockerCLI is the per-instance choice of compose runtime (v2 plugin
 // `docker compose` vs legacy `docker-compose`), cached for 60 s so each
 // burger-menu click doesn't re-probe. Concurrency-safe.
 type dockerCLI struct {
-	useV2     bool // true → `docker compose`, false → `docker-compose`
-	cachedAt  time.Time
+	useV2    bool // true → `docker compose`, false → `docker-compose`
+	cachedAt time.Time
 }
 
 var (
@@ -72,8 +88,8 @@ var (
 const dockerCLITTL = 60 * time.Second
 
 // DockerProbe runs a cheap two-step probe inside the instance:
-//   1. `incus exec` succeeds (LXC always; VM only when agent is up)
-//   2. `docker info --format {{.ServerVersion}}` returns non-empty
+//  1. `incus exec` succeeds (LXC always; VM only when agent is up)
+//  2. `docker info --format {{.ServerVersion}}` returns non-empty
 //
 // Anything else → Available=false with a short Reason. Never an error
 // the caller is supposed to surface; this is purely a "should we paint
@@ -89,27 +105,56 @@ func DockerProbe(instance string) DockerProbeResult {
 		// agent_ok=false uniformly and let the UI stay quiet.
 		return DockerProbeResult{Available: false, AgentOK: false, Reason: "instance not reachable (stopped, or incus-agent not running)"}
 	}
-	// Step 2 — docker daemon up.
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel2()
-	out, err := exec.CommandContext(ctx2, "incus", "exec", instance, "--",
-		"docker", "info", "--format", "{{.ServerVersion}}").Output()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
-		return DockerProbeResult{Available: false, AgentOK: true, Reason: "docker daemon not running"}
+	// Step 2 — a container runtime is up. Prefer Docker; fall back to Podman.
+	rt, cli := detectRuntime(instance)
+	if rt == "" {
+		return DockerProbeResult{Available: false, AgentOK: true, Reason: "no docker or podman runtime running"}
 	}
-	return DockerProbeResult{Available: true, AgentOK: true}
+	return DockerProbeResult{Available: true, AgentOK: true, Runtime: rt, ComposeCLI: cli}
+}
+
+// detectRuntime probes for a container runtime inside the instance and returns
+// ("docker"|"podman"|"", composeCLI). It tries Docker first (`docker info`),
+// then Podman (`podman info`). composeCLI is the verb head the deploy/action
+// paths should use: "docker compose" when the v2 plugin is present, else
+// "docker-compose" (the standalone v2 binary we install for Podman talks to
+// Podman's Docker-compat socket, so the same `docker-compose` head works).
+func detectRuntime(instance string) (runtime, composeCLI string) {
+	run := func(timeout time.Duration, args ...string) bool {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "incus", append([]string{"exec", instance, "--"}, args...)...).Output()
+		return err == nil && strings.TrimSpace(string(out)) != ""
+	}
+	if run(5*time.Second, "docker", "info", "--format", "{{.ServerVersion}}") {
+		cli := "docker-compose"
+		if dockerComposeV2(instance) {
+			cli = "docker compose"
+		}
+		return "docker", cli
+	}
+	if run(5*time.Second, "podman", "info", "--format", "{{.Version.Version}}") {
+		return "podman", "docker-compose"
+	}
+	return "", ""
 }
 
 // DockerListContainers returns every container (running or not) the
 // in-guest docker daemon knows about. Two-step:
-//   1. `docker ps -a --no-trunc --format '{{json .}}'` for IDs + names
-//   2. `docker inspect <id…>` to pull structured label maps (the ps
-//      output flattens labels into a "k=v,k=v" string which is lossy
-//      when a value itself contains commas — common in
-//      `com.docker.compose.project.config_files`).
+//  1. `docker ps -a --no-trunc --format '{{json .}}'` for IDs + names
+//  2. `docker inspect <id…>` to pull structured label maps (the ps
+//     output flattens labels into a "k=v,k=v" string which is lossy
+//     when a value itself contains commas — common in
+//     `com.docker.compose.project.config_files`).
 //
 // Grouping is the caller's job.
 func DockerListContainers(instance string) ([]DockerContainer, error) {
+	// Podman instances expose a JSON `podman ps` that already carries the
+	// compose labels, so we parse that directly rather than the two-step
+	// docker ps + inspect dance (podman's inspect schema differs from Docker's).
+	if rt, _ := detectRuntime(instance); rt == "podman" {
+		return podmanListContainers(instance)
+	}
 	// Step 1 — gather IDs.
 	psOut, err := exec.Command("incus", "exec", instance, "--",
 		"docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}}").Output()
@@ -143,10 +188,10 @@ func DockerListContainers(instance string) ([]DockerContainer, error) {
 			continue
 		}
 		var raw struct {
-			ID     string `json:"Id"`
-			Name   string `json:"Name"`
-			Image  string `json:"Image"`
-			State  struct {
+			ID    string `json:"Id"`
+			Name  string `json:"Name"`
+			Image string `json:"Image"`
+			State struct {
 				Status     string `json:"Status"`
 				StartedAt  string `json:"StartedAt"`
 				FinishedAt string `json:"FinishedAt"`
@@ -284,6 +329,7 @@ func DockerDeleteFile(instance, path string) error {
 // docker-compose YAML lives" promise is kept. We:
 //   - cd into filepath.Dir(configFile) via `incus exec --cwd <dir>`
 //   - pass `-f <basename>` rather than the absolute path
+//
 // so any `./...` reference inside the YAML — build contexts, env_files,
 // bind-mount volumes — resolves the same as it would when the user runs
 // the same command from a shell in that directory.
@@ -310,6 +356,7 @@ func DockerComposeAction(instance, configFile string, verb []string, logCh chan<
 // Start / Stop / Restart menu. `update` is a special two-step:
 //   - `docker pull <image>` to refresh the image tag
 //   - `docker restart <id>` to bounce the container onto the new layer
+//
 // The Update mode only works for containers whose creation args we can
 // safely reconstruct, which in practice means containers managed by
 // docker compose (the caller routes "individual" containers to a
@@ -529,4 +576,210 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// podmanListContainers lists containers in a Podman instance for the Docker
+// card, mapping `podman ps -a --format json` (which carries the compose labels)
+// onto the DockerContainer shape used by the grouping/render code.
+func podmanListContainers(instance string) ([]DockerContainer, error) {
+	out, err := exec.Command("incus", "exec", instance, "--",
+		"podman", "ps", "-a", "--format", "json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("podman ps: %w", err)
+	}
+	var raw []struct {
+		Id     string            `json:"Id"`
+		Names  []string          `json:"Names"`
+		Image  string            `json:"Image"`
+		State  string            `json:"State"`
+		Status string            `json:"Status"`
+		Labels map[string]string `json:"Labels"`
+		Ports  []struct {
+			HostIP        string `json:"host_ip"`
+			ContainerPort int    `json:"container_port"`
+			HostPort      int    `json:"host_port"`
+			Protocol      string `json:"protocol"`
+		} `json:"Ports"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("podman ps parse: %w", err)
+	}
+	containers := make([]DockerContainer, 0, len(raw))
+	for _, r := range raw {
+		c := DockerContainer{ID: r.Id, Image: r.Image, State: r.State, Status: r.Status}
+		if len(r.Names) > 0 {
+			c.Name = r.Names[0]
+		}
+		if r.Labels != nil {
+			c.Project = r.Labels["com.docker.compose.project"]
+			c.Service = r.Labels["com.docker.compose.service"]
+			c.WorkingDir = r.Labels["com.docker.compose.project.working_dir"]
+			if cf := r.Labels["com.docker.compose.project.config_files"]; cf != "" {
+				c.ConfigFiles = strings.Split(cf, ",")
+			}
+		}
+		var ports []string
+		for _, p := range r.Ports {
+			if p.HostPort == 0 {
+				continue
+			}
+			hip := p.HostIP
+			if hip == "" {
+				hip = "0.0.0.0"
+			}
+			ports = append(ports, fmt.Sprintf("%s:%d->%d/%s", hip, p.HostPort, p.ContainerPort, p.Protocol))
+		}
+		c.Ports = strings.Join(ports, ", ")
+		containers = append(containers, c)
+	}
+	return containers, nil
+}
+
+// ListComposeTargets probes every Running instance for a Docker or Podman
+// runtime, concurrently, and returns those that can host a new compose stack
+// (option #2). A bounded worker pool keeps the fan-out cheap even on hosts
+// with many instances; each probe inherits DockerProbe's per-step timeouts.
+func ListComposeTargets() ([]ComposeTarget, error) {
+	insts, err := listLXDInstancesImpl()
+	if err != nil {
+		return nil, err
+	}
+	type result struct {
+		t  ComposeTarget
+		ok bool
+	}
+	sem := make(chan struct{}, 6)
+	results := make([]result, len(insts))
+	var wg sync.WaitGroup
+	for i := range insts {
+		inst := insts[i]
+		if inst.Status != "Running" {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, name, typ, status string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			pr := DockerProbe(name)
+			if pr.Available && pr.Runtime != "" {
+				results[idx] = result{ComposeTarget{Name: name, Type: typ, Status: status, Runtime: pr.Runtime}, true}
+			}
+		}(i, inst.Name, inst.Type, inst.Status)
+	}
+	wg.Wait()
+	out := []ComposeTarget{}
+	for _, r := range results {
+		if r.ok {
+			out = append(out, r.t)
+		}
+	}
+	return out, nil
+}
+
+// DeployComposeToInstance drops a new compose stack into an existing instance
+// (option #2): /opt/<stackName>/{docker-compose.yml,.env}, then `up -d` with the
+// instance's detected runtime. The runtime is re-probed here (never trusted from
+// the client). Refuses to overwrite an existing stack folder.
+func DeployComposeToInstance(instance, stackName, composeYAML, composeEnv string, logCh chan<- string) error {
+	log := func(s string) {
+		if logCh != nil {
+			logCh <- s
+		}
+	}
+	if !composeStackNameRe.MatchString(stackName) {
+		return fmt.Errorf("invalid stack name %q (letters, digits, hyphen, underscore)", stackName)
+	}
+	probe := DockerProbe(instance)
+	if !probe.Available || probe.Runtime == "" {
+		return fmt.Errorf("no Docker or Podman runtime detected in %s", instance)
+	}
+	dir := "/opt/" + stackName
+	// Refuse to clobber an existing stack folder.
+	if exec.Command("incus", "exec", instance, "--", "test", "-e", dir).Run() == nil {
+		return fmt.Errorf("a stack folder already exists at %s in %s — pick another name", dir, instance)
+	}
+
+	composeYAML = sanitizeComposeContent(composeYAML)
+	composeEnv = sanitizeComposeContent(composeEnv)
+	log("Creating " + dir + " in " + instance + "…")
+	if out, err := exec.Command("incus", "exec", instance, "--", "mkdir", "-p", dir).CombinedOutput(); err != nil {
+		return fmt.Errorf("mkdir %s: %s", dir, strings.TrimSpace(string(out)))
+	}
+	log("Writing docker-compose.yml…")
+	if err := lxdWriteFileInside(instance, dir+"/docker-compose.yml", composeYAML); err != nil {
+		return err
+	}
+	if strings.TrimSpace(composeEnv) != "" {
+		log("Writing .env…")
+		if err := lxdWriteFileInside(instance, dir+"/.env", composeEnv); err != nil {
+			return err
+		}
+	}
+
+	log("Starting the stack (compose up -d)…")
+	if probe.Runtime == "podman" {
+		// Make sure docker-compose + the Docker-compat socket exist, then drive
+		// compose over DOCKER_HOST exactly like a dedicated podman stack.
+		EnsureDockerComposeInStack(instance)
+		a := []string{"exec", instance,
+			"--env", "DOCKER_HOST=unix:///run/podman/podman.sock",
+			"--cwd", dir, "--", "docker-compose", "up", "-d"}
+		if err := runIncusStreamed("docker-compose up", a, logCh); err != nil {
+			log("WARNING: 'compose up' failed — fix the file and redeploy from the instance's Docker card:")
+			log(err.Error())
+			return nil
+		}
+	} else {
+		// Real Docker engine — DockerComposeAction picks `docker compose`/`docker-compose`.
+		if err := DockerComposeAction(instance, dir+"/docker-compose.yml", []string{"up", "-d"}, logCh); err != nil {
+			log("WARNING: 'compose up' failed — fix the file and redeploy from the instance's Docker card:")
+			log(err.Error())
+			return nil
+		}
+	}
+	log("Stack is up.")
+	return nil
+}
+
+// DeleteComposeProject tears down a detected compose project and removes its
+// on-disk folder (§6). configFile is the absolute path to the project's compose
+// file (from the com.docker.compose.project.config_files label); workingDir is
+// the project working dir to rm. The rm is hard-guarded to paths under /opt/.
+func DeleteComposeProject(instance, configFile, workingDir string, removeVolumes bool, logCh chan<- string) error {
+	log := func(s string) {
+		if logCh != nil {
+			logCh <- s
+		}
+	}
+	if configFile == "" || configFile[0] != '/' {
+		return fmt.Errorf("compose file path must be absolute, got %q", configFile)
+	}
+	// Validate the rm target up-front (before `down`) so a bad path fails fast
+	// without side effects.
+	var rmDir string
+	if workingDir != "" {
+		rmDir = filepath.Clean(workingDir)
+		if !strings.HasPrefix(rmDir, "/opt/") || rmDir == "/opt" || rmDir == "/opt/" {
+			return fmt.Errorf("refusing to remove %q — only stack folders under /opt/ may be deleted", workingDir)
+		}
+	}
+	verb := []string{"down"}
+	if removeVolumes {
+		verb = append(verb, "-v")
+	}
+	log("Stopping stack (compose down" + map[bool]string{true: " -v", false: ""}[removeVolumes] + ")…")
+	if err := DockerComposeAction(instance, configFile, verb, logCh); err != nil {
+		// Don't abort the folder removal on a down error (the stack may already
+		// be partly gone); surface it as a warning and continue.
+		log("WARNING: compose down reported an error: " + err.Error())
+	}
+	if rmDir != "" {
+		log("Removing " + rmDir + "…")
+		if out, err := exec.Command("incus", "exec", instance, "--", "rm", "-rf", rmDir).CombinedOutput(); err != nil {
+			return fmt.Errorf("rm -rf %s: %s", rmDir, strings.TrimSpace(string(out)))
+		}
+	}
+	log("Stack deleted.")
+	return nil
 }

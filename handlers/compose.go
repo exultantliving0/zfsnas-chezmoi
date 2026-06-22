@@ -602,7 +602,7 @@ func HandleComposeLogsWS(w http.ResponseWriter, r *http.Request) {
 
 	cmd := exec.Command("incus", "exec", stack,
 		"--env", "DOCKER_HOST=unix:///run/podman/podman.sock",
-		"--cwd", "/opt/stack", "--",
+		"--cwd", system.ComposeStackDir(stack), "--",
 		"docker-compose", "logs", "--tail=500", "-f")
 	cmd.Env = append(os.Environ(), "NO_COLOR=1")
 	// Merge stdout + stderr through a single pipe so the scanner gets one

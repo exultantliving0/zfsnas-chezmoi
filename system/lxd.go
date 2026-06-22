@@ -5850,8 +5850,11 @@ func LXDCreateComposeStack(req LXDCreateContainerRequest, distro, composeYAML, c
 	if err := LXDCreateContainer(req, logCh); err != nil {
 		return err
 	}
-	// Tag it so ZNAS recognises this container as a Compose stack.
-	exec.Command("incus", "config", "set", req.Name, "user.zfsnas.compose", "true").Run() //nolint:errcheck
+	// Tag it so ZNAS recognises this container as a Compose stack, and record
+	// the per-stack folder + runtime (6.6.22 — /opt/<name>/, podman for LXC).
+	exec.Command("incus", "config", "set", req.Name, "user.zfsnas.compose", "true").Run()               //nolint:errcheck
+	exec.Command("incus", "config", "set", req.Name, "user.zfsnas.compose_dir", "/opt/"+req.Name).Run() //nolint:errcheck
+	exec.Command("incus", "config", "set", req.Name, "user.zfsnas.compose_runtime", "podman").Run()     //nolint:errcheck
 
 	// Wait for container networking — the package install needs it.
 	log("Waiting for container network…")
@@ -5909,14 +5912,15 @@ func LXDCreateComposeStack(req LXDCreateContainerRequest, distro, composeYAML, c
 	// podman-compose rejects NUL / BOM / control bytes outright.
 	composeYAML = sanitizeComposeContent(composeYAML)
 	composeEnv = sanitizeComposeContent(composeEnv)
+	stackDir := "/opt/" + req.Name
 	log("Writing docker-compose.yml…")
-	exec.Command("incus", "exec", req.Name, "--", "mkdir", "-p", "/opt/stack").Run() //nolint:errcheck
-	if err := lxdWriteFileInside(req.Name, "/opt/stack/docker-compose.yml", composeYAML); err != nil {
+	exec.Command("incus", "exec", req.Name, "--", "mkdir", "-p", stackDir).Run() //nolint:errcheck
+	if err := lxdWriteFileInside(req.Name, stackDir+"/docker-compose.yml", composeYAML); err != nil {
 		return err
 	}
 	if strings.TrimSpace(composeEnv) != "" {
 		log("Writing .env…")
-		if err := lxdWriteFileInside(req.Name, "/opt/stack/.env", composeEnv); err != nil {
+		if err := lxdWriteFileInside(req.Name, stackDir+"/.env", composeEnv); err != nil {
 			return err
 		}
 	}
@@ -5938,6 +5942,109 @@ func LXDCreateComposeStack(req LXDCreateContainerRequest, distro, composeYAML, c
 	if err := runIncusComposeStreamed(req.Name, []string{"up", "-d"}, logCh); err != nil {
 		// The container itself is fine — surface the compose error without
 		// failing the whole job so the user can fix the YAML and redeploy.
+		log("WARNING: 'docker-compose up' failed — fix the compose file and redeploy:")
+		log(err.Error())
+		return nil
+	}
+	log("Compose stack is up.")
+	return nil
+}
+
+// LXDCreateComposeStackVM creates a Compose stack inside a fresh VM (option #3).
+// It is the VM-equivalent of LXDCreateComposeStack: create the VM from the
+// compose base image (so the incus-agent is present), install the chosen
+// runtime (Docker or Podman), deploy the compose file to /opt/<name>/ and bring
+// it up. runtime is "docker" or "podman" (defaults to docker).
+func LXDCreateComposeStackVM(req LXDCreateVMRequest, runtime, composeYAML, composeEnv string, logCh chan<- string) error {
+	log := func(s string) {
+		if logCh != nil {
+			logCh <- s
+		}
+	}
+	if runtime != "podman" {
+		runtime = "docker"
+	}
+	if req.Image == "" {
+		req.Image = "images:debian/12"
+	}
+	req.AutoStart = true
+
+	if err := LXDCreateVM(req, logCh); err != nil {
+		return err
+	}
+
+	// Wait for the incus-agent to answer exec (the VM must be booted + agent up).
+	log("Waiting for the VM agent…")
+	agentUp := false
+	for i := 0; i < 60; i++ {
+		if exec.Command("incus", "exec", req.Name, "--", "true").Run() == nil {
+			agentUp = true
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if !agentUp {
+		return fmt.Errorf("VM %s agent did not come up — cannot provision the stack", req.Name)
+	}
+
+	// Wait for a default route (the runtime install needs the network).
+	log("Waiting for VM network…")
+	for i := 0; i < 30; i++ {
+		if exec.Command("incus", "exec", req.Name, "--", "sh", "-c",
+			"ip route 2>/dev/null | grep -q default").Run() == nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	switch runtime {
+	case "docker":
+		log("Installing Docker Engine (get.docker.com)…")
+		installCmd := "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && " +
+			"apt-get install -y -qq curl ca-certificates && " +
+			"curl -fsSL https://get.docker.com | sh"
+		if out, err := exec.Command("incus", "exec", req.Name, "--", "sh", "-c", installCmd).CombinedOutput(); err != nil {
+			return fmt.Errorf("install docker in %s: %s", req.Name, strings.TrimSpace(string(out)))
+		}
+		exec.Command("incus", "exec", req.Name, "--", "systemctl", "enable", "--now", "docker").Run() //nolint:errcheck
+	default: // podman
+		log("Installing Podman…")
+		installCmd := "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && " +
+			"apt-get install -y -qq podman ca-certificates wget"
+		if out, err := exec.Command("incus", "exec", req.Name, "--", "sh", "-c", installCmd).CombinedOutput(); err != nil {
+			return fmt.Errorf("install podman in %s: %s", req.Name, strings.TrimSpace(string(out)))
+		}
+		log("Configuring Podman registries…")
+		registriesConf := "# Written by ZNAS — Docker-Hub-default search, like docker-compose.\n" +
+			"unqualified-search-registries = [\"docker.io\"]\n" +
+			"short-name-mode = \"permissive\"\n"
+		exec.Command("incus", "exec", req.Name, "--", "mkdir", "-p", "/etc/containers/registries.conf.d").Run() //nolint:errcheck
+		_ = lxdWriteFileInside(req.Name, "/etc/containers/registries.conf.d/00-znas-docker-io.conf", registriesConf)
+	}
+
+	// Tag as a Compose stack + record the folder and runtime.
+	exec.Command("incus", "config", "set", req.Name, "user.zfsnas.compose", "true").Run()               //nolint:errcheck
+	exec.Command("incus", "config", "set", req.Name, "user.zfsnas.compose_dir", "/opt/"+req.Name).Run() //nolint:errcheck
+	exec.Command("incus", "config", "set", req.Name, "user.zfsnas.compose_runtime", runtime).Run()      //nolint:errcheck
+
+	// Deploy the compose file (+ optional .env), scrubbed of invisible bytes.
+	composeYAML = sanitizeComposeContent(composeYAML)
+	composeEnv = sanitizeComposeContent(composeEnv)
+	stackDir := "/opt/" + req.Name
+	log("Writing docker-compose.yml…")
+	exec.Command("incus", "exec", req.Name, "--", "mkdir", "-p", stackDir).Run() //nolint:errcheck
+	if err := lxdWriteFileInside(req.Name, stackDir+"/docker-compose.yml", composeYAML); err != nil {
+		return err
+	}
+	if strings.TrimSpace(composeEnv) != "" {
+		log("Writing .env…")
+		if err := lxdWriteFileInside(req.Name, stackDir+"/.env", composeEnv); err != nil {
+			return err
+		}
+	}
+
+	log("Starting the compose stack (docker-compose up)…")
+	if err := runIncusComposeStreamed(req.Name, []string{"up", "-d"}, logCh); err != nil {
 		log("WARNING: 'docker-compose up' failed — fix the compose file and redeploy:")
 		log(err.Error())
 		return nil
@@ -6269,6 +6376,37 @@ func sanitizeComposeContent(s string) string {
 	return b.String()
 }
 
+// composeStackDir returns the on-disk directory of a dedicated stack's compose
+// files inside the instance. New stacks (6.6.22+) record it in
+// user.zfsnas.compose_dir (= /opt/<name>); we fall back to /opt/<name> if that
+// dir exists, else the legacy fixed /opt/stack so pre-6.6.22 stacks keep working.
+func composeStackDir(instance string) string {
+	if out, err := exec.Command("incus", "config", "get", instance, "user.zfsnas.compose_dir").Output(); err == nil {
+		if d := strings.TrimSpace(string(out)); d != "" {
+			return d
+		}
+	}
+	if exec.Command("incus", "exec", instance, "--", "test", "-d", "/opt/"+instance).Run() == nil {
+		return "/opt/" + instance
+	}
+	return "/opt/stack"
+}
+
+// ComposeStackDir is the exported accessor for composeStackDir (handlers package).
+func ComposeStackDir(instance string) string { return composeStackDir(instance) }
+
+// composeStackRuntime returns the container runtime a dedicated stack uses,
+// recorded at creation in user.zfsnas.compose_runtime. Legacy stacks (and LXC
+// stacks) have no key → "podman" (the historical default).
+func composeStackRuntime(instance string) string {
+	if out, err := exec.Command("incus", "config", "get", instance, "user.zfsnas.compose_runtime").Output(); err == nil {
+		if r := strings.TrimSpace(string(out)); r == "docker" || r == "podman" {
+			return r
+		}
+	}
+	return "podman"
+}
+
 // ComposeContainer is one Podman container belonging to a Compose stack.
 type ComposeContainer struct {
 	Name    string `json:"name"`    // podman container name (e.g. "stack_web_1")
@@ -6282,6 +6420,27 @@ type ComposeContainer struct {
 // ComposeStackContainers lists the Podman containers running inside a
 // Compose stack. Parses `podman ps -a --format json`.
 func ComposeStackContainers(stack string) ([]ComposeContainer, error) {
+	// Docker-runtime dedicated stacks (a fresh VM created with the Docker
+	// option) list via the docker CLI; reuse DockerListContainers and map
+	// its richer rows onto the ComposeContainer shape the UI expects.
+	if composeStackRuntime(stack) == "docker" {
+		dcs, err := DockerListContainers(stack)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]ComposeContainer, 0, len(dcs))
+		for _, c := range dcs {
+			out = append(out, ComposeContainer{
+				Name:    strings.TrimPrefix(c.Name, "/"),
+				Service: c.Service,
+				Image:   c.Image,
+				State:   c.State,
+				Status:  c.Status,
+				Ports:   c.Ports,
+			})
+		}
+		return out, nil
+	}
 	out, err := exec.Command("incus", "exec", stack, "--",
 		"podman", "ps", "-a", "--format", "json").Output()
 	if err != nil {
@@ -6332,11 +6491,12 @@ func ComposeStackContainers(stack string) ([]ComposeContainer, error) {
 // ComposeStackFiles reads the deployed docker-compose.yml and .env back from
 // a stack. A missing .env yields an empty string (not an error).
 func ComposeStackFiles(stack string) (composeYAML, composeEnv string, err error) {
-	composeYAML, err = lxdReadFileInside(stack, "/opt/stack/docker-compose.yml")
+	dir := composeStackDir(stack)
+	composeYAML, err = lxdReadFileInside(stack, dir+"/docker-compose.yml")
 	if err != nil {
 		return "", "", err
 	}
-	composeEnv, err = lxdReadFileInside(stack, "/opt/stack/.env")
+	composeEnv, err = lxdReadFileInside(stack, dir+"/.env")
 	if err != nil {
 		return "", "", err
 	}
@@ -6356,17 +6516,18 @@ func ComposeRedeploy(stack, composeYAML, composeEnv string, logCh chan<- string)
 	// other invisible characters that PyYAML refuses. See sanitizeComposeContent.
 	composeYAML = sanitizeComposeContent(composeYAML)
 	composeEnv = sanitizeComposeContent(composeEnv)
+	dir := composeStackDir(stack)
 	log("Writing docker-compose.yml…")
-	if err := lxdWriteFileInside(stack, "/opt/stack/docker-compose.yml", composeYAML); err != nil {
+	if err := lxdWriteFileInside(stack, dir+"/docker-compose.yml", composeYAML); err != nil {
 		return err
 	}
 	if strings.TrimSpace(composeEnv) != "" {
 		log("Writing .env…")
-		if err := lxdWriteFileInside(stack, "/opt/stack/.env", composeEnv); err != nil {
+		if err := lxdWriteFileInside(stack, dir+"/.env", composeEnv); err != nil {
 			return err
 		}
 	} else {
-		exec.Command("incus", "exec", stack, "--", "rm", "-f", "/opt/stack/.env").Run() //nolint:errcheck
+		exec.Command("incus", "exec", stack, "--", "rm", "-f", dir+"/.env").Run() //nolint:errcheck
 	}
 	// If the host LXC is stopped we can still update the files on disk
 	// (lxdWriteFileInside uses incus file push, which works on stopped
@@ -6624,12 +6785,28 @@ start_post() {
 // socket on first call (no-op when already present), so stacks created
 // under the old podman-compose runtime self-migrate.
 func runIncusComposeStreamed(stack string, args []string, logCh chan<- string) error {
-	if err := ensureDockerComposeInStack(stack, logCh); err != nil {
-		return err
+	dir := composeStackDir(stack)
+	var cmdArgs []string
+	if composeStackRuntime(stack) == "docker" {
+		// Real Docker engine (a fresh VM created with the Docker option).
+		// Use the engine's own compose (v2 plugin or the legacy binary); no
+		// DOCKER_HOST override — it talks to /var/run/docker.sock natively.
+		head := []string{"docker-compose"}
+		if dockerComposeV2(stack) {
+			head = []string{"docker", "compose"}
+		}
+		cmdArgs = append([]string{"exec", stack, "--cwd", dir, "--"}, head...)
+		cmdArgs = append(cmdArgs, args...)
+	} else {
+		// Podman: ensure the docker-compose binary + Docker-compat socket, then
+		// drive it via DOCKER_HOST. Lazily self-migrates old podman-compose stacks.
+		if err := ensureDockerComposeInStack(stack, logCh); err != nil {
+			return err
+		}
+		cmdArgs = append([]string{"exec", stack,
+			"--env", "DOCKER_HOST=unix:///run/podman/podman.sock",
+			"--cwd", dir, "--", "docker-compose"}, args...)
 	}
-	cmdArgs := append([]string{"exec", stack,
-		"--env", "DOCKER_HOST=unix:///run/podman/podman.sock",
-		"--cwd", "/opt/stack", "--", "docker-compose"}, args...)
 	cmd := exec.Command("incus", cmdArgs...)
 	cmd.Env = append(os.Environ(), "NO_COLOR=1")
 	pr, pw := io.Pipe()

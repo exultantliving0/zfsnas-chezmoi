@@ -898,6 +898,14 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("create_container")(http.HandlerFunc(HandleCreateContainer)))).Methods("POST")
 	r.Handle("/api/lxd/compose-stacks",
 		RequireAuth(RequirePermission("create_container")(http.HandlerFunc(HandleCreateComposeStack(appCfg))))).Methods("POST")
+	// v6.6.22 — deploy-target chooser: list docker/podman targets (#2),
+	// deploy into an existing instance (#2), create a fresh compose VM (#3).
+	r.Handle("/api/lxd/compose-targets",
+		RequireAuth(RequireVirtView(http.HandlerFunc(HandleComposeTargets)))).Methods("GET")
+	r.Handle("/api/lxd/instances/{name}/compose-deploy",
+		RequireAuth(RequireInstancePerm("create_container")(http.HandlerFunc(HandleComposeDeploy)))).Methods("POST")
+	r.Handle("/api/lxd/compose-vms",
+		RequireAuth(RequirePermission("create_vm")(http.HandlerFunc(HandleCreateComposeVM)))).Methods("POST")
 	r.Handle("/api/lxd/compose-stacks/{name}",
 		RequireAuth(http.HandlerFunc(HandleComposeStackGet(appCfg)))).Methods("GET")
 	r.Handle("/api/lxd/compose-stacks/{name}",
@@ -1021,6 +1029,9 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequirePermission("manage_docker_detect")(http.HandlerFunc(HandleDockerComposeAction(appCfg))))).Methods("POST")
 	r.Handle("/api/lxd/instances/{name}/docker/container-action",
 		RequireAuth(RequirePermission("manage_docker_detect")(http.HandlerFunc(HandleDockerContainerAction(appCfg))))).Methods("POST")
+	// v6.6.22 §6 — delete a detected compose project (down + rm -rf /opt/<name>).
+	r.Handle("/api/lxd/instances/{name}/docker/compose-project",
+		RequireAuth(RequirePermission("manage_docker_detect")(http.HandlerFunc(HandleDeleteComposeProject)))).Methods("DELETE")
 	r.Handle("/ws/docker-console",
 		RequireAuth(RequirePermission("terminal")(http.HandlerFunc(HandleDockerConsoleWS(appCfg))))).Methods("GET")
 	r.Handle("/docker-console/{instance}/{container}",

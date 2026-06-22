@@ -2746,7 +2746,7 @@
             </div>
 
             <!-- Image selector -->
-            <div class="form-group" style="margin-bottom:14px;">
+            <div class="form-group" style="margin-bottom:14px;" id="lxd-vm-image-section">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                 <label style="margin:0;white-space:nowrap;">OS Image</label>
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -3137,6 +3137,36 @@
                 <textarea class="input" id="lxd-vm-cloud-init" rows="6" placeholder="#cloud-config&#10;packages:&#10;  - nginx" style="font-family:monospace;font-size:13px;"></textarea>
               </div>
             </details>
+
+            <!-- v6.6.22 #3 — Compose sections (shown only in compose-VM mode) -->
+            <div id="lxd-vm-compose-section" style="display:none;">
+              <div class="form-group" style="margin-bottom:14px;">
+                <label>Container runtime</label>
+                <div style="display:flex;gap:18px;align-items:center;">
+                  <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px;font-weight:400;">
+                    <input type="radio" name="lxd-vm-runtime" value="docker" checked> Docker
+                    <span style="color:var(--text-3);font-size:11px;">(recommended for a VM)</span></label>
+                  <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px;font-weight:400;">
+                    <input type="radio" name="lxd-vm-runtime" value="podman"> Podman</label>
+                </div>
+              </div>
+              <div class="form-group" style="margin-bottom:14px;">
+                <label>docker-compose.yml <span style="color:var(--accent-danger);">*</span></label>
+                <textarea id="lxd-vm-compose-yaml" class="input" rows="12" spellcheck="false" wrap="off"
+                  autocapitalize="off" autocomplete="off" autocorrect="off"
+                  placeholder="services:&#10;  web:&#10;    image: docker.io/library/nginx:alpine&#10;    ports:&#10;      - 8080:80"
+                  onpaste="_ctPasteCleanText(event)"
+                  style="width:100%;font-family:'SF Mono',monospace;font-size:12px;line-height:1.5;resize:vertical;"></textarea>
+              </div>
+              <details style="margin-bottom:6px;">
+                <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);padding:8px 0;">Environment file (.env) <span style="color:var(--text-3);font-size:11px;font-weight:400;">optional</span></summary>
+                <textarea id="lxd-vm-compose-env" class="input" rows="5" spellcheck="false" wrap="off"
+                  autocapitalize="off" autocomplete="off" autocorrect="off"
+                  placeholder="# KEY=value pairs&#10;POSTGRES_PASSWORD=changeme"
+                  onpaste="_ctPasteCleanText(event)"
+                  style="width:100%;margin-top:6px;font-family:'SF Mono',monospace;font-size:12px;line-height:1.5;resize:vertical;"></textarea>
+              </details>
+            </div>
           </form>
           <div class="modal-footer">
             <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-lxd-vm').classList.add('hidden')">Cancel</button>
@@ -3508,6 +3538,87 @@
           <div class="modal-footer">
             <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-lxd-container').classList.add('hidden')">Cancel</button>
             <button type="submit" form="form-lxd-container" class="btn btn-primary" id="lxd-ct-submit-btn" disabled>Create Container</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- v6.6.22 — Compose deploy-target chooser + deploy-into-existing flow -->
+      <div class="modal-backdrop hidden" id="modal-compose-chooser">
+        <div class="modal" style="max-width:760px;width:96vw;max-height:96vh;display:flex;flex-direction:column;">
+          <div class="modal-header">
+            <h3 id="compose-chooser-title">Deploy a Compose Stack</h3>
+            <button class="modal-close" onclick="document.getElementById('modal-compose-chooser').classList.add('hidden')">✕</button>
+          </div>
+          <div id="compose-chooser-alert" class="alert alert-error hidden" style="margin:0 24px 8px;"></div>
+          <div style="overflow-y:auto;flex:1;padding:18px 24px 20px;">
+
+            <!-- Step 1 — choose target -->
+            <div id="compose-step-choose">
+              <p style="margin:0 0 16px;color:var(--text-2);font-size:13px;">Where should this stack run?</p>
+              <div id="compose-target-cards" style="display:flex;flex-direction:column;gap:12px;">
+                <div class="compose-target-card" data-choice="lxc" onclick="_composeChoosePick('lxc')">
+                  <div class="ctc-icon">📦</div>
+                  <div class="ctc-body"><div class="ctc-title">Fresh LXC container</div>
+                    <div class="ctc-desc">A new isolated container running Podman (the current default).</div></div>
+                </div>
+                <div class="compose-target-card" data-choice="existing" onclick="_composeChoosePick('existing')">
+                  <div class="ctc-icon">🧩</div>
+                  <div class="ctc-body"><div class="ctc-title">Existing Docker / Podman instance</div>
+                    <div class="ctc-desc">Add this stack to an LXC or VM that already runs Docker or Podman.</div></div>
+                </div>
+                <div class="compose-target-card" data-choice="vm" onclick="_composeChoosePick('vm')">
+                  <div class="ctc-icon">🖥️</div>
+                  <div class="ctc-body"><div class="ctc-title">Fresh virtual machine</div>
+                    <div class="ctc-desc">A new VM provisioned with Docker or Podman, then your stack deployed.</div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 2 — detect + pick an existing target -->
+            <div id="compose-step-detect" style="display:none;">
+              <div id="compose-detect-spinner" style="text-align:center;padding:34px 0;color:var(--text-3);">
+                <div class="spinner" style="margin:0 auto 12px;"></div>
+                Detecting Docker / Podman targets…
+              </div>
+              <div id="compose-detect-list" style="display:none;flex-direction:column;gap:10px;"></div>
+              <div id="compose-detect-empty" style="display:none;text-align:center;padding:24px 0;color:var(--text-3);font-size:13px;">
+                No running instance with Docker or Podman was found.<br>Create a fresh LXC or VM instead.
+              </div>
+            </div>
+
+            <!-- Step 3 — stack name + compose/.env -->
+            <div id="compose-step-details" style="display:none;">
+              <div id="compose-details-target" style="font-size:12px;color:var(--text-2);margin-bottom:12px;"></div>
+              <div class="form-group" style="margin-bottom:14px;">
+                <label>Stack name <span style="color:var(--accent-danger);">*</span>
+                  <span style="font-size:11px;color:var(--text-3);font-weight:400;">(folder under /opt — letters, digits, hyphen, underscore)</span></label>
+                <input type="text" class="input" id="compose-deploy-name" placeholder="my-stack"
+                  pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]*" oninput="_composeDeployCheckReady()">
+              </div>
+              <div class="form-group" style="margin-bottom:14px;">
+                <label>docker-compose.yml <span style="color:var(--accent-danger);">*</span></label>
+                <textarea id="compose-deploy-yaml" class="input" rows="12" spellcheck="false" wrap="off"
+                  autocapitalize="off" autocomplete="off" autocorrect="off"
+                  placeholder="services:&#10;  web:&#10;    image: docker.io/library/nginx:alpine&#10;    ports:&#10;      - 8080:80"
+                  oninput="_composeDeployCheckReady()" onpaste="_ctPasteCleanText(event)"
+                  style="width:100%;font-family:'SF Mono',monospace;font-size:12px;line-height:1.5;resize:vertical;"></textarea>
+              </div>
+              <details id="compose-deploy-env-section" style="margin-bottom:6px;">
+                <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text);padding:8px 0;">Environment file (.env) <span style="color:var(--text-3);font-size:11px;font-weight:400;">optional</span></summary>
+                <textarea id="compose-deploy-env" class="input" rows="5" spellcheck="false" wrap="off"
+                  autocapitalize="off" autocomplete="off" autocorrect="off"
+                  placeholder="# KEY=value pairs&#10;POSTGRES_PASSWORD=changeme"
+                  onpaste="_ctPasteCleanText(event)"
+                  style="width:100%;margin-top:6px;font-family:'SF Mono',monospace;font-size:12px;line-height:1.5;resize:vertical;"></textarea>
+              </details>
+            </div>
+
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-ghost" id="compose-chooser-back" style="display:none;" onclick="_composeChooserBack()">← Back</button>
+            <span style="flex:1;"></span>
+            <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-compose-chooser').classList.add('hidden')">Cancel</button>
+            <button type="button" class="btn btn-primary" id="compose-chooser-next" onclick="_composeChooserNext()">Next →</button>
           </div>
         </div>
       </div>
@@ -4714,7 +4825,11 @@
                 <span style="font-weight:700;font-size:14px;color:var(--text);">Stack Containers</span>
                 <span id="ci-compose-count" style="font-size:12px;color:var(--text-3);"></span>
                 <span style="flex:1;"></span>
-                <span id="ci-compose-refresh" onclick="ciLoadComposeContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;">↻ Refresh</span>
+                <!-- §7 — power / update / edit parity with the detected Docker card -->
+                <span onclick="ciTogglePowerMenu(event)" title="Power" style="cursor:pointer;color:var(--text-2);font-size:14px;padding:2px 8px;user-select:none;line-height:1;">⏻</span>
+                <span onclick="ciComposeUpdateNow()" title="Update (pull + up)" style="cursor:pointer;color:var(--text-2);font-size:14px;padding:2px 8px;user-select:none;line-height:1;">⬆</span>
+                <button class="btn btn-sm btn-ghost" style="padding:2px 10px;font-size:11px;" onclick="ciOpenEdit()">✎ Edit</button>
+                <span id="ci-compose-refresh" onclick="ciLoadComposeContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;margin-left:8px;">↻ Refresh</span>
               </div>
               <div id="ci-compose-body">
                 <div style="text-align:center;color:var(--text-3);padding:20px 0;">Loading…</div>
@@ -4732,6 +4847,7 @@
                 <span style="font-weight:700;font-size:14px;color:var(--text);">Stack Containers</span>
                 <span id="ci-docker-count" style="font-size:12px;color:var(--text-3);"></span>
                 <span style="flex:1;"></span>
+                <button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:12px;margin-right:10px;" onclick="_composeDeployToInstance()">+ Compose Stack</button>
                 <span id="ci-docker-refresh" onclick="ciLoadDockerContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;">↻ Refresh</span>
               </div>
               <div id="ci-docker-body">
@@ -38071,19 +38187,18 @@ function openComputeInstance(name, type) {
   // Compose stack: show the Stack Containers card + Update button.
   _ciIsCompose = !!(_ciInst && _ciInst.is_compose);
   _ciApplyComposeView();
-  if (_ciIsCompose) ciLoadComposeContainers();
-  // v6.5.26 — Docker Detection inside user-managed VMs/LXCs. The probe
-  // is the source of truth for whether the card paints; the user-side
-  // toggle in Settings → Virtualization just gates whether we run the
-  // probe at all. Skip entirely for compose stacks (their Podman card
-  // already covers the same surface).
+  // v6.6.22 — both compose-tagged stacks AND docker-detected instances render
+  // the GROUPED Docker card (`_ciRenderDockerGroups`), which handles 1..N
+  // compose projects per instance with per-stack edit/power/update/delete. The
+  // flat single-stack "Stack Containers" card is now only a fallback, shown by
+  // ciLoadDockerContainers when the grouped card can't paint (probe down /
+  // stack stopped). This is what makes a VM/LXC that hosts several stacks list
+  // them as separate, individually-editable stacks.
   document.getElementById('ci-docker-card').style.display = 'none';
-  if (!_ciIsCompose) {
-    const want = (type === 'virtual-machine')
-      ? !!appSettings.docker_detect_vms
-      : !!appSettings.docker_detect_containers;
-    if (want) ciLoadDockerContainers();
-  }
+  const wantDetect = (type === 'virtual-machine')
+    ? !!appSettings.docker_detect_vms
+    : !!appSettings.docker_detect_containers;
+  if (_ciIsCompose || wantDetect) ciLoadDockerContainers();
   loadComputeInstanceDetail(name, type);
   loadCISnapshots(name);
   // v6.5.19: load backup count + refresh "📅" badge on the Snapshots button.
@@ -38664,13 +38779,22 @@ let _ciIsCompose = false;
 let _ciComposeContainers = [];
 let _ciComposeLogsWS = null;
 
-// _ciApplyComposeView shows/hides the Compose-only UI (containers card +
-// Update button) on the instance detail page.
+// _ciApplyComposeView resets the legacy flat Compose card + header Update
+// button. They are now a FALLBACK: hidden by default and only revealed by
+// ciLoadDockerContainers() when the grouped Docker card can't paint (probe
+// unavailable / stack stopped). The grouped card is the primary view and
+// carries its own per-stack power/update/edit/delete controls.
 function _ciApplyComposeView() {
+  _ciSetFlatComposeVisible(false);
+}
+
+// _ciSetFlatComposeVisible toggles the legacy flat "Stack Containers" card and
+// the header Update button together.
+function _ciSetFlatComposeVisible(show) {
   const card = document.getElementById('ci-compose-card');
   const upd  = document.getElementById('ci-update-wrap');
-  if (card) card.style.display = _ciIsCompose ? '' : 'none';
-  if (upd)  upd.style.display  = _ciIsCompose ? '' : 'none';
+  if (card) card.style.display = (show && _ciIsCompose) ? '' : 'none';
+  if (upd)  upd.style.display  = (show && _ciIsCompose) ? '' : 'none';
 }
 
 function _ciComposeStateColor(state) {
@@ -38901,16 +39025,21 @@ async function ciLoadDockerContainers() {
     const pr = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/probe');
     const probe = pr.ok ? await pr.json() : { available: false };
     if (!probe.available) {
-      // Silent hide — the card is opt-in and we don't want to spam users
-      // who installed docker once and removed it. The settings card
-      // explains the prerequisites; that's where the user should look.
+      // Grouped card can't paint (runtime down / VM agent not up / stack
+      // stopped). For a compose-tagged instance fall back to the legacy flat
+      // card so the user still gets the nice "offline" state + controls;
+      // otherwise just stay quiet (opt-in detection on a plain instance).
       card.style.display = 'none';
+      if (_ciIsCompose) { _ciSetFlatComposeVisible(true); ciLoadComposeContainers(); }
       return;
     }
+    _ciDockerRuntime = probe.runtime || 'docker'; // §5 — used by + Compose Stack
     const lr = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/containers');
     if (!lr.ok) throw new Error(await lr.text());
     const d = await lr.json();
     _ciDockerContainers = d.containers || [];
+    // Grouped card wins — hide the legacy flat compose card (and header Update).
+    _ciSetFlatComposeVisible(false);
     card.style.display = '';
     _ciRenderDockerGroups(_ciDockerContainers);
   } catch (e) {
@@ -39067,6 +39196,11 @@ function _ciRenderDockerGroups(list) {
         html += `<button class="btn btn-sm btn-ghost" style="padding:2px 10px;font-size:11px;" onclick="dockerEditComposeOpen('${projAttr}','${cfgAttr}')">✎ Edit</button>`;
       } else {
         html += `<span style="font-size:11px;color:var(--text-3);padding:2px 6px;" title="No compose file recorded in labels">✎ Edit</span>`;
+      }
+      // §6 — delete the whole stack (compose down + remove its /opt/<name>/ folder).
+      if (editable) {
+        const wdAttr = encodeURIComponent(g.working_dir || '');
+        html += `<button class="btn btn-sm btn-ghost" title="Delete stack" style="padding:2px 10px;font-size:11px;color:var(--accent-danger);" onclick="_ciDeleteComposeProject('${esc(headerTitle)}','${cfgAttr}','${wdAttr}')">🗑 Delete</button>`;
       }
     }
     html += `</div>`;
@@ -39402,6 +39536,34 @@ function _ciDockerPollUntilIdle(jobId) {
 }
 
 // ── Stack-level actions ─────────────────────────────────────────────────────
+// §6 — delete a detected compose project: `compose down` (optionally -v) then
+// remove its /opt/<name>/ folder on the host. project/cfgEnc/wdEnc are the
+// header-escaped + URL-encoded project name, config file path, and working dir.
+function _ciDeleteComposeProject(project, cfgEnc, wdEnc) {
+  _ciDockerCloseAllRowMenus();
+  const cfg = decodeURIComponent(cfgEnc || '');
+  const wd = decodeURIComponent(wdEnc || '');
+  showConfirm({
+    title: 'Delete stack “' + project + '”?',
+    danger: true,
+    confirmText: 'Delete stack',
+    body: 'This stops the stack (<code>compose down</code>) and removes its folder'
+      + (wd ? ' <code>' + esc(wd) + '</code>' : '') + ' inside <b>' + esc(_ciCurrentName) + '</b>.'
+      + '<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer;">'
+      + '<input type="checkbox" id="ci-del-compose-vols"> Also remove named volumes (<code>-v</code>) — destroys data</label>',
+    onConfirm: async () => {
+      const removeVolumes = !!document.getElementById('ci-del-compose-vols')?.checked;
+      const r = await fetch('/api/incus/instances/' + encodeURIComponent(_ciCurrentName) + '/docker/compose-project', {
+        method: 'DELETE', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ config_file: cfg, working_dir: wd, remove_volumes: removeVolumes })
+      });
+      if (!r.ok) { alert('Delete failed: ' + await r.text()); return; }
+      const d = await r.json();
+      openLXDProgressModal('Deleting stack ' + project + '…', d.job_id, { kind: 'docker-action', noAutoClose: true });
+    }
+  });
+}
+
 async function _ciDockerStackAction(gi, action) {
   _ciDockerCloseAllRowMenus();
   const groups = _ciDockerGroup(_ciDockerContainers);
@@ -47275,6 +47437,8 @@ function _nextInstanceLabel(prefix) {
 // ---- New VM Modal ----
 
 async function openNewVMModal() {
+  _vmComposeMode = false;
+  _applyVMComposeMode();
   _lxdVMDisks = [];
   _lxdVMNICs  = [];
   _lxdVMNic0PFwds = [];
@@ -47464,7 +47628,198 @@ function _lxdCreatePick(kind) {
   document.getElementById('lxd-create-menu')?.classList.add('hidden');
   if (kind === 'vm')             openNewVMModal();
   else if (kind === 'container') openNewContainerModal();
-  else if (kind === 'compose')   openComposeModal();
+  else if (kind === 'compose')   openComposeTargetChooser();
+}
+
+// ── v6.6.22 Compose deploy-target chooser ───────────────────────────────────
+let _composeChoice = null;      // 'lxc' | 'existing' | 'vm'
+let _composeChooserStep = 'choose';
+let _composeDeployTarget = null; // {name,type,runtime} chosen in step 2
+
+function openComposeTargetChooser() {
+  _composeChoice = null;
+  _composeChooserStep = 'choose';
+  _composeDeployTarget = null;
+  _composePretargeted = false;
+  document.getElementById('compose-chooser-alert')?.classList.add('hidden');
+  document.querySelectorAll('#compose-target-cards .compose-target-card')
+    .forEach(c => c.classList.remove('selected'));
+  _composeChooserShowStep('choose');
+  document.getElementById('modal-compose-chooser').classList.remove('hidden');
+}
+
+function _composeChoosePick(choice) {
+  _composeChoice = choice;
+  document.querySelectorAll('#compose-target-cards .compose-target-card')
+    .forEach(c => c.classList.toggle('selected', c.getAttribute('data-choice') === choice));
+}
+
+function _composeChooserShowStep(step) {
+  _composeChooserStep = step;
+  const map = { choose: 'compose-step-choose', detect: 'compose-step-detect', details: 'compose-step-details' };
+  Object.entries(map).forEach(([k, id]) => {
+    const el = document.getElementById(id); if (el) el.style.display = (k === step) ? '' : 'none';
+  });
+  const back = document.getElementById('compose-chooser-back');
+  const next = document.getElementById('compose-chooser-next');
+  const title = document.getElementById('compose-chooser-title');
+  // Hide Back on the first step, and on the details step when pre-targeted
+  // from an instance's Docker card (there's no chooser/detect to go back to).
+  if (back) back.style.display = (step === 'choose' || (step === 'details' && _composePretargeted)) ? 'none' : '';
+  if (step === 'choose') { next.textContent = 'Next →'; next.disabled = false; title.textContent = 'Deploy a Compose Stack'; }
+  else if (step === 'detect') { next.textContent = 'Next →'; next.disabled = true; title.textContent = 'Pick a target'; }
+  else if (step === 'details') { next.textContent = 'Deploy'; title.textContent = 'Stack details'; _composeDeployCheckReady(); }
+}
+
+function _composeChooserBack() {
+  if (_composeChooserStep === 'details' && _composeChoice === 'existing') { _composeChooserShowStep('detect'); return; }
+  _composeChooserShowStep('choose');
+}
+
+function _composeChooserNext() {
+  const alert = document.getElementById('compose-chooser-alert');
+  alert.classList.add('hidden');
+  if (_composeChooserStep === 'choose') {
+    if (!_composeChoice) { alert.textContent = 'Pick where to deploy the stack.'; alert.classList.remove('hidden'); return; }
+    if (_composeChoice === 'lxc') {
+      document.getElementById('modal-compose-chooser').classList.add('hidden');
+      openComposeModal();
+    } else if (_composeChoice === 'vm') {
+      document.getElementById('modal-compose-chooser').classList.add('hidden');
+      openComposeVMFlow();
+    } else { // existing
+      _composeChooserShowStep('detect');
+      _composeRunDetection();
+    }
+    return;
+  }
+  if (_composeChooserStep === 'detect') {
+    if (!_composeDeployTarget) return;
+    _composeChooserShowStep('details');
+    document.getElementById('compose-details-target').innerHTML =
+      'Target: <b>' + esc(_composeDeployTarget.name) + '</b> ' +
+      '<span class="compose-rt-badge ' + esc(_composeDeployTarget.runtime) + '">' + esc(_composeDeployTarget.runtime) + '</span>';
+    return;
+  }
+  if (_composeChooserStep === 'details') { _composeDeploySubmit(); return; }
+}
+
+async function _composeRunDetection() {
+  const spin = document.getElementById('compose-detect-spinner');
+  const list = document.getElementById('compose-detect-list');
+  const empty = document.getElementById('compose-detect-empty');
+  spin.style.display = ''; list.style.display = 'none'; empty.style.display = 'none';
+  _composeDeployTarget = null;
+  try {
+    const r = await fetch('/api/incus/compose-targets');
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    const targets = d.targets || [];
+    spin.style.display = 'none';
+    if (!targets.length) { empty.style.display = ''; return; }
+    list.innerHTML = targets.map((t, i) => {
+      const icon = t.type === 'virtual-machine' ? '🖥️' : '📦';
+      return `<div class="compose-target-card" data-ti="${i}" onclick="_composeDetectPick(${i})">
+        <div class="ctc-icon">${icon}</div>
+        <div class="ctc-body"><div class="ctc-title">${esc(t.name)}</div>
+          <div class="ctc-desc">${esc(t.type === 'virtual-machine' ? 'Virtual machine' : 'Container')}</div></div>
+        <span class="compose-rt-badge ${esc(t.runtime)}">${esc(t.runtime)}</span>
+      </div>`;
+    }).join('');
+    list.style.display = 'flex';
+    list._targets = targets;
+  } catch (e) {
+    spin.style.display = 'none'; empty.style.display = '';
+    empty.textContent = 'Detection failed: ' + (e.message || e);
+  }
+}
+
+function _composeDetectPick(i) {
+  const list = document.getElementById('compose-detect-list');
+  _composeDeployTarget = (list._targets || [])[i] || null;
+  list.querySelectorAll('.compose-target-card').forEach(c =>
+    c.classList.toggle('selected', String(c.getAttribute('data-ti')) === String(i)));
+  document.getElementById('compose-chooser-next').disabled = !_composeDeployTarget;
+}
+
+function _composeDeployCheckReady() {
+  const name = (document.getElementById('compose-deploy-name')?.value || '').trim();
+  const yaml = (document.getElementById('compose-deploy-yaml')?.value || '').trim();
+  const ok = /^[a-zA-Z0-9][a-zA-Z0-9_\-]*$/.test(name) && yaml.length > 0;
+  const next = document.getElementById('compose-chooser-next');
+  if (next && _composeChooserStep === 'details') next.disabled = !ok;
+}
+
+async function _composeDeploySubmit() {
+  const alert = document.getElementById('compose-chooser-alert');
+  alert.classList.add('hidden');
+  const name = (document.getElementById('compose-deploy-name').value || '').trim();
+  const yaml = (document.getElementById('compose-deploy-yaml').value || '').trim();
+  const env  = document.getElementById('compose-deploy-env').value || '';
+  if (!_composeDeployTarget) { alert.textContent = 'No target selected.'; alert.classList.remove('hidden'); return; }
+  // Reuse the global compose/.env validators.
+  const yamlV = _composeValidate(yaml), envV = _envValidate(env);
+  if (!yamlV.ok || !envV.ok) {
+    const all = (yamlV.errors||[]).map(e=>({...e,_src:'compose'})).concat((envV.errors||[]).map(e=>({...e,_src:'env'})));
+    _showComposeValidate('Compose validation failed', 'Fix the errors below and try again.', all, '✗');
+    return;
+  }
+  const next = document.getElementById('compose-chooser-next');
+  next.disabled = true;
+  try {
+    const r = await fetch('/api/incus/instances/' + encodeURIComponent(_composeDeployTarget.name) + '/compose-deploy', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ stack_name: name, compose_yaml: yaml, env: env })
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    document.getElementById('modal-compose-chooser').classList.add('hidden');
+    openLXDProgressModal('Deploying ' + name + ' to ' + _composeDeployTarget.name + '…', data.job_id);
+  } catch (e) {
+    alert.textContent = e.message || e; alert.classList.remove('hidden'); next.disabled = false;
+  }
+}
+
+// §5 — "+ Compose Stack" on an instance's Docker card: open the chooser
+// pre-targeted to the current instance, jumping straight to the details step.
+let _ciDockerRuntime = 'docker';
+let _composePretargeted = false;
+function _composeDeployToInstance() {
+  _composeChoice = 'existing';
+  _composePretargeted = true;
+  _composeDeployTarget = { name: _ciCurrentName, type: 'container', runtime: _ciDockerRuntime || 'docker' };
+  document.getElementById('compose-chooser-alert')?.classList.add('hidden');
+  // Reset the details fields.
+  const n = document.getElementById('compose-deploy-name'); if (n) n.value = '';
+  const y = document.getElementById('compose-deploy-yaml'); if (y) y.value = '';
+  const ev = document.getElementById('compose-deploy-env'); if (ev) ev.value = '';
+  document.getElementById('compose-details-target').innerHTML =
+    'Target: <b>' + esc(_composeDeployTarget.name) + '</b> ' +
+    '<span class="compose-rt-badge ' + esc(_composeDeployTarget.runtime) + '">' + esc(_composeDeployTarget.runtime) + '</span>';
+  document.getElementById('modal-compose-chooser').classList.remove('hidden');
+  _composeChooserShowStep('details');
+}
+
+// ── #3 — fresh VM + compose ──────────────────────────────────────────────────
+let _vmComposeMode = false;
+
+async function openComposeVMFlow() {
+  await openNewVMModal();           // resets _vmComposeMode = false (see below)
+  _vmComposeMode = true;
+  _applyVMComposeMode();
+}
+
+// Toggle the VM modal between normal and compose-VM presentation.
+function _applyVMComposeMode() {
+  const show = _vmComposeMode;
+  const sec = document.getElementById('lxd-vm-compose-section');
+  const img = document.getElementById('lxd-vm-image-section');
+  if (sec) sec.style.display = show ? '' : 'none';
+  if (img) img.style.display = show ? 'none' : '';
+  const h = document.querySelector('#modal-lxd-vm .modal-header h3');
+  if (h) h.textContent = show ? 'New VM + Compose Stack' : 'New Virtual Machine';
+  const btn = document.getElementById('lxd-vm-submit-btn');
+  if (btn) btn.textContent = show ? 'Create VM & Deploy' : 'Create VM';
 }
 
 function _lxdToolsToggle(evt) {
@@ -49350,14 +49705,35 @@ async function submitCreateVM(e) {
     smbios_type4:     _smbios4Collect('lxd-vm'),
   };
 
+  // v6.6.22 #3 — compose-VM mode: validate compose/.env, retarget the endpoint.
+  let endpoint = '/api/incus/vms';
+  let progressLabel = 'Creating VM ' + body.name + '…';
+  if (_vmComposeMode) {
+    const yaml = (document.getElementById('lxd-vm-compose-yaml')?.value || '').trim();
+    const env  = document.getElementById('lxd-vm-compose-env')?.value || '';
+    if (!yaml) { alertEl.textContent = 'Paste a docker-compose file to create the stack.'; alertEl.classList.remove('hidden'); btn.disabled = false; return; }
+    const yamlV = _composeValidate(yaml), envV = _envValidate(env);
+    if (!yamlV.ok || !envV.ok) {
+      const all = (yamlV.errors||[]).map(e=>({...e,_src:'compose'})).concat((envV.errors||[]).map(e=>({...e,_src:'env'})));
+      _showComposeValidate('Compose validation failed', 'Fix the errors below and try again.', all, '✗');
+      btn.disabled = false; return;
+    }
+    body.image = '';              // backend forces the compose base image
+    body.runtime = (document.querySelector('input[name="lxd-vm-runtime"]:checked')?.value) || 'docker';
+    body.compose_yaml = yaml;
+    body.compose_env = env;
+    endpoint = '/api/incus/compose-vms';
+    progressLabel = 'Creating VM ' + body.name + ' + deploying stack…';
+  }
+
   try {
-    const res = await fetch('/api/incus/vms', {
+    const res = await fetch(endpoint, {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     document.getElementById('modal-lxd-vm').classList.add('hidden');
-    _bgPollLXDJob(data.job_id, 'Creating VM ' + body.name + '…');
+    _bgPollLXDJob(data.job_id, progressLabel);
   } catch(e) {
     alertEl.textContent = e.message;
     alertEl.classList.remove('hidden');
