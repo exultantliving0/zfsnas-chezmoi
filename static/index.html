@@ -37679,9 +37679,15 @@ function _tagPillHTML(name, opts) {
   opts = opts || {};
   const c = _tagColor(name), tc = _tagTextColor(c);
   const cls = 'tag-pill' + (opts.clickable ? ' tag-pill-clickable' : '');
-  const onclick = opts.clickable ? ` onclick='_tagOpenSwatch(event, ${JSON.stringify(name)})'` : '';
+  // The tag name is interpolated into single-quoted inline handler attributes.
+  // JSON.stringify alone does NOT escape the single quote, so a name containing
+  // one breaks out of the attribute → stored XSS. Run the JSON literal through
+  // esc() (which entity-encodes ' " < > & \) so it is safe in attribute context;
+  // the browser decodes the entities back to a valid JS string before parsing.
+  const nameJS = esc(JSON.stringify(name));
+  const onclick = opts.clickable ? ` onclick='_tagOpenSwatch(event, ${nameJS})'` : '';
   const x = opts.removable
-    ? `<span class="tag-pill-x" title="Remove tag" onclick='event.stopPropagation();_ciRemoveTag(${JSON.stringify(name)})'>×</span>`
+    ? `<span class="tag-pill-x" title="Remove tag" onclick='event.stopPropagation();_ciRemoveTag(${nameJS})'>×</span>`
     : '';
   return `<span class="${cls}" style="background:${c};color:${tc};"${onclick}>${esc(name)}${x}</span>`;
 }
@@ -37776,11 +37782,14 @@ function _tagOpenSwatch(ev, name) {
   _tagCloseSwatch();
   const pop = document.createElement('div');
   pop.className = 'tag-swatch-pop';
+  // esc() the JSON literal of the tag name so a name containing a single quote
+  // can't break out of the single-quoted inline handler attribute (stored XSS).
+  const nameJS = esc(JSON.stringify(name));
   pop.innerHTML = _TAG_PALETTE.map(c =>
-    `<span class="sw" style="background:${c};" onclick='_tagApplyColor(${JSON.stringify(name)}, ${JSON.stringify(c)})'></span>`
-  ).join('') + `<input type="color" value="${_tagColor(name)}" title="Custom color"
+    `<span class="sw" style="background:${c};" onclick='_tagApplyColor(${nameJS}, ${JSON.stringify(c)})'></span>`
+  ).join('') + `<input type="color" value="${esc(_tagColor(name))}" title="Custom color"
       style="grid-column:1 / -1;width:100%;height:24px;border:none;background:none;cursor:pointer;"
-      onchange='_tagApplyColor(${JSON.stringify(name)}, this.value)'>`;
+      onchange='_tagApplyColor(${nameJS}, this.value)'>`;
   document.body.appendChild(pop);
   const r = ev.currentTarget.getBoundingClientRect();
   pop.style.left = Math.min(r.left, window.innerWidth - pop.offsetWidth - 12) + 'px';

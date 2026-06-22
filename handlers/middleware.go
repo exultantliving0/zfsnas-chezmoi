@@ -288,6 +288,28 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// Content-Security-Policy: defense-in-depth against XSS/exfiltration.
+		// The SPA relies on inline scripts/handlers and inline styles, so
+		// 'unsafe-inline' is required for script-src/style-src; all script files
+		// are self-hosted (/static/vendor/*), only Google Fonts is external.
+		// frame-ancestors is 'self' (not 'none') because the VGA console and file
+		// previewer are framed same-origin (they override X-Frame-Options to
+		// SAMEORIGIN). object-src 'none' + base-uri 'self' close common bypasses.
+		if w.Header().Get("Content-Security-Policy") == "" {
+			w.Header().Set("Content-Security-Policy",
+				"default-src 'self'; "+
+					"script-src 'self' 'unsafe-inline' 'unsafe-eval'; "+
+					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
+					"font-src 'self' https://fonts.gstatic.com; "+
+					"img-src 'self' data: blob:; "+
+					"media-src 'self' blob:; "+
+					"connect-src 'self'; "+
+					"worker-src 'self' blob:; "+
+					"object-src 'none'; "+
+					"base-uri 'self'; "+
+					"frame-ancestors 'self'; "+
+					"form-action 'self'")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

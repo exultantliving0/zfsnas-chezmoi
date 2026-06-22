@@ -87,15 +87,26 @@ func saveTagRegistry(reg map[string]string) error {
 	return os.Rename(tmp, path)
 }
 
+// tagUnsafeChars are characters rejected in tag names because they enable HTML/
+// attribute-context injection when the name is rendered in the UI (the tag pill
+// is interpolated into inline event-handler attributes). Defense-in-depth: the
+// frontend escapes these too, but the backend refuses to store them at all.
+// Comma is excluded separately because tags are stored comma-separated.
+const tagUnsafeChars = `<>'"&` + "`"
+
 // normalizeTag trims, lowercases, and validates a single tag name.
 // Lowercasing avoids near-duplicate clutter (Prod vs prod). Returns "" for
-// names that are empty or contain a comma/control char after trimming.
+// names that are empty or contain a comma, control char, or HTML-unsafe
+// character after trimming.
 func normalizeTag(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
 		return ""
 	}
 	if strings.ContainsRune(name, ',') {
+		return ""
+	}
+	if strings.ContainsAny(name, tagUnsafeChars) {
 		return ""
 	}
 	for _, r := range name {

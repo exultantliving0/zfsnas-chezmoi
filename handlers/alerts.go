@@ -17,19 +17,41 @@ import (
 )
 
 // smtpPasswordMask is the sentinel returned by GET and recognised by PUT to mean
-// "password already set — keep existing value unchanged".
+// "secret already set — keep existing value unchanged". It is reused for every
+// notification secret (SMTP password, ntfy/gotify tokens, pushover keys) so a
+// non-admin who can read the alert config never receives any secret in cleartext.
 const smtpPasswordMask = "••••••••"
 
-// HandleGetAlerts returns the current alert configuration with the SMTP password masked.
+// maskSecret replaces a non-empty secret with the mask sentinel.
+func maskSecret(s string) string {
+	if s != "" {
+		return smtpPasswordMask
+	}
+	return ""
+}
+
+// unmaskSecret returns existing when the caller sent the mask sentinel back
+// (meaning "leave unchanged"), otherwise the new value as supplied.
+func unmaskSecret(supplied, existing string) string {
+	if supplied == smtpPasswordMask {
+		return existing
+	}
+	return supplied
+}
+
+// HandleGetAlerts returns the current alert configuration with all notification
+// secrets masked (never returned in cleartext, regardless of caller role).
 func HandleGetAlerts(w http.ResponseWriter, r *http.Request) {
 	cfg, err := alerts.Load()
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to load alert config")
 		return
 	}
-	if cfg.Email.SMTP.Password != "" {
-		cfg.Email.SMTP.Password = smtpPasswordMask
-	}
+	cfg.Email.SMTP.Password = maskSecret(cfg.Email.SMTP.Password)
+	cfg.Ntfy.Token = maskSecret(cfg.Ntfy.Token)
+	cfg.Gotify.Token = maskSecret(cfg.Gotify.Token)
+	cfg.Pushover.UserKey = maskSecret(cfg.Pushover.UserKey)
+	cfg.Pushover.APIToken = maskSecret(cfg.Pushover.APIToken)
 	jsonOK(w, cfg)
 }
 
@@ -40,14 +62,22 @@ func HandleUpdateAlerts(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// Preserve existing SMTP password when the UI sends back the mask.
-	if cfg.Email.SMTP.Password == smtpPasswordMask {
-		existing, err := alerts.Load()
-		if err == nil && existing.Email.SMTP.Password != "" {
-			cfg.Email.SMTP.Password = existing.Email.SMTP.Password
-		} else {
-			cfg.Email.SMTP.Password = ""
-		}
+	// Preserve existing secrets when the UI sends back the mask sentinel
+	// (the GET handler masks every secret, so an unchanged form round-trips
+	// the mask rather than the real value).
+	if existing, err := alerts.Load(); err == nil {
+		cfg.Email.SMTP.Password = unmaskSecret(cfg.Email.SMTP.Password, existing.Email.SMTP.Password)
+		cfg.Ntfy.Token = unmaskSecret(cfg.Ntfy.Token, existing.Ntfy.Token)
+		cfg.Gotify.Token = unmaskSecret(cfg.Gotify.Token, existing.Gotify.Token)
+		cfg.Pushover.UserKey = unmaskSecret(cfg.Pushover.UserKey, existing.Pushover.UserKey)
+		cfg.Pushover.APIToken = unmaskSecret(cfg.Pushover.APIToken, existing.Pushover.APIToken)
+	} else {
+		// Can't load existing values; never persist the mask sentinel as a secret.
+		cfg.Email.SMTP.Password = unmaskSecret(cfg.Email.SMTP.Password, "")
+		cfg.Ntfy.Token = unmaskSecret(cfg.Ntfy.Token, "")
+		cfg.Gotify.Token = unmaskSecret(cfg.Gotify.Token, "")
+		cfg.Pushover.UserKey = unmaskSecret(cfg.Pushover.UserKey, "")
+		cfg.Pushover.APIToken = unmaskSecret(cfg.Pushover.APIToken, "")
 	}
 	if err := alerts.Save(&cfg); err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to save alert config")
