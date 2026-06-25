@@ -35017,7 +35017,6 @@ function runReplicationTask(id, name) {
     const tip = o.tip ? `<title>${mapEsc(o.tip)}</title>` : '';
     return `<g class="net-node ${o.cls}" data-id="${mapEsc(o.id)}" transform="translate(${x.toFixed(1)},${y.toFixed(1)})"${hue}>`
       + `<rect class="net-node-bg" width="${o.w}" height="${o.h}" rx="9"/>`
-      + `<rect class="net-node-scan" width="${o.w}" height="3" rx="2"/>`
       + tip + title + subs + dot + `</g>`;
   }
   function netSpokeMarkup(id, x1, y1, x2, y2, hue, kind){
@@ -35723,7 +35722,6 @@ function runReplicationTask(id, name) {
     return `<g class="map-node ${cls}" data-id="${n.id}" transform="translate(${n.__x.toFixed(1)},${n.__y.toFixed(1)})">`
       + `<rect class="map-node-base" width="${n.__w}" height="${n.__h}" rx="9"/>`
       + `<rect class="map-node-bg"   width="${n.__w}" height="${n.__h}" rx="9"/>`
-      + `<rect class="map-node-scan" width="${n.__w}" height="3" rx="2"/>`
       + title
       + `<text class="map-node-sub"   x="9" y="${subY}"  data-role="sub"></text>`
       + `<text class="map-node-sub2"  x="9" y="${sub2Y}" data-role="sub2"></text>`

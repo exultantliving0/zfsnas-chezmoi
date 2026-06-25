@@ -2932,7 +2932,6 @@ body.light, body.dawn{       /* every light-background theme uses the dark-hue s
 .map-node .map-node-base{fill:var(--map-fill);}
 .map-node .map-node-bg{fill:color-mix(in srgb, var(--hue) 12%, var(--map-fill));
   stroke:var(--hue);stroke-width:1.2;}
-.map-node .map-node-scan{fill:var(--hue);opacity:.7;}
 .map-node .map-node-title{fill:var(--text);font-size:11px;font-weight:600;}
 .map-node .map-node-sub {fill:var(--text-2);font-size:9.5px;}
 .map-node .map-node-sub2{fill:var(--text-3);font-size:9.5px;font-variant-numeric:tabular-nums;}
@@ -3040,7 +3039,6 @@ body.dawn  .map-node.st-faulted, body.dawn  .map-node.st-missing{--hue:#dc2626;}
 .net-node .net-node-bg{fill:hsl(var(--h) 55% 15% / .93);stroke:hsl(var(--h) 90% 60%);stroke-width:1.2;}
 body.light .net-node .net-node-bg,
 body.dawn  .net-node .net-node-bg{fill:hsl(var(--h) 65% 95% / .96);}
-.net-node .net-node-scan{fill:hsl(var(--h) 90% 62%);opacity:.7;}
 .net-node .net-node-title{fill:var(--text);font-size:11px;font-weight:600;}
 .net-node .net-node-sub{fill:var(--text-2);font-size:9.5px;font-variant-numeric:tabular-nums;}
 .net-node--bridge .net-node-bg{stroke-width:2;}
@@ -3057,9 +3055,6 @@ body.dawn  .net-node--docker .net-node-sub{fill:hsl(var(--h) 70% 35%);}
 .net-node--vm .net-node-bg,
 .net-node--ct .net-node-bg{fill:color-mix(in srgb, var(--map-vm) 16%, #0d0d0f);stroke:var(--map-vm);}
 .net-node--docker .net-node-bg{fill:color-mix(in srgb, var(--map-docker) 16%, #0d0d0f);stroke:var(--map-docker);}
-.net-node--vm .net-node-scan,
-.net-node--ct .net-node-scan{fill:var(--map-vm);}
-.net-node--docker .net-node-scan{fill:var(--map-docker);}
 .net-node--docker .net-node-sub{fill:color-mix(in srgb, var(--map-docker) 80%, #fff);}
 body.light .net-node--vm .net-node-bg, body.dawn .net-node--vm .net-node-bg,
 body.light .net-node--ct .net-node-bg, body.dawn .net-node--ct .net-node-bg{fill:color-mix(in srgb, var(--map-vm) 12%, #fafafa);}
