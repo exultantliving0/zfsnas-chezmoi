@@ -3365,6 +3365,91 @@ body.is-phone .modal {
    single "Got it"/close button after the scroll region instead of in a
    .modal-footer) must never be squeezed out by the flex:1 scroll area. */
 body.is-phone .modal > button { flex-shrink: 0; }
+
+/* ===== File browser — phone layout =========================================
+   The desktop file browser is a resizable two-pane window (260px tree + a
+   multi-column listing) that overflowed a phone screen badly. On phone it
+   becomes a full-screen page: no tree, full-width touch listing trimmed to
+   icon · name · size, a horizontally-scrollable touch toolbar, and a wrapping
+   nav row with a full-width search. Placed AFTER the `.modal` phone rules so
+   these (equal-specificity) overrides win the cascade. */
+body.is-phone .fbnew-modal {
+  width: 100% !important; height: 100dvh !important;
+  min-width: 0 !important; min-height: 0 !important;
+  max-width: none !important; max-height: 100dvh !important;
+  border: none !important; border-radius: 0 !important; resize: none !important;
+}
+/* Full-screen ⇒ the header sits under the notch and the screen's rounded
+   corners. Pad it down past the top safe-area (the header surface bleeds up
+   behind the notch) and in from the left/right insets. `!important` is required
+   to beat the `.fbnew-modal > div { padding:0 !important }` reset. */
+body.is-phone .fbnew-modal-header {
+  padding: calc(12px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right))
+           12px calc(14px + env(safe-area-inset-left)) !important;
+  gap: 10px;
+}
+body.is-phone .fbnew-modal-header h3 { font-size: 15px; }
+body.is-phone #fbnew-maximize-btn { display: none; }            /* no resize on phone */
+body.is-phone .fbnew-iconbtn { font-size: 20px; padding: 6px 8px; }
+
+/* Toolbar → one horizontally-scrollable row of touch pills (snappy, no scrollbar). */
+body.is-phone .fbnew-toolbar {
+  flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  gap: 8px; scrollbar-width: none;
+  /* !important beats the `.fbnew-modal > div{padding:0 !important}` reset; pad in
+     from the side safe-area so the first/last pill clears rounded corners. */
+  padding: 9px calc(12px + env(safe-area-inset-right)) 9px calc(12px + env(safe-area-inset-left)) !important;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent);
+          mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent);
+}
+body.is-phone .fbnew-toolbar::-webkit-scrollbar { display: none; }
+body.is-phone .fbnew-toolbar .fbnew-spacer { display: none; }
+body.is-phone .fbnew-btn {
+  flex-shrink: 0; padding: 9px 14px; font-size: 13px; border-radius: 9px; min-height: 38px;
+}
+
+/* Nav row → back · refresh · breadcrumb on one line; search wraps to full width. */
+body.is-phone .fbnew-navrow {
+  flex-wrap: wrap; gap: 7px;
+  padding: 9px calc(12px + env(safe-area-inset-right)) 9px calc(12px + env(safe-area-inset-left)) !important;
+}
+body.is-phone #fbnew-forward { display: none; }                 /* rarely used on phone */
+body.is-phone .fbnew-navbtn { min-width: 40px; min-height: 36px; font-size: 17px; border-radius: 9px; }
+body.is-phone .fbnew-crumb { flex: 1 1 auto; height: 36px; font-size: 13px; }
+body.is-phone input.fbnew-search {
+  order: 9; flex: 1 1 100%; max-width: none; min-width: 0; height: 38px; font-size: 16px;
+}
+
+/* Body → drop the tree, listing fills the screen. */
+body.is-phone .fbnew-modal > .fbnew-body { display: block !important; }
+body.is-phone .fbnew-tree { display: none; }
+body.is-phone .fbnew-listing { width: 100%; height: 100%; }
+/* Keep the last rows clear of the home indicator. */
+body.is-phone .fbnew-listing[data-view="list"] { padding-bottom: env(safe-area-inset-bottom); }
+body.is-phone .fbnew-listing:not([data-view="list"]) { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+
+/* List view → touch rows, trimmed to checkbox · name · size. */
+body.is-phone .fb-list-head,
+body.is-phone .fb-list-row {
+  grid-template-columns: 34px 1fr auto; gap: 10px; padding: 12px 14px; font-size: 14px;
+}
+body.is-phone .fb-list-head > :nth-child(n+4),
+body.is-phone .fb-list-row  > :nth-child(n+4) { display: none; }
+body.is-phone .fb-list-row .fb-name { font-size: 15px; }
+body.is-phone .fb-list-row .fb-name .fb-icon { font-size: 22px; width: 28px; }
+body.is-phone .fb-list-row .fb-mono { font-size: 12.5px; }
+body.is-phone .fb-list-head input[type="checkbox"],
+body.is-phone .fb-list-row input[type="checkbox"] { width: 21px; height: 21px; }
+
+/* Tile / icon views → phone-sized columns. */
+body.is-phone .fbnew-listing[data-view="tiles"]  { grid-template-columns: 1fr; }
+body.is-phone .fbnew-listing[data-view="small"]  { grid-template-columns: repeat(auto-fill, minmax(82px, 1fr)); }
+body.is-phone .fbnew-listing[data-view="medium"] { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); }
+body.is-phone .fbnew-listing[data-view="large"]  { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+
+/* New-folder inline form → full-width input. */
+body.is-phone #fbnew-mkdir-form { flex-wrap: wrap; }
+body.is-phone #fbnew-mkdir-name { flex: 1 1 100%; font-size: 16px; }
 @keyframes m-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 body.is-phone .modal-header {
   position: sticky; top: 0; z-index: 2;

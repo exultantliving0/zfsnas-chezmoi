@@ -54528,6 +54528,10 @@ function _fbJoin(base, name) {
 function fbRowClick(ev, idx) {
   // Don't hijack clicks on the checkbox itself.
   if (ev.target && ev.target.tagName === 'INPUT') return;
+  // On phone a single tap ACTIVATES the entry (open folder / preview file) —
+  // double-tap is unreliable on touch. Multi-select is still available via each
+  // row's checkbox and the long-press context menu.
+  if (document.body.classList.contains('is-phone')) { fbRowDblClick(idx); return; }
   const entries = fileBrowserState.sortedEntries || [];
   const e = entries[idx];
   if (!e) return;
