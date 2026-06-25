@@ -2294,10 +2294,16 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .modal > div:not(.modal-header):not(.modal-body):not(.modal-footer):last-child {
   padding-bottom: 28px;
 }
-/* Forms may need to scroll on small screens */
-.modal > form {
+/* Forms AND plain content divs may need to scroll on small screens so the
+   action buttons at the bottom stay reachable. Without overflow-y on the
+   plain-div case, a tall modal whose content lives in a bare <div> (not a
+   <form> or .modal-body) clipped under .modal's overflow:hidden and the
+   bottom buttons became unreachable in the phone sheet layout. */
+.modal > form,
+.modal > div:not(.modal-header):not(.modal-body):not(.modal-footer) {
   overflow-y: auto;
   scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-footer {
@@ -3340,14 +3346,25 @@ body.is-phone .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch;
 /* --- Modal → bottom sheet ---------------------------------------------------
    One treatment covers every .modal: dock to the bottom, full width, sticky
    header (with a grab handle) + footer, scrollable body, safe-area aware. */
-body.is-phone .modal-backdrop { padding: 0; align-items: flex-end; }
+/* The bottom tab bar (#m-tabbar, z-index:1400) otherwise paints OVER an open
+   modal — hiding the sheet's sticky footer/action buttons at the very bottom.
+   Lift the backdrop above it so the sheet covers the tab bar and its footer is
+   fully visible. (Toasts at z-index 99999 still sit above modals.) */
+body.is-phone .modal-backdrop { padding: 0; align-items: flex-end; z-index: 1500; }
 body.is-phone .modal {
   max-width: none; width: 100%;
-  max-height: 92dvh;
+  /* !important defeats per-modal inline `max-height:NNvh` — on phones `vh`
+     includes the URL-bar area, so e.g. 96vh pushes the sticky footer below the
+     visible viewport. `dvh` tracks the actually-visible height. */
+  max-height: 92dvh !important;
   border-radius: 18px 18px 0 0;
   border-left: none; border-right: none; border-bottom: none;
   animation: m-sheet-up .26s cubic-bezier(.4,0,.2,1);
 }
+/* Bare action buttons that sit as direct children of .modal (a few modals put a
+   single "Got it"/close button after the scroll region instead of in a
+   .modal-footer) must never be squeezed out by the flex:1 scroll area. */
+body.is-phone .modal > button { flex-shrink: 0; }
 @keyframes m-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 body.is-phone .modal-header {
   position: sticky; top: 0; z-index: 2;

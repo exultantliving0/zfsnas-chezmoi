@@ -37,6 +37,22 @@ var relayBypassPrefixes = []string{
 	"/apple-touch-icon",
 }
 
+// relayForwardInterlinkPaths are interlink/push-interlink HTTP paths that ARE
+// forwarded to the remote server when relay mode is active, overriding the
+// broad /api/interlink/ + /api/push-interlink/ bypass above. Rationale: when an
+// operator is VIEWING peer B and pushes one of B's datasets, the whole push
+// flow — the eligible-target server list, the remote pool/folder lookups, and
+// the syncoid transfer itself — must run ON B (so it pushes B's dataset to one
+// of B's own peers, which includes the home server A). Served locally on A, the
+// target list was A's peers (excluding A, including B) — i.e. wrong, and missing
+// the home server. The switcher's own /api/interlink/servers stays bypassed
+// (local) so the server-switch dropdown keeps listing A's peers.
+var relayForwardInterlinkPaths = []string{
+	"/api/push-interlink/",           // start/start-dataset/servers/jobs/cancel/status
+	"/api/interlink/remote-pools/",   // destination pool lookup on the viewed server
+	"/api/interlink/remote-folders/", // destination folder lookup on the viewed server
+}
+
 // relayWSForwardPaths are WebSocket paths that ARE relayed to the remote server
 // despite /ws/ being in the bypass list above.
 var relayWSForwardPaths = []string{
@@ -96,6 +112,13 @@ func relayProxyTimeout(path string) time.Duration {
 func isRelayBypassed(path string) bool {
 	// WebSocket paths explicitly forwarded to the remote override the /ws/ bypass.
 	for _, p := range relayWSForwardPaths {
+		if strings.HasPrefix(path, p) {
+			return false
+		}
+	}
+	// Push-interlink flow paths forward to the viewed peer, overriding the broad
+	// /api/interlink/ + /api/push-interlink/ bypass below.
+	for _, p := range relayForwardInterlinkPaths {
 		if strings.HasPrefix(path, p) {
 			return false
 		}

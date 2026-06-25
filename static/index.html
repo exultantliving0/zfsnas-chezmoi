@@ -7176,6 +7176,28 @@ Select the Console tab to load.</pre>
 </div>
 
 <!-- Delete Dataset Confirm Modal -->
+<!-- Rename Dataset / ZVol Modal -->
+<div class="modal-backdrop hidden" id="modal-zfs-rename" onclick="if(event.target===this)closeZfsRename()">
+  <div class="modal" style="max-width:480px;width:94vw;">
+    <div class="modal-header">
+      <h3>Rename</h3>
+      <button class="modal-close" onclick="closeZfsRename()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-error hidden" id="zfs-rename-alert" style="margin-bottom:10px;"></div>
+      <label style="display:block;font-size:13px;font-weight:600;color:var(--text-1);margin-bottom:6px;">Name</label>
+      <input type="text" id="zfs-rename-input" class="input" style="width:100%;font-family:monospace;font-size:13px;"
+        spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
+        oninput="_zfsRenameCheck()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitZfsRename();}">
+      <div id="zfs-rename-hint" style="font-size:11.5px;color:var(--text-3);margin-top:8px;line-height:1.5;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeZfsRename()">Cancel</button>
+      <button class="btn btn-primary" id="zfs-rename-btn" onclick="submitZfsRename()" disabled>Rename</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="modal-delete-dataset">
   <div class="modal" style="max-width:420px;border:1px solid var(--accent-danger);">
     <div class="modal-header" style="background:rgba(255,59,48,0.08);border-bottom:1px solid var(--accent-danger);">
@@ -21016,6 +21038,61 @@ async function submitEditZVol(e) {
   }
 }
 
+// ── Rename dataset / zvol (zfs rename) ───────────────────────────────────────
+let _zfsRenameOrig = '';
+let _zfsRenameIsZvol = false;
+
+function openZfsRename(name, isZvol) {
+  _zfsRenameOrig = name;
+  _zfsRenameIsZvol = !!isZvol;
+  const inp = document.getElementById('zfs-rename-input');
+  inp.value = name;
+  document.getElementById('zfs-rename-alert').classList.add('hidden');
+  document.getElementById('zfs-rename-hint').textContent =
+    (isZvol ? 'ZVol' : 'Dataset') + ' renamed via `zfs rename`. Any children and snapshots move with it; the pool prefix must stay the same.';
+  document.getElementById('zfs-rename-btn').disabled = true;
+  document.getElementById('modal-zfs-rename').classList.remove('hidden');
+  // Focus the input and pre-select the leaf component (after the last "/").
+  setTimeout(() => {
+    inp.focus();
+    const i = name.lastIndexOf('/');
+    inp.setSelectionRange(i >= 0 ? i + 1 : 0, name.length);
+  }, 50);
+}
+
+function closeZfsRename() {
+  document.getElementById('modal-zfs-rename').classList.add('hidden');
+}
+
+// Enable the Rename button only when the name is non-empty AND changed.
+function _zfsRenameCheck() {
+  const v = (document.getElementById('zfs-rename-input').value || '').trim();
+  document.getElementById('zfs-rename-btn').disabled = !v || v === _zfsRenameOrig;
+}
+
+async function submitZfsRename() {
+  const v = (document.getElementById('zfs-rename-input').value || '').trim();
+  if (!v || v === _zfsRenameOrig) return;
+  const btn = document.getElementById('zfs-rename-btn');
+  const alertEl = document.getElementById('zfs-rename-alert');
+  btn.disabled = true;
+  alertEl.classList.add('hidden');
+  try {
+    const r = await fetch('/api/datasets/rename', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_name: _zfsRenameOrig, new_name: v }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'failed');
+    closeZfsRename();
+    showToast('Renamed to ' + v, 'success');
+    loadDatasets();
+  } catch (e) {
+    alertEl.textContent = e.message;
+    alertEl.classList.remove('hidden');
+    btn.disabled = false;
+  }
+}
+
 function deleteZVol(name) {
   _deleteZVolPending = name;
   document.getElementById('delete-zvol-name').textContent = name;
@@ -21108,6 +21185,11 @@ function toggleZVolMenu(evt) {
   pushILBtn.textContent = '⇅ Push InterLink…';
   pushILBtn.addEventListener('click', () => { closeShareMenus(); openPushDsILModal(zvolName, true); });
   dd.appendChild(pushILBtn);
+
+  const renameBtn = document.createElement('button');
+  renameBtn.textContent = '✏ Rename';
+  renameBtn.addEventListener('click', () => { closeShareMenus(); openZfsRename(zvolName, true); });
+  dd.appendChild(renameBtn);
 
   const sep = document.createElement('hr');
   sep.className = 'menu-sep';
@@ -24304,6 +24386,11 @@ function toggleDsMenu(evt) {
   browseBtn.textContent = '📂 Browse Files';
   browseBtn.addEventListener('click', () => { closeShareMenus(); openFileBrowser('dataset', dsName); });
   dd.appendChild(browseBtn);
+
+  const renameBtn = document.createElement('button');
+  renameBtn.textContent = '✏ Rename';
+  renameBtn.addEventListener('click', () => { closeShareMenus(); openZfsRename(dsName, false); });
+  dd.appendChild(renameBtn);
 
   // Lock / Unlock actions for encrypted datasets.
   const dsObj = (datasetCache || []).find(x => x.name === dsName);
@@ -33062,7 +33149,13 @@ async function _replLoadILServers(prefix) {
   const sel = document.getElementById(prefix + '-target');
   if (!sel) return;
   try {
-    const r = await fetch('/api/interlink/servers/fast');
+    // /api/incus/interlink/servers is the relay-AWARE list (the /api/incus/ →
+    // /api/lxd/ namespace is not relay-bypassed), so in relay mode it forwards
+    // to the VIEWED peer and returns ITS replication targets — including the
+    // home server. The bypassed /api/interlink/servers* returned the home
+    // server's peers instead (missing the home/interlink server). Same path the
+    // VM-push modal already uses; peers ship this route, so no fallback needed.
+    const r = await fetch('/api/incus/interlink/servers', {credentials:'same-origin'});
     _replILServers = r.ok ? (await r.json() || []) : [];
   } catch { _replILServers = []; }
   const cur = sel.value;
@@ -37171,6 +37264,20 @@ let _pushDsILDataset    = null; // dataset/zvol name being pushed via modal-push
 let _pushDsILSourceSize = 0;   // estimated bytes of the source (used for capacity check)
 let _pushDsILPoolAvail  = {};  // pool name → available bytes on the remote
 
+// _fetchPushTargets returns the list of servers eligible as a push target. It
+// prefers /api/push-interlink/servers (which forwards to the viewed peer in
+// relay mode → that server's peers, incl. the home server) and falls back to
+// /api/interlink/servers when the viewed peer runs an older build without the
+// new route (mixed-version fleet) — no worse than the pre-6.6.22 behavior.
+async function _fetchPushTargets() {
+  try {
+    const r = await fetch('/api/push-interlink/servers', {credentials:'same-origin'});
+    if (r.ok) return (await r.json()) || [];
+  } catch (_) { /* fall through */ }
+  const r2 = await fetch('/api/interlink/servers', {credentials:'same-origin'});
+  return (await r2.json()) || [];
+}
+
 async function openPushDsILModal(dsName, isZvol) {
   _pushDsILDataset   = dsName;
   _pushDsILPoolAvail = {};
@@ -37202,7 +37309,7 @@ async function openPushDsILModal(dsName, isZvol) {
   document.getElementById('modal-push-ds-il').classList.remove('hidden');
 
   try {
-    const servers = await fetch('/api/interlink/servers', {credentials:'same-origin'}).then(r => r.json());
+    const servers = await _fetchPushTargets();
     const online  = (servers || []).filter(s => s.online);
     if (!online.length) {
       serverSel.innerHTML = '<option value="">No online InterLink servers</option>';
@@ -37418,7 +37525,7 @@ async function openPushInterlinkModal(snapName) {
   const serverSel = document.getElementById('push-il-server');
   serverSel.innerHTML = '<option value="">Loading…</option>';
   try {
-    const servers = await fetch('/api/interlink/servers', {credentials:'same-origin'}).then(r => r.json());
+    const servers = await _fetchPushTargets();
     const online  = (servers || []).filter(s => s.online);
     if (!online.length) {
       serverSel.innerHTML = '<option value="">No online InterLink servers</option>';
@@ -53086,6 +53193,7 @@ function showToast(msg, type = 'error') {
       <button class="fbnew-btn" id="fbnew-btn-del"   onclick="fbDelete()"        title="Delete">🗑 Delete</button>
       <button class="fbnew-btn" id="fbnew-btn-mv"    onclick="fbMoveToDialog()"  title="Move to…">📂 Move…</button>
       <button class="fbnew-btn" id="fbnew-btn-cpto"  onclick="fbCopyToDialog()"  title="Copy to…">📋 Copy to…</button>
+      <button class="fbnew-btn" id="fbnew-btn-rename" onclick="fbRenamePrompt()" title="Rename selected item">✏ Rename</button>
       <button class="fbnew-btn" id="fbnew-btn-edit"  onclick="fbEditSelection()" title="Edit ownership &amp; permissions">✎ Edit</button>
       <button class="fbnew-btn" id="fbnew-btn-dl"    onclick="fbDownloadSelection()" title="Download selected files">⬇ Download</button>
       <span class="fbnew-spacer"></span>
@@ -54496,6 +54604,7 @@ function fbUpdateToolbar() {
   has('fbnew-btn-del',  isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
   has('fbnew-btn-mv',   isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
   has('fbnew-btn-cpto', isAdmin && selCount > 0, isAdmin ? '' : 'Admin only');
+  has('fbnew-btn-rename', isAdmin && selCount === 1, isAdmin ? (selCount === 1 ? '' : 'Pick one entry') : 'Admin only');
   has('fbnew-btn-edit', isAdmin && selCount === 1, selCount === 1 ? '' : 'Pick one entry');
   // Download is gated by browse_files only — read-only verb, available
   // to any role that can already see the directory listing. Disabled
@@ -54716,6 +54825,44 @@ async function _fbPasteRun(verb, cb, dstRoot, dstSub, overwrite) {
 
 // ── Delete ───────────────────────────────────────────────────────────────────
 
+// fbRenamePrompt renames the single selected entry in place. Backed by
+// POST /api/files/rename (sudo mv -n, same-directory only).
+function fbRenamePrompt() {
+  if (_fbCtx.selection.size !== 1) { showToast('Select exactly one item to rename.', 'error'); return; }
+  const oldName = _fbSelectedNames()[0];
+  const sub = fileBrowserState.subpath;
+  const subpath = sub ? sub + '/' + oldName : oldName;
+  showConfirm({
+    title: 'Rename',
+    confirmText: 'Rename',
+    body: `<div style="font-size:13px;margin-bottom:8px;">New name for <code>${esc(oldName)}</code>:</div>`
+        + `<input type="text" id="fb-rename-input" class="input" style="width:100%;" value="${esc(oldName)}" spellcheck="false" autocomplete="off"`
+        + ` onkeydown="if(event.key==='Enter'){event.preventDefault();_executeGenericConfirm();}">`,
+    onConfirm: async () => {
+      const newName = (document.getElementById('fb-rename-input')?.value || '').trim();
+      if (!newName || newName === oldName) return;
+      try {
+        const r = await fetch('/api/files/rename', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ root: fileBrowserState.root, subpath, new_name: newName }),
+        });
+        if (!r.ok) throw new Error((await r.json()).error || 'failed');
+        await fileBrowserNavigate(fileBrowserState.subpath);
+        await fbLoadTree();
+      } catch (e) { showToast('Rename failed: ' + e.message, 'error'); }
+    }
+  });
+  // Focus the input and pre-select the basename (excluding extension) so the
+  // user can immediately type a new name.
+  setTimeout(() => {
+    const inp = document.getElementById('fb-rename-input');
+    if (!inp) return;
+    inp.focus();
+    const dot = oldName.lastIndexOf('.');
+    inp.setSelectionRange(0, dot > 0 ? dot : oldName.length);
+  }, 50);
+}
+
 function fbDelete() {
   if (_fbCtx.selection.size === 0) return;
   const names = _fbSelectedNames();
@@ -54895,6 +55042,7 @@ function _fbOnKeyDown(ev) {
   if (ev.altKey && ev.key === 'ArrowLeft')  { fbHistoryBack();    ev.preventDefault(); return; }
   if (ev.altKey && ev.key === 'ArrowRight') { fbHistoryForward(); ev.preventDefault(); return; }
   if (ev.key === 'Delete') { fbDelete(); ev.preventDefault(); return; }
+  if (ev.key === 'F2') { fbRenamePrompt(); ev.preventDefault(); return; }
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a') {
     fbToggleSelectAll(true); ev.preventDefault(); return;
   }
@@ -54934,6 +55082,7 @@ function fbShowRowContextMenu(ev, idx) {
   items.push({ divider: true });
   items.push({ label: '📂 Move to…', enabled: isAdmin, handler: 'fbMoveToDialog()' });
   items.push({ label: '📋 Copy to…', enabled: isAdmin, handler: 'fbCopyToDialog()' });
+  items.push({ label: '✏ Rename', shortcut: 'F2', enabled: isAdmin && _fbCtx.selection.size === 1, handler: 'fbRenamePrompt()' });
   items.push({ label: '✎ Edit permissions', enabled: isAdmin && _fbCtx.selection.size === 1, handler: 'fbEditSelection()' });
   items.push({ divider: true });
   items.push({ label: '⬇ Download', enabled: !e.is_dir, handler: 'fbDownloadSelection()' });

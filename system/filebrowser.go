@@ -901,6 +901,39 @@ func MovePaths(srcAbsRoot string, srcSubpaths []string, dstAbsRoot, dstSubpath s
 	return nil
 }
 
+// RenamePath renames a single entry in place (same directory) to newName.
+// newName is a bare filename — no path separators, no traversal. Uses the same
+// privileged `sudo mv -n` as MovePaths so root-owned entries can be renamed, and
+// the -n + pre-check guarantees an existing target is never clobbered.
+func RenamePath(absRoot, subpath, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" || newName == "." || newName == ".." || strings.ContainsAny(newName, "/\\") {
+		return fmt.Errorf("invalid name %q", newName)
+	}
+	src, err := SafeJoin(absRoot, subpath)
+	if err != nil {
+		return err
+	}
+	rootClean := filepath.Clean(absRoot)
+	if src == rootClean {
+		return fmt.Errorf("cannot rename the root directory")
+	}
+	dst := filepath.Join(filepath.Dir(src), newName)
+	if dst != rootClean && !strings.HasPrefix(dst, rootClean+string(filepath.Separator)) {
+		return fmt.Errorf("invalid destination")
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		return fmt.Errorf("a file or folder named %q already exists", newName)
+	}
+	mu := fbRootMutex(absRoot)
+	mu.Lock()
+	defer mu.Unlock()
+	if out, err := exec.Command("sudo", "mv", "-n", "--", src, dst).CombinedOutput(); err != nil {
+		return fmt.Errorf("mv: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // CopyPaths runs `sudo cp -a -n|-f -- <src…> <dst>`. -a preserves
 // mode / ownership / timestamps / xattrs and recurses into directories.
 func CopyPaths(srcAbsRoot string, srcSubpaths []string, dstAbsRoot, dstSubpath string, overwrite bool) error {

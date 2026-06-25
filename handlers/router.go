@@ -265,6 +265,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(http.HandlerFunc(HandleListDatasets))).Methods("GET")
 	r.Handle("/api/datasets",
 		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleCreateDataset)))).Methods("POST")
+	r.Handle("/api/datasets/rename",
+		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleRenameDataset)))).Methods("POST")
 	r.Handle("/api/datasets/{path:.+}/load-key",
 		RequireAuth(RequirePermission("manage_pool_dataset")(http.HandlerFunc(HandleLoadDatasetKey)))).Methods("POST")
 	r.Handle("/api/datasets/{path:.+}/unload-key",
@@ -732,6 +734,13 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	r.Handle("/api/interlink/remote-lxd-instances/{server_id}",
 		RequireAuth(http.HandlerFunc(HandleInterlinkRemoteLXDInstances(appCfg)))).Methods("GET")
 	// Push InterLink job endpoints.
+	// v6.6.22 — the eligible push-target list. Mirrors /api/interlink/servers but
+	// lives under /api/push-interlink/ so it FORWARDS to the viewed peer in relay
+	// mode (the switcher's /api/interlink/servers stays local). This is what makes
+	// the Push-InterLink dataset/snapshot modals list the viewed server's peers
+	// (incl. the home server) rather than the home server's peers.
+	r.Handle("/api/push-interlink/servers",
+		RequireAuth(http.HandlerFunc(HandleInterlinkList(appCfg)))).Methods("GET")
 	r.Handle("/api/push-interlink/start",
 		RequireAuth(RequirePermission("manage_interlink")(http.HandlerFunc(HandlePushInterlinkStart(appCfg)))))
 	r.Handle("/api/push-interlink/start-dataset",
@@ -767,6 +776,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserDelete)))).Methods("POST")
 	r.Handle("/api/files/move",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserMove)))).Methods("POST")
+	r.Handle("/api/files/rename",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserRename)))).Methods("POST")
 	r.Handle("/api/files/copy",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleFileBrowserCopy)))).Methods("POST")
 

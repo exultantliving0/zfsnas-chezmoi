@@ -15,10 +15,10 @@ import (
 
 // VdevDisk is a single leaf device within a vdev group.
 type VdevDisk struct {
-	Raw         string `json:"raw"`                    // path as ZFS stores it (e.g. /dev/disk/by-partuuid/…)
-	Device      string `json:"device"`                 // resolved canonical /dev/sdXN
-	Status      string `json:"status"`                 // ONLINE | FAULTED | OFFLINE | REMOVED | UNAVAIL
-	Present     bool   `json:"present"`                // true if the device node exists on the system
+	Raw         string `json:"raw"`                     // path as ZFS stores it (e.g. /dev/disk/by-partuuid/…)
+	Device      string `json:"device"`                  // resolved canonical /dev/sdXN
+	Status      string `json:"status"`                  // ONLINE | FAULTED | OFFLINE | REMOVED | UNAVAIL
+	Present     bool   `json:"present"`                 // true if the device node exists on the system
 	SubVdevType string `json:"sub_vdev_type,omitempty"` // type of direct parent sub-vdev (e.g. "spare", "replacing") when nested inside a top-level vdev
 	SubVdevName string `json:"sub_vdev_name,omitempty"` // name of direct parent sub-vdev (e.g. "spare-2")
 }
@@ -33,39 +33,39 @@ type VdevGroup struct {
 
 // Pool represents a ZFS pool.
 type Pool struct {
-	Name        string   `json:"name"`
-	Size        uint64   `json:"size"`         // raw physical size (zpool list)
-	Alloc       uint64   `json:"alloc"`        // allocated bytes (zpool list)
-	Free        uint64   `json:"free"`         // free raw bytes (zpool list)
-	UsableSize  uint64   `json:"usable_size"`  // usable = root used + root avail (zfs list)
-	UsableUsed  uint64   `json:"usable_used"`  // root dataset used (zfs list)
-	UsableAvail uint64   `json:"usable_avail"` // root dataset avail (zfs list)
-	Health      string   `json:"health"`
-	Members         []string `json:"members"`          // raw device paths as tracked by zpool (may be by-partuuid)
-	MemberDevices   []string `json:"member_devices"`   // resolved canonical /dev/sdX paths
-	MemberRoles     []string `json:"member_roles"`     // per-member vdev role: "stripe"|"mirror"|"raidz1"|"raidz2"|"raidz3"
-	MemberStatuses  []string `json:"member_statuses"`  // per-member device state: "ONLINE"|"FAULTED"|etc
-	MemberPresent   []bool   `json:"member_present"`   // per-member: true if the device path exists in /dev
-	CacheDevs     []string `json:"cache_devs"`      // raw L2ARC cache paths (may be by-partuuid)
-	CacheDevices  []string `json:"cache_devices"`   // resolved canonical /dev/sdX paths
-	SpareDevs     []string `json:"spare_devs"`      // raw hot-spare paths (may be by-partuuid)
-	SpareDevices  []string `json:"spare_devices"`   // resolved canonical /dev/sdX paths
-	SpareStatuses []string `json:"spare_statuses"`  // per-spare state: "AVAIL"|"INUSE"|"FAULTED" etc
-	SparePresent  []bool   `json:"spare_present"`   // per-spare: true if the device path exists in /dev
-	VdevType    string   `json:"vdev_type"`  // "stripe" | "mirror" | "raidz1" | "raidz2" | "raidz3"
-	Operation   string   `json:"operation"`  // "" | "scrubbing" | "resilvering" | "expanding"
-	SizeStr     string   `json:"size_str"`
-	AllocStr    string   `json:"alloc_str"`
-	FreeStr     string   `json:"free_str"`
-	Ashift      int      `json:"ashift"`         // pool block size exponent (9=512B, 12=4K, 13=8K)
-	Compression string   `json:"compression"`    // root dataset compression
-	CompRatio   string   `json:"compress_ratio"` // root dataset compressratio
-	Dedup       string   `json:"dedup"`          // root dataset dedup
-	Sync        string   `json:"sync"`           // root dataset sync
-	Atime       string   `json:"atime"`          // root dataset atime
-	Encrypted            bool   `json:"encrypted"`             // encryption property != "off"
-	KeyLocked            bool   `json:"key_locked"`            // keystatus == "unavailable"
-	EncryptionAlgorithm  string `json:"encryption_algorithm"`  // e.g. "aes-256-gcm", "" when off
+	Name                string   `json:"name"`
+	Size                uint64   `json:"size"`         // raw physical size (zpool list)
+	Alloc               uint64   `json:"alloc"`        // allocated bytes (zpool list)
+	Free                uint64   `json:"free"`         // free raw bytes (zpool list)
+	UsableSize          uint64   `json:"usable_size"`  // usable = root used + root avail (zfs list)
+	UsableUsed          uint64   `json:"usable_used"`  // root dataset used (zfs list)
+	UsableAvail         uint64   `json:"usable_avail"` // root dataset avail (zfs list)
+	Health              string   `json:"health"`
+	Members             []string `json:"members"`         // raw device paths as tracked by zpool (may be by-partuuid)
+	MemberDevices       []string `json:"member_devices"`  // resolved canonical /dev/sdX paths
+	MemberRoles         []string `json:"member_roles"`    // per-member vdev role: "stripe"|"mirror"|"raidz1"|"raidz2"|"raidz3"
+	MemberStatuses      []string `json:"member_statuses"` // per-member device state: "ONLINE"|"FAULTED"|etc
+	MemberPresent       []bool   `json:"member_present"`  // per-member: true if the device path exists in /dev
+	CacheDevs           []string `json:"cache_devs"`      // raw L2ARC cache paths (may be by-partuuid)
+	CacheDevices        []string `json:"cache_devices"`   // resolved canonical /dev/sdX paths
+	SpareDevs           []string `json:"spare_devs"`      // raw hot-spare paths (may be by-partuuid)
+	SpareDevices        []string `json:"spare_devices"`   // resolved canonical /dev/sdX paths
+	SpareStatuses       []string `json:"spare_statuses"`  // per-spare state: "AVAIL"|"INUSE"|"FAULTED" etc
+	SparePresent        []bool   `json:"spare_present"`   // per-spare: true if the device path exists in /dev
+	VdevType            string   `json:"vdev_type"`       // "stripe" | "mirror" | "raidz1" | "raidz2" | "raidz3"
+	Operation           string   `json:"operation"`       // "" | "scrubbing" | "resilvering" | "expanding"
+	SizeStr             string   `json:"size_str"`
+	AllocStr            string   `json:"alloc_str"`
+	FreeStr             string   `json:"free_str"`
+	Ashift              int      `json:"ashift"`               // pool block size exponent (9=512B, 12=4K, 13=8K)
+	Compression         string   `json:"compression"`          // root dataset compression
+	CompRatio           string   `json:"compress_ratio"`       // root dataset compressratio
+	Dedup               string   `json:"dedup"`                // root dataset dedup
+	Sync                string   `json:"sync"`                 // root dataset sync
+	Atime               string   `json:"atime"`                // root dataset atime
+	Encrypted           bool     `json:"encrypted"`            // encryption property != "off"
+	KeyLocked           bool     `json:"key_locked"`           // keystatus == "unavailable"
+	EncryptionAlgorithm string   `json:"encryption_algorithm"` // e.g. "aes-256-gcm", "" when off
 	// Vdevs is the structured topology of the pool's data section,
 	// mirroring the tree shown by `zpool status`.
 	Vdevs []VdevGroup `json:"vdevs,omitempty"`
@@ -92,12 +92,12 @@ func GetPool() (*Pool, error) {
 	// Populate member devices from `zpool status -P`.
 	p.Members, p.MemberDevices, p.MemberRoles = poolMembers(p.Name)
 	p.MemberStatuses = poolMemberStatuses(p.Name)
-	p.MemberPresent  = poolMemberPresent(p.Members)
+	p.MemberPresent = poolMemberPresent(p.Members)
 	p.CacheDevs, p.CacheDevices = poolCacheDevs(p.Name)
 	p.SpareDevs, p.SpareDevices, p.SpareStatuses = poolSpareDevs(p.Name)
 	p.SparePresent = poolMemberPresent(p.SpareDevs)
-	p.VdevType   = poolVdevType(p.Name)
-	p.Operation  = poolOperation(p.Name)
+	p.VdevType = poolVdevType(p.Name)
+	p.Operation = poolOperation(p.Name)
 	p.Compression, p.CompRatio, p.Dedup, p.Sync, p.Atime = poolRootProps(p.Name)
 	p.Ashift = poolAshift(p.Name)
 	p.Encrypted, p.KeyLocked, p.EncryptionAlgorithm = poolEncryptionStatus(p.Name)
@@ -153,11 +153,11 @@ func GetAllPools() ([]*Pool, error) {
 		p.UsableSize = p.UsableUsed + p.UsableAvail
 		p.Members, p.MemberDevices, p.MemberRoles = poolMembers(p.Name)
 		p.MemberStatuses = poolMemberStatuses(p.Name)
-		p.MemberPresent  = poolMemberPresent(p.Members)
+		p.MemberPresent = poolMemberPresent(p.Members)
 		p.CacheDevs, p.CacheDevices = poolCacheDevs(p.Name)
 		p.SpareDevs, p.SpareDevices, p.SpareStatuses = poolSpareDevs(p.Name)
 		p.SparePresent = poolMemberPresent(p.SpareDevs)
-		p.VdevType  = poolVdevType(p.Name)
+		p.VdevType = poolVdevType(p.Name)
 		p.Operation = poolOperation(p.Name)
 		p.Compression, p.CompRatio, p.Dedup, p.Sync, p.Atime = poolRootProps(p.Name)
 		p.Ashift = poolAshift(p.Name)
@@ -187,11 +187,11 @@ func GetPoolByName(name string) (*Pool, error) {
 	p.UsableSize = p.UsableUsed + p.UsableAvail
 	p.Members, p.MemberDevices, p.MemberRoles = poolMembers(p.Name)
 	p.MemberStatuses = poolMemberStatuses(p.Name)
-	p.MemberPresent  = poolMemberPresent(p.Members)
+	p.MemberPresent = poolMemberPresent(p.Members)
 	p.CacheDevs, p.CacheDevices = poolCacheDevs(p.Name)
 	p.SpareDevs, p.SpareDevices, p.SpareStatuses = poolSpareDevs(p.Name)
 	p.SparePresent = poolMemberPresent(p.SpareDevs)
-	p.VdevType  = poolVdevType(p.Name)
+	p.VdevType = poolVdevType(p.Name)
 	p.Operation = poolOperation(p.Name)
 	p.Compression, p.CompRatio, p.Dedup, p.Sync, p.Atime = poolRootProps(p.Name)
 	p.Ashift = poolAshift(p.Name)
@@ -535,7 +535,7 @@ func poolVdevGroups(poolName string) []VdevGroup {
 	skipSectionNames := map[string]bool{
 		"spares": true, "spare": true,
 		"cache": true,
-		"logs": true, "log": true,
+		"logs":  true, "log": true,
 	}
 	vdevPfxType := []struct {
 		pfx string
@@ -566,17 +566,28 @@ func poolVdevGroups(poolName string) []VdevGroup {
 		inCfg := false
 		for _, line := range strings.Split(string(data), "\n") {
 			tr := strings.TrimSpace(line)
-			if strings.HasPrefix(tr, "config:") { inCfg = true; continue }
-			if !inCfg { continue }
-			if strings.HasPrefix(tr, "errors:") { break }
-			if tr == "" { continue }
+			if strings.HasPrefix(tr, "config:") {
+				inCfg = true
+				continue
+			}
+			if !inCfg {
+				continue
+			}
+			if strings.HasPrefix(tr, "errors:") {
+				break
+			}
+			if tr == "" {
+				continue
+			}
 			f := strings.Fields(tr)
-			if len(f) < 2 || !validStates[f[1]] { continue }
+			if len(f) < 2 || !validStates[f[1]] {
+				continue
+			}
 			out = append(out, entry{countIndent(line), f[0]})
 		}
 		return out
 	}
-	entriesP  := collectEntries(outP)
+	entriesP := collectEntries(outP)
 	entriesNP := collectEntries(outNP)
 
 	// rawToResolved: map the -P path to the ZFS-resolved (non-P) name.
@@ -602,21 +613,30 @@ func poolVdevGroups(poolName string) []VdevGroup {
 	}
 
 	// Parse the -P output structure.
-	inConfig        := false
-	inData          := true
-	poolIndent      := -1
-	var groups       []VdevGroup
-	currentGroup    := -1
-	subVdevIndent   := -1   // indent of the current sub-vdev header (e.g. spare-2)
-	subVdevType     := ""   // type of current sub-vdev (e.g. "spare", "replacing")
-	subVdevName     := ""   // name of current sub-vdev (e.g. "spare-2")
+	inConfig := false
+	inData := true
+	poolIndent := -1
+	var groups []VdevGroup
+	currentGroup := -1
+	subVdevIndent := -1 // indent of the current sub-vdev header (e.g. spare-2)
+	subVdevType := ""   // type of current sub-vdev (e.g. "spare", "replacing")
+	subVdevName := ""   // name of current sub-vdev (e.g. "spare-2")
 
 	for _, line := range strings.Split(string(outP), "\n") {
 		tr := strings.TrimSpace(line)
-		if strings.HasPrefix(tr, "config:") { inConfig = true; continue }
-		if !inConfig { continue }
-		if strings.HasPrefix(tr, "errors:") { break }
-		if tr == "" { continue }
+		if strings.HasPrefix(tr, "config:") {
+			inConfig = true
+			continue
+		}
+		if !inConfig {
+			continue
+		}
+		if strings.HasPrefix(tr, "errors:") {
+			break
+		}
+		if tr == "" {
+			continue
+		}
 
 		indent := countIndent(line)
 		fields := strings.Fields(tr)
@@ -644,11 +664,11 @@ func poolVdevGroups(poolName string) []VdevGroup {
 
 		// Classify this line.
 		isVdevHdr := false
-		vdevType  := ""
+		vdevType := ""
 		for _, pt := range vdevPfxType {
 			if strings.HasPrefix(name, pt.pfx) {
 				isVdevHdr = true
-				vdevType  = pt.typ
+				vdevType = pt.typ
 				break
 			}
 		}
@@ -656,8 +676,8 @@ func poolVdevGroups(poolName string) []VdevGroup {
 		// If we've stepped back out of a sub-vdev, clear sub-vdev tracking.
 		if subVdevIndent >= 0 && indent <= subVdevIndent {
 			subVdevIndent = -1
-			subVdevType   = ""
-			subVdevName   = ""
+			subVdevType = ""
+			subVdevName = ""
 		}
 
 		switch {
@@ -686,8 +706,8 @@ func poolVdevGroups(poolName string) []VdevGroup {
 		case indent > vdevIndent && currentGroup >= 0 && isVdevHdr:
 			// Sub-vdev header inside a top-level vdev (e.g. spare-2 inside raidz1-0).
 			subVdevIndent = indent
-			subVdevType   = vdevType
-			subVdevName   = name
+			subVdevType = vdevType
+			subVdevName = name
 
 		case indent > vdevIndent && currentGroup >= 0 && !isVdevHdr:
 			// Leaf disk inside a named vdev.
@@ -725,22 +745,35 @@ func poolSpareDevs(poolName string) (raw, resolved, statuses []string) {
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "config:") { inConfig = true; continue }
-		if !inConfig { continue }
-		if strings.HasPrefix(trimmed, "errors:") { break }
-		if trimmed == "" { continue }
+		if strings.HasPrefix(trimmed, "config:") {
+			inConfig = true
+			continue
+		}
+		if !inConfig {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "errors:") {
+			break
+		}
+		if trimmed == "" {
+			continue
+		}
 		fields := strings.Fields(trimmed)
 		if len(fields) == 1 {
 			inSpares = strings.ToLower(trimmed) == "spares"
 			continue
 		}
-		if len(fields) < 2 { continue }
+		if len(fields) < 2 {
+			continue
+		}
 		name, state := fields[0], fields[1]
 		if !validStates[state] {
 			inSpares = strings.ToLower(name) == "spares"
 			continue
 		}
-		if !inSpares { continue }
+		if !inSpares {
+			continue
+		}
 		spareStatus[name] = state
 	}
 
@@ -800,22 +833,48 @@ func poolMemberStatuses(poolName string) []string {
 	var statuses []string
 	for _, line := range strings.Split(string(out), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "config:") { inConfig = true; continue }
-		if !inConfig { continue }
-		if strings.HasPrefix(trimmed, "errors:") { break }
-		if trimmed == "" { continue }
+		if strings.HasPrefix(trimmed, "config:") {
+			inConfig = true
+			continue
+		}
+		if !inConfig {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "errors:") {
+			break
+		}
+		if trimmed == "" {
+			continue
+		}
 		fields := strings.Fields(trimmed)
 		indent := countIndent(line)
-		if len(fields) < 2 || !validStates[fields[1]] { continue }
+		if len(fields) < 2 || !validStates[fields[1]] {
+			continue
+		}
 		name := fields[0]
-		if name == "NAME" { continue }
-		if poolIndent < 0 { poolIndent = indent; continue } // pool line itself
-		if indent <= poolIndent { continue }
-		if skipSections[strings.ToLower(name)] { inData = false; continue }
-		if !inData { continue }
+		if name == "NAME" {
+			continue
+		}
+		if poolIndent < 0 {
+			poolIndent = indent
+			continue
+		} // pool line itself
+		if indent <= poolIndent {
+			continue
+		}
+		if skipSections[strings.ToLower(name)] {
+			inData = false
+			continue
+		}
+		if !inData {
+			continue
+		}
 		isVdev := false
 		for _, pfx := range vdevPrefixes {
-			if strings.HasPrefix(name, pfx) { isVdev = true; break }
+			if strings.HasPrefix(name, pfx) {
+				isVdev = true
+				break
+			}
 		}
 		if !isVdev {
 			statuses = append(statuses, fields[1])
@@ -1001,7 +1060,6 @@ func AttachPoolDisk(poolName, existingDevice, newDevice string) error {
 	return nil
 }
 
-
 // resolveDevPath resolves symlinks (e.g. /dev/disk/by-id/... or
 // /dev/disk/by-uuid/...) to their canonical /dev/sdX path.
 // Returns the original path unchanged if resolution fails or the result
@@ -1130,7 +1188,7 @@ func PrepareZFSPartition(device string) (string, error) {
 	}
 	// Inform the kernel of the new partition table, then wait for udev to
 	// fully process the new partition (creates device node + by-partuuid symlink).
-	exec.Command("sudo", "partprobe", device).Run()          //nolint
+	exec.Command("sudo", "partprobe", device).Run()                 //nolint
 	exec.Command("sudo", "udevadm", "settle", "--timeout=15").Run() //nolint
 
 	// Locate the new partition's by-partuuid symlink.
@@ -1159,9 +1217,11 @@ func PrepareZFSPartition(device string) (string, error) {
 // Each device is first wiped and repartitioned (GPT, type BF01) so the pool
 // tracks the partition by its stable PARTUUID rather than by kernel device name.
 // layout: "stripe" | "mirror" | "raid10" | "raidz1" | "raidz2" | "raidz3"
-//   raid10: stripe of 2-way mirrors — len(devices) must be even and ≥4. Each
-//   consecutive pair becomes its own mirror vdev, so the resulting top-level
-//   layout is `mirror d0 d1 mirror d2 d3 …`.
+//
+//	raid10: stripe of 2-way mirrors — len(devices) must be even and ≥4. Each
+//	consecutive pair becomes its own mirror vdev, so the resulting top-level
+//	layout is `mirror d0 d1 mirror d2 d3 …`.
+//
 // ashift: 9, 12, or 13
 // compression: "off" | "lz4" | "zstd"
 // dedup: "off" | "on" | "verify"
@@ -1276,8 +1336,8 @@ func parseImportOutput(output string) []ImportablePool {
 
 // ScrubInfo holds the parsed state of a ZFS pool scrub.
 type ScrubInfo struct {
-	Pool        string  `json:"pool,omitempty"`        // pool this status applies to (v6.5.26+)
-	State       string  `json:"state"`                 // idle | running | finished | canceled
+	Pool        string  `json:"pool,omitempty"` // pool this status applies to (v6.5.26+)
+	State       string  `json:"state"`          // idle | running | finished | canceled
 	ProgressPct float64 `json:"progress_pct,omitempty"`
 	TimeLeft    string  `json:"time_left,omitempty"`
 	Duration    string  `json:"duration,omitempty"`
@@ -1926,28 +1986,28 @@ func ImportPoolForce(name string) error {
 
 // Dataset represents a ZFS filesystem dataset.
 type Dataset struct {
-	Name             string `json:"name"`
-	ShortName        string `json:"short_name"`
-	Used             uint64 `json:"used"`
-	Avail            uint64 `json:"avail"`
-	Refer            uint64 `json:"refer"`
-	Quota            uint64 `json:"quota"`          // 0 = none
-	RefQuota         uint64 `json:"refquota"`       // 0 = none
-	Refreservation   uint64 `json:"refreservation"` // 0 = none
-	Compression      string `json:"compression"`
-	CompRatio        string `json:"compress_ratio"`
-	RecordSize       uint64 `json:"record_size"`
-	RecordSizeRaw    string `json:"record_size_raw"` // e.g. "128K" or "inherit"
-	Mountpoint       string `json:"mountpoint"`
-	Sync             string `json:"sync"`             // standard|always|disabled|inherit
-	Dedup            string `json:"dedup"`            // on|off|verify|inherit
-	CaseSensitivity  string `json:"case_sensitivity"` // sensitive|insensitive|mixed
-	Comment          string `json:"comment"`          // user property zfsnas:comment
-	UsedStr          string `json:"used_str"`
-	AvailStr         string `json:"avail_str"`
-	QuotaStr         string `json:"quota_str"`
-	RefreservationStr string `json:"refreservation_str"`
-	Depth            int    `json:"depth"`     // 0 = pool root
+	Name                string `json:"name"`
+	ShortName           string `json:"short_name"`
+	Used                uint64 `json:"used"`
+	Avail               uint64 `json:"avail"`
+	Refer               uint64 `json:"refer"`
+	Quota               uint64 `json:"quota"`          // 0 = none
+	RefQuota            uint64 `json:"refquota"`       // 0 = none
+	Refreservation      uint64 `json:"refreservation"` // 0 = none
+	Compression         string `json:"compression"`
+	CompRatio           string `json:"compress_ratio"`
+	RecordSize          uint64 `json:"record_size"`
+	RecordSizeRaw       string `json:"record_size_raw"` // e.g. "128K" or "inherit"
+	Mountpoint          string `json:"mountpoint"`
+	Sync                string `json:"sync"`             // standard|always|disabled|inherit
+	Dedup               string `json:"dedup"`            // on|off|verify|inherit
+	CaseSensitivity     string `json:"case_sensitivity"` // sensitive|insensitive|mixed
+	Comment             string `json:"comment"`          // user property zfsnas:comment
+	UsedStr             string `json:"used_str"`
+	AvailStr            string `json:"avail_str"`
+	QuotaStr            string `json:"quota_str"`
+	RefreservationStr   string `json:"refreservation_str"`
+	Depth               int    `json:"depth"`                // 0 = pool root
 	Encrypted           bool   `json:"encrypted"`            // encryption != "off"
 	KeyLocked           bool   `json:"key_locked"`           // keystatus == "unavailable"
 	EncryptionAlgorithm string `json:"encryption_algorithm"` // e.g. "aes-256-gcm", "" when off
@@ -2067,28 +2127,28 @@ func parseDatasetLine(line, poolName string) (Dataset, error) {
 	shortName := parts[len(parts)-1]
 
 	return Dataset{
-		Name:              name,
-		ShortName:         shortName,
-		Used:              used,
-		Avail:             avail,
-		Refer:             refer,
-		Quota:             quota,
-		RefQuota:          refquota,
-		Refreservation:    refreservation,
-		Compression:       compression,
-		CompRatio:         compRatio,
-		RecordSize:        recordSize,
-		RecordSizeRaw:     recordSizeRaw,
-		Mountpoint:        mountpoint,
-		Sync:              sync,
-		Dedup:             dedup,
-		CaseSensitivity:   caseSensitivity,
-		Comment:           comment,
-		UsedStr:           formatBytes(used),
-		AvailStr:          formatBytes(avail),
-		QuotaStr:          zeroOrBytes(quota),
-		RefreservationStr: zeroOrBytes(refreservation),
-		Depth:             depth,
+		Name:                name,
+		ShortName:           shortName,
+		Used:                used,
+		Avail:               avail,
+		Refer:               refer,
+		Quota:               quota,
+		RefQuota:            refquota,
+		Refreservation:      refreservation,
+		Compression:         compression,
+		CompRatio:           compRatio,
+		RecordSize:          recordSize,
+		RecordSizeRaw:       recordSizeRaw,
+		Mountpoint:          mountpoint,
+		Sync:                sync,
+		Dedup:               dedup,
+		CaseSensitivity:     caseSensitivity,
+		Comment:             comment,
+		UsedStr:             formatBytes(used),
+		AvailStr:            formatBytes(avail),
+		QuotaStr:            zeroOrBytes(quota),
+		RefreservationStr:   zeroOrBytes(refreservation),
+		Depth:               depth,
 		Encrypted:           dsEncrypted,
 		KeyLocked:           dsKeyLocked,
 		EncryptionAlgorithm: dsEncAlgo,
@@ -2099,6 +2159,55 @@ func parseDatasetLine(line, poolName string) (Dataset, error) {
 }
 
 // CreateDataset creates a new ZFS filesystem with the given options.
+// zfsComponentRe validates a single dataset path component (between slashes).
+// ZFS permits alphanumerics plus _ - : . — the component must start alnum/_.
+var zfsComponentRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.:\-]*$`)
+
+// validateZFSName checks a full dataset/zvol name (pool/child/…) is well-formed.
+func validateZFSName(name string) error {
+	if strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") || strings.Contains(name, "//") {
+		return fmt.Errorf("invalid dataset name %q", name)
+	}
+	parts := strings.Split(name, "/")
+	if len(parts) < 2 {
+		return fmt.Errorf("name must include the pool and at least one component (e.g. pool/name)")
+	}
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." || !zfsComponentRe.MatchString(p) {
+			return fmt.Errorf("invalid name component %q", p)
+		}
+	}
+	return nil
+}
+
+// RenameDataset renames a dataset or zvol in place via `zfs rename`. ZFS can
+// only rename within the same pool; any children and snapshots travel with it.
+// The rename fails (and the error is surfaced) if the dataset is busy/mounted
+// in a way ZFS refuses to remount.
+func RenameDataset(oldName, newName string) error {
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
+	if oldName == "" || newName == "" {
+		return fmt.Errorf("name must not be empty")
+	}
+	if oldName == newName {
+		return fmt.Errorf("the new name is identical to the current name")
+	}
+	if !strings.Contains(oldName, "/") {
+		return fmt.Errorf("cannot rename a pool root dataset")
+	}
+	if err := validateZFSName(newName); err != nil {
+		return err
+	}
+	if strings.SplitN(oldName, "/", 2)[0] != strings.SplitN(newName, "/", 2)[0] {
+		return fmt.Errorf("cannot rename across pools — keep the same pool prefix")
+	}
+	if out, err := exec.Command("sudo", "zfs", "rename", oldName, newName).CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func CreateDataset(name string, opts DatasetCreateOptions) error {
 	args := []string{"zfs", "create"}
 	if opts.KeyFilePath != "" {
@@ -2462,7 +2571,7 @@ func formatBytesShort(b uint64) string {
 type ZVol struct {
 	Name           string `json:"name"`
 	Pool           string `json:"pool"`
-	Size           uint64 `json:"size"`           // volsize in bytes
+	Size           uint64 `json:"size"` // volsize in bytes
 	Used           uint64 `json:"used"`
 	Refer          uint64 `json:"refer"`
 	Refreservation uint64 `json:"refreservation"` // 0 = none/thin
@@ -2478,29 +2587,29 @@ type ZVol struct {
 
 // ZVolCreateRequest holds all parameters for creating a new ZVol.
 type ZVolCreateRequest struct {
-	Parent      string `json:"parent"`      // pool or pool/dataset path
-	Name        string `json:"name"`        // leaf name
-	Size        string `json:"size"`        // e.g. "10G", "500M"
-	Comment     string `json:"comment"`
-	Provisioning string `json:"provisioning"` // "thick"|"thin"|"25"|"50"|"75"
-	Sync        string `json:"sync"`        // "" = inherit
-	Compression string `json:"compression"` // "" = inherit
-	Dedup       string `json:"dedup"`       // "" = inherit
-	BlockSize   string `json:"block_size"`  // "" = inherit; "4K", "8K", etc.
-	Encryption  string `json:"encryption"`  // "" = inherit, "enabled"
-	KeyFilePath string `json:"key_file_path"` // required when Encryption="enabled"
+	Parent       string `json:"parent"` // pool or pool/dataset path
+	Name         string `json:"name"`   // leaf name
+	Size         string `json:"size"`   // e.g. "10G", "500M"
+	Comment      string `json:"comment"`
+	Provisioning string `json:"provisioning"`  // "thick"|"thin"|"25"|"50"|"75"
+	Sync         string `json:"sync"`          // "" = inherit
+	Compression  string `json:"compression"`   // "" = inherit
+	Dedup        string `json:"dedup"`         // "" = inherit
+	BlockSize    string `json:"block_size"`    // "" = inherit; "4K", "8K", etc.
+	Encryption   string `json:"encryption"`    // "" = inherit, "enabled"
+	KeyFilePath  string `json:"key_file_path"` // required when Encryption="enabled"
 }
 
 // ZVolEditRequest holds the mutable properties for editing a ZVol.
 type ZVolEditRequest struct {
 	Name            string `json:"name"`
 	Comment         string `json:"comment"`
-	Provisioning    string `json:"provisioning"`    // "thick"|"thin"|"25"|"50"|"75"
-	VolSizeBytes    uint64 `json:"vol_size_bytes"`  // current volsize, required for % provisioning
+	Provisioning    string `json:"provisioning"`       // "thick"|"thin"|"25"|"50"|"75"
+	VolSizeBytes    uint64 `json:"vol_size_bytes"`     // current volsize, required for % provisioning
 	NewVolSizeBytes uint64 `json:"new_vol_size_bytes"` // if >0 and >= VolSizeBytes, grow the volume
-	Sync         string `json:"sync"`
-	Compression  string `json:"compression"`
-	Dedup        string `json:"dedup"`
+	Sync            string `json:"sync"`
+	Compression     string `json:"compression"`
+	Dedup           string `json:"dedup"`
 }
 
 // ListAllZVols returns all ZFS volumes across all imported pools.

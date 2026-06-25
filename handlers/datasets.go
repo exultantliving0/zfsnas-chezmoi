@@ -205,6 +205,32 @@ func HandleUpdateDataset(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"message": "dataset updated"})
 }
 
+// HandleRenameDataset renames a dataset or zvol via `zfs rename`.
+// POST /api/datasets/rename
+func HandleRenameDataset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OldName string `json:"old_name"`
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := system.RenameDataset(req.OldName, req.NewName); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sess := MustSession(r)
+	audit.Log(audit.Entry{
+		User:   sess.Username,
+		Role:   sess.Role,
+		Action: audit.ActionUpdateDataset,
+		Target: req.OldName + " → " + req.NewName,
+		Result: audit.ResultOK,
+	})
+	jsonOK(w, map[string]interface{}{"ok": true})
+}
+
 func HandleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 	path := mux.Vars(r)["path"]
 	if path == "" {
@@ -455,11 +481,11 @@ func HandleSetDatasetKeySource(w http.ResponseWriter, r *http.Request) {
 		}
 		sess := MustSession(r)
 		audit.Log(audit.Entry{
-			User:   sess.Username,
-			Role:   sess.Role,
-			Action: audit.ActionChangeKeySource,
-			Target: path,
-			Result: audit.ResultOK,
+			User:    sess.Username,
+			Role:    sess.Role,
+			Action:  audit.ActionChangeKeySource,
+			Target:  path,
+			Result:  audit.ResultOK,
 			Details: "prompt",
 		})
 	default:

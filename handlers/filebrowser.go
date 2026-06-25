@@ -460,6 +460,41 @@ func HandleFileBrowserMove(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]interface{}{"ok": true, "moved": len(req.SrcSubpaths)})
 }
 
+// HandleFileBrowserRename renames a single entry in place.
+// POST /api/files/rename
+func HandleFileBrowserRename(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Root    string `json:"root"`
+		Subpath string `json:"subpath"`
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	absRoot, _, ok := fbResolveRoot(w, req.Root)
+	if !ok {
+		return
+	}
+	if err := system.RenamePath(absRoot, req.Subpath, req.NewName); err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sess, _ := SessionFromRequest(r)
+	user := ""
+	if sess != nil {
+		user = sess.Username
+	}
+	audit.Log(audit.Entry{
+		User:    user,
+		Action:  audit.ActionFileBrowserMove,
+		Target:  filepath.Join(absRoot, filepath.Dir(req.Subpath), req.NewName),
+		Result:  audit.ResultOK,
+		Details: "rename " + req.Subpath + " → " + req.NewName,
+	})
+	jsonOK(w, map[string]interface{}{"ok": true})
+}
+
 // HandleFileBrowserCopy copies entries (cp -a, cross-root OK).
 // POST /api/files/copy
 func HandleFileBrowserCopy(w http.ResponseWriter, r *http.Request) {
