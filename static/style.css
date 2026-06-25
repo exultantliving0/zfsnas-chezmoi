@@ -3277,12 +3277,30 @@ body.is-phone.drawer-open #m-backdrop { display: block; opacity: 1; pointer-even
 
 /* --- Activity bar → collapsed bottom strip above the tab bar ---------------- */
 body.is-phone .activity-bar.collapsed { height: 40px !important; }
-/* !important beats the inline px height the desktop resize-handle may have saved. */
-body.is-phone .activity-bar.expanded  { height: 55dvh !important; }
-/* The activity header's desktop tab strip + "All Servers" button crowd the phone
-   width; keep just the title + chevron when collapsed feels tidy. */
+/* Expanded height is the --ab-ph-h CSS var (default 55dvh), updated by the
+   phone touch-resize (_abPhoneResize) — a var avoids fighting the desktop
+   inline-px path while the !important still beats any stale desktop px. */
+body.is-phone .activity-bar.expanded  { height: var(--ab-ph-h, 55dvh) !important; }
 body.is-phone .activity-bar-header { padding: 0 14px; gap: 8px; }
 body.is-phone .activity-bar-body { padding: 0 14px 12px; }
+/* The drag handle is hidden while COLLAPSED (the strip is a tap-to-expand
+   target); once OPEN it becomes a comfy touch grip to resize the sheet. */
+body.is-phone .activity-bar.collapsed #activity-resize-handle { display: none; }
+body.is-phone .activity-bar.expanded  #activity-resize-handle {
+  height: 20px; touch-action: none; cursor: row-resize;
+}
+body.is-phone .activity-bar.expanded #activity-resize-handle::before { width: 52px; height: 5px; }
+/* CRITICAL: the in-header tab strip ("Activity & Events" / "Live Alerts") +
+   "All Servers" button do event.stopPropagation(), and on a narrow phone they
+   cover the whole header — so a tap to expand landed on a tab button and never
+   reached the header's toggleActivityBar(). Hide them while COLLAPSED so the
+   entire 40px strip is one big tap-to-expand target; they reappear once open
+   (where you tap the title/chevron to collapse). */
+body.is-phone .activity-bar.collapsed .ab-tab-strip,
+body.is-phone .activity-bar.collapsed #ab-all-servers-btn { display: none !important; }
+/* Bigger, obviously-tappable chevron + comfortable header height on phone. */
+body.is-phone .activity-bar-header { height: 40px; }
+body.is-phone #ab-chevron { font-size: 14px; padding: 6px; margin-left: 4px; }
 
 /* Generic phone niceties */
 body.is-phone { -webkit-text-size-adjust: 100%; }

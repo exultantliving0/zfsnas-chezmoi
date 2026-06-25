@@ -28219,6 +28219,47 @@ function applyUpdates() {
       // collapsed/expanded state from the server).
     },
   });
+
+  // Phone-only: touch-drag the handle to resize the OPEN activity sheet. The
+  // desktop initResizeHandle above only binds mousedown; here we drive the
+  // --ab-ph-h CSS var (the phone expanded height) on touch, so it never fights
+  // the desktop inline-px height path. Clamped 140px ↔ 90% of the viewport,
+  // persisted under a phone-specific key.
+  (function _abPhoneResize(){
+    const bar = document.getElementById('activity-bar');
+    const handle = document.getElementById('activity-resize-handle');
+    if (!bar || !handle) return;
+    const KEY = 'ab-phone-height';
+    const clampH = h => Math.max(140, Math.min(Math.round(window.innerHeight * 0.9), Math.round(h)));
+    const saved = parseInt(localStorage.getItem(KEY), 10);
+    if (saved) bar.style.setProperty('--ab-ph-h', clampH(saved) + 'px');
+    let startY = 0, startH = 0, dragging = false;
+    handle.addEventListener('touchstart', e => {
+      if (!document.body.classList.contains('is-phone')) return;
+      if (!bar.classList.contains('expanded')) return;
+      dragging = true;
+      startY = e.touches[0].clientY;
+      startH = bar.getBoundingClientRect().height;
+      bar.style.transition = 'none';
+      handle.classList.add('dragging');
+      e.preventDefault();
+    }, { passive: false });
+    window.addEventListener('touchmove', e => {
+      if (!dragging) return;
+      const h = clampH(startH + (startY - e.touches[0].clientY));
+      bar.style.setProperty('--ab-ph-h', h + 'px');
+      e.preventDefault();
+    }, { passive: false });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      bar.style.transition = '';
+      handle.classList.remove('dragging');
+      localStorage.setItem(KEY, clampH(bar.getBoundingClientRect().height));
+    };
+    window.addEventListener('touchend', end);
+    window.addEventListener('touchcancel', end);
+  })();
 })();
 
 // ===== Terminal =====
