@@ -7,8 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-
-	"zfsnas/internal/version"
 )
 
 // experimentalSudoersAliases lists Cmnd_Aliases that are only required when
@@ -159,14 +157,15 @@ func RequiredSudoersContent() string {
 	s := strings.Replace(requiredSudoersTemplate, "{{ZFSNAS_FILES}}", buildFilesAlias(), 1)
 	s = strings.Replace(s, "{{LXD_CAT_LINE}}", lxdConsoleCatLine(), 1)
 	s = applySudoRSSubstitutions(s)
-	// The experimental aliases (ZFSNAS_INCUS*, ZFSNAS_VMSETUP, ZFSNAS_SYNCOID)
-	// only matter once virtualization is actually installed. Merely passing
-	// --experimental must NOT make them "required" — otherwise a fresh host that
-	// turned the flag on (but never enabled VMs & Containers) reports a pile of
-	// missing VM-import / virtualization sudoers it can't satisfy. The enable
-	// flow itself runs under full sudo (the mandatory "sudo all" prerequisite),
-	// so these hardened rules are only needed AFTER incus is on the box.
-	if !(version.IsExperimental() && IncusInstalled()) {
+	// The virtualization aliases (ZFSNAS_INCUS*, ZFSNAS_VMSETUP, ZFSNAS_SYNCOID)
+	// only matter once virtualization is actually installed. As of v6.6.26 the
+	// feature is no longer gated behind --experimental, so the decisive signal is
+	// purely whether Incus is on the box: a host that never enabled VMs &
+	// Containers must NOT report a pile of missing VM-import / virtualization
+	// sudoers it can't satisfy. The enable flow itself runs under full sudo (the
+	// mandatory "sudo all" prerequisite), so these hardened rules are only needed
+	// AFTER incus is installed.
+	if !IncusInstalled() {
 		s = stripExperimentalSudoersSections(s)
 	}
 	return s

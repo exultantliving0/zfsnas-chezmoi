@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -139,6 +140,16 @@ func HandleCreatePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := MustSession(r)
+
+	// Detect whether this is the very first ZFS pool on the box. If so, we apply
+	// conservative ARC cache defaults once it's created (min 200 MiB / max 512 MiB)
+	// so ZFS doesn't claim up to half of RAM by default — leaving headroom for the
+	// OS, applications and (when enabled) VMs & Containers.
+	firstPool := false
+	if existing, err := system.GetAllPools(); err == nil && len(existing) == 0 {
+		firstPool = true
+	}
+
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
 	job := &poolCreateJob{Status: "running"}
 	poolCreateJobs.Store(jobID, job)
@@ -158,6 +169,23 @@ func HandleCreatePool(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		diskCacheStale = true
+
+		// First pool on a fresh system — pin a conservative ARC cache range
+		// (min 200 MiB, max 512 MiB). Best-effort: a failure here must not fail
+		// the pool creation, which already succeeded.
+		if firstPool {
+			const mib = int64(1024 * 1024)
+			if arcErr := system.SetARCParams(512*mib, 200*mib); arcErr != nil {
+				log.Printf("WARNING: first-pool ARC defaults (min 200MiB/max 512MiB): %v", arcErr)
+			} else {
+				audit.Log(audit.Entry{
+					User: sess.Username, Role: sess.Role,
+					Action: audit.ActionUpdatePool, Target: req.Name, Result: audit.ResultOK,
+					Details: "first-pool ARC defaults applied: min=200MiB max=512MiB",
+				})
+			}
+		}
+
 		pool, _ := system.GetPoolByName(req.Name)
 		job.Pool = pool
 		job.Status = "done"

@@ -5,8 +5,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-
-	"zfsnas/internal/version"
 )
 
 // Package describes a required system package and its install status.
@@ -239,15 +237,13 @@ func CheckSudoAccess() SudoStatus {
 	// Hardened configuration — check each required entry.
 	var missing []string
 	for _, chk := range requiredSudoChecks {
-		// Skip experimental-only entries unless --experimental is on AND
-		// virtualization is actually installed. The sudoers template removes
-		// their alias block until the feature is enabled, so warning about a
-		// missing line the user can't add from the editor is pure noise. Merely
-		// passing --experimental (without ever installing virtualization) must
-		// not surface red "missing" rows for virtualization sudo entries. v6.5.30
-		// covered the non-experimental case; v6.6.9 also gates on IncusInstalled
-		// so an experimental-but-not-yet-installed host stays clean.
-		if chk.IfExperimental && !(version.IsExperimental() && IncusInstalled()) {
+		// Skip virtualization-only entries unless Incus is actually installed.
+		// The sudoers template removes their alias block until the feature is
+		// enabled, so warning about a missing line the user can't add from the
+		// editor is pure noise. As of v6.6.26 the feature is no longer gated
+		// behind --experimental, so installation of Incus is the only signal
+		// that matters (v6.5.30/v6.6.9 also keyed on the now-removed flag).
+		if chk.IfExperimental && !IncusInstalled() {
 			continue
 		}
 		// Skip optional-feature entries when the feature is not installed.

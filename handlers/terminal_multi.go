@@ -46,9 +46,12 @@ const terminalMultiPageHTML = `<!DOCTYPE html>
 <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/icons/z-terminals.png">
 <link rel="icon" type="image/svg+xml" href="/icons/z-terminals.svg">
 <link rel="icon" type="image/png" sizes="180x180" href="/icons/z-terminals.png">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<!-- Local (self-hosted) xterm assets — the page's CSP (script-src/style-src 'self')
+     blocks the jsdelivr CDN, which left "Terminal is not defined" so no terminal
+     could open here. index.html serves the same vendored copies. -->
+<link rel="stylesheet" href="/static/vendor/xterm.min.css">
+<script src="/static/vendor/xterm.min.js"></script>
+<script src="/static/vendor/xterm-addon-fit.min.js"></script>
 <!-- Selectable console fonts (gear → Font type). Same CDN-assumed model as xterm above. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

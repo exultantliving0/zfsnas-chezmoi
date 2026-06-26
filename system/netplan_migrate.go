@@ -690,7 +690,18 @@ func MigrateNetplanToIfupdown(stream func(string)) error {
 	log("Scanning /etc/netplan/*.yaml…")
 	scan, err := scanNetplanYAMLs()
 	if err != nil {
-		return err
+		// No netplan YAMLs. On a stock Debian host the network is managed by
+		// raw systemd-networkd (/etc/systemd/network/*.network) — migrate from
+		// the live state instead. Everything below (snapshot → render
+		// /etc/network/interfaces → disable+mask networkd → ifup) is renderer-
+		// agnostic; only the device list and the netplan-file rename differ.
+		// (v6.6.26.)
+		if systemdNetworkdActive() {
+			log("  No netplan YAMLs — migrating from raw systemd-networkd.")
+			scan = &netplanScanResult{Renderer: "networkd", Devices: liveManagedEtherDevices()}
+		} else {
+			return err
+		}
 	}
 	log(fmt.Sprintf("  Found %d file(s); renderer=%q; ethernets=%v",
 		len(scan.Files), scan.Renderer, scan.Devices))
@@ -953,6 +964,35 @@ func MigrateNetplanToIfupdown(stream func(string)) error {
 
 	log("✓ Migration complete. /etc/network/interfaces is now authoritative.")
 	return nil
+}
+
+// liveManagedEtherDevices returns the names of ether interfaces that carry a
+// global IPv4 address and are not enslaved to a bridge/bond (Master unset) —
+// the management NICs to migrate onto ifupdown. Used when there is no netplan
+// YAML to read the device list from (raw systemd-networkd hosts). Mirrors the
+// device set netplan would have listed under `ethernets:`.
+func liveManagedEtherDevices() []string {
+	out, err := exec.Command("ip", "-j", "addr").Output()
+	if err != nil {
+		return nil
+	}
+	var ifaces []ipAddrLite
+	if err := json.Unmarshal(out, &ifaces); err != nil {
+		return nil
+	}
+	var names []string
+	for _, ifc := range ifaces {
+		if ifc.LinkType != "ether" || ifc.Master != "" {
+			continue
+		}
+		for _, a := range ifc.AddrInfo {
+			if a.Family == "inet" && a.Scope == "global" {
+				names = append(names, ifc.IfName)
+				break
+			}
+		}
+	}
+	return names
 }
 
 // devicesMissingIPv4 returns the subset of names that no longer have a

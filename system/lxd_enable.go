@@ -132,6 +132,13 @@ func lxdBinaryPath() string {
 // Incus packages diverge in those repos and the netplan migration step
 // has only been validated on 26.04.
 //
+// 6.6.26: the feature is no longer gated behind --experimental, so the OS
+// check is tightened to match what is actually validated: a *real* Debian
+// 13+ (Proxmox VE reports ID=debian but ships a customised kernel/network
+// stack and is rejected) or Ubuntu 26.04+. A new Hardware Requirements
+// prerequisite (HardwareOK) hard-blocks hosts without CPU virtualization
+// support or with ≤4 GB RAM.
+//
 // NetworkCanFix=true tells the UI to surface the "Switch to systemd
 // Networking" button on the Network row — set when netplan is the only
 // network configuration on the host (see netplan_migrate.go).
@@ -142,6 +149,7 @@ type LXDEnablePrereqResult struct {
 	NetworkOK     bool     `json:"network_ok"`
 	NetworkCanFix bool     `json:"network_can_fix,omitempty"`
 	OSSupported   bool     `json:"os_supported"`
+	HardwareOK    bool     `json:"hardware_ok"`
 	HasPools      bool     `json:"has_pools"`
 	AllOK         bool     `json:"all_ok"`
 	SudoAllNote   string   `json:"sudo_all_note,omitempty"`
@@ -149,6 +157,7 @@ type LXDEnablePrereqResult struct {
 	StaticIPNote  string   `json:"static_ip_note,omitempty"`
 	NetworkNote   string   `json:"network_note,omitempty"`
 	OSNote        string   `json:"os_note,omitempty"`
+	HardwareNote  string   `json:"hardware_note,omitempty"`
 	PoolsNote     string   `json:"pools_note,omitempty"`
 	ZFSPools      []string `json:"zfs_pools"`
 }
@@ -273,15 +282,29 @@ func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 	case !hasIfupdown && hasNetplan:
 		res.NetworkNote = "Netplan configuration detected (/etc/netplan/*.yaml). This feature requires ifupdown — click \"Switch to systemd Networking\" on the right to migrate."
 		res.NetworkCanFix = true
+	case systemdNetworkdActive():
+		// Raw systemd-networkd (no netplan, no ifupdown) — the stock Debian
+		// default. The migration handles this case too, so offer the same
+		// "Switch to systemd Networking" button.
+		res.NetworkNote = "systemd-networkd manages the network directly. This feature requires ifupdown — click \"Switch to systemd Networking\" to migrate."
+		res.NetworkCanFix = true
 	default:
 		res.NetworkNote = "/etc/network/interfaces not found. This feature requires the ifupdown networking system."
 	}
 
-	// 3. OS is Debian, or Ubuntu ≥ 26.04 (both first-class supported).
+	// 3. OS is a *real* Debian 13+, or Ubuntu ≥ 26.04 (both first-class
+	// supported). Proxmox VE reports ID=debian in /etc/os-release but ships a
+	// customised kernel and network stack that the Incus install + netplan
+	// migration have not been validated against — it is detected and rejected.
 	osRelease := readOSRelease()
 	id := osRelease["ID"]
 	switch {
-	case strings.EqualFold(id, "debian"):
+	case isProxmoxHost():
+		res.OSNote = "Proxmox VE detected. This feature requires a standard Debian 13+ or Ubuntu 26.04+ host — Proxmox's customised kernel and network stack are not supported."
+	case strings.EqualFold(id, "debian") && debianVersionAtLeast(osRelease["VERSION_ID"], 13):
+		// Debian 13 (trixie) and newer. Debian testing/sid carry no
+		// VERSION_ID — debianVersionAtLeast treats that as a newer rolling
+		// release and allows it (see helper).
 		res.OSSupported = true
 	case strings.EqualFold(id, "ubuntu") && ubuntuVersionAtLeast(osRelease["VERSION_ID"], 26, 4):
 		// Ubuntu 26.04+ uses the same Incus install path as Debian
@@ -301,7 +324,26 @@ func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 		if name == "" {
 			name = "unknown OS"
 		}
-		res.OSNote = fmt.Sprintf("Detected: %s. This feature requires Debian Linux or Ubuntu 26.04+.", name)
+		res.OSNote = fmt.Sprintf("Detected: %s. This feature requires Debian 13+ (non-Proxmox) or Ubuntu 26.04+.", name)
+	}
+
+	// 3b. Hardware Requirements: the host CPU must support hardware
+	// virtualization (VT-x / AMD-V) and have more than 4 GB of RAM. Both are
+	// hard blockers — without VT-x/AMD-V QEMU/KVM cannot run accelerated VMs,
+	// and ≤4 GB leaves no headroom once the host, ZFS ARC and a guest are
+	// accounted for. (v6.6.26.)
+	cpuOK := hostVirtSupport()
+	ram := GetHardwareInfo().TotalRAMBytes
+	ramOK := ram > minVirtRAMBytes
+	switch {
+	case cpuOK && ramOK:
+		res.HardwareOK = true
+	case !cpuOK && !ramOK:
+		res.HardwareNote = fmt.Sprintf("CPU virtualization (VT-x/AMD-V) is unavailable and only %.1f GB RAM detected (more than 4 GB required).", float64(ram)/1e9)
+	case !cpuOK:
+		res.HardwareNote = "CPU virtualization (VT-x/AMD-V) is not available — enable it in the BIOS/UEFI, or run on hardware that supports it."
+	default:
+		res.HardwareNote = fmt.Sprintf("Only %.1f GB RAM detected. VMs & Containers require more than 4 GB.", float64(ram)/1e9)
 	}
 
 	// 4. At least one ZFS pool
@@ -335,7 +377,7 @@ func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 	}
 
 	res.AllOK = res.SudoAllOK && res.SudoersOK && res.StaticIPOK &&
-		res.NetworkOK && res.OSSupported && res.HasPools
+		res.NetworkOK && res.OSSupported && res.HardwareOK && res.HasPools
 	return res
 }
 
@@ -460,7 +502,45 @@ func SetEnableStaticIP(iface, addrCIDR, gateway string, dns []string) error {
 	if netplanIsAuthoritative() {
 		return writeNetplanStaticAndApply(iface, addrCIDR, gateway, cleanDNS)
 	}
+	// Raw systemd-networkd (no netplan, no /etc/network/interfaces) — the stock
+	// Debian default. Writing the ifupdown file here fails because /etc/network/
+	// doesn't even exist yet ("open /etc/network/interfaces: no such file or
+	// directory"); instead pin the address in a systemd-networkd .network file.
+	// (v6.6.26.)
+	if _, err := os.Stat("/etc/network/interfaces"); err != nil && systemdNetworkdActive() {
+		return writeNetworkdStaticAndApply(iface, addrCIDR, gateway, cleanDNS)
+	}
 	return writeIfupdownStaticAndApply(iface, addrCIDR, gateway, cleanDNS)
+}
+
+// writeNetworkdStaticAndApply pins the interface to a static address via a
+// systemd-networkd .network file and reconfigures the link. Used on hosts that
+// run raw systemd-networkd (no netplan, no ifupdown) — the common stock-Debian
+// case. The numeric "10-" prefix sorts the file ahead of the distro's default
+// "<iface>.network" so networkd picks it (only the first matching file applies).
+// Keeping the same address the host already holds means the link does not drop.
+func writeNetworkdStaticAndApply(iface, addrCIDR, gateway string, dns []string) error {
+	var b strings.Builder
+	b.WriteString("# Written by ZNAS — static IP for " + iface + " (set before enabling virtualization).\n")
+	b.WriteString("[Match]\nName=" + iface + "\n\n[Network]\nDHCP=no\n")
+	b.WriteString("Address=" + addrCIDR + "\n")
+	if gateway != "" {
+		b.WriteString("Gateway=" + gateway + "\n")
+	}
+	for _, d := range dns {
+		b.WriteString("DNS=" + d + "\n")
+	}
+	path := "/etc/systemd/network/10-znas-static-" + iface + ".network"
+	if err := writeInterfacesFile(path, []byte(b.String())); err != nil {
+		return fmt.Errorf("write networkd config: %w", err)
+	}
+	// Reload unit files, then reconfigure just this link so the static address
+	// takes effect without a full networkd restart.
+	exec.Command("sudo", "networkctl", "reload").Run() //nolint:errcheck
+	if out, err := exec.Command("sudo", "networkctl", "reconfigure", iface).CombinedOutput(); err != nil {
+		return fmt.Errorf("networkctl reconfigure %s: %s: %w", iface, strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
 
 // writeNetplanStaticAndApply drops a high-priority netplan file pinning the
@@ -621,6 +701,77 @@ func ubuntuVersionAtLeast(versionID string, minMajor, minMinor int) bool {
 		return false
 	}
 	return minor >= minMinor
+}
+
+// minVirtRAMBytes is the RAM floor for the Hardware Requirements prerequisite.
+// "More than 4 GB" is expressed in decimal GB (4×10⁹) so a host with 4 GiB of
+// physical RAM (MemTotal ≈ 4.0–4.1×10⁹ after kernel reservation) passes, while a
+// box with 4 GB or less fails. (v6.6.26.)
+const minVirtRAMBytes uint64 = 4 * 1000 * 1000 * 1000
+
+// debianVersionAtLeast parses a Debian VERSION_ID like "13" / "12" and reports
+// whether its major number is ≥ minMajor. Debian testing/sid carry NO VERSION_ID
+// in /etc/os-release (they are rolling releases newer than the last stable), so
+// an empty/unparseable value is treated as "newer than any released stable" and
+// allowed. Returns false only for a parseable version below the floor.
+func debianVersionAtLeast(versionID string, minMajor int) bool {
+	versionID = strings.TrimSpace(versionID)
+	if versionID == "" {
+		return true // testing/sid — newer rolling release
+	}
+	parts := strings.SplitN(versionID, ".", 2)
+	major, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return true // unparseable on a Debian host ⇒ assume newer/rolling
+	}
+	return major >= minMajor
+}
+
+// isProxmoxHost reports whether the running host is Proxmox VE. Proxmox is
+// Debian-based and reports ID=debian in /etc/os-release, so it must be detected
+// out-of-band: the /etc/pve cluster filesystem, the pveversion CLI, or the
+// proxmox-ve meta-package. Any one is sufficient.
+func isProxmoxHost() bool {
+	if _, err := os.Stat("/etc/pve"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/usr/bin/pveversion"); err == nil {
+		return true
+	}
+	if installed, _ := packageInfo("proxmox-ve"); installed {
+		return true
+	}
+	return false
+}
+
+// hostVirtSupport reports whether the host CPU supports hardware virtualization
+// AND the KVM device node is present. It requires both: a vmx (Intel) or svm
+// (AMD) flag in /proc/cpuinfo proves the CPU is capable, and /dev/kvm proves the
+// kernel exposes KVM (the flag can be present while VT is disabled in BIOS, in
+// which case /dev/kvm is absent). (v6.6.26.)
+func hostVirtSupport() bool {
+	if _, err := os.Stat("/dev/kvm"); err != nil {
+		return false
+	}
+	f, err := os.Open("/proc/cpuinfo")
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "flags") && !strings.HasPrefix(line, "Features") {
+			continue
+		}
+		// Match whole-word vmx/svm to avoid false positives in longer tokens.
+		for _, fl := range strings.Fields(line) {
+			if fl == "vmx" || fl == "svm" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func readOSRelease() map[string]string {

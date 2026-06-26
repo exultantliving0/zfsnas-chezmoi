@@ -1187,7 +1187,7 @@
             Collecting workload data… check back in a few minutes.
           </div>
           <div id="workload-perf-charts">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:20px;">
               <div class="card-sm" style="position:relative;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                   <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Top VMs / Containers · CPU</div>
@@ -7776,35 +7776,40 @@ Select the Console tab to load.</pre>
       <div id="lxd-enable-prereq-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-sudoall" style="font-size:15px;">⋯</span>
-          <span style="flex:1;font-size:13px;color:var(--text-1);">Full sudo access (<code style="background:var(--surface3);padding:1px 4px;border-radius:3px;font-size:11px;">sudo all</code>) — required to enable</span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Full sudo access (<code style="background:var(--surface3);padding:1px 4px;border-radius:3px;font-size:11px;">sudo all</code>) — required to enable <i class="info-tip" data-tip="Enabling virtualization runs commands outside the hardened sudoers template — initialising Incus, rewriting the host network config, and controlling system services.&#10;&#10;The service account therefore needs full passwordless sudo (NOPASSWD: ALL) for the duration of the setup. You can re-apply sudoers hardening afterwards from Settings → Sudoers."></i></span>
           <span id="lxd-pre-note-sudoall" style="font-size:12px;color:var(--text-3);max-width:300px;text-align:right;"></span>
           <button id="lxd-pre-sudoall-fix-btn" class="btn btn-sm btn-ghost" style="display:none;white-space:nowrap;" onclick="lxdEnableSwitchSudoAll()">Switch to sudo all</button>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-sudoers" style="font-size:15px;">⋯</span>
-          <span style="flex:1;font-size:13px;color:var(--text-1);">Sudoers configuration allows feature setup</span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Sudoers configuration allows feature setup <i class="info-tip" data-tip="Installing the Incus and QEMU packages needs passwordless apt-get access (the ZFSNAS_APT sudoers rule).&#10;&#10;If hardened sudoers is missing those entries, apply the full template from the Security tab first."></i></span>
           <span id="lxd-pre-note-sudoers" style="font-size:12px;color:var(--text-3);max-width:340px;text-align:right;"></span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-staticip" style="font-size:15px;">⋯</span>
-          <span style="flex:1;font-size:13px;color:var(--text-1);">Primary interface uses a static IP</span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Primary interface uses a static IP <i class="info-tip" data-tip="A DHCP-assigned address changes when the host migrates from netplan to ifupdown and again when the vmbr0 bridge is created (it presents a different DHCP identity).&#10;&#10;Pinning the interface to the IP it already has up front avoids that churn and stops the portal session from dropping mid-setup."></i></span>
           <span id="lxd-pre-note-staticip" style="font-size:12px;color:var(--text-3);max-width:300px;text-align:right;"></span>
           <button id="lxd-pre-staticip-fix-btn" class="btn btn-sm btn-ghost" style="display:none;white-space:nowrap;" onclick="lxdEnableOpenStaticIP()">Configure Static IP</button>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-network" style="font-size:15px;">⋯</span>
-          <span style="flex:1;font-size:13px;color:var(--text-1);">Network uses <code style="background:var(--surface3);padding:1px 4px;border-radius:3px;font-size:11px;">/etc/network/interfaces</code></span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Network uses <code style="background:var(--surface3);padding:1px 4px;border-radius:3px;font-size:11px;">/etc/network/interfaces</code> <i class="info-tip" data-tip="The physical-NIC bridges (vmbr0, vmbr1, …) that give VMs and containers LAN access are defined in the ifupdown config file /etc/network/interfaces.&#10;&#10;If the host still uses netplan/systemd-networkd, click &quot;Switch to systemd Networking&quot; to migrate — only ifupdown is supported for the bridge step."></i></span>
           <span id="lxd-pre-note-network" style="font-size:12px;color:var(--text-3);max-width:340px;text-align:right;"></span>
           <button id="lxd-pre-network-fix-btn" class="btn btn-sm btn-ghost" style="display:none;white-space:nowrap;" onclick="lxdMigrateNetplanStart()">Switch to systemd Networking</button>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-debian" style="font-size:15px;">⋯</span>
-          <span style="flex:1;font-size:13px;color:var(--text-1);">Operating System</span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Operating System <i class="info-tip" data-tip="The Incus packages and the netplan→ifupdown migration are validated only on Debian 13+ (trixie or newer) and Ubuntu 26.04+.&#10;&#10;Proxmox VE is Debian-based but ships a customised kernel and network stack and is not supported."></i></span>
           <span id="lxd-pre-note-debian" style="font-size:12px;color:var(--text-3);max-width:340px;text-align:right;"></span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
+          <span id="lxd-pre-icon-hardware" style="font-size:15px;">⋯</span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Hardware Requirements <i class="info-tip" data-tip="VMs need hardware virtualization: a CPU with Intel VT-x or AMD-V, exposed through KVM (/dev/kvm). If the flag is present but /dev/kvm is missing, virtualization is usually disabled in the BIOS/UEFI.&#10;&#10;The host must also have more than 4 GB of RAM to leave headroom for the host, ZFS ARC cache and at least one guest."></i></span>
+          <span id="lxd-pre-note-hardware" style="font-size:12px;color:var(--text-3);max-width:340px;text-align:right;"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-pools" style="font-size:15px;">⋯</span>
-          <span style="flex:1;font-size:13px;color:var(--text-1);">At least one ZFS storage pool exists</span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">At least one ZFS storage pool exists <i class="info-tip" data-tip="Incus is initialised with a ZFS storage backend on the pool you select below — VM disks and container roots are created as datasets on it.&#10;&#10;Create at least one ZFS pool before enabling the feature."></i></span>
           <span id="lxd-pre-note-pools" style="font-size:12px;color:var(--text-3);max-width:340px;text-align:right;"></span>
         </div>
       </div>
@@ -10541,33 +10546,39 @@ Select the Console tab to load.</pre>
       <h3>Install Missing Packages</h3>
       <button class="modal-close" id="btn-close-install" onclick="closeInstallModal()">✕</button>
     </div>
-    <p class="text-2" style="font-size:14px;margin-bottom:16px;">
-      The following command will be run with <code style="background:var(--surface2);padding:1px 6px;border-radius:4px;font-size:12px;">sudo apt-get install</code>:
-    </p>
-    <div id="install-pkg-list" style="margin-bottom:16px;"></div>
-    <div class="stream-box hidden" id="install-stream">Waiting for output…</div>
-    <div id="install-actions" style="margin-top:16px;display:flex;gap:8px;">
+    <!-- Scrollable body: keeps the modal within the viewport while apt output
+         streams and the post-install service prompt appears, so the bottom
+         action buttons stay reachable on short screens. -->
+    <div class="modal-body">
+      <p class="text-2" style="font-size:14px;margin-bottom:16px;">
+        The following command will be run with <code style="background:var(--surface2);padding:1px 6px;border-radius:4px;font-size:12px;">sudo apt-get install</code>:
+      </p>
+      <div id="install-pkg-list" style="margin-bottom:16px;"></div>
+      <div class="stream-box hidden" id="install-stream">Waiting for output…</div>
+      <div id="install-done" class="alert alert-success hidden" style="margin-top:12px;"></div>
+
+      <!-- Systemd service prompt (shown after install) -->
+      <div id="service-prompt" class="hidden" style="margin-top:16px;">
+        <div class="divider"></div>
+        <h3 style="margin-bottom:8px;">Install as Systemd Service?</h3>
+        <p class="text-2" style="font-size:13px;margin-bottom:12px;">
+          This will register ZFS NAS to start automatically on boot, running as the current user from the current directory.
+        </p>
+        <div class="flex gap-2">
+          <button class="btn btn-ghost btn-sm" onclick="skipService()">Skip</button>
+          <button class="btn btn-primary btn-sm" onclick="installService()" style="flex:1;">
+            Yes, install service
+          </button>
+        </div>
+        <div id="service-install-result" class="hidden" style="margin-top:10px;font-size:13px;"></div>
+      </div>
+    </div>
+    <!-- Pinned footer: the primary actions stay visible regardless of body height. -->
+    <div class="modal-footer" id="install-actions">
       <button class="btn btn-ghost" onclick="closeInstallModal()">Cancel</button>
       <button class="btn btn-primary" onclick="startInstall()" id="btn-start-install" style="flex:1;">
         Install Now
       </button>
-    </div>
-    <div id="install-done" class="alert alert-success hidden" style="margin-top:12px;"></div>
-
-    <!-- Systemd service prompt (shown after install) -->
-    <div id="service-prompt" class="hidden" style="margin-top:16px;">
-      <div class="divider"></div>
-      <h3 style="margin-bottom:8px;">Install as Systemd Service?</h3>
-      <p class="text-2" style="font-size:13px;margin-bottom:12px;">
-        This will register ZFS NAS to start automatically on boot, running as the current user from the current directory.
-      </p>
-      <div class="flex gap-2">
-        <button class="btn btn-ghost btn-sm" onclick="skipService()">Skip</button>
-        <button class="btn btn-primary btn-sm" onclick="installService()" style="flex:1;">
-          Yes, install service
-        </button>
-      </div>
-      <div id="service-install-result" class="hidden" style="margin-top:10px;font-size:13px;"></div>
     </div>
   </div>
 </div>
@@ -13979,6 +13990,9 @@ function startInstall() {
         document.getElementById('install-done').textContent = '✓ All packages installed successfully.';
         document.getElementById('install-done').className = 'alert alert-success';
         document.getElementById('install-done').classList.remove('hidden');
+        // The footer actions are hidden once the install finishes, so re-show
+        // the header ✕ as the always-available way to dismiss the modal.
+        document.getElementById('btn-close-install').classList.remove('hidden');
         // Offer systemd service install
         if (!prereqData.service_installed) {
           document.getElementById('service-prompt').classList.remove('hidden');
@@ -14409,9 +14423,11 @@ function renderSudoersDiff(diff) {
     }
   }
 
-  // LXD/Proxmox/virtualization sudoers sections are only relevant with --experimental.
+  // LXD/Proxmox/virtualization sudoers sections are only relevant once the
+  // VMs & Containers feature is installed (v6.6.26: no longer gated on
+  // --experimental — keyed on whether Incus is actually on the box).
   const LXD_SECS = new Set(['ZFSNAS_LXDNET', 'ZFSNAS_LXD', 'ZFSNAS_VMSETUP']);
-  const _secVis = d => _experimentalMode || !LXD_SECS.has(d.section);
+  const _secVis = d => window._lxdAvailable || !LXD_SECS.has(d.section);
 
   const matched     = (diff.matched_lines || []).filter(d => !d.forced && _secVis(d));
   const missing     = (diff.missing_lines || []).filter(d => !d.silenced && !d.forced && _secVis(d));
@@ -19006,7 +19022,7 @@ function _renderARCModal(s) {
   _setARCStatsRow(s);
   _buildARCMaxDropdown(s);
   document.getElementById('arc-input-min').value = s.param_arc_min ? Math.round(s.param_arc_min / 1024 / 1024) : '';
-  document.getElementById('arc-hint-min').textContent = s.arc_min ? 'Current kernel: ' + fmtBytes(s.arc_min) : '';
+  document.getElementById('arc-hint-min').textContent = s.arc_min ? 'Current kernel: ' + _fmtARCBytes(s.arc_min) : '';
 }
 
 let _arcMaxSelectedPct = 0; // 0 = kernel default, -1 = custom MB
@@ -19064,7 +19080,7 @@ function _buildARCMaxDropdown(s) {
         <div style="font-size:11px;color:var(--text-3);margin-top:2px;">ZFS decides the ARC size automatically based on available RAM</div>
       </div>`;
     }
-    const sizeLabel = bytes > 0 ? fmtBytes(bytes) : '?';
+    const sizeLabel = bytes > 0 ? _fmtARCBytes(bytes) : '?';
     const badge = rec && rec.badge
       ? `<span style="font-size:10px;font-weight:600;color:${rec.badgeColor};border:1px solid ${rec.badgeColor};border-radius:3px;padding:1px 5px;margin-left:6px;">${rec.badge.toUpperCase()}</span>`
       : '';
@@ -19091,7 +19107,7 @@ function _buildARCMaxDropdown(s) {
   </div>`;
 
   document.getElementById('arc-hint-max').textContent = s.arc_max
-    ? 'Active: ' + fmtBytes(s.arc_max) + (totalBytes > 0 ? '  (' + (s.arc_max / totalBytes * 100).toFixed(0) + '% of RAM)' : '')
+    ? 'Active: ' + _fmtARCBytes(s.arc_max) + (totalBytes > 0 ? '  (' + (s.arc_max / totalBytes * 100).toFixed(0) + '% of RAM)' : '')
     : '';
 }
 
@@ -19103,12 +19119,12 @@ function _updateARCMaxTrigger(totalBytes) {
     lbl.style.color = 'var(--text-3)';
   } else if (_arcMaxSelectedPct === -1) {
     lbl.innerHTML = `<strong style="color:var(--text-1)">Custom</strong>`
-      + `<span style="color:var(--accent-2);margin-left:8px;">${_arcMaxCustomMB > 0 ? fmtBytes(_arcMaxCustomMB * 1024 * 1024) : ''}</span>`;
+      + `<span style="color:var(--accent-2);margin-left:8px;">${_arcMaxCustomMB > 0 ? _fmtARCBytes(_arcMaxCustomMB * 1024 * 1024) : ''}</span>`;
     lbl.style.color = '';
   } else {
     const bytes = totalBytes > 0 ? Math.round(totalBytes * _arcMaxSelectedPct / 100) : 0;
     lbl.innerHTML = `<strong style="color:var(--text-1)">${_arcMaxSelectedPct}%</strong>`
-      + `<span style="color:var(--accent-2);margin-left:8px;">${bytes > 0 ? fmtBytes(bytes) : ''}</span>`;
+      + `<span style="color:var(--accent-2);margin-left:8px;">${bytes > 0 ? _fmtARCBytes(bytes) : ''}</span>`;
     lbl.style.color = '';
   }
 }
@@ -19208,10 +19224,10 @@ function _closeARCMaxDropdown() {
 
 function _setARCStatCards(s) {
   const cards = [
-    { id: 'arc-card-size',  label: 'ARC Size', tip: 'Current amount of RAM used by the ARC cache.',      val: s ? fmtBytes(s.arc_size) : '—', color: 'var(--accent-2)' },
+    { id: 'arc-card-size',  label: 'ARC Size', tip: 'Current amount of RAM used by the ARC cache.',      val: s ? _fmtARCBytes(s.arc_size) : '—', color: 'var(--accent-2)' },
     { id: 'arc-card-hit',   label: 'Hit Ratio', tip: 'Percentage of read requests served from ARC. Values above 90% indicate a well-sized cache.', val: s ? s.hit_ratio.toFixed(1) + '%' : '—', color: s && s.hit_ratio >= 90 ? 'var(--accent-3)' : s && s.hit_ratio >= 70 ? 'var(--accent-warn)' : 'var(--accent-danger)' },
-    { id: 'arc-card-max',   label: 'ARC Max',  tip: 'Hard ceiling for ARC RAM usage.',                   val: s ? fmtBytes(s.arc_max) : '—', color: 'var(--text-1)' },
-    { id: 'arc-card-min',   label: 'ARC Min',  tip: 'ARC will not shrink below this size.',              val: s ? fmtBytes(s.arc_min) : '—', color: 'var(--text-1)' },
+    { id: 'arc-card-max',   label: 'ARC Max',  tip: 'Hard ceiling for ARC RAM usage.',                   val: s ? _fmtARCBytes(s.arc_max) : '—', color: 'var(--text-1)' },
+    { id: 'arc-card-min',   label: 'ARC Min',  tip: 'ARC will not shrink below this size.',              val: s ? _fmtARCBytes(s.arc_min) : '—', color: 'var(--text-1)' },
   ];
   cards.forEach(c => {
     const el = document.getElementById(c.id);
@@ -44604,6 +44620,16 @@ function _fmtBytes(b) {
 // matching the config / Live Info / Virtual Hardware cards instead of the
 // base-1000 "8.6 GB"), max 1 decimal, 0 → "0 B".
 function _fmtMemBytes(b) { b = Number(b) || 0; return b <= 0 ? '0 B' : _fmtBytes(b); }
+// ARC cache sizes are configured and stored in MiB (the "MB" inputs multiply by
+// 1024²), so format them base-1024 with no trailing ".0": a user who sets 512
+// sees "512 MB", not the base-1000 "537 MB" that fmtBytes would produce.
+function _fmtARCBytes(b) {
+  b = Number(b) || 0;
+  if (b <= 0) return '—';
+  const trim = n => { const r = Math.round(n * 10) / 10; return r % 1 === 0 ? r.toFixed(0) : r.toFixed(1); };
+  const mib = b / 1024 / 1024;
+  return mib < 1024 ? trim(mib) + ' MB' : trim(mib / 1024) + ' GB';
+}
 
 // parseIncusMemoryBytes parses any limits.memory string (e.g. "8GB", "8GiB",
 // "8192MiB") into bytes using BINARY semantics for both GB and GiB. Matches
@@ -51987,8 +52013,8 @@ async function _updateLXDEnableStatus() {
   const btnEl    = document.getElementById('prereq-lxd-enable-btn');
   const menuEl   = document.getElementById('prereq-lxd-menu-wrap');
   if (!row) return;
-  // Only show the row in experimental mode
-  if (!_experimentalMode) { row.style.display = 'none'; return; }
+  // v6.6.26: VMs & Containers is a first-class feature on every install — the
+  // row is always shown (no longer gated behind --experimental).
   row.style.display = 'flex';
   try {
     const r = await fetch('/api/incus/enable/status');
@@ -52036,7 +52062,7 @@ function _lxdEnableShowPhase(n) {
 
 async function lxdEnableLoadPrereqs() {
   // Reset icons to loading state
-  ['sudoall','sudoers','staticip','network','debian','pools'].forEach(k => {
+  ['sudoall','sudoers','staticip','network','debian','hardware','pools'].forEach(k => {
     const ic = document.getElementById('lxd-pre-icon-'+k);
     const nt = document.getElementById('lxd-pre-note-'+k);
     if (ic) ic.textContent = '⋯';
@@ -52083,6 +52109,7 @@ function _lxdEnableApplyPrereqs(p) {
   _lxdEnableSetPrereq('staticip', p.static_ip_ok, p.static_ip_note);
   _lxdEnableSetPrereq('network',  p.network_ok, p.network_note);
   _lxdEnableSetPrereq('debian',   p.os_supported, p.os_note);
+  _lxdEnableSetPrereq('hardware', p.hardware_ok, p.hardware_note);
   _lxdEnableSetPrereq('pools',    p.has_pools,  p.pools_note);
 
   // "Switch to sudo all" button — shown until full sudo is granted.
@@ -52141,7 +52168,7 @@ function _lxdEnableApplyPrereqs(p) {
   const alertEl = document.getElementById('lxd-enable-prereq-alert');
   if (alertEl) {
     if (!p.all_ok) {
-      const issues = [p.sudo_all_note, p.sudoers_note, p.static_ip_note, p.network_note, p.os_note, p.pools_note].filter(Boolean);
+      const issues = [p.sudo_all_note, p.sudoers_note, p.static_ip_note, p.network_note, p.os_note, p.hardware_note, p.pools_note].filter(Boolean);
       alertEl.textContent = issues.join(' · ');
       alertEl.classList.remove('hidden');
     } else {
