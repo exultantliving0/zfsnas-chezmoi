@@ -726,19 +726,20 @@ func DeployComposeToInstance(instance, stackName, composeYAML, composeEnv string
 			"--env", "DOCKER_HOST=unix:///run/podman/podman.sock",
 			"--cwd", dir, "--", "docker-compose", "up", "-d"}
 		if err := runIncusStreamed("docker-compose up", a, logCh); err != nil {
-			log("WARNING: 'compose up' failed — fix the file and redeploy from the instance's Docker card:")
-			log(err.Error())
-			return nil
+			// Files are deployed; only the stack didn't start. Phase 1: report
+			// as a job error so the output stays visible and the failure
+			// persists. Fix the file and redeploy from the instance.
+			log("✗ 'compose up' failed — the stack files were written but the stack did not start.")
+			return fmt.Errorf("compose deployment failed: %v", err)
 		}
 	} else {
 		// Real Docker engine — DockerComposeAction picks `docker compose`/`docker-compose`.
 		if err := DockerComposeAction(instance, dir+"/docker-compose.yml", []string{"up", "-d"}, logCh); err != nil {
-			log("WARNING: 'compose up' failed — fix the file and redeploy from the instance's Docker card:")
-			log(err.Error())
-			return nil
+			log("✗ 'compose up' failed — the stack files were written but the stack did not start.")
+			return fmt.Errorf("compose deployment failed: %v", err)
 		}
 	}
-	log("Stack is up.")
+	log("✓ Stack is up.")
 	return nil
 }
 

@@ -5940,13 +5940,15 @@ func LXDCreateComposeStack(req LXDCreateContainerRequest, distro, composeYAML, c
 	// Bring the stack up.
 	log("Starting the compose stack (docker-compose up)…")
 	if err := runIncusComposeStreamed(req.Name, []string{"up", "-d"}, logCh); err != nil {
-		// The container itself is fine — surface the compose error without
-		// failing the whole job so the user can fix the YAML and redeploy.
-		log("WARNING: 'docker-compose up' failed — fix the compose file and redeploy:")
-		log(err.Error())
-		return nil
+		// The container itself was created fine — but the deployment failed.
+		// Phase 1: report it as a job error so the progress modal keeps the
+		// full output on screen (no auto-dismiss) and the failure persists in
+		// the Activity bar. The container is kept; the user fixes the compose
+		// file and redeploys from the stack.
+		log("✗ 'docker-compose up' failed — the stack container was created but the stack did not start.")
+		return fmt.Errorf("compose deployment failed: %v", err)
 	}
-	log("Compose stack is up.")
+	log("✓ Compose stack is up.")
 	return nil
 }
 
@@ -6045,11 +6047,12 @@ func LXDCreateComposeStackVM(req LXDCreateVMRequest, runtime, composeYAML, compo
 
 	log("Starting the compose stack (docker-compose up)…")
 	if err := runIncusComposeStreamed(req.Name, []string{"up", "-d"}, logCh); err != nil {
-		log("WARNING: 'docker-compose up' failed — fix the compose file and redeploy:")
-		log(err.Error())
-		return nil
+		// VM created OK, deployment failed — report as a job error so the
+		// failure stays visible (Phase 1). The VM is kept for redeploy.
+		log("✗ 'docker-compose up' failed — the VM was created but the stack did not start.")
+		return fmt.Errorf("compose deployment failed: %v", err)
 	}
-	log("Compose stack is up.")
+	log("✓ Compose stack is up.")
 	return nil
 }
 

@@ -3838,6 +3838,7 @@
             <button class="modal-close" onclick="_lxdProgressHideToBackground()" title="Hide — keeps running in background (Activity panel)">✕</button>
           </div>
           <div style="padding:16px 24px 20px;">
+            <div id="lxd-progress-fail-banner" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:var(--radius-sm);background:rgba(255,69,58,0.12);border:1px solid rgba(255,69,58,0.4);color:#ff6961;font-size:13px;line-height:1.45;"></div>
             <pre id="lxd-progress-log" style="background:var(--bg-dark,#0d1117);border-radius:var(--radius-sm);padding:12px;margin:0;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.45;color:#cdd9e5;min-height:80px;max-height:calc(100vh - 280px);overflow:auto;white-space:pre-wrap;word-break:break-word;"></pre>
             <div id="lxd-progress-bg-hint" style="font-size:11px;color:var(--text-3);margin-top:8px;">Closing this window leaves the task running in the background — track it in the Activity panel (bell icon).</div>
           </div>
@@ -18045,7 +18046,7 @@ function renderPoolExists(el, pool) {
         <div style="font-size:20px;font-weight:700;color:${healthColor};">${poolStatusLabel(pool)}</div>
       </div>
       <div class="card-sm">
-        <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Usable Capacity</div>
+        <div class="text-3 text-xs mb-1" style="text-transform:uppercase;letter-spacing:.08em;">Total</div>
         <div style="font-size:18px;font-weight:700;">${fmtBytes(usableSize)}</div>
       </div>
       <div class="card-sm">
@@ -18059,15 +18060,13 @@ function renderPoolExists(el, pool) {
     </div>
 
     <div class="pool-cards-grid">
-      <div class="card" style="min-width:0;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-          <h3 style="margin:0;">zpool status</h3>
-          <span id="pool-status-tick" style="font-size:11px;color:var(--text-3);">Refreshing every 10s</span>
+      <div class="card" style="min-width:0;" id="physical-disks-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <h3 style="margin:0;">Physical Disks (<span id="physical-disks-count">${totalDisks}</span>)</h3>
+          <span id="physical-disks-tick" style="font-size:11px;color:var(--text-3);">Refreshing every 10s</span>
         </div>
-        <pre id="pool-status-output"
-          style="margin:0;background:transparent;border:0;border-radius:0;
-                 padding:0;font-size:12px;line-height:1.6;overflow:hidden;
-                 color:var(--text-1);white-space:pre-wrap;word-break:break-word;">Loading…</pre>
+        <div class="text-3 text-xs" style="margin-bottom:12px;">Devices that make up this pool</div>
+        <div id="physical-disks-body">${_physDiskContentHtml}</div>
       </div>
       <div class="card" style="min-width:0;">
         <h3 style="margin-bottom:16px;">Pool Details</h3>
@@ -18080,13 +18079,15 @@ function renderPoolExists(el, pool) {
         <div class="stat-row"><span class="stat-label">Access time</span><span class="stat-value">${esc(pool.atime||'—')}</span></div>
         <div class="stat-row"><span class="stat-label">Encryption</span><span class="stat-value">${pool.encrypted ? `${esc(pool.encryption_algorithm||'on')} ${pool.key_locked ? '<span style="color:#ff9f0a;font-size:11px;">🔓 key not loaded</span>' : '<span style="color:var(--accent-3);font-size:11px;">🔒 unlocked</span>'}` : '<span style="color:var(--text-3);">off</span>'}</span></div>
       </div>
-      <div class="card" style="min-width:0;" id="physical-disks-card">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-          <h3 style="margin:0;">Physical Disks (<span id="physical-disks-count">${totalDisks}</span>)</h3>
-          <span id="physical-disks-tick" style="font-size:11px;color:var(--text-3);">Refreshing every 10s</span>
+      <div class="card" style="min-width:0;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <h3 style="margin:0;">zpool status</h3>
+          <span id="pool-status-tick" style="font-size:11px;color:var(--text-3);">Refreshing every 10s</span>
         </div>
-        <div class="text-3 text-xs" style="margin-bottom:12px;">Devices that make up this pool</div>
-        <div id="physical-disks-body">${_physDiskContentHtml}</div>
+        <pre id="pool-status-output"
+          style="margin:0;background:transparent;border:0;border-radius:0;
+                 padding:0;font-size:12px;line-height:1.6;overflow:hidden;
+                 color:var(--text-1);white-space:pre-wrap;word-break:break-word;">Loading…</pre>
       </div>
     </div>
 
@@ -48126,7 +48127,8 @@ async function _composeDeploySubmit() {
     if (!r.ok) throw new Error(await r.text());
     const data = await r.json();
     document.getElementById('modal-compose-chooser').classList.add('hidden');
-    openLXDProgressModal('Deploying ' + name + ' to ' + _composeDeployTarget.name + '…', data.job_id);
+    openLXDProgressModal('Deploying ' + name + ' to ' + _composeDeployTarget.name + '…', data.job_id,
+      { composeStack: _composeDeployTarget.name, composeType: _composeDeployTarget.type === 'virtual-machine' ? 'virtual-machine' : 'container' });
   } catch (e) {
     alert.textContent = e.message || e; alert.classList.remove('hidden'); next.disabled = false;
   }
@@ -50085,7 +50087,13 @@ async function submitCreateVM(e) {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     document.getElementById('modal-lxd-vm').classList.add('hidden');
-    _bgPollLXDJob(data.job_id, progressLabel);
+    if (_vmComposeMode) {
+      // Compose-VM: use the progress modal so a failed deploy stays visible
+      // with the full output + "Fix & redeploy" (Phase 1), like the LXC path.
+      openLXDProgressModal(progressLabel, data.job_id, { composeStack: body.name, composeType: 'virtual-machine' });
+    } else {
+      _bgPollLXDJob(data.job_id, progressLabel);
+    }
   } catch(e) {
     alertEl.textContent = e.message;
     alertEl.classList.remove('hidden');
@@ -51126,7 +51134,8 @@ async function submitCreateContainer(e) {
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     document.getElementById('modal-lxd-container').classList.add('hidden');
-    openLXDProgressModal(progressLabel, data.job_id);
+    openLXDProgressModal(progressLabel, data.job_id,
+      _lxdComposeMode ? { composeStack: body.name, composeType: 'container' } : undefined);
   } catch(e) {
     alertEl.textContent = e.message;
     alertEl.classList.remove('hidden');
@@ -51599,10 +51608,40 @@ const _lxdActivePollIds = new Set();
 // Job IDs whose progress modal should stay open after success (no 1.5s
 // auto-dismiss) so the user can read the full log and close it themselves.
 const _lxdNoAutoCloseJobs = new Set();
+// jobId → { stack, type } for compose-deploy jobs. A failed deploy is a job
+// error (Phase 1): the modal stays open showing the full compose-up output,
+// a red banner explains it, and "Fix & redeploy" opens the stack.
+const _lxdComposeJobInfo = {};
+
+// _lxdShowComposeFailBanner paints the red explanation banner above the deploy
+// log when a compose deployment fails.
+function _lxdShowComposeFailBanner(ci) {
+  const b = document.getElementById('lxd-progress-fail-banner');
+  if (!b) return;
+  b.innerHTML = '<b>Compose deployment failed.</b> ' + esc(ci.stack)
+    + ' was created, but <code>docker-compose up</code> did not bring the stack up — '
+    + 'see the output below for the reason (a wrong image name, an unreachable registry, '
+    + 'or an invalid compose file are the usual causes). Fix the compose file and redeploy.';
+  b.style.display = '';
+}
+
+// _lxdComposeFixRedeploy closes the progress modal and opens the stack so the
+// user can edit the compose file and redeploy.
+function _lxdComposeFixRedeploy(jobId) {
+  const ci = _lxdComposeJobInfo[String(jobId)];
+  document.getElementById('modal-lxd-progress').classList.add('hidden');
+  if (ci && typeof openComputeInstance === 'function') {
+    openComputeInstance(ci.stack, ci.type || 'container');
+  } else if (typeof loadLXDInstances === 'function') {
+    loadLXDInstances();
+  }
+}
 
 function openLXDProgressModal(title, jobId, opts) {
   document.getElementById('lxd-progress-title').textContent = title;
   document.getElementById('lxd-progress-log').textContent = '';
+  { const b = document.getElementById('lxd-progress-fail-banner'); if (b) { b.style.display = 'none'; b.innerHTML = ''; } }
+  if (opts && opts.composeStack) _lxdComposeJobInfo[String(jobId)] = { stack: opts.composeStack, type: opts.composeType || 'container' };
   // Restore the default footer — the uninstall flow replaces it with its own
   // "Close & Refresh" button, so reset it for create/other reuse of this modal.
   document.getElementById('lxd-progress-footer').innerHTML =
@@ -51691,7 +51730,19 @@ async function pollLXDProgress(jobId, seenLines) {
     if (data.status === 'error') {
       logEl.textContent += '\n✗ Error: ' + (data.error||'unknown error') + '\n';
       logEl.scrollTop = logEl.scrollHeight;
-      document.getElementById('lxd-progress-footer').style.display = '';
+      const footer = document.getElementById('lxd-progress-footer');
+      footer.style.display = '';
+      const ci = _lxdComposeJobInfo[String(jobId)];
+      if (ci) {
+        // Compose deploy failed — keep the modal open (no auto-dismiss),
+        // explain it, and offer to open the stack to fix & redeploy. Re-show
+        // the modal in case the user had sent the job to the background.
+        document.getElementById('modal-lxd-progress').classList.remove('hidden');
+        _lxdShowComposeFailBanner(ci);
+        footer.innerHTML =
+          `<button class="btn btn-ghost" onclick="document.getElementById('modal-lxd-progress').classList.add('hidden')">Close</button>`
+          + `<button class="btn btn-primary" onclick="_lxdComposeFixRedeploy('${String(jobId)}')">Open stack to fix &amp; redeploy →</button>`;
+      }
       _lxdActivePollIds.delete(String(jobId));
       _lxdNoAutoCloseJobs.delete(String(jobId));
       removeActiveJob('lxd-create-' + jobId);
