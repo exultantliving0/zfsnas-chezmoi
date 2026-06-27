@@ -66,6 +66,20 @@ func binaryPresent(name string) bool {
 	return found
 }
 
+// ForgetBinaryPresence drops a binary from the sticky positive cache so the
+// next presence check re-evaluates from disk. The cache only ever stores
+// positives (so transient load failures can't produce a false "not installed"),
+// which means an actual *removal* — e.g. uninstalling the virtualization feature
+// purges the `incus` binary — would otherwise read as still-installed for the
+// life of the process. Call this after a deliberate uninstall so IncusInstalled()
+// (and everything keyed on it: the health watchdog, sudoers stripping) reflects
+// reality without needing a service restart.
+func ForgetBinaryPresence(name string) {
+	binPresenceMu.Lock()
+	delete(binPresenceCache, name)
+	binPresenceMu.Unlock()
+}
+
 // binaryInstalled reports whether ALL of the named binaries are installed. Used
 // by the various *PrereqsInstalled / Is*Installed helpers so they don't report
 // a false "not installed" when the host is too busy to fork/stat reliably.

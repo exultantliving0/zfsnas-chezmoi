@@ -221,13 +221,13 @@ func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 	// 0. Sudo all: enabling virtualization touches many commands not covered by
 	// the hardened sudoers template (incus admin init, netplan/ifupdown rewrites,
 	// service control). It is therefore MANDATORY to hold unrestricted sudo while
-	// enabling — the user can re-apply hardening from Settings → Sudoers once the
+	// enabling — the user can re-apply hardening from Requisites → Hardening once the
 	// feature is on. A "Switch to sudo all" button is offered on the row.
 	sudo := CheckSudoAccess()
 	if sudo.Type == "all" || sudo.Type == "root" {
 		res.SudoAllOK = true
 	} else {
-		res.SudoAllNote = "Hardened sudoers detected. Enabling virtualization requires full passwordless sudo — click \"Switch to sudo all\". You can re-apply hardening afterwards from Settings → Sudoers."
+		res.SudoAllNote = "Hardened sudoers detected. Enabling virtualization requires full passwordless sudo — click \"Switch to sudo all\". You can re-apply hardening afterwards from Requisites → Hardening."
 	}
 
 	// 1. Sudoers: can we run apt-get? (root, all, or hardened with ZFSNAS_APT)
@@ -244,7 +244,7 @@ func LXDEnableCheckPrereqs() LXDEnablePrereqResult {
 			}
 		}
 		if missing {
-			res.SudoersNote = "Hardened sudoers is missing apt-get commands (ZFSNAS_APT). Apply the full sudoers template from the Security tab first."
+			res.SudoersNote = "Hardened sudoers is missing apt-get commands (ZFSNAS_APT). Apply the full sudoers template from the Requisites → Hardening tab first."
 		} else {
 			res.SudoersOK = true
 		}
@@ -935,6 +935,10 @@ func lxdStep1Packages(ctx context.Context, job *LXDEnableJob) error {
 		// Rocky, CentOS Stream, RHEL-family in general).
 		// Without this, those VMs fail to start with
 		// "Neither mkisofs nor genisoimage could be found".
+		"sanoid", // provides /usr/sbin/syncoid — ZFS-aware incremental snapshot
+		// streaming used by the per-VM/Container Backups feature. Installed with
+		// the feature so the "Backups" button works out of the box instead of
+		// needing a separate trip to Requisites → ZFS Replication.
 	}
 	job.log("Running apt-get update…")
 	if err := runCmdLog(ctx, job, "/usr/bin/apt-get", "update"); err != nil {
@@ -993,6 +997,37 @@ func lxdIsInitialized() bool {
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
+// lxdRemoveStaleHostNatBridge deletes a leftover UNMANAGED `host-nat` kernel
+// bridge so a re-enable's preseed can create the managed network cleanly. It is
+// a no-op when host-nat is a managed Incus network (a live setup — never touch
+// it) or when no such device exists. Best-effort.
+func lxdRemoveStaleHostNatBridge(job *LXDEnableJob) {
+	// If host-nat is a MANAGED incus network, it belongs to a working setup —
+	// leave it alone.
+	if out, err := exec.Command("incus", "network", "list", "--format", "json").Output(); err == nil {
+		var nets []struct {
+			Name    string `json:"name"`
+			Managed bool   `json:"managed"`
+		}
+		if json.Unmarshal(out, &nets) == nil {
+			for _, n := range nets {
+				if n.Name == "host-nat" && n.Managed {
+					return
+				}
+			}
+		}
+	}
+	// Unmanaged (or daemon unreachable). If a kernel bridge device exists, it's a
+	// leftover from a prior enable — delete it.
+	if exec.Command("ip", "link", "show", "dev", "host-nat").Run() != nil {
+		return // no such device — nothing to clean up
+	}
+	job.log("Removing leftover unmanaged host-nat bridge from a previous attempt…")
+	if out, err := exec.Command("sudo", "/usr/sbin/ip", "link", "delete", "dev", "host-nat").CombinedOutput(); err != nil {
+		job.log("  (could not delete host-nat bridge, continuing): " + strings.TrimSpace(string(out)))
+	}
+}
+
 // runLXCLog runs an incus command (no sudo) and streams its output into the
 // job log.
 func runLXCLog(ctx context.Context, job *LXDEnableJob, args ...string) error {
@@ -1017,6 +1052,16 @@ func lxdStep2Init(ctx context.Context, storagePool, hostname string, job *LXDEna
 	if err := runCmdLog(ctx, job, "/usr/sbin/usermod", "-a", "-G", HVUserGroup, "zfsnas"); err != nil {
 		job.log("Warning: usermod returned error (may already be in group): " + err.Error())
 	}
+
+	// Remove a leftover UNMANAGED `host-nat` bridge from a previous enable. After
+	// a disable/uninstall the incus DB record is gone, but the kernel bridge
+	// device lingers (nothing tears it down — not the uninstall, not a reboot
+	// necessarily). On re-enable the preseed then tries to create the managed
+	// host-nat over the existing kernel device and fails with "Failed to update
+	// local member network host-nat … Network not found". Delete the stale device
+	// first — but only when it's unmanaged, so a live managed network is never
+	// touched. (6.6.26.)
+	lxdRemoveStaleHostNatBridge(job)
 
 	var err error
 	if lxdIsInitialized() {
@@ -1230,6 +1275,16 @@ projects:
 	}
 	waitCancel()
 
+	// Clear any leftover `host-nat` network from a previous attempt. The
+	// fresh-vs-existing decision keys on storage pools (lxdIsInitialized), so a
+	// daemon that still has the host-nat network in its DB but no storage pool —
+	// e.g. after a disable/re-enable cycle, or a half-completed prior init — lands
+	// HERE on the fresh-preseed path. `incus admin init --preseed` then tries to
+	// UPDATE the existing host-nat instead of creating it and dies with
+	// "Failed to update local member network \"host-nat\" … Network not found".
+	// Deleting it first makes the preseed create it cleanly. Best-effort: a
+	// "not found" (the normal fresh case) or in-use error is ignored — if it's
+	// genuinely in use the daemon wasn't fresh and the preseed will report that.
 	// Wrap the preseed itself in a hard timeout so a stuck init can't sit
 	// silently forever. 5 minutes is generous — on a healthy host the
 	// preseed is sub-second; if it's still running at 5 min something

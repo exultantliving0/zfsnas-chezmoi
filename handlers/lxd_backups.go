@@ -478,6 +478,15 @@ func listBackupJobs() []map[string]interface{} {
 	return out
 }
 
+// HandleSyncoidStatus reports whether the syncoid binary (from the sanoid
+// package) is installed. Used by the Requisites → ZFS Replication row to show
+// "Installed" without the user clicking the install button — e.g. after the
+// virtualization feature pulled syncoid in as a dependency.
+// GET /api/prerequisites/syncoid-status
+func HandleSyncoidStatus(w http.ResponseWriter, r *http.Request) {
+	jsonOK(w, map[string]bool{"installed": system.SyncoidPrereqsInstalled()})
+}
+
 // HandleInstallSyncoid runs apt-get install -y sanoid.
 // POST /api/prerequisites/install-syncoid
 func HandleInstallSyncoid(w http.ResponseWriter, r *http.Request) {

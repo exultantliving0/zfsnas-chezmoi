@@ -520,35 +520,6 @@ func HandleUninstallPackage(appCfg *config.AppConfig) http.HandlerFunc {
 	}
 }
 
-// HandleSetFeatureNavVisibility shows or hides an optional feature's nav item.
-// Body: { "feature": "iscsi" | "minio", "hidden": true | false }
-func HandleSetFeatureNavVisibility(appCfg *config.AppConfig) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Feature string `json:"feature"`
-			Hidden  bool   `json:"hidden"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			jsonErr(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-		switch req.Feature {
-		case "iscsi":
-			appCfg.ISCSI.HideNav = req.Hidden
-		case "minio":
-			appCfg.MinIO.HideNav = req.Hidden
-		default:
-			jsonErr(w, http.StatusBadRequest, "unknown feature")
-			return
-		}
-		if err := config.SaveAppConfig(appCfg); err != nil {
-			jsonErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		jsonOK(w, map[string]bool{"ok": true})
-	}
-}
-
 // mustJSON marshals v to JSON, panics on error (only for internal use).
 func mustJSON(v interface{}) []byte {
 	b, _ := json.Marshal(v)

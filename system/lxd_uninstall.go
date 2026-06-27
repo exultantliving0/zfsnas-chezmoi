@@ -133,6 +133,12 @@ func LXDUninstallFeature(ctx context.Context, job *LXDEnableJob) {
 		// don't want that to abort. Log and continue.
 		job.log("apt-get purge non-zero (ignored — packages may already be absent): " + err.Error())
 	}
+	// The `incus` binary is now gone. Drop it from the sticky presence cache so
+	// IncusInstalled() reports false immediately — otherwise the health watchdog
+	// keeps probing the absent daemon and raises the "incus commands timing out"
+	// banner until the next service restart. (Also lets sudoers stripping pick up
+	// the removal.)
+	ForgetBinaryPresence("incus")
 	job.setStep(3, "done", "")
 
 	// Step 4 — remove daemon state. Incus stores DB + per-instance config
@@ -145,6 +151,18 @@ func LXDUninstallFeature(ctx context.Context, job *LXDEnableJob) {
 			if err := runCmdLog(ctx, job, "/usr/bin/rm", "-rf", p); err != nil {
 				job.log("Warning: rm -rf " + p + ": " + err.Error())
 			}
+		}
+	}
+	// Tear down the host-nat NAT bridge device. Removing /var/lib/incus drops the
+	// network's DB record, but the kernel bridge interface lingers until reboot —
+	// and a leftover host-nat device breaks a later re-enable's `incus admin init`
+	// ("Failed to update local member network host-nat … Network not found"). The
+	// enable flow also guards against this, but cleaning up here keeps the host
+	// tidy. Best-effort.
+	if exec.Command("ip", "link", "show", "dev", "host-nat").Run() == nil {
+		job.log("Removing host-nat bridge device…")
+		if out, err := exec.Command("sudo", "/usr/sbin/ip", "link", "delete", "dev", "host-nat").CombinedOutput(); err != nil {
+			job.log("Warning: could not delete host-nat bridge: " + strings.TrimSpace(string(out)))
 		}
 	}
 	job.setStep(4, "done", "")

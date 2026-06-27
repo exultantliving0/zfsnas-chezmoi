@@ -3529,6 +3529,46 @@ body.is-phone [style*="minmax(360px"],
 body.is-phone [style*="minmax(380px"],
 body.is-phone [style*="minmax(480px"],
 body.is-phone [style*="minmax(525px"] { grid-template-columns: 1fr !important; }
+/* The VM/Container detail view lays its cards out in a class-based grid
+   (.ci-cards-grid, minmax(360px,1fr)) — the inline-style override above doesn't
+   catch it, so on a narrow phone the 360px min track overflows the screen and
+   the cards look oversized. Collapse to a single full-width column. */
+body.is-phone .ci-cards-grid { grid-template-columns: 1fr !important; }
+
+/* Monitor tab realtime row: 4 cards forced into one row (flex-wrap:nowrap) are
+   too slim on a phone. Wrap them into a 2×2 grid (two rows of two); on a very
+   narrow phone they drop to one-per-row (four rows). */
+body.is-phone .ci-mon-rt-row { flex-wrap: wrap !important; }
+body.is-phone .ci-mon-rt-row .ci-mon-rt-card {
+  flex: 1 1 calc(50% - 6px) !important;
+  min-width: calc(50% - 6px);
+}
+@media (max-width: 380px) {
+  body.is-phone .ci-mon-rt-row .ci-mon-rt-card {
+    flex-basis: 100% !important;
+    min-width: 100%;
+  }
+}
+
+/* Capacity Trend "Select pools & datasets" panel. On desktop it's an absolute
+   340px-wide dropdown anchored to its button; on a phone that overflows the
+   viewport and renders under the phone app bar / bottom tabs (higher z-index),
+   so the checkboxes are unreachable. Turn it into a full-width fixed overlay
+   above the chrome, with its own scroll, so it's usable on small screens. */
+body.is-phone .cap-selector-panel {
+  position: fixed;
+  top: 64px;
+  left: 8px;
+  right: 8px;
+  min-width: 0;
+  width: auto;
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  z-index: 1600;
+}
+/* Let the whole panel scroll instead of the inner tree (overrides the inline
+   max-height:320px on #cap-tree) so the Apply button is always reachable. */
+body.is-phone .cap-selector-panel #cap-tree { max-height: none !important; }
 
 /* Custom-styled selects (.cs-wrap/.cs-trigger, built by initAllCustomSelects)
    carry an inline min/explicit width copied from the native control; clamp them

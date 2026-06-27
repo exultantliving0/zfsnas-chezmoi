@@ -16,11 +16,18 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// HandleOSInfo reads /etc/os-release and returns the NAME and VERSION fields.
+// HandleOSInfo reads /etc/os-release and returns the NAME and VERSION fields,
+// plus the running kernel release (uname -r, from /proc/sys/kernel/osrelease).
 func HandleOSInfo(w http.ResponseWriter, r *http.Request) {
+	// Kernel release is independent of /etc/os-release — read it first so it's
+	// reported even on the os-release-missing fallback path.
+	kernel := ""
+	if b, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+		kernel = strings.TrimSpace(string(b))
+	}
 	f, err := os.Open("/etc/os-release")
 	if err != nil {
-		jsonOK(w, map[string]string{"name": "Linux", "version": ""})
+		jsonOK(w, map[string]string{"name": "Linux", "version": "", "kernel": kernel})
 		return
 	}
 	defer f.Close()
@@ -50,6 +57,7 @@ func HandleOSInfo(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{
 		"name":    fields["NAME"],
 		"version": version,
+		"kernel":  kernel,
 	})
 }
 

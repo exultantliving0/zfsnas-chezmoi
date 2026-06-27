@@ -717,8 +717,8 @@
     <div class="sidebar-section">Sharing</div>
     <button class="nav-item" onclick="showPage('shares')"    id="nav-shares">   <span class="nav-icon">🔗</span><span class="nav-label"> SMB Shares</span><span id="nav-smb-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
     <button class="nav-item" onclick="showPage('nfs')"       id="nav-nfs">      <span class="nav-icon">🌐</span><span class="nav-label"> NFS Shares</span><span id="nav-nfs-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
-    <button class="nav-item" id="nav-iscsi" onclick="navISCSI()" style="opacity:0.45;" data-prereqs-missing="1" title="iSCSI requires targetcli-fb — see Prerequisites"><span class="nav-icon"><img src="/static/iscsi.svg" class="iscsi-icon" alt=""></span><span class="nav-label"> iSCSI Shares</span><span id="nav-iscsi-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
-    <button class="nav-item" id="nav-s3" onclick="navS3()" style="opacity:0.45;" data-prereqs-missing="1" title="S3 Object Server requires MinIO — see Prerequisites"><span class="nav-icon" style="font-size:14px;">🪣</span><span class="nav-label"> S3 Buckets</span><span id="nav-s3-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
+    <button class="nav-item" id="nav-iscsi" onclick="navISCSI()" style="display:none;" data-prereqs-missing="1" title="iSCSI Shares"><span class="nav-icon"><img src="/static/iscsi.svg" class="iscsi-icon" alt=""></span><span class="nav-label"> iSCSI Shares</span><span id="nav-iscsi-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
+    <button class="nav-item" id="nav-s3" onclick="navS3()" style="display:none;" data-prereqs-missing="1" title="S3 Buckets"><span class="nav-icon" style="font-size:14px;">🪣</span><span class="nav-label"> S3 Buckets</span><span id="nav-s3-dot" class="nav-dot" style="display:none;width:8px;height:8px;border-radius:50%;margin-left:auto;flex-shrink:0;"></span></button>
     </div><!-- end nav-group-storage-sharing -->
 
     <div class="sidebar-section" id="nav-virt-section" style="display:none">Virtualization</div>
@@ -1471,28 +1471,35 @@
       <!-- PREREQUISITES -->
       <div class="page hidden" id="page-prereqs">
 
-        <!-- Tab bar — flush to top, matching Settings layout -->
+        <!-- Tab bar — flush to top, matching Settings layout.
+             Order: Optional Features → OS Packages → Hardening (formerly
+             "Security"; renamed because the sudoers restrictions are optional). -->
         <div class="settings-tab-bar">
-          <button class="settings-tab active" id="ptab-security" onclick="switchPrereqTab('security')" style="display:flex;align-items:center;gap:6px;">
-            Security
-            <span id="prereq-security-tab-dot" style="display:none;width:7px;height:7px;border-radius:50%;background:#f0b429;box-shadow:0 0 4px rgba(240,180,41,0.6);flex-shrink:0;"></span>
-          </button>
-          <button class="settings-tab" id="ptab-optfeat" onclick="switchPrereqTab('optfeat')">Optional Features</button>
+          <button class="settings-tab active" id="ptab-optfeat" onclick="switchPrereqTab('optfeat')">Optional Features</button>
           <button class="settings-tab" id="ptab-ospkgs" onclick="switchPrereqTab('ospkgs')" style="display:flex;align-items:center;gap:6px;">
             OS Packages
             <span id="prereq-ospkgs-tab-dot" style="display:none;width:7px;height:7px;border-radius:50%;background:#4ade80;box-shadow:0 0 4px rgba(74,222,128,0.6);flex-shrink:0;"></span>
           </button>
+          <button class="settings-tab" id="ptab-security" onclick="switchPrereqTab('security')" style="display:flex;align-items:center;gap:6px;">
+            Hardening
+            <span id="prereq-security-tab-dot" style="display:none;width:7px;height:7px;border-radius:50%;background:#f0b429;box-shadow:0 0 4px rgba(240,180,41,0.6);flex-shrink:0;"></span>
+          </button>
         </div>
 
-        <!-- Tab: Security -->
-        <div id="ptab-panel-security">
+        <!-- Tab: Hardening (sudoers restriction — optional) -->
+        <div id="ptab-panel-security" style="display:none;">
           <div class="card" style="max-width:960px;">
+            <div style="background:rgba(88,166,255,0.08);border:1px solid rgba(88,166,255,0.25);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--text-2);line-height:1.6;">
+              <strong style="color:var(--text-1);">Hardening is optional.</strong> ZFS NAS is fully functional without it — the service account already uses passwordless <code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:12px;">sudo</code> for the commands it needs. This tab lets you <em>restrict</em> that sudo access to a reviewed allow-list of exact commands instead of broad access, and review any drift.
+              <br><br>
+              Apply it only for <strong>high-security deployments</strong> where you want to minimise the portal's host privileges. For most home / single-admin setups it can be safely skipped.
+            </div>
             <div id="prereq-sudo-section"></div>
           </div>
         </div>
 
         <!-- Tab: Optional Features -->
-        <div id="ptab-panel-optfeat" style="display:none;">
+        <div id="ptab-panel-optfeat">
           <div class="card" style="max-width:960px;">
             <p style="font-size:13px;color:var(--text-3);margin-bottom:14px;">These packages are not required for core ZFS NAS functionality but enable additional features.</p>
             <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);">
@@ -2040,12 +2047,12 @@
 
         <!-- OS Packages card -->
         <div class="card">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-            <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+            <div style="min-width:0;">
               <h3 style="margin-bottom:2px;">OS Packages</h3>
               <div id="os-info-line" style="font-size:13px;color:var(--text-3);">Loading…</div>
             </div>
-            <div style="display:flex;gap:8px;align-items:center;">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <button class="btn btn-ghost btn-sm" onclick="checkUpdates()" id="btn-check-updates">↻ Check for Updates</button>
               <div style="position:relative;display:inline-block;">
                 <button class="btn btn-primary btn-sm hidden" onclick="toggleUpdateMenu(event)" id="btn-apply-updates">⬇ Install Updates&nbsp;▾</button>
@@ -4933,7 +4940,7 @@
             </div>
           </div>
 
-          <div style="display:flex;flex-direction:row;gap:12px;margin-bottom:24px;align-items:stretch;flex-wrap:nowrap;">
+          <div class="ci-mon-rt-row" style="display:flex;flex-direction:row;gap:12px;margin-bottom:24px;align-items:stretch;flex-wrap:nowrap;">
             <div class="card ci-mon-rt-card" style="padding:10px 12px;margin:0;">
               <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">CPU
                 <i class="info-tip" data-tip="Live cpu.usage from /1.0/instances/<name>/state. Compared to the previous 3-second sample to derive a percentage. Reads up to (number-of-vCPUs)×100% — a 4-vCPU VM saturating all cores reads 400%."></i>
@@ -6299,12 +6306,12 @@ Select the Console tab to load.</pre>
 
         <!-- ── Encryption Key Management ── -->
         <div class="card" id="card-key-mgmt">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-            <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
+            <div style="min-width:0;">
               <h3 style="margin-bottom:2px;">Encryption Key Management</h3>
               <div style="font-size:13px;color:var(--text-3);">Manage AES-256 key files used for ZFS pool encryption.</div>
             </div>
-            <div style="display:flex;gap:8px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn btn-ghost btn-sm" onclick="showImportKeySettings()">Import Key</button>
               <button class="btn btn-primary btn-sm" onclick="showGenerateKeySettings()">Generate New Key</button>
             </div>
@@ -6331,7 +6338,7 @@ Select the Console tab to load.</pre>
 
         <!-- Certificate Management (admin only) -->
         <div class="card" id="cert-mgmt-card" style="display:none;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
             <h3 style="margin:0;">Certificate Management</h3>
             <button class="btn btn-primary btn-sm" onclick="openUploadCertModal()">+ Upload Certificate</button>
           </div>
@@ -6709,17 +6716,19 @@ Select the Console tab to load.</pre>
     <!-- ===== IN-APP ALERT TOASTS ===== -->
     <div id="alert-toasts"></div>
 
-    <!-- ===== PERSISTENT SYSTEM-LEVEL BANNER (v6.5.26) =====
-         Used by the incus health watchdog: stays visible while the
-         daemon is stuck, auto-clears when it recovers. Survives page
+    <!-- ===== INCUS HEALTH NOTIFICATION (v6.5.26; restyled v6.6.26) =====
+         Used by the incus health watchdog: shown while the daemon is stuck,
+         auto-clears when it recovers. Styled like an in-app toast (compact,
+         red, bottom-right) and user-dismissible via the ✕. Survives page
          reloads via /api/incus/health hydration in initAlertsWebSocket. -->
-    <div id="incus-stuck-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9000;background:#3b0d0d;border-bottom:2px solid #f85149;color:#ffd5d3;padding:10px 16px;font-size:13px;line-height:1.45;box-shadow:0 2px 8px rgba(0,0,0,0.35);">
-      <div style="max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:12px;">
-        <span style="font-size:18px;flex-shrink:0;">⚠️</span>
+    <div id="incus-stuck-banner" style="display:none;position:fixed;bottom:24px;right:24px;z-index:9000;max-width:360px;background:#3b0d0d;border:1px solid #f85149;border-radius:8px;color:#ffd5d3;padding:12px 14px;font-size:13px;line-height:1.45;box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+      <div style="display:flex;align-items:flex-start;gap:10px;">
+        <span style="font-size:16px;flex-shrink:0;line-height:1.2;">⚠️</span>
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:700;color:#fff;">Incus daemon not responding</div>
-          <div style="opacity:.85;">ZNAS' <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px;">incus</code> commands are timing out. VMs &amp; Containers actions will hang until the daemon recovers — see <a id="incus-stuck-doc" href="https://linuxcontainers.org/incus/docs/main/howto/troubleshoot/" target="_blank" rel="noopener" style="color:#ffb4b1;text-decoration:underline;">Incus troubleshooting docs</a>.</div>
+          <div style="font-weight:700;color:#fff;margin-bottom:2px;">Incus daemon not responding</div>
+          <div style="opacity:.85;">ZNAS' <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px;">incus</code> commands are timing out — see <a id="incus-stuck-doc" href="https://linuxcontainers.org/incus/docs/main/howto/troubleshoot/" target="_blank" rel="noopener" style="color:#ffb4b1;text-decoration:underline;">troubleshooting docs</a>.</div>
         </div>
+        <button onclick="dismissIncusStuckBanner()" title="Dismiss" style="flex-shrink:0;background:none;border:none;color:#ffb4b1;font-size:15px;line-height:1;cursor:pointer;padding:0 2px;">✕</button>
       </div>
     </div>
 
@@ -7776,13 +7785,13 @@ Select the Console tab to load.</pre>
       <div id="lxd-enable-prereq-rows" style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-sudoall" style="font-size:15px;">⋯</span>
-          <span style="flex:1;font-size:13px;color:var(--text-1);">Full sudo access (<code style="background:var(--surface3);padding:1px 4px;border-radius:3px;font-size:11px;">sudo all</code>) — required to enable <i class="info-tip" data-tip="Enabling virtualization runs commands outside the hardened sudoers template — initialising Incus, rewriting the host network config, and controlling system services.&#10;&#10;The service account therefore needs full passwordless sudo (NOPASSWD: ALL) for the duration of the setup. You can re-apply sudoers hardening afterwards from Settings → Sudoers."></i></span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Full sudo access (<code style="background:var(--surface3);padding:1px 4px;border-radius:3px;font-size:11px;">sudo all</code>) — required to enable <i class="info-tip" data-tip="Enabling virtualization runs commands outside the hardened sudoers template — initialising Incus, rewriting the host network config, and controlling system services.&#10;&#10;The service account therefore needs full passwordless sudo (NOPASSWD: ALL) for the duration of the setup. You can re-apply sudoers hardening afterwards from Requisites → Hardening."></i></span>
           <span id="lxd-pre-note-sudoall" style="font-size:12px;color:var(--text-3);max-width:300px;text-align:right;"></span>
           <button id="lxd-pre-sudoall-fix-btn" class="btn btn-sm btn-ghost" style="display:none;white-space:nowrap;" onclick="lxdEnableSwitchSudoAll()">Switch to sudo all</button>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
           <span id="lxd-pre-icon-sudoers" style="font-size:15px;">⋯</span>
-          <span style="flex:1;font-size:13px;color:var(--text-1);">Sudoers configuration allows feature setup <i class="info-tip" data-tip="Installing the Incus and QEMU packages needs passwordless apt-get access (the ZFSNAS_APT sudoers rule).&#10;&#10;If hardened sudoers is missing those entries, apply the full template from the Security tab first."></i></span>
+          <span style="flex:1;font-size:13px;color:var(--text-1);">Sudoers configuration allows feature setup <i class="info-tip" data-tip="Installing the Incus and QEMU packages needs passwordless apt-get access (the ZFSNAS_APT sudoers rule).&#10;&#10;If hardened sudoers is missing those entries, apply the full template from the Requisites → Hardening tab first."></i></span>
           <span id="lxd-pre-note-sudoers" style="font-size:12px;color:var(--text-3);max-width:340px;text-align:right;"></span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface2);border-radius:6px;">
@@ -7834,8 +7843,15 @@ Select the Console tab to load.</pre>
       <div id="lxd-enable-steps" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;flex-shrink:0;"></div>
       <div style="font-size:12px;font-weight:600;color:var(--text-3);margin-bottom:6px;flex-shrink:0;">Output</div>
       <div id="lxd-enable-terminal" style="flex:1;min-height:180px;background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-family:monospace;font-size:12px;color:#c9d1d9;overflow-y:auto;white-space:pre-wrap;line-height:1.5;"></div>
+      <!-- No cancel button during install: interrupting a half-applied incus
+           init / network migration leaves the host in a broken state, so the
+           user must wait. _lxdEnableSuccess / _lxdEnableError swap in a Close
+           button on completion. -->
       <div class="modal-footer" style="padding:12px 0 0;flex-shrink:0;">
-        <button class="btn btn-ghost btn-sm" id="lxd-enable-cancel-btn" onclick="lxdEnableCancel()">Cancel job</button>
+        <div style="display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:13px;">
+          <span class="spinner" style="width:14px;height:14px;border-width:2px;"></span>
+          Setting up… please wait. Do not close this window.
+        </div>
       </div>
     </div>
 
@@ -12955,6 +12971,9 @@ async function refreshAppConfigFlags() {
 
 // ===== Navigation =====
 function showPage(name) {
+  // Instantly drop any chart tooltip overlay so it can't linger on the next
+  // screen (the watchdog also covers this, but this is immediate).
+  if (typeof _hideChartTooltip === 'function') _hideChartTooltip();
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.nav-item,.nav-compute-instance').forEach(n => n.classList.remove('active'));
   _clearComputeRootHighlight();
@@ -13969,6 +13988,32 @@ async function loadPrereqs() {
   _updateUPSPrereqStatus();
   _updateDiskPowerPrereqStatus();
   _updateLXDEnableStatus();
+  _updateSyncoidPrereqStatus();
+}
+
+// Reflects whether syncoid (sanoid package) is installed — it may have been
+// pulled in by the virtualization feature, so show "Installed" without the user
+// clicking the button.
+async function _updateSyncoidPrereqStatus() {
+  const stat = document.getElementById('prereq-syncoid-status');
+  const btn  = document.getElementById('prereq-syncoid-btn');
+  if (!stat) return;
+  try {
+    const r = await fetch('/api/prerequisites/syncoid-status');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.installed) {
+      stat.textContent = '✓ Installed';
+      stat.style.color = '#30d158';
+      stat.style.fontWeight = '600';
+      if (btn) btn.style.display = 'none';
+    } else {
+      stat.textContent = 'Not installed';
+      stat.style.color = 'var(--text-3)';
+      stat.style.fontWeight = '';
+      if (btn) { btn.style.display = ''; btn.disabled = false; btn.textContent = 'Install syncoid'; }
+    }
+  } catch (_) {}
 }
 
 async function _updateISCSIPrereqStatus() {
@@ -13994,10 +14039,8 @@ async function _updateISCSIPrereqStatus() {
       statusEl.style.color = 'var(--text-3)';
       statusEl.style.fontWeight = '';
       if (btnEl) { btnEl.style.display = ''; btnEl.disabled = false; btnEl.textContent = 'Enable iSCSI Feature'; }
-      if (menuWrap) {
-        menuWrap.classList.remove('hidden');
-        _renderOptFeatMenu('iscsi', false, s.hide_nav);
-      }
+      // No burger menu when not installed — the only action is "Enable".
+      if (menuWrap) menuWrap.classList.add('hidden');
     }
   } catch (_) {}
 }
@@ -14323,7 +14366,7 @@ function updatePrereqDot() {
   const critical = !!_prereqDotReasons.sudoCritical;
   dot.style.background = critical ? '#ff3b30' : '#f0b429';
   dot.style.boxShadow  = critical ? '0 0 4px rgba(255,59,48,0.6)' : '0 0 4px rgba(240,180,41,0.6)';
-  // Security tab dot — green when all OK, yellow/red when issues exist
+  // Hardening tab dot — green when all OK, yellow/red when issues exist
   // Only shown after data has loaded (guard: sudoCritical key must exist in reasons object)
   const secDot = document.getElementById('prereq-security-tab-dot');
   if (secDot && 'sudoCritical' in _prereqDotReasons) {
@@ -16860,6 +16903,15 @@ function initAlertsWebSocket() {
 // clears this), per the operator's request.
 let _lxdEnableInProgress = false;
 
+// User dismissed the notification with the ✕. Stays dismissed until the daemon
+// recovers (which resets the flag), so a brand-new stuck event can surface again.
+let _incusStuckDismissed = false;
+function dismissIncusStuckBanner() {
+  _incusStuckDismissed = true;
+  const el = document.getElementById('incus-stuck-banner');
+  if (el) el.style.display = 'none';
+}
+
 function applyIncusStuckBanner(stuck, d) {
   const el = document.getElementById('incus-stuck-banner');
   if (!el) return;
@@ -16871,8 +16923,10 @@ function applyIncusStuckBanner(stuck, d) {
       const a = document.getElementById('incus-stuck-doc');
       if (a) a.href = d.docs_url;
     }
-    el.style.display = '';
+    if (!_incusStuckDismissed) el.style.display = '';
   } else {
+    // Recovered — clear the notification and re-arm it for a future event.
+    _incusStuckDismissed = false;
     el.style.display = 'none';
   }
 }
@@ -23122,8 +23176,10 @@ async function loadDisks() {
   el.innerHTML = '<div style="color:var(--text-3);text-align:center;padding:32px;">Loading disk info…</div>';
   const slow = _slowLoadHint(el, 'Reading physical disks', 3000);
   try {
-    // Ensure pool data is current so we can cross-reference pool members.
-    if (!poolData) await refreshPoolBar();
+    // Always refresh pool data so disk↔pool cross-referencing (members, cache,
+    // and hot spares) reflects the current layout — a spare added/removed since
+    // the last pool-bar load would otherwise be misclassified.
+    await refreshPoolBar();
     const resp  = await fetch('/api/disks');
     clearTimeout(slow);
     // Under heavy ZFS/CPU load `lsblk`/smartctl can fail or the request 500s.
@@ -23276,10 +23332,20 @@ function renderDisks(el, disks) {
       ...(p.cache_devices || []),
     ]).map(stripPart)
   );
+  // Hot-spare devices assigned to a pool. They aren't active data members, but
+  // they ARE assigned to the pool, so they belong in the "ZFS Assigned" table,
+  // not "Available for ZFS".
+  const spareDevices = new Set(
+    allPoolsData.flatMap(p => [
+      ...(p.spare_devs    || []),
+      ...(p.spare_devices || []),
+    ]).map(stripPart)
+  );
   const isZfsDisk  = d => poolDevices.has(d.device)  || poolDevices.has('/dev/' + d.name);
   const isCacheDisk = d => cacheDevices.has(d.device) || cacheDevices.has('/dev/' + d.name);
+  const isSpareDisk = d => spareDevices.has(d.device) || spareDevices.has('/dev/' + d.name);
 
-  // Per-disk pool lookup: find which pool owns this disk.
+  // Per-disk pool lookup: find which pool owns this disk (data member or spare).
   function diskOwnerPool(d) {
     for (const p of allPoolsData) {
       const devs = new Set([
@@ -23290,14 +23356,25 @@ function renderDisks(el, disks) {
     }
     return poolData ? poolData.name : '';
   }
+  function spareOwnerPool(d) {
+    for (const p of allPoolsData) {
+      const devs = new Set([
+        ...(p.spare_devs    || []).map(stripPart),
+        ...(p.spare_devices || []).map(stripPart),
+      ]);
+      if (devs.has(d.device) || devs.has('/dev/' + d.name)) return p.name;
+    }
+    return poolData ? poolData.name : '';
+  }
 
   // Disks without vendor+model are likely virtual/OS block devices.
   const hasIdentity = d => !!(d.vendor || d.model);
 
   const zfsAssigned = disks.filter(d => isZfsDisk(d));
-  const cacheDiskList = disks.filter(d => !isZfsDisk(d) && isCacheDisk(d));
-  const available   = disks.filter(d => !isZfsDisk(d) && !isCacheDisk(d) && !d.in_use && hasIdentity(d));
-  const inUse       = disks.filter(d => !isZfsDisk(d) && !isCacheDisk(d) && (d.in_use || !hasIdentity(d)));
+  const spareList     = disks.filter(d => !isZfsDisk(d) && isSpareDisk(d));
+  const cacheDiskList = disks.filter(d => !isZfsDisk(d) && !isSpareDisk(d) && isCacheDisk(d));
+  const available   = disks.filter(d => !isZfsDisk(d) && !isSpareDisk(d) && !isCacheDisk(d) && !d.in_use && hasIdentity(d));
+  const inUse       = disks.filter(d => !isZfsDisk(d) && !isSpareDisk(d) && !isCacheDisk(d) && (d.in_use || !hasIdentity(d)));
 
   let html = '';
 
@@ -23306,17 +23383,18 @@ function renderDisks(el, disks) {
     html += '<div class="table-wrap" style="margin-bottom:28px;"><table class="disks-table">';
     html += diskTableHeader(true);
     html += '<tbody>' + available.map(d => diskRow(d, false, true)).join('') + '</tbody></table></div>';
-  } else if (!zfsAssigned.length && !cacheDiskList.length) {
+  } else if (!zfsAssigned.length && !cacheDiskList.length && !spareList.length) {
     html += `<div style="color:var(--text-3);font-size:14px;margin-bottom:24px;">No disks available for ZFS pool creation.</div>`;
   }
 
-  if (zfsAssigned.length || cacheDiskList.length) {
-    const total = zfsAssigned.length + cacheDiskList.length;
+  if (zfsAssigned.length || cacheDiskList.length || spareList.length) {
+    const total = zfsAssigned.length + cacheDiskList.length + spareList.length;
     html += `<h3 style="margin-bottom:12px;color:var(--accent-2);">ZFS Assigned Disks (${total})</h3>`;
     html += '<div class="table-wrap" style="margin-bottom:28px;"><table class="disks-table">';
     html += diskTableHeaderWithPool();
     html += '<tbody>';
     html += zfsAssigned.map(d => diskRowWithPool(d, diskOwnerPool(d))).join('');
+    html += spareList.map(d => diskRowWithPool(d, 'spare:' + spareOwnerPool(d))).join('');
     html += cacheDiskList.map(d => diskRowWithPool(d, 'Cache')).join('');
     html += '</tbody></table></div>';
   }
@@ -23424,7 +23502,9 @@ function diskRowWithPool(d, poolName) {
     <td id="disk-smart-${ck}">${smartBadge(d)}</td>
     <td>${poolName === '⚡ Cache'
       ? `<span style="font-size:12px;font-weight:600;color:#bf5af2;">⚡ L2ARC Cache</span>`
-      : `<span style="font-family:monospace;font-size:12px;font-weight:600;color:var(--accent-2);">${esc(poolName)}</span>`
+      : (typeof poolName === 'string' && poolName.startsWith('spare:'))
+        ? `<span style="font-family:monospace;font-size:12px;font-weight:600;color:#f0b429;">${esc(poolName.slice(6))} · spare</span>`
+        : `<span style="font-family:monospace;font-size:12px;font-weight:600;color:var(--accent-2);">${esc(poolName)}</span>`
     }</td>
   </tr>`;
 }
@@ -24612,10 +24692,10 @@ async function loadISCSINavStatus() {
         dot.style.display = 'none';
       }
     } else {
+      // Not installed → hide the nav item entirely. The feature is enabled from
+      // Requisites → Optional Features, not from a greyed-out menu entry.
       btn.dataset.prereqsMissing = '1';
-      btn.style.display = s.hide_nav ? 'none' : '';
-      btn.style.opacity = '0.45';
-      btn.title = 'iSCSI requires targetcli-fb — see Prerequisites';
+      btn.style.display = 'none';
       if (dot) dot.style.display = 'none';
     }
   } catch (_) {}
@@ -25452,10 +25532,10 @@ function _updateS3NavDot(status) {
   if (!btn) return;
 
   if (!status.prereqs_installed) {
+    // Not installed → hide the nav item entirely. The feature is enabled from
+    // Requisites → Optional Features, not from a greyed-out menu entry.
     btn.dataset.prereqsMissing = '1';
-    btn.style.display = status.hide_nav ? 'none' : '';
-    btn.style.opacity = '0.45';
-    btn.title = 'S3 Object Server requires MinIO — see Prerequisites';
+    btn.style.display = 'none';
     if (dot) dot.style.display = 'none';
     return;
   }
@@ -26033,10 +26113,8 @@ async function _updateMinIOPrereqStatus() {
       statusEl.style.color   = 'var(--text-3)';
       statusEl.style.fontWeight = '';
       if (btnEl) { btnEl.style.display = ''; btnEl.disabled = false; btnEl.textContent = 'Enable S3 Object Server'; }
-      if (menuWrap) {
-        menuWrap.classList.remove('hidden');
-        _renderOptFeatMenu('minio', false, s.hide_nav);
-      }
+      // No burger menu when not installed — the only action is "Enable".
+      if (menuWrap) menuWrap.classList.add('hidden');
     }
   } catch (_) {}
 }
@@ -26064,27 +26142,25 @@ function _optFeatMenu(e, feature) {
   const btn = e.currentTarget;
   if (_openOptFeatMenu) { _closeOptFeatMenus(); return; }
   const state = _optFeatMenuState['_' + feature] || { installed: false, hidden: false };
+  // The burger only offers actions for an INSTALLED feature (Uninstall, plus
+  // Re-Detect for UPS). When not installed there's nothing to show — the
+  // "Hide/Unhide from menu" options were removed (nav items now auto-hide when
+  // their feature isn't installed). Bail so we never open an empty menu.
+  if (!state.installed) return;
   const pkg = feature === 'minio' ? 'minio' : feature === 'ups' ? 'nut' : feature === 'diskpower' ? 'hdparm' : feature === 'lxd' ? 'lxd' : 'targetcli-fb';
   const dd = document.createElement('div');
   dd.addEventListener('click', ev => ev.stopPropagation());
   dd.style.cssText = 'position:fixed;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);min-width:170px;overflow:hidden;';
-  let itemHtml = '';
-  if (state.installed) {
-    const redetectBtn = feature === 'ups'
-      ? `<button onclick="_closeOptFeatMenus();redetectUPS()" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🔍 Re-Detect UPS</button>`
-      : '';
-    // VMs & Containers ("lxd") has its own pre-flight (must have zero
-    // instances) and its own multi-step uninstall job, separate from the
-    // generic apt-purge flow used by the simpler features.
-    const uninstallCall = feature === 'lxd'
-      ? `_closeOptFeatMenus();openLXDUninstallModal()`
-      : `_closeOptFeatMenus();uninstallFeature('${pkg}')`;
-    itemHtml = redetectBtn + `<button onclick="${uninstallCall}" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🗑 Uninstall Feature</button>`;
-  } else if (state.hidden) {
-    itemHtml = `<button onclick="_closeOptFeatMenus();setFeatureNavVisibility('${feature}', false)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">👁 Unhide from menu</button>`;
-  } else {
-    itemHtml = `<button onclick="_closeOptFeatMenus();setFeatureNavVisibility('${feature}', true)" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🙈 Hide from menu</button>`;
-  }
+  const redetectBtn = feature === 'ups'
+    ? `<button onclick="_closeOptFeatMenus();redetectUPS()" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--text-1);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🔍 Re-Detect UPS</button>`
+    : '';
+  // VMs & Containers ("lxd") has its own pre-flight (must have zero
+  // instances) and its own multi-step uninstall job, separate from the
+  // generic apt-purge flow used by the simpler features.
+  const uninstallCall = feature === 'lxd'
+    ? `_closeOptFeatMenus();openLXDUninstallModal()`
+    : `_closeOptFeatMenus();uninstallFeature('${pkg}')`;
+  const itemHtml = redetectBtn + `<button onclick="${uninstallCall}" style="display:block;width:100%;padding:9px 14px;text-align:left;background:none;border:none;color:var(--accent-danger);cursor:pointer;font-size:13px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='none'">🗑 Uninstall Feature</button>`;
   dd.innerHTML = itemHtml;
   document.body.appendChild(dd);
   const rect = btn.getBoundingClientRect();
@@ -26093,25 +26169,6 @@ function _optFeatMenu(e, feature) {
   _openOptFeatMenu = dd;
 }
 
-async function setFeatureNavVisibility(feature, hidden) {
-  _closeOptFeatMenus();
-  try {
-    await fetch('/api/prereqs/feature-nav', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ feature, hidden }),
-    });
-    await _updateISCSIPrereqStatus();
-    await _updateMinIOPrereqStatus();
-    await _updateUPSPrereqStatus();
-    await _updateDiskPowerPrereqStatus();
-
-    loadISCSINavStatus();
-    loadS3NavStatus();
-  } catch (e) {
-    showToast('Error: ' + e.message, 'error');
-  }
-}
 
 let _uninstallPkg = '';
 const _uninstallDesc = {
@@ -27602,7 +27659,8 @@ function initUpdatesPage() {
     if (!el) return;
     const name    = d.name    || 'Linux';
     const version = d.version || '';
-    el.textContent = 'You are running ' + name + (version ? ' Version ' + version : '') + '.';
+    el.textContent = 'You are running ' + name + (version ? ' Version ' + version : '')
+      + (d.kernel ? ' · Kernel ' + d.kernel : '') + '.';
   }).catch(() => {
     const el = document.getElementById('os-info-line');
     if (el) el.textContent = 'System packages via apt-get';
@@ -31939,6 +31997,14 @@ function _znasExternalTooltip(context) {
   });
   tip.innerHTML = html;
   tip.style.display = 'block';
+  // Remember which chart owns the tooltip and start a watchdog so a stuck
+  // tooltip can never outlive its chart. Chart.js only hides the external
+  // tooltip on a mouseout event — which NEVER fires when you navigate away
+  // while hovering (the canvas is display:none'd, not moused-out), leaving the
+  // overlay frozen over the next screen. The watchdog hides it the instant the
+  // owning canvas stops being visible. (6.6.26.)
+  tip._ownerCanvas = chart.canvas;
+  _armChartTooltipWatchdog();
   // Position: below the cursor, horizontally centered on it. Matches the
   // global `znasBelowCursor` Chart.js positioner so the Net/Disk external
   // tooltips don't sit on top of the curve — they sit below it, the way
@@ -31981,6 +32047,35 @@ function _znasExternalTooltip(context) {
 // cleaned up — Chart.defaults.plugins.tooltip.external already points
 // at _znasExternalTooltip for every chart in the app.
 const _netExternalTooltip = _znasExternalTooltip;
+
+// ── Stuck-tooltip guard ──────────────────────────────────────────────────────
+// Immediately hide the shared chart tooltip overlay.
+function _hideChartTooltip() {
+  const tip = document.getElementById('chart-net-tooltip');
+  if (tip) { tip.style.display = 'none'; tip._ownerCanvas = null; }
+}
+// While the tooltip is visible, poll (cheaply, via rAF) whether its owning
+// chart canvas is still on screen. The moment the canvas is hidden or removed
+// — a page switch, an in-page tab switch (switchPerfTab/switchCapTab/…), a modal
+// opening over it, etc. — hide the overlay. This covers every navigation path
+// without having to instrument each one. Also enforces a hard max-age so a
+// tooltip can never persist more than 10 s without a fresh mouse update.
+let _chartTipWatchdog = null;
+let _chartTipLastSeen = 0;
+function _armChartTooltipWatchdog() {
+  _chartTipLastSeen = Date.now();
+  if (_chartTipWatchdog) return; // one loop is enough; show() refreshes _chartTipLastSeen
+  const tick = () => {
+    const tip = document.getElementById('chart-net-tooltip');
+    if (!tip || tip.style.display === 'none') { _chartTipWatchdog = null; return; }
+    const c = tip._ownerCanvas;
+    const canvasGone = !c || !document.body.contains(c) || c.offsetParent === null;
+    const tooOld = (Date.now() - _chartTipLastSeen) > 10000;
+    if (canvasGone || tooOld) { _hideChartTooltip(); _chartTipWatchdog = null; return; }
+    _chartTipWatchdog = requestAnimationFrame(tick);
+  };
+  _chartTipWatchdog = requestAnimationFrame(tick);
+}
 
 // Plugin to keep all points active on the net chart (for the external tooltip).
 const _netTooltipPlugin = {
@@ -45532,6 +45627,19 @@ function _bridgeOptions(names, selectedValue) {
   ).join('');
 }
 
+// Default NIC bridge for a new VM/container/NIC: prefer vmbr0 — the physical-NIC
+// bridge that puts guests on the LAN — falling back to the first available
+// bridge when vmbr0 doesn't exist. The user can still change it in the Network
+// section of the create form.
+function _lxdDefaultBridge() {
+  // Prefer the freshest bridge list available — _lxdAvailBridges.all is set by
+  // both the create and edit flows; _lxdNetworks only by the create flows.
+  const list = (_lxdAvailBridges && (_lxdAvailBridges.all || []).length)
+    ? _lxdAvailBridges.all
+    : (_lxdNetworks || []);
+  return list.includes('vmbr0') ? 'vmbr0' : (list[0] || '');
+}
+
 function _lxdEditSectionLabel(text) {
   const el = document.createElement('div');
   el.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.07em;margin:0 0 8px;';
@@ -45809,7 +45917,7 @@ function lxdEditAddNIC() {
   const used = new Set(_lxdEditNICs.filter(n => !n._deleted).map(n => n.name));
   let n = 0;
   while (used.has('eth' + n)) n++;
-  const defaultBridge = (_lxdAvailBridges.all || [])[0] || '';
+  const defaultBridge = _lxdDefaultBridge();
   _lxdEditNICs.push({name: 'eth' + n, bridge: defaultBridge,
     nictype: (_lxdAvailBridges.managed || []).includes(defaultBridge) ? 'network' : 'bridged',
     vlan_id: 0, from_profile: false, _origBridge: '', _new: true, _deleted: false,
@@ -47789,9 +47897,9 @@ async function openNewVMModal() {
   document.getElementById('lxd-vm-cdrom-list').innerHTML = '';
   _syncVMCDROMSummary();
 
-  // Populate NIC0 bridge selector
+  // Populate NIC0 bridge selector — default to vmbr0 (LAN bridge) when present.
   const n0Sel = document.getElementById('lxd-vm-nic0-bridge');
-  n0Sel.innerHTML = _bridgeOptions(_lxdNetworks);
+  n0Sel.innerHTML = _bridgeOptions(_lxdNetworks, _lxdDefaultBridge());
   if (n0Sel.options.length > 0) {
     document.getElementById('vmhw-nic0-summary').textContent = n0Sel.value;
   }
@@ -49691,7 +49799,7 @@ function addVMNICRow() {
   // eth0 — and `incus config device add` then refused the duplicate
   // device name, silently dropping the second NIC. v6.5.26 fix.
   const idx = _lxdVMNICs.length;
-  _lxdVMNICs.push({ device_name: 'eth' + (idx + 1), network: _lxdNetworks[0]||'lxdbr0', mac: '', vlan_id: 0, connected: true });
+  _lxdVMNICs.push({ device_name: 'eth' + (idx + 1), network: _lxdDefaultBridge()||'lxdbr0', mac: '', vlan_id: 0, connected: true });
   _renderVMNICRows();
 }
 
@@ -50557,9 +50665,9 @@ async function openNewContainerModal(opts) {
   rpSel.innerHTML = '<option value="">default</option>' + _lxdPools.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
   csRefresh('lxd-ct-root-pool');
 
-  // Populate NIC0 bridge selector
+  // Populate NIC0 bridge selector — default to vmbr0 (LAN bridge) when present.
   const n0Sel = document.getElementById('lxd-ct-nic0-bridge');
-  n0Sel.innerHTML = _bridgeOptions(_lxdNetworks);
+  n0Sel.innerHTML = _bridgeOptions(_lxdNetworks, _lxdDefaultBridge());
   if (n0Sel.options.length > 0) {
     document.getElementById('cthw-nic0-summary').textContent = n0Sel.value;
   }
@@ -50798,7 +50906,7 @@ function _renderCTExistingDisks() {
 
 function addCTNICRow() {
   const idx = _lxdCTNICs.length;
-  _lxdCTNICs.push({ device_name: 'eth'+idx, network: _lxdNetworks[0]||'lxdbr0', mac: '', vlan_id: 0 });
+  _lxdCTNICs.push({ device_name: 'eth'+idx, network: _lxdDefaultBridge()||'lxdbr0', mac: '', vlan_id: 0 });
   _renderCTNICRows();
 }
 
@@ -51495,6 +51603,11 @@ const _lxdNoAutoCloseJobs = new Set();
 function openLXDProgressModal(title, jobId, opts) {
   document.getElementById('lxd-progress-title').textContent = title;
   document.getElementById('lxd-progress-log').textContent = '';
+  // Restore the default footer — the uninstall flow replaces it with its own
+  // "Close & Refresh" button, so reset it for create/other reuse of this modal.
+  document.getElementById('lxd-progress-footer').innerHTML =
+    `<button class="btn btn-ghost" onclick="_lxdProgressHideToBackground()">Run in background</button>`
+    + `<button class="btn btn-primary" onclick="document.getElementById('modal-lxd-progress').classList.add('hidden');loadLXDInstances();">Close</button>`;
   document.getElementById('lxd-progress-footer').style.display = 'none';
   document.getElementById('lxd-progress-bg-hint').style.display = '';
   document.getElementById('modal-lxd-progress').classList.remove('hidden');
@@ -51968,18 +52081,17 @@ async function _pollLXDEnableJobInto(jobId, seenLines, activeJobKey) {
     if (data.status === 'done' || data.status === 'error') {
       logEl.textContent += '\n' + (data.status === 'done' ? '✓ Complete.' : '✗ Error: ' + (data.error || 'unknown error')) + '\n';
       logEl.scrollTop = logEl.scrollHeight;
-      document.getElementById('lxd-progress-footer').style.display = '';
       removeActiveJob(activeJobKey);
-      // Auto-dismiss the success state to match the create flow.
+      const footer = document.getElementById('lxd-progress-footer');
       if (data.status === 'done') {
-        setTimeout(() => {
-          const m = document.getElementById('modal-lxd-progress');
-          if (m && !m.classList.contains('hidden')) {
-            m.classList.add('hidden');
-            _updateLXDEnableStatus();
-          }
-        }, 1500);
+        // Virtualization is now uninstalled. Don't auto-dismiss — give the user
+        // an explicit "Close & Refresh" that reloads the page so every
+        // virtualization button / tab / nav entry disappears.
+        footer.innerHTML = `<button class="btn btn-primary" onclick="_lxdUninstallDone()">Close &amp; Refresh</button>`;
+      } else {
+        footer.innerHTML = `<button class="btn btn-ghost" onclick="document.getElementById('modal-lxd-progress').classList.add('hidden')">Close</button>`;
       }
+      footer.style.display = '';
       return;
     }
     setTimeout(() => _pollLXDEnableJobInto(jobId, lines, activeJobKey), 1500);
@@ -52033,6 +52145,17 @@ async function openLXDUninstallModal() {
 
 function closeLXDUninstallModal() {
   document.getElementById('modal-lxd-uninstall').classList.add('hidden');
+}
+
+// Called from the uninstall progress modal's "Close & Refresh" button. Re-probe
+// so the server reports lxd_available=false, then reload the page so every
+// virtualization control (nav entry, Create menu, settings tab, per-instance
+// buttons) disappears.
+async function _lxdUninstallDone() {
+  const btn = document.querySelector('#lxd-progress-footer .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  try { await fetch('/api/incus/refresh-status', { method: 'POST' }); } catch (_) {}
+  location.reload();
 }
 
 async function submitLXDUninstall() {
@@ -52268,7 +52391,7 @@ function _lxdEnableSetPrereq(key, ok, note) {
 function lxdEnableSwitchSudoAll() {
   showConfirm({
     title: 'Switch to sudo all?',
-    body: 'This grants the ZNAS service account full passwordless sudo (<code>NOPASSWD: ALL</code>), which is required to enable virtualization. You can re-apply sudoers hardening afterwards from <strong>Settings → Sudoers</strong>.',
+    body: 'This grants the ZNAS service account full passwordless sudo (<code>NOPASSWD: ALL</code>), which is required to enable virtualization. You can re-apply sudoers hardening afterwards from <strong>Requisites → Hardening</strong>.',
     confirmText: 'Switch to sudo all',
     onConfirm: async () => {
       try {
@@ -52613,15 +52736,6 @@ function _lxdEnableError(msg) {
       <span style="font-size:12px;color:#ff453a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${msg.replace(/"/g,'&quot;')}">Enablement failed: ${msg}</span>
     </div>
     <button class="btn btn-ghost btn-sm" onclick="closeLXDEnableModal()">Close</button>`;
-}
-
-async function lxdEnableCancel() {
-  if (!_lxdEnableJobId) { closeLXDEnableModal(); return; }
-  clearInterval(_lxdEnablePollTmr); _lxdEnablePollTmr = null;
-  try {
-    await fetch('/api/incus/enable/cancel?job_id=' + _lxdEnableJobId, {method:'POST'});
-  } catch (_) {}
-  _lxdEnableError('Job cancelled by user.');
 }
 
 async function lxdEnableDone() {

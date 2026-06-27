@@ -487,8 +487,6 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallPackage(appCfg))))).Methods("POST")
 	r.Handle("/api/prereqs/uninstall",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUninstallPackage(appCfg))))).Methods("POST")
-	r.Handle("/api/prereqs/feature-nav",
-		RequireAuth(RequireAdmin(http.HandlerFunc(HandleSetFeatureNavVisibility(appCfg))))).Methods("POST")
 
 	// --- MinIO / S3 Object Server ---
 	r.Handle("/api/minio/status",
@@ -1190,6 +1188,8 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 	// Syncoid install entry (admin-only; reused by Prerequisites page).
 	r.Handle("/api/prerequisites/install-syncoid",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleInstallSyncoid)))).Methods("POST")
+	r.Handle("/api/prerequisites/syncoid-status",
+		RequireAuth(http.HandlerFunc(HandleSyncoidStatus))).Methods("GET")
 
 	// --- Homepage widget API keys (admin only) ---
 	r.Handle("/api/settings/api-keys",
