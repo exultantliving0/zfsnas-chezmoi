@@ -3353,6 +3353,13 @@ body.is-phone table.m-card-table td:not([data-label]):not(.m-cell-full) { justif
 body.is-phone table.m-card-table td:not([data-label]):not(.m-cell-full)::before { display: none; }
 /* Avoid the doubled border when a cardified table sits in a .table-wrap. */
 body.is-phone .table-wrap:has(table.m-card-table) { border: none; overflow: visible; border-radius: 0; }
+/* Rows whose action cell holds an absolutely-positioned dropdown (the Stack
+   Containers table's 🖥️ terminal + ⋮ burger menus) must NOT clip it — the
+   default cardified-row overflow:hidden hid the menu the moment it opened, so
+   the buttons looked dead on a phone. Let those rows (and their action cell)
+   overflow so the menu is visible and tappable. */
+body.is-phone table.m-card-table tbody tr:has(.row-menu-dropdown),
+body.is-phone table.m-card-table td:has(.row-menu-dropdown) { overflow: visible; }
 /* Fallback: tables we didn't cardify still scroll sideways rather than clipping. */
 body.is-phone .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
@@ -3525,15 +3532,21 @@ body.is-phone .page-header > div { flex-wrap: wrap; }
    the ~358px usable width forces horizontal overflow, so collapse the large ones
    to a single column. Small-tile grids (minmax ≤ 340px) already fit and are left
    alone so they keep their intended multi-column layout. */
+body.is-phone [style*="minmax(340px"],
 body.is-phone [style*="minmax(360px"],
 body.is-phone [style*="minmax(380px"],
+body.is-phone [style*="minmax(460px"],
 body.is-phone [style*="minmax(480px"],
-body.is-phone [style*="minmax(525px"] { grid-template-columns: 1fr !important; }
+body.is-phone [style*="minmax(525px"] { grid-template-columns: minmax(0, 1fr) !important; }
+/* minmax(0,1fr) — not plain 1fr — so the single column can shrink to the
+   container width. A bare 1fr track has an implicit min of auto (min-content),
+   which lets a card grow past the container (≈8px on a slim phone), giving an
+   uneven right gutter vs the symmetric full-width cards. */
 /* The VM/Container detail view lays its cards out in a class-based grid
    (.ci-cards-grid, minmax(360px,1fr)) — the inline-style override above doesn't
    catch it, so on a narrow phone the 360px min track overflows the screen and
    the cards look oversized. Collapse to a single full-width column. */
-body.is-phone .ci-cards-grid { grid-template-columns: 1fr !important; }
+body.is-phone .ci-cards-grid { grid-template-columns: minmax(0, 1fr) !important; }
 
 /* Monitor tab realtime row: 4 cards forced into one row (flex-wrap:nowrap) are
    too slim on a phone. Wrap them into a 2×2 grid (two rows of two); on a very
