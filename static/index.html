@@ -39569,20 +39569,20 @@ function _ciRenderDockerGroups(list) {
           <div id="ci-docker-menu-${idx}" class="row-menu-dropdown" style="display:none;position:absolute;right:6px;top:100%;min-width:170px;z-index:60;">${menu}</div>
         </td></tr>`;
     });
-    // Headers render only on the first group; later groups skip the
-    // <thead> so their first body row sits flush against the section
-    // header. Column widths come from the shared <colgroup>, so even
-    // without a visible header the alignment is preserved.
-    const thead = gi === 0
-      ? `<thead><tr>
+    // Render the header on EVERY group: the phone card layout derives its
+    // per-cell labels from <thead>, so a group without one stays an
+    // uncardified table on phone. On desktop the later groups hide the
+    // header (display:none) so their first body row still sits flush under
+    // the section header; column widths come from the shared <colgroup>, and
+    // on phone the header is hidden anyway (cards use data-label).
+    const thead = `<thead${gi === 0 ? '' : ' style="display:none;"'}><tr>
           <th style="padding:4px 8px;font-size:11px;text-align:left;">Container</th>
           <th style="padding:4px 8px;font-size:11px;text-align:left;">Service</th>
           <th style="padding:4px 8px;font-size:11px;text-align:left;">Image</th>
           <th style="padding:4px 8px;font-size:11px;text-align:left;">State</th>
           <th style="padding:4px 8px;font-size:11px;text-align:left;">Ports</th>
           <th style="padding:4px 8px;"></th>
-        </tr></thead>`
-      : '';
+        </tr></thead>`;
     html += `<table class="data-table" style="width:100%;table-layout:fixed;font-size:12.5px;margin-top:6px;">
       ${COLGROUP}${thead}
       <tbody>${rows}</tbody></table>`;
