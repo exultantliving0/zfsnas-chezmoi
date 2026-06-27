@@ -23,7 +23,31 @@ type DetailedSystemInfo struct {
 	Motherboard  DetailedMotherboardInfo  `json:"motherboard"`
 	BIOS         DetailedBIOSInfo         `json:"bios"`
 	Controllers  []DetailedDiskController `json:"controllers"`
+	GPUs         []DetailedGPU            `json:"gpus"`
+	USBDevices   []DetailedUSBDevice      `json:"usb_devices"`
 	System       DetailedSystemSummary    `json:"system"`
+}
+
+// DetailedGPU is a display/3D adapter from lspci, with best-effort VRAM.
+type DetailedGPU struct {
+	Slot        string `json:"slot"`         // PCI BDF, e.g. "01:00.0"
+	Class       string `json:"class"`        // "VGA compatible controller" / "3D controller" / "Display controller"
+	Vendor      string `json:"vendor"`
+	Model       string `json:"model"`
+	Driver      string `json:"driver,omitempty"`       // kernel driver in use (amdgpu, nvidia, i915, …)
+	MemoryBytes uint64 `json:"memory_bytes"`           // VRAM; 0 = unknown (e.g. shared-memory iGPU)
+}
+
+// DetailedUSBDevice is one connected USB device (root hubs excluded), read from
+// /sys/bus/usb/devices so it needs no usbutils package.
+type DetailedUSBDevice struct {
+	Bus          string `json:"bus,omitempty"`
+	Device       string `json:"device,omitempty"`
+	VendorID     string `json:"vendor_id"`
+	ProductID    string `json:"product_id"`
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Product      string `json:"product"`
+	Class        string `json:"class,omitempty"` // friendly USB class (HID, Mass Storage, Hub, …)
 }
 
 type DetailedCPUInfo struct {
@@ -112,6 +136,8 @@ func GetDetailedSystemInfo() DetailedSystemInfo {
 	info.Memory = collectMemoryInfo()
 	info.Motherboard, info.BIOS, info.System = collectDMIInfo()
 	info.Controllers = collectStorageControllers()
+	info.GPUs = collectGPUs()
+	info.USBDevices = collectUSBDevices()
 	if info.System.Hostname == "" {
 		if h, err := os.Hostname(); err == nil {
 			info.System.Hostname = h
@@ -558,6 +584,211 @@ func isStorageClass(class string) bool {
 		}
 	}
 	return false
+}
+
+// ── GPUs ──────────────────────────────────────────────────────────────────────
+
+// collectGPUs lists display/3D adapters from lspci and attaches a best-effort
+// VRAM figure + kernel driver. VRAM is read from the amdgpu DRM sysfs node or
+// nvidia-smi when available; integrated GPUs (shared system memory) report 0.
+func collectGPUs() []DetailedGPU {
+	devices, err := ListPCIDevices()
+	if err != nil {
+		return nil
+	}
+	var gpus []DetailedGPU
+	for _, d := range devices {
+		if !isDisplayClass(d.Class) {
+			continue
+		}
+		bdf := pciFullBDF(d.Slot)
+		g := DetailedGPU{
+			Slot:   d.Slot,
+			Class:  d.Class,
+			Vendor: d.Vendor,
+			Model:  d.Device,
+			Driver: pciDriver(bdf),
+		}
+		g.MemoryBytes = gpuVRAMBytes(bdf)
+		gpus = append(gpus, g)
+	}
+	sort.Slice(gpus, func(i, j int) bool { return gpus[i].Slot < gpus[j].Slot })
+	return gpus
+}
+
+func isDisplayClass(class string) bool {
+	c := strings.ToLower(class)
+	return strings.Contains(c, "vga") ||
+		strings.Contains(c, "3d controller") ||
+		strings.Contains(c, "display controller")
+}
+
+// pciFullBDF normalises an lspci slot ("01:00.0") to a sysfs BDF with the PCI
+// domain ("0000:01:00.0"). Slots that already carry a domain are returned as-is.
+func pciFullBDF(slot string) string {
+	if strings.Count(slot, ":") >= 2 {
+		return slot
+	}
+	return "0000:" + slot
+}
+
+// pciDriver returns the kernel driver bound to a PCI device, or "".
+func pciDriver(bdf string) string {
+	link, err := os.Readlink("/sys/bus/pci/devices/" + bdf + "/driver")
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(link)
+}
+
+// gpuVRAMBytes returns total VRAM for a GPU at the given PCI BDF, 0 if unknown.
+func gpuVRAMBytes(bdf string) uint64 {
+	if v := amdgpuVRAMForBDF(bdf); v > 0 {
+		return v
+	}
+	if v := nvidiaVRAMForBDF(bdf); v > 0 {
+		return v
+	}
+	return 0
+}
+
+// amdgpuVRAMForBDF reads mem_info_vram_total from the DRM card whose PCI device
+// matches bdf (amdgpu exposes this; Intel/iGPU do not).
+func amdgpuVRAMForBDF(bdf string) uint64 {
+	cards, _ := filepath.Glob("/sys/class/drm/card*/device")
+	for _, dev := range cards {
+		target, err := os.Readlink(dev)
+		if err != nil || !strings.HasSuffix(target, bdf) {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dev, "mem_info_vram_total"))
+		if err != nil {
+			continue
+		}
+		if v, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64); err == nil {
+			return v
+		}
+	}
+	return 0
+}
+
+// nvidiaVRAMForBDF queries nvidia-smi (if installed) for the card's total memory.
+func nvidiaVRAMForBDF(bdf string) uint64 {
+	out, err := exec.Command("nvidia-smi",
+		"--query-gpu=pci.bus_id,memory.total", "--format=csv,noheader,nounits").Output()
+	if err != nil {
+		return 0
+	}
+	want := strings.ToLower(bdf)
+	for _, line := range strings.Split(string(out), "\n") {
+		parts := strings.SplitN(line, ",", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		// nvidia-smi prints a zero-padded bus id like "00000000:01:00.0".
+		if strings.HasSuffix(strings.ToLower(strings.TrimSpace(parts[0])), want) {
+			if mib, err := strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 64); err == nil {
+				return mib * 1024 * 1024
+			}
+		}
+	}
+	return 0
+}
+
+// ── USB devices ───────────────────────────────────────────────────────────────
+
+// collectUSBDevices enumerates connected USB devices from /sys/bus/usb/devices
+// (no usbutils dependency). Root hubs and interface nodes are excluded.
+func collectUSBDevices() []DetailedUSBDevice {
+	entries, _ := filepath.Glob("/sys/bus/usb/devices/*")
+	var devs []DetailedUSBDevice
+	for _, e := range entries {
+		base := filepath.Base(e)
+		// Interface nodes look like "1-1:1.0" (contain ':'); root hubs are
+		// named "usbN". Skip both — we want real downstream devices.
+		if strings.Contains(base, ":") || strings.HasPrefix(base, "usb") {
+			continue
+		}
+		vid := readSysStr(filepath.Join(e, "idVendor"))
+		pid := readSysStr(filepath.Join(e, "idProduct"))
+		if vid == "" || pid == "" {
+			continue
+		}
+		d := DetailedUSBDevice{
+			Bus:          readSysStr(filepath.Join(e, "busnum")),
+			Device:       readSysStr(filepath.Join(e, "devnum")),
+			VendorID:     vid,
+			ProductID:    pid,
+			Manufacturer: readSysStr(filepath.Join(e, "manufacturer")),
+			Product:      readSysStr(filepath.Join(e, "product")),
+			Class:        usbClassName(e),
+		}
+		if d.Product == "" {
+			d.Product = vid + ":" + pid
+		}
+		devs = append(devs, d)
+	}
+	sort.Slice(devs, func(i, j int) bool {
+		if devs[i].Bus != devs[j].Bus {
+			return devs[i].Bus < devs[j].Bus
+		}
+		return devs[i].Device < devs[j].Device
+	})
+	return devs
+}
+
+// usbClassName maps a device's USB class to a friendly label. The device-level
+// bDeviceClass is often 00 ("use per-interface"), in which case we fall back to
+// the first interface's bInterfaceClass.
+func usbClassName(devDir string) string {
+	code := readSysStr(filepath.Join(devDir, "bDeviceClass"))
+	if code == "00" || code == "" {
+		if ifaces, _ := filepath.Glob(filepath.Join(devDir, filepath.Base(devDir)+":*")); len(ifaces) > 0 {
+			if ic := readSysStr(filepath.Join(ifaces[0], "bInterfaceClass")); ic != "" {
+				code = ic
+			}
+		}
+	}
+	switch strings.ToLower(code) {
+	case "01":
+		return "Audio"
+	case "02":
+		return "Communications"
+	case "03":
+		return "HID"
+	case "05":
+		return "Physical"
+	case "06":
+		return "Image"
+	case "07":
+		return "Printer"
+	case "08":
+		return "Mass Storage"
+	case "09":
+		return "Hub"
+	case "0a":
+		return "CDC-Data"
+	case "0b":
+		return "Smart Card"
+	case "0e":
+		return "Video"
+	case "e0":
+		return "Wireless"
+	case "ef":
+		return "Miscellaneous"
+	case "ff":
+		return "Vendor Specific"
+	}
+	return ""
+}
+
+// readSysStr reads and trims a sysfs/text file, returning "" on any error.
+func readSysStr(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func enumerateBlockDevices() []DetailedAttachedDisk {

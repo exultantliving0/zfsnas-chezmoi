@@ -1187,7 +1187,7 @@
             Collecting workload data… check back in a few minutes.
           </div>
           <div id="workload-perf-charts">
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:20px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:20px;">
               <div class="card-sm" style="position:relative;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                   <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);">Top VMs / Containers · CPU</div>
@@ -1197,7 +1197,7 @@
                   </div>
                 </div>
                 <div id="workload-legend-cpu" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;font-size:11px;"></div>
-                <div style="position:relative;height:180px;"><canvas id="workload-chart-cpu"></canvas><div id="workload-zoom-sel-cpu" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+                <div style="position:relative;height:280px;"><canvas id="workload-chart-cpu"></canvas><div id="workload-zoom-sel-cpu" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
               </div>
               <div class="card-sm" style="position:relative;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -1208,7 +1208,7 @@
                   </div>
                 </div>
                 <div id="workload-legend-mem" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;font-size:11px;"></div>
-                <div style="position:relative;height:180px;"><canvas id="workload-chart-mem"></canvas><div id="workload-zoom-sel-mem" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+                <div style="position:relative;height:280px;"><canvas id="workload-chart-mem"></canvas><div id="workload-zoom-sel-mem" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
               </div>
               <div class="card-sm" style="position:relative;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -1219,7 +1219,7 @@
                   </div>
                 </div>
                 <div id="workload-legend-net" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;font-size:11px;"></div>
-                <div style="position:relative;height:180px;"><canvas id="workload-chart-net"></canvas><div id="workload-zoom-sel-net" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+                <div style="position:relative;height:280px;"><canvas id="workload-chart-net"></canvas><div id="workload-zoom-sel-net" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
               </div>
               <div class="card-sm" style="position:relative;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -1230,7 +1230,7 @@
                   </div>
                 </div>
                 <div id="workload-legend-disk" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px;font-size:11px;"></div>
-                <div style="position:relative;height:180px;"><canvas id="workload-chart-disk"></canvas><div id="workload-zoom-sel-disk" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
+                <div style="position:relative;height:280px;"><canvas id="workload-chart-disk"></canvas><div id="workload-zoom-sel-disk" style="position:absolute;top:0;left:0;background:rgba(100,180,255,0.12);border:1px solid rgba(100,180,255,0.5);pointer-events:none;display:none;z-index:5;"></div></div>
               </div>
             </div>
           </div>
@@ -13236,6 +13236,66 @@ function _renderSysInfo(data) {
     </div>`;
   }
 
+  // GPUs — full-row block listing each display/3D adapter and its VRAM.
+  const gpus = data.gpus || [];
+  let gpuBlock;
+  if (gpus.length === 0) {
+    gpuBlock = `<div class="sysinfo-chip is-ctrl sysinfo-grid-row">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">🎮</span>Graphics</div>
+      <div class="sysinfo-subline" style="margin-top:8px;">No GPU detected.</div>
+    </div>`;
+  } else {
+    const gpuCards = gpus.map(g => {
+      const vram = g.memory_bytes ? _sysinfoBytesPretty(g.memory_bytes) : 'Shared / unknown';
+      return `<div class="sysinfo-ctrl-card">
+        <div class="sysinfo-ctrl-head">
+          <span class="sysinfo-ctrl-model">${esc(g.model || g.vendor || 'Unknown GPU')}</span>
+          <span class="sysinfo-ctrl-class">${esc(g.class || '')}</span>
+          <span class="sysinfo-ctrl-slot" style="margin-left:auto;">${esc(g.slot || '')}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:8px;">${esc(g.vendor || '')}${g.driver ? ' · driver: ' + esc(g.driver) : ''}</div>
+        <div class="sysinfo-ctrl-disks"><div class="sysinfo-disk">
+          <span class="sysinfo-disk-icon">🧠</span>
+          <div class="sysinfo-disk-info">
+            <span class="sysinfo-disk-dev">Video memory</span>
+            <span class="sysinfo-disk-meta">${esc(vram)}</span>
+          </div>
+        </div></div>
+      </div>`;
+    }).join('');
+    gpuBlock = `<div class="sysinfo-chip is-ctrl sysinfo-grid-row">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">🎮</span>Graphics</div>
+      <div class="sysinfo-ctrl" style="margin-top:10px;">${gpuCards}</div>
+    </div>`;
+  }
+
+  // USB devices — full-row block listing each connected device (root hubs excluded).
+  const usb = data.usb_devices || [];
+  let usbBlock;
+  if (usb.length === 0) {
+    usbBlock = `<div class="sysinfo-chip is-ctrl sysinfo-grid-row">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">🔌</span>USB Devices</div>
+      <div class="sysinfo-subline" style="margin-top:8px;">No USB devices connected.</div>
+    </div>`;
+  } else {
+    const usbRows = usb.map(u => {
+      const name = u.product || (u.vendor_id + ':' + u.product_id);
+      const meta = [u.manufacturer, u.class, (u.vendor_id && u.product_id) ? u.vendor_id + ':' + u.product_id : '']
+        .filter(Boolean).join(' · ');
+      return `<div class="sysinfo-disk">
+        <span class="sysinfo-disk-icon">🔌</span>
+        <div class="sysinfo-disk-info">
+          <span class="sysinfo-disk-dev">${esc(name)}</span>
+          <span class="sysinfo-disk-meta">${esc(meta || '—')}</span>
+        </div>
+      </div>`;
+    }).join('');
+    usbBlock = `<div class="sysinfo-chip is-ctrl sysinfo-grid-row">
+      <div class="sysinfo-chip-label"><span class="sysinfo-chip-icon">🔌</span>USB Devices</div>
+      <div class="sysinfo-ctrl" style="margin-top:10px;"><div class="sysinfo-ctrl-card"><div class="sysinfo-ctrl-disks">${usbRows}</div></div></div>
+    </div>`;
+  }
+
   document.getElementById('sysinfo-body').innerHTML = `
     <div class="sysinfo-board">
       <div class="sysinfo-grid">
@@ -13245,6 +13305,8 @@ function _renderSysInfo(data) {
         ${biosChip}
         ${sysChip}
         ${ctrlBlock}
+        ${gpuBlock}
+        ${usbBlock}
       </div>
     </div>
   `;
@@ -44883,7 +44945,10 @@ const _LXD_TOGGLE_COLS = [
   {id:'autostart', label:'Autostart'},
   {id:'tags',      label:'Tags'},
 ];
-const _LXD_DEFAULT_COLS = _LXD_TOGGLE_COLS.map(c => c.id); // all on by default
+// All toggleable columns are on by default EXCEPT datastore — it's available
+// via the column button but hidden until the user opts in. Users who have
+// already saved a column preference keep whatever they chose.
+const _LXD_DEFAULT_COLS = _LXD_TOGGLE_COLS.map(c => c.id).filter(id => id !== 'datastore');
 
 // Live per-instance fallback info (status + limits), keyed by instance name.
 // Populated by the row renderers; consumed by the metric-cell builders.
@@ -44924,6 +44989,13 @@ function _lxdApplyColVisibility(scope) {
     if (col === 'image' && show) {
       const tbl = el.closest('table');
       show = !!(tbl && tbl.querySelector('tbody td[data-col="image"]'));
+    }
+    // Tags is selectable but auto-hides when no row carries any tag — a
+    // non-empty tags cell renders a .tag-cell-pills span; an empty one renders
+    // a muted "—". If none have pills, the whole column is hidden.
+    if (col === 'tags' && show) {
+      const tbl = el.closest('table');
+      show = !!(tbl && tbl.querySelector('tbody td[data-col="tags"] .tag-cell-pills'));
     }
     el.style.display = show ? '' : 'none';
   });
@@ -45220,7 +45292,7 @@ function _lxdRenderRows(instances) {
     return `<tr id="lxd-row-${esc(inst.name)}" style="cursor:pointer;" onclick='openComputeInstance(${JSON.stringify(inst.name)},${JSON.stringify(inst.type)})' oncontextmenu='_lxdRowContextMenu(event,${JSON.stringify(inst.name)},${JSON.stringify(inst.type)},${JSON.stringify(inst.status)})'>
       <td data-col="type" style="padding-left:10px;padding-right:4px;text-align:center;">${typeBadge}</td>
       <td data-col="name" style="padding-left:6px;" title="${esc((inst.description ? inst.description + ' · ' : '') + inst.name)}"><span class="lxd-name-cell"><span class="lxd-name-1">${esc(inst.description || inst.name)}</span><span class="lxd-name-2" style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(inst.name)}</span></span></td>
-      <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(inst.ipv4 || '—')}</td>
+      <td data-col="ipv4" style="color:var(--text-2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(inst.ipv4 || '')}">${esc(inst.ipv4 || '—')}</td>
       ${imgCell}
       <td data-col="datastore" style="color:var(--text-2);font-size:12px;" title="${esc(dsLabel)}">${esc(dsLabel)}</td>
       ${_lxdMetricTd('cpu', inst.name)}
@@ -56491,7 +56563,7 @@ async function loadBridgeMembers() {
       return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})' oncontextmenu='_lxdRowContextMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)},${JSON.stringify(m.status)})'>
         <td data-col="type">${typeBadge}</td>
         <td data-col="name" title="${esc((m.description ? m.description + ' · ' : '') + m.name)}"><span class="lxd-name-cell"><span class="lxd-name-1">${esc(m.description || m.name)}</span><span class="lxd-name-2" style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></span></td>
-        <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
+        <td data-col="ipv4" style="color:var(--text-2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(m.ipv4 || '')}">${esc(m.ipv4 || '—')}</td>
         ${hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}"><span class="lxd-img">${esc(m.image || '—')}</span></td>` : ''}
         <td data-col="datastore" style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
         ${_lxdMetricTd('cpu', m.name)}
@@ -57033,7 +57105,7 @@ async function loadDatastoreMembers() {
       return `<tr id="lxd-row-${esc(m.name)}" style="cursor:pointer;" title="Open ${esc(m.name)}" onclick='openComputeInstance(${JSON.stringify(m.name)}, ${JSON.stringify(m.type)})' oncontextmenu='_lxdRowContextMenu(event,${JSON.stringify(m.name)},${JSON.stringify(m.type)},${JSON.stringify(m.status)})'>
         <td data-col="type">${typeBadge}</td>
         <td data-col="name" title="${esc((m.description ? m.description + ' · ' : '') + m.name)}"><span class="lxd-name-cell"><span class="lxd-name-1">${esc(m.description || m.name)}</span><span class="lxd-name-2" style="font-family:monospace;font-size:11px;color:var(--text-3);">${esc(m.name)}</span></span></td>
-        <td data-col="ipv4" style="font-family:monospace;color:var(--text-2);">${esc(m.ipv4 || '—')}</td>
+        <td data-col="ipv4" style="color:var(--text-2);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(m.ipv4 || '')}">${esc(m.ipv4 || '—')}</td>
         ${hasImg ? `<td data-col="image" style="color:var(--text-2);font-size:12px;" title="${esc(m.image || '')}"><span class="lxd-img">${esc(m.image || '—')}</span></td>` : ''}
         <td data-col="datastore" style="color:var(--text-2);font-size:12px;">${esc(dsLabel)}</td>
         ${_lxdMetricTd('cpu', m.name)}

@@ -305,9 +305,22 @@ func main() {
 	// the user can't reach :8443. Moving everything into a goroutine
 	// lets the listener come up immediately and the LXD bits fill in
 	// asynchronously. (6.5.26 fix.)
+	// The --experimental flag is legacy as of 6.6.26 — VMs & Containers is now a
+	// first-class feature on every install. We still honour the flag for the
+	// /api/version "experimental_mode" field, but it no longer gates anything.
 	if *experimentalMode {
 		version.SetExperimental(true)
-		log.Println("Experimental mode enabled.")
+		log.Println("Experimental mode enabled (note: no longer required — VMs & Containers is available on all installs).")
+	}
+
+	// VMs & Containers detection. Driven purely by whether the `incus` binary is
+	// present — NOT by --experimental (6.6.26 unlock). On a host with no Incus
+	// installed we skip the whole block so a fresh box never probes a
+	// non-existent daemon or shows the "Incus daemon not responding" banner.
+	// Without this, a non-experimental host with Incus installed/enabled left
+	// the cached lxdAvailable=false, so /api/lxd/status and the enable status
+	// reported "not available" even though Incus was running.
+	if system.IncusInstalled() {
 		// Health watchdog runs even if the first probe in the goroutine
 		// below fails — that's the whole point: we want the UI to
 		// recover automatically when the daemon comes back, without

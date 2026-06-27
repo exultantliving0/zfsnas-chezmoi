@@ -1095,7 +1095,7 @@ body:not(.is-phone) .lxd-inst-table { width: 100%; table-layout: fixed; }
 body:not(.is-phone) .lxd-inst-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 body:not(.is-phone) .lxd-inst-table th[data-col="type"]      { width: 40px  !important; }
 body:not(.is-phone) .lxd-inst-table th[data-col="name"]      { width: 150px !important; }
-body:not(.is-phone) .lxd-inst-table th[data-col="ipv4"]      { width: 104px !important; }
+body:not(.is-phone) .lxd-inst-table th[data-col="ipv4"]      { width: 128px !important; }
 body:not(.is-phone) .lxd-inst-table th[data-col="image"]     { width: 124px !important; }
 body:not(.is-phone) .lxd-inst-table th[data-col="datastore"] { width: 102px !important; }
 body:not(.is-phone) .lxd-inst-table th[data-col="net"]       { width: 80px  !important; }
