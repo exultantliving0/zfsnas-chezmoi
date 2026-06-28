@@ -4837,6 +4837,7 @@
                 <span onclick="ciTogglePowerMenu(event)" title="Power" style="cursor:pointer;color:var(--text-2);font-size:14px;padding:2px 8px;user-select:none;line-height:1;">⏻</span>
                 <span onclick="ciComposeUpdateNow()" title="Update (pull + up)" style="cursor:pointer;color:var(--text-2);font-size:14px;padding:2px 8px;user-select:none;line-height:1;">⬆</span>
                 <button class="btn btn-sm btn-ghost" style="padding:2px 10px;font-size:11px;" onclick="ciOpenEdit()">✎ Edit</button>
+                <button class="btn btn-secondary btn-sm" style="padding:2px 10px;font-size:11px;" onclick="_stkToggleColsMenu(event)" title="Choose table columns">&#9881; Columns &#9662;</button>
                 <span id="ci-compose-refresh" onclick="ciLoadComposeContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;margin-left:8px;">↻ Refresh</span>
               </div>
               <div id="ci-compose-body">
@@ -4856,6 +4857,7 @@
                 <span id="ci-docker-count" style="font-size:12px;color:var(--text-3);"></span>
                 <span style="flex:1;"></span>
                 <button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:12px;margin-right:10px;" onclick="_composeDeployToInstance()">+ Compose Stack</button>
+                <button class="btn btn-secondary btn-sm" style="padding:2px 10px;font-size:11px;margin-right:10px;" onclick="_stkToggleColsMenu(event)" title="Choose table columns">&#9881; Columns &#9662;</button>
                 <span id="ci-docker-refresh" onclick="ciLoadDockerContainers()" style="cursor:pointer;color:var(--text-3);font-size:12px;user-select:none;">↻ Refresh</span>
               </div>
               <div id="ci-docker-body">
@@ -39181,6 +39183,12 @@ function _ciRenderComposeContainers(list, stackStatus) {
   // bottom rule). Less than half the vertical footprint of the previous
   // 5px / 12-12.5px layout.
   const cellTd = 'padding:2px 8px;font-size:11px;line-height:1.35;';
+  // Truncate overflowing cells to an ellipsis so a long value loses chars
+  // instead of forcing its column wide and starving the more-important
+  // left columns. `table-layout:fixed` + the weighted colgroup below honour
+  // these widths; Ports is the lowest-priority column so it shrinks first.
+  const truncStyle = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  const COLGROUP = _composeBuildColgroup(list);
   let rows = '';
   list.forEach((c, i) => {
     const running = (c.state || '').toLowerCase() === 'running';
@@ -39199,11 +39207,11 @@ function _ciRenderComposeContainers(list, stackStatus) {
       : `<div style="padding:10px 14px;font-size:12px;color:var(--text-3);">Container must be running</div>`;
     rows += `<tr oncontextmenu="event.preventDefault();_ciComposeRowCtxMenu(event,'${esc(c.name)}','${esc(c.service||'')}',${running})">
       <td data-col="name" class="fb-truncstart" style="${cellTd}font-family:monospace;" title="${esc(c.name)}">${esc(c.name)}</td>
-      <td data-col="service" style="${cellTd}color:var(--text-2);">${esc(c.service || '—')}</td>
+      <td data-col="service" style="${cellTd}color:var(--text-2);${truncStyle}" title="${esc(c.service || '—')}">${esc(c.service || '—')}</td>
       <td data-col="image" class="fb-truncstart" style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
-      <td data-col="state" style="${cellTd}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${color};">
-        <span style="width:6px;height:6px;border-radius:50%;background:${color};"></span>${esc(c.status || c.state)}</span></td>
-      <td data-col="ports" style="${cellTd}font-family:monospace;color:var(--text-3);">${_renderComposePortsLinks(c.ports, _stackIP)}</td>
+      <td data-col="state" style="${cellTd}${truncStyle}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${color};">
+        <span style="width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0;"></span>${esc(c.status || c.state)}</span></td>
+      <td data-col="ports" data-ports="${esc(c.ports || '')}" data-ip="${esc(_stackIP)}" onmouseenter="_ciPortsTip(event,this)" onmousemove="movePoolTip(event)" onmouseleave="hidePoolTip()" style="${cellTd}font-family:monospace;color:var(--text-3);${truncStyle}">${_renderComposePortsLinks(c.ports, _stackIP)}</td>
       <td data-col="actions" style="${cellTd}position:relative;text-align:right;width:58px;white-space:nowrap;">
         <span onclick="_ciComposeTermMenu(event,${i})" title="Terminal" style="cursor:${running?'pointer':'not-allowed'};opacity:${running?'1':'.4'};color:var(--text-2);font-size:13px;padding:0 3px;user-select:none;line-height:1;">🖥️</span>
         <span onclick="_ciComposeRowMenu(event,${i})" style="cursor:pointer;color:var(--text-2);font-size:16px;padding:0 4px;user-select:none;line-height:1;">⋮</span>
@@ -39211,8 +39219,8 @@ function _ciRenderComposeContainers(list, stackStatus) {
         <div id="ci-compose-menu-${i}" class="row-menu-dropdown" style="display:none;position:absolute;right:6px;top:100%;min-width:150px;z-index:60;">${menu}</div>
       </td></tr>`;
   });
-  body.innerHTML = `<table class="data-table stk-resp-table" style="width:100%;font-size:11px;">
-    <thead><tr>
+  body.innerHTML = `<table class="data-table stk-resp-table" style="width:100%;table-layout:fixed;font-size:11px;">
+    ${COLGROUP}<thead><tr>
       <th data-col="name" style="padding:3px 8px;font-size:10px;">Container</th>
       <th data-col="service" style="padding:3px 8px;font-size:10px;">Service</th>
       <th data-col="image" style="padding:3px 8px;font-size:10px;">Image</th>
@@ -39255,6 +39263,66 @@ function _renderComposePortsLinks(portsStr, lxcIP) {
     }
     return esc(s);
   }).join(', ');
+}
+
+// _composeBuildColgroup sizes the stack-container table's columns by their
+// actual content, char-weighted with per-column floors/ceilings. The left
+// columns (Container/Service/Image) carry the higher ceilings so they keep
+// their space; Ports gets the tightest ceiling so, under `table-layout:fixed`,
+// it's the first to give up width and truncate to an ellipsis when the card
+// is narrow. Name has no explicit width (`auto`) so any width freed by the
+// responsive column-hider flows back into it rather than the fixed actions cell.
+function _composeBuildColgroup(list) {
+  let mxService = 'Service'.length, mxImage = 'Image'.length,
+      mxState = 'State'.length, mxPorts = 'Ports'.length;
+  (list || []).forEach(c => {
+    mxService = Math.max(mxService, (c.service || '').length);
+    mxImage   = Math.max(mxImage,   _composeShortImage(c.image || '').length);
+    mxState   = Math.max(mxState,   (c.status || c.state || '').length);
+    const portsTxt = (c.ports && c.ports !== '—')
+      ? c.ports.split(',').map(s => s.trim()).join(', ') : '';
+    mxPorts = Math.max(mxPorts, portsTxt.length);
+  });
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const wService = clamp(mxService,  8, 24);
+  const wImage   = clamp(mxImage,   12, 50);
+  const wState   = clamp(mxState,   10, 20);
+  const wPorts   = clamp(mxPorts,    8, 26);   // tightest ceiling → shrinks first
+  const totalChars = wService + wImage + wState + wPorts;
+  const pct = (chars) => ((chars / totalChars) * 100).toFixed(2) + '%';
+  return `<colgroup>
+    <col data-col="name">
+    <col data-col="service" style="width:${pct(wService)};">
+    <col data-col="image" style="width:${pct(wImage)};">
+    <col data-col="state" style="width:${pct(wState)};">
+    <col data-col="ports" style="width:${pct(wPorts)};">
+    <col data-col="actions" style="width:58px;">
+  </colgroup>`;
+}
+
+// _ciPortsTip shows a floating popup (reusing #pool-tip) listing every
+// published port for the hovered container — host IP:port → container
+// port/proto — so the truncated Ports cell stays legible while the full
+// mapping is one hover away.
+function _ciPortsTip(e, td) {
+  const tip = document.getElementById('pool-tip');
+  const raw = td.getAttribute('data-ports') || '';
+  if (!tip || !raw || raw === '—') return;
+  const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (!parts.length) return;
+  const row = (k, v) => `<div class="tip-row"><span class="tip-key">${k}</span><span class="tip-val">${v}</span></div>`;
+  let html = `<div class="tip-name">Exposed Ports</div>`;
+  parts.forEach(p => {
+    const m = p.match(/^(.+):(\d+)->(\d+)\/(tcp|udp)$/i);
+    if (m) {
+      html += row(esc(m[1] + ':' + m[2]), '→ ' + esc(m[3] + '/' + m[4].toUpperCase()));
+    } else {
+      html += row(esc(p), '');
+    }
+  });
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  _placePoolTip(e, tip);
 }
 
 function _ciComposeRowMenu(ev, idx) {
@@ -39496,12 +39564,99 @@ function _ciFitStackTables() {
   };
   apply('ci-compose-body');
   apply('ci-docker-body');
+  _stkApplyColVisibility();   // re-assert the user's per-browser column choice
 }
 let _stkFitRaf = 0;
 window.addEventListener('resize', () => {
   if (_stkFitRaf) return;
   _stkFitRaf = requestAnimationFrame(() => { _stkFitRaf = 0; _ciFitStackTables(); });
 });
+
+// ── Stack Containers column chooser (⚙ Columns button) ───────────────────────
+// Lets the user pick which optional columns show in BOTH Stack Containers cards
+// (Compose stacks + detected Docker). The choice is per-browser, stored in a
+// cookie (no account preference) so it survives reloads on this machine only.
+// Container/Status/actions are always kept — only these four are toggleable.
+const _STK_TOGGLE_COLS = [
+  {id:'service', label:'Service'},
+  {id:'image',   label:'Image'},
+  {id:'state',   label:'State'},
+  {id:'ports',   label:'Ports'},
+];
+const _STK_COOKIE = 'znas_stk_hidden_cols';
+
+function _stkReadCookie(name) {
+  const m = document.cookie.match('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\\/\+^])/g,'\\$1') + '=([^;]*)');
+  return m ? decodeURIComponent(m[1]) : '';
+}
+function _stkWriteCookie(name, val) {
+  // 1-year persistent cookie, scoped to the whole site; SameSite=Lax is fine
+  // (no cross-site use). Secure because the portal is HTTPS-only.
+  document.cookie = name + '=' + encodeURIComponent(val)
+    + ';path=/;max-age=' + (365 * 24 * 3600) + ';SameSite=Lax;Secure';
+}
+// Returns the Set of HIDDEN toggle-column ids (default: none hidden → all shown).
+function _stkHiddenSet() {
+  const raw = _stkReadCookie(_STK_COOKIE);
+  const ids = new Set(_STK_TOGGLE_COLS.map(c => c.id));
+  return new Set(raw.split(',').map(s => s.trim()).filter(s => ids.has(s)));
+}
+function _stkSaveHidden(hidden) {
+  const arr = _STK_TOGGLE_COLS.map(c => c.id).filter(id => hidden.has(id));
+  _stkWriteCookie(_STK_COOKIE, arr.join(','));
+}
+// Toggle the stk-uhide-* class for each hidden column on every stack table.
+function _stkApplyColVisibility() {
+  const hidden = _stkHiddenSet();
+  document.querySelectorAll('table.stk-resp-table').forEach(t => {
+    _STK_TOGGLE_COLS.forEach(c => t.classList.toggle('stk-uhide-' + c.id, hidden.has(c.id)));
+  });
+}
+
+let _stkColsMenuEl = null;
+function _stkCloseColsMenu() {
+  if (_stkColsMenuEl) { _stkColsMenuEl.remove(); _stkColsMenuEl = null; document.removeEventListener('mousedown', _stkColsMenuOutside, true); }
+}
+function _stkColsMenuOutside(e) { if (_stkColsMenuEl && !_stkColsMenuEl.contains(e.target)) _stkCloseColsMenu(); }
+function _stkToggleColsMenu(e) {
+  e.stopPropagation();
+  if (_stkColsMenuEl) { _stkCloseColsMenu(); return; }
+  const btn = e.currentTarget;
+  const hidden = _stkHiddenSet();
+  const dd = document.createElement('div');
+  dd.className = 'row-menu-dropdown';
+  dd.style.cssText = 'position:fixed;min-width:170px;padding:6px 0;z-index:4000;';
+  dd.addEventListener('click', ev => ev.stopPropagation());
+  const title = document.createElement('div');
+  title.textContent = 'Show columns';
+  title.style.cssText = 'padding:4px 12px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);';
+  dd.appendChild(title);
+  _STK_TOGGLE_COLS.forEach(c => {
+    const lab = document.createElement('label');
+    lab.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;font-size:13px;color:var(--text);';
+    lab.addEventListener('mouseover', () => lab.style.background = 'var(--bg-3)');
+    lab.addEventListener('mouseout',  () => lab.style.background = '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !hidden.has(c.id);
+    cb.style.cursor = 'pointer';
+    cb.addEventListener('change', () => {
+      const cur = _stkHiddenSet();
+      if (cb.checked) cur.delete(c.id); else cur.add(c.id);
+      _stkSaveHidden(cur);
+      _stkApplyColVisibility();
+    });
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(c.label));
+    dd.appendChild(lab);
+  });
+  document.body.appendChild(dd);
+  const r = btn.getBoundingClientRect();
+  dd.style.top = (r.bottom + 4) + 'px';
+  dd.style.left = Math.max(8, Math.min(r.left, window.innerWidth - dd.offsetWidth - 8)) + 'px';
+  _stkColsMenuEl = dd;
+  setTimeout(() => document.addEventListener('mousedown', _stkColsMenuOutside, true), 0);
+}
 
 function _ciRenderDockerGroups(list) {
   const body = document.getElementById('ci-docker-body');

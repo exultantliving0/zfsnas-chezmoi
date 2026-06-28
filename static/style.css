@@ -1098,6 +1098,15 @@ th.lxd-sortable.sort-desc .sort-arrow { opacity: 1; }
 .stk-resp-table.stk-hide-image   [data-col="image"],
 .stk-resp-table.stk-hide-service [data-col="service"] { display: none; }
 
+/* User column chooser (the ⚙ Columns button on each Stack Containers card).
+   Persisted per-browser via cookie. Mirrors the responsive hide rules above so
+   a deselected column collapses its <col>/<th>/<td> cleanly under
+   table-layout:fixed. Container/State/actions are always kept. */
+.stk-resp-table.stk-uhide-service [data-col="service"],
+.stk-resp-table.stk-uhide-image   [data-col="image"],
+.stk-resp-table.stk-uhide-state   [data-col="state"],
+.stk-resp-table.stk-uhide-ports   [data-col="ports"] { display: none; }
+
 body:not(.is-phone) .lxd-inst-table { width: 100%; table-layout: fixed; }
 /* When the window is narrower than the fixed columns, scroll horizontally rather
    than clip. The main page table has its own .lxd-table-card scroller; the bridge
