@@ -1088,6 +1088,16 @@ th.lxd-sortable.sort-desc .sort-arrow { opacity: 1; }
    the current container size.
    (!important overrides the per-th inline widths that were tuned for auto layout.)
    Skipped on phone, where the table renders as cards. */
+/* Responsive Stack-Containers tables (.stk-resp-table): the JS fitter
+   (_ciFitStackTables) toggles these classes to drop columns from the right
+   when the card is too narrow — ports first, then image, then service. The
+   selector hits the <col>, <th> and <td> for that column (all carry data-col),
+   so the column collapses cleanly under table-layout:fixed and the freed width
+   flows to the auto-width Name column. */
+.stk-resp-table.stk-hide-ports   [data-col="ports"],
+.stk-resp-table.stk-hide-image   [data-col="image"],
+.stk-resp-table.stk-hide-service [data-col="service"] { display: none; }
+
 body:not(.is-phone) .lxd-inst-table { width: 100%; table-layout: fixed; }
 /* When the window is narrower than the fixed columns, scroll horizontally rather
    than clip. The main page table has its own .lxd-table-card scroller; the bridge

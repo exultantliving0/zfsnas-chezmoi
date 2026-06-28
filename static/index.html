@@ -39198,29 +39198,30 @@ function _ciRenderComposeContainers(list, stackStatus) {
         `<button onclick="_ciComposeTermNewWindow('${esc(c.name)}')">LXD Window Terminal</button>`
       : `<div style="padding:10px 14px;font-size:12px;color:var(--text-3);">Container must be running</div>`;
     rows += `<tr oncontextmenu="event.preventDefault();_ciComposeRowCtxMenu(event,'${esc(c.name)}','${esc(c.service||'')}',${running})">
-      <td class="fb-truncstart" style="${cellTd}font-family:monospace;" title="${esc(c.name)}">${esc(c.name)}</td>
-      <td style="${cellTd}color:var(--text-2);">${esc(c.service || '—')}</td>
-      <td class="fb-truncstart" style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
-      <td style="${cellTd}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${color};">
+      <td data-col="name" class="fb-truncstart" style="${cellTd}font-family:monospace;" title="${esc(c.name)}">${esc(c.name)}</td>
+      <td data-col="service" style="${cellTd}color:var(--text-2);">${esc(c.service || '—')}</td>
+      <td data-col="image" class="fb-truncstart" style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
+      <td data-col="state" style="${cellTd}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:${color};">
         <span style="width:6px;height:6px;border-radius:50%;background:${color};"></span>${esc(c.status || c.state)}</span></td>
-      <td style="${cellTd}font-family:monospace;color:var(--text-3);">${_renderComposePortsLinks(c.ports, _stackIP)}</td>
-      <td style="${cellTd}position:relative;text-align:right;width:58px;white-space:nowrap;">
+      <td data-col="ports" style="${cellTd}font-family:monospace;color:var(--text-3);">${_renderComposePortsLinks(c.ports, _stackIP)}</td>
+      <td data-col="actions" style="${cellTd}position:relative;text-align:right;width:58px;white-space:nowrap;">
         <span onclick="_ciComposeTermMenu(event,${i})" title="Terminal" style="cursor:${running?'pointer':'not-allowed'};opacity:${running?'1':'.4'};color:var(--text-2);font-size:13px;padding:0 3px;user-select:none;line-height:1;">🖥️</span>
         <span onclick="_ciComposeRowMenu(event,${i})" style="cursor:pointer;color:var(--text-2);font-size:16px;padding:0 4px;user-select:none;line-height:1;">⋮</span>
         <div id="ci-compose-termmenu-${i}" class="row-menu-dropdown" style="display:none;position:absolute;right:28px;top:100%;min-width:200px;z-index:60;">${termMenu}</div>
         <div id="ci-compose-menu-${i}" class="row-menu-dropdown" style="display:none;position:absolute;right:6px;top:100%;min-width:150px;z-index:60;">${menu}</div>
       </td></tr>`;
   });
-  body.innerHTML = `<table class="data-table" style="width:100%;font-size:11px;">
+  body.innerHTML = `<table class="data-table stk-resp-table" style="width:100%;font-size:11px;">
     <thead><tr>
-      <th style="padding:3px 8px;font-size:10px;">Container</th>
-      <th style="padding:3px 8px;font-size:10px;">Service</th>
-      <th style="padding:3px 8px;font-size:10px;">Image</th>
-      <th style="padding:3px 8px;font-size:10px;">State</th>
-      <th style="padding:3px 8px;font-size:10px;">Ports</th>
-      <th style="padding:3px 8px;"></th>
+      <th data-col="name" style="padding:3px 8px;font-size:10px;">Container</th>
+      <th data-col="service" style="padding:3px 8px;font-size:10px;">Service</th>
+      <th data-col="image" style="padding:3px 8px;font-size:10px;">Image</th>
+      <th data-col="state" style="padding:3px 8px;font-size:10px;">State</th>
+      <th data-col="ports" style="padding:3px 8px;font-size:10px;">Ports</th>
+      <th data-col="actions" style="padding:3px 8px;"></th>
     </tr></thead>
     <tbody>${rows}</tbody></table>`;
+  _ciFitStackTables();
 }
 
 // _composeShortImage trims the "docker.io/" prefix (and the redundant
@@ -39451,15 +39452,56 @@ function _dockerBuildColgroup(groups) {
   // applying the five percentages, so we don't need to math it in here.
   const totalChars = wName + wService + wImage + wState + wPorts;
   const pct = (chars) => ((chars / totalChars) * 100).toFixed(2) + '%';
+  // Name is `auto` (no explicit width) so that when the responsive fitter
+  // hides columns from the right (ports → image → service) the freed width
+  // flows into the Name column instead of inflating the fixed actions cell.
+  // The other four keep their char-weighted %, so Name's normal width still
+  // ≈ wName/totalChars of the table (the % pool still divides by totalChars).
   return `<colgroup>
-    <col style="width:${pct(wName)};">
-    <col style="width:${pct(wService)};">
-    <col style="width:${pct(wImage)};">
-    <col style="width:${pct(wState)};">
-    <col style="width:${pct(wPorts)};">
-    <col style="width:56px;">
+    <col data-col="name">
+    <col data-col="service" style="width:${pct(wService)};">
+    <col data-col="image" style="width:${pct(wImage)};">
+    <col data-col="state" style="width:${pct(wState)};">
+    <col data-col="ports" style="width:${pct(wPorts)};">
+    <col data-col="actions" style="width:56px;">
   </colgroup>`;
 }
+
+// ── Responsive stack-container tables ────────────────────────────────────────
+// On a real horizontal table (desktop / tablet — NOT the phone card layout),
+// drop columns from the right when the card is too narrow to show them all
+// legibly: ports → image → service. Container name, Status and the action
+// buttons are always kept. The freed width flows into the Name column (its
+// <col> is `auto`). On phone these tables are cardified, so we strip the fit
+// classes and let every field render. Re-runs after each render and on resize.
+function _ciFitStackTables() {
+  const apply = (bodyId) => {
+    const body = document.getElementById(bodyId);
+    if (!body) return;
+    const tables = body.querySelectorAll('table.stk-resp-table');
+    if (!tables.length) return;
+    let cls = '';
+    if (!document.body.classList.contains('is-phone')) {
+      const w = body.clientWidth || 0;
+      if (w) {
+        if      (w < 340) cls = 'stk-hide-ports stk-hide-image stk-hide-service';
+        else if (w < 420) cls = 'stk-hide-ports stk-hide-image';
+        else if (w < 520) cls = 'stk-hide-ports';
+      }
+    }
+    tables.forEach(t => {
+      t.classList.remove('stk-hide-ports', 'stk-hide-image', 'stk-hide-service');
+      if (cls) cls.split(' ').forEach(c => t.classList.add(c));
+    });
+  };
+  apply('ci-compose-body');
+  apply('ci-docker-body');
+}
+let _stkFitRaf = 0;
+window.addEventListener('resize', () => {
+  if (_stkFitRaf) return;
+  _stkFitRaf = requestAnimationFrame(() => { _stkFitRaf = 0; _ciFitStackTables(); });
+});
 
 function _ciRenderDockerGroups(list) {
   const body = document.getElementById('ci-docker-body');
@@ -39556,13 +39598,13 @@ function _ciRenderDockerGroups(list) {
       // the table — `table-layout:fixed` honours these widths.
       const truncStyle = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       rows += `<tr oncontextmenu="event.preventDefault();_ciDockerRowCtxMenu(event,'${esc(c.id)}','${esc(c.name)}',${running},${c.project ? 'true' : 'false'})">
-        <td class="fb-truncstart" style="${cellTd}font-family:monospace;" title="${esc(c.name)}">${esc(c.name)}</td>
-        <td style="${cellTd}color:var(--text-2);${truncStyle}" title="${esc(c.service || '—')}">${esc(c.service || '—')}</td>
-        <td class="fb-truncstart" style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
-        <td style="${cellTd}${truncStyle}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;color:${color};">
+        <td data-col="name" class="fb-truncstart" style="${cellTd}font-family:monospace;" title="${esc(c.name)}">${esc(c.name)}</td>
+        <td data-col="service" style="${cellTd}color:var(--text-2);${truncStyle}" title="${esc(c.service || '—')}">${esc(c.service || '—')}</td>
+        <td data-col="image" class="fb-truncstart" style="${cellTd}font-family:monospace;color:var(--text-3);" title="${esc(c.image)}">${esc(_composeShortImage(c.image))}</td>
+        <td data-col="state" style="${cellTd}${truncStyle}"><span style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;color:${color};">
           <span style="width:7px;height:7px;border-radius:50%;background:${color};flex-shrink:0;"></span>${esc(c.status || c.state)}</span></td>
-        <td style="${cellTd}font-family:monospace;color:var(--text-3);${truncStyle}" title="${esc(portsFmt.full || (c.ports || ''))}">${esc(portsFmt.display)}</td>
-        <td style="${cellTd}position:relative;text-align:right;white-space:nowrap;">
+        <td data-col="ports" style="${cellTd}font-family:monospace;color:var(--text-3);${truncStyle}" title="${esc(portsFmt.full || (c.ports || ''))}">${esc(portsFmt.display)}</td>
+        <td data-col="actions" style="${cellTd}position:relative;text-align:right;white-space:nowrap;">
           <span onclick="_ciDockerTermMenu(event,'${idx}')" title="Terminal" style="cursor:${running?'pointer':'not-allowed'};opacity:${running?'1':'.4'};color:var(--text-2);font-size:13px;padding:0 3px;user-select:none;line-height:1;">🖥️</span>
           <span onclick="_ciDockerRowMenu(event,'${idx}')" style="cursor:pointer;color:var(--text-2);font-size:16px;padding:0 4px;user-select:none;line-height:1;">⋮</span>
           <div id="ci-docker-termmenu-${idx}" class="row-menu-dropdown" style="display:none;position:absolute;right:28px;top:100%;min-width:200px;z-index:60;">${termMenu}</div>
@@ -39576,18 +39618,19 @@ function _ciRenderDockerGroups(list) {
     // the section header; column widths come from the shared <colgroup>, and
     // on phone the header is hidden anyway (cards use data-label).
     const thead = `<thead${gi === 0 ? '' : ' style="display:none;"'}><tr>
-          <th style="padding:4px 8px;font-size:11px;text-align:left;">Container</th>
-          <th style="padding:4px 8px;font-size:11px;text-align:left;">Service</th>
-          <th style="padding:4px 8px;font-size:11px;text-align:left;">Image</th>
-          <th style="padding:4px 8px;font-size:11px;text-align:left;">State</th>
-          <th style="padding:4px 8px;font-size:11px;text-align:left;">Ports</th>
-          <th style="padding:4px 8px;"></th>
+          <th data-col="name" style="padding:4px 8px;font-size:11px;text-align:left;">Container</th>
+          <th data-col="service" style="padding:4px 8px;font-size:11px;text-align:left;">Service</th>
+          <th data-col="image" style="padding:4px 8px;font-size:11px;text-align:left;">Image</th>
+          <th data-col="state" style="padding:4px 8px;font-size:11px;text-align:left;">State</th>
+          <th data-col="ports" style="padding:4px 8px;font-size:11px;text-align:left;">Ports</th>
+          <th data-col="actions" style="padding:4px 8px;"></th>
         </tr></thead>`;
-    html += `<table class="data-table" style="width:100%;table-layout:fixed;font-size:12.5px;margin-top:6px;">
+    html += `<table class="data-table stk-resp-table" style="width:100%;table-layout:fixed;font-size:12.5px;margin-top:6px;">
       ${COLGROUP}${thead}
       <tbody>${rows}</tbody></table>`;
   });
   body.innerHTML = html;
+  _ciFitStackTables();
 }
 
 // ────────────────────────────────────────────────────────────────────────────
