@@ -61,6 +61,89 @@ func HandleOSInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// unattendedAutoUpgradesPath is the apt periodic config the portal manages to
+// turn automatic background OS upgrades on or off. This is the same file
+// `dpkg-reconfigure unattended-upgrades` writes.
+const unattendedAutoUpgradesPath = "/etc/apt/apt.conf.d/20auto-upgrades"
+
+// aptPeriodicValue returns the effective value of an APT::Periodic::* key by
+// asking apt-config, which merges every file under apt.conf.d. Missing keys
+// come back as "" (apt-config omits them from the dump).
+func aptPeriodicValue(key string) string {
+	out, err := exec.Command("apt-config", "dump", key).Output()
+	if err != nil {
+		return ""
+	}
+	// Output line looks like: APT::Periodic::Unattended-Upgrade "1";
+	line := strings.TrimSpace(string(out))
+	i := strings.IndexByte(line, '"')
+	if i < 0 {
+		return ""
+	}
+	rest := line[i+1:]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+// HandleUnattendedStatus reports whether the unattended-upgrades package is
+// installed and whether automatic background OS upgrades are currently enabled.
+func HandleUnattendedStatus(w http.ResponseWriter, r *http.Request) {
+	installed := false
+	if _, err := os.Stat("/usr/bin/unattended-upgrade"); err == nil {
+		installed = true
+	}
+	unattended := aptPeriodicValue("APT::Periodic::Unattended-Upgrade")
+	updateLists := aptPeriodicValue("APT::Periodic::Update-Package-Lists")
+	jsonOK(w, map[string]interface{}{
+		"installed":    installed,
+		"enabled":      installed && unattended == "1",
+		"update_lists": updateLists == "1",
+	})
+}
+
+// HandleUnattendedSet enables or disables automatic background OS upgrades by
+// rewriting /etc/apt/apt.conf.d/20auto-upgrades — the same knob
+// `dpkg-reconfigure unattended-upgrades` toggles. Admin only.
+func HandleUnattendedSet(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	val := "0"
+	if body.Enabled {
+		val = "1"
+	}
+	content := "APT::Periodic::Update-Package-Lists \"" + val + "\";\n" +
+		"APT::Periodic::Unattended-Upgrade \"" + val + "\";\n"
+
+	cmd := exec.Command("sudo", "/usr/bin/tee", unattendedAutoUpgradesPath)
+	cmd.Stdin = strings.NewReader(content)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		jsonErr(w, http.StatusInternalServerError, "failed to write apt config: "+strings.TrimSpace(string(out)))
+		return
+	}
+
+	sess := MustSession(r)
+	state := "disabled"
+	if body.Enabled {
+		state = "enabled"
+	}
+	audit.Log(audit.Entry{
+		User:    sess.Username,
+		Role:    sess.Role,
+		Action:  audit.ActionUpdateSettings,
+		Result:  audit.ResultOK,
+		Details: "automatic OS upgrades (unattended-upgrades) " + state,
+	})
+	jsonOK(w, map[string]interface{}{"ok": true, "enabled": body.Enabled})
+}
+
 type updateCacheFile struct {
 	CheckedAt time.Time           `json:"checked_at"`
 	Packages  []map[string]string `json:"packages"`

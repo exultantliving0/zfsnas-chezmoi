@@ -391,6 +391,10 @@ func NewRouter(staticFS fs.FS, readFile func(string) ([]byte, error), appCfg *co
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUpgradeStatus)))).Methods("GET")
 	r.Handle("/ws/updates-apply",
 		RequireAuth(RequireAdmin(http.HandlerFunc(HandleApplyUpdates)))).Methods("GET")
+	r.Handle("/api/updates/unattended-status",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUnattendedStatus)))).Methods("GET")
+	r.Handle("/api/updates/unattended",
+		RequireAuth(RequireAdmin(http.HandlerFunc(HandleUnattendedSet)))).Methods("POST")
 
 	// --- Settings ---
 	r.Handle("/api/settings",

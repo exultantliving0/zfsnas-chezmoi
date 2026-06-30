@@ -255,6 +255,19 @@
     }
     body.light .info-tip { background: rgba(0,0,0,0.10); color: #9a9a9e; }
     .info-tip::before { content: 'i'; }
+    /* On/off slider switch (used in the Automatic OS Updates popup) */
+    .au-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .au-switch input { opacity: 0; width: 0; height: 0; }
+    .au-slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: #4a4a4e; border-radius: 24px; transition: background .18s;
+    }
+    .au-slider::before {
+      content: ''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px;
+      background: #fff; border-radius: 50%; transition: transform .18s;
+    }
+    .au-switch input:checked + .au-slider { background: var(--accent-2, #0a84ff); }
+    .au-switch input:checked + .au-slider::before { transform: translateX(20px); }
     /* Reuses tip-box but without the info-icon circle styling */
     .sess-tip { cursor: help; }
     /* Floating tooltip rendered via JS into #tip-box — escapes overflow:hidden containers */
@@ -2051,6 +2064,14 @@
             <div style="min-width:0;">
               <h3 style="margin-bottom:2px;">OS Packages</h3>
               <div id="os-info-line" style="font-size:13px;color:var(--text-3);">Loading…</div>
+              <div id="os-autoupdate-line" style="display:none;align-items:center;gap:7px;margin-top:4px;">
+                <span id="os-autoupdate-text" style="font-size:12px;line-height:1.4;"></span>
+                <i class="info-tip" style="cursor:pointer;flex-shrink:0;" title="About automatic OS updates"
+                   onclick="document.getElementById('modal-autoupdate-info').classList.remove('hidden')"></i>
+                <span onclick="openAutoUpdateModal()" title="Configure automatic OS updates"
+                   style="cursor:pointer;color:var(--text-3);font-size:14px;line-height:1;flex-shrink:0;transition:color .15s;"
+                   onmouseover="this.style.color='var(--text-1)'" onmouseout="this.style.color='var(--text-3)'">&#9881;</span>
+              </div>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <button class="btn btn-ghost btn-sm" onclick="checkUpdates()" id="btn-check-updates">↻ Check for Updates</button>
@@ -7606,6 +7627,107 @@ Select the Console tab to load.</pre>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="document.getElementById('modal-security-info').classList.add('hidden')">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- Automatic OS updates — info popup -->
+<div class="modal-backdrop hidden" id="modal-autoupdate-info" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal" style="max-width:540px;">
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:24px;line-height:1;">🔄</span>
+        <h3 style="margin:0;">Automatic OS Updates</h3>
+      </div>
+      <button class="modal-close" onclick="document.getElementById('modal-autoupdate-info').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body" style="padding-top:4px;">
+      <div style="font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:16px;">
+        Debian and Ubuntu ship an <strong>unattended-upgrades</strong> service that can install
+        security (and sometimes regular) package updates <strong>on its own, in the background</strong>,
+        on a daily systemd timer — without you initiating it from this page.
+      </div>
+
+      <div style="background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.28);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:16px;">
+        <div style="font-weight:600;color:#f5a623;font-size:13px;margin-bottom:4px;">⚠ Why this matters on a NAS</div>
+        <div style="font-size:13px;color:var(--text-2);line-height:1.6;">
+          When an update lands, packages may be reconfigured and <strong>services restarted</strong> — Samba,
+          NFS, iSCSI, the ZFS kernel modules, or even this portal. That can mean a
+          <strong>brief, unannounced interruption</strong> of file shares and running VMs/containers, at a
+          time you did not choose. A kernel upgrade can also leave the running kernel out of sync with the
+          loaded ZFS module until the next reboot.
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;margin-bottom:18px;">
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:18px;flex-shrink:0;margin-top:1px;">✅</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);margin-bottom:2px;">Recommended for a NAS: Disabled</div>
+            <div style="font-size:13px;color:var(--text-2);line-height:1.5;">
+              Keep automatic upgrades <strong>off</strong> and install updates yourself from this page,
+              during a maintenance window when a short service blip is acceptable. You stay in control of
+              <em>when</em> services restart.
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:18px;flex-shrink:0;margin-top:1px;">⚙️</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-1);margin-bottom:2px;">How the toggle works</div>
+            <div style="font-size:13px;color:var(--text-2);line-height:1.5;">
+              The gear next to the status line writes
+              <code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:12px;">/etc/apt/apt.conf.d/20auto-upgrades</code>
+              — the same setting <code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:12px;">dpkg-reconfigure unattended-upgrades</code>
+              manages — flipping the daily background upgrade on or off.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Automatic OS updates — configure popup -->
+<div class="modal-backdrop hidden" id="modal-autoupdate-config" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:24px;line-height:1;">🔄</span>
+        <h3 style="margin:0;">Automatic OS Updates</h3>
+      </div>
+      <button class="modal-close" onclick="document.getElementById('modal-autoupdate-config').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body" style="padding-top:4px;">
+      <div id="autoupdate-cfg-alert" class="alert alert-error hidden" style="margin-bottom:14px;"></div>
+
+      <div id="autoupdate-cfg-notinstalled" class="hidden" style="font-size:13px;color:var(--text-2);line-height:1.6;background:var(--surface2);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:8px;">
+        The <code style="background:var(--bg);padding:1px 5px;border-radius:3px;font-size:12px;">unattended-upgrades</code>
+        package is <strong>not installed</strong>, so the OS cannot auto-install updates. There is nothing to
+        disable — your system only updates when you do it from this page.
+      </div>
+
+      <div id="autoupdate-cfg-body" class="hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;background:var(--surface2);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:14px;">
+          <div style="min-width:0;">
+            <div style="font-size:14px;font-weight:600;color:var(--text-1);">Auto-install updates in the background</div>
+            <div id="autoupdate-cfg-state" style="font-size:12px;color:var(--text-3);margin-top:2px;"></div>
+          </div>
+          <label class="au-switch" style="flex-shrink:0;">
+            <input type="checkbox" id="autoupdate-cfg-toggle" onchange="setAutoUpdate(this.checked)">
+            <span class="au-slider"></span>
+          </label>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:flex-start;background:rgba(48,209,88,0.08);border:1px solid rgba(48,209,88,0.25);border-radius:var(--radius-sm);padding:11px 14px;">
+          <span style="font-size:16px;flex-shrink:0;line-height:1.4;">💡</span>
+          <div style="font-size:12.5px;color:var(--text-2);line-height:1.55;">
+            <strong style="color:#30d158;">Recommended for a NAS: keep this OFF.</strong>
+            Install updates manually from this page during a maintenance window so you control when shares,
+            VMs, and containers briefly restart. <span style="cursor:pointer;color:var(--accent-2);text-decoration:underline;" onclick="document.getElementById('modal-autoupdate-config').classList.add('hidden');document.getElementById('modal-autoupdate-info').classList.remove('hidden');">Learn more</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -27611,6 +27733,95 @@ function roleBadge(role) {
 
 // ===== OS Updates =====
 
+// Cached last-known unattended-upgrades status (so the config popup can render
+// immediately, then refresh from the server).
+let _autoUpdateStatus = null;
+
+// _loadAutoUpdateStatus fetches the unattended-upgrades service state and
+// renders the short status line under the OS version in the OS Packages card.
+function _loadAutoUpdateStatus() {
+  fetch('/api/updates/unattended-status').then(r => r.ok ? r.json() : null).then(d => {
+    if (!d) return;
+    _autoUpdateStatus = d;
+    const wrap = document.getElementById('os-autoupdate-line');
+    const txt  = document.getElementById('os-autoupdate-text');
+    if (!wrap || !txt) return;
+    if (!d.installed) {
+      txt.innerHTML = '<span style="color:var(--text-3);">Automatic OS updates: not installed — the system only updates when you do.</span>';
+    } else if (d.enabled) {
+      txt.innerHTML = '<span style="color:#f5a623;">⚠ Automatic OS updates: <strong>ON</strong> — the system may install updates on its own, which can briefly interrupt shares, VMs &amp; services.</span>';
+    } else {
+      txt.innerHTML = '<span style="color:var(--accent-ok,#30d158);">✔ Automatic OS updates: off — updates install only when you choose.</span>';
+    }
+    wrap.style.display = 'flex';
+    // Keep the config popup in sync if it's open.
+    _renderAutoUpdateModal();
+  }).catch(() => {});
+}
+
+// openAutoUpdateModal shows the configure popup and (re)loads fresh status.
+function openAutoUpdateModal() {
+  const a = document.getElementById('autoupdate-cfg-alert');
+  if (a) a.classList.add('hidden');
+  _renderAutoUpdateModal();
+  document.getElementById('modal-autoupdate-config').classList.remove('hidden');
+  // Refresh from server in case it changed elsewhere.
+  fetch('/api/updates/unattended-status').then(r => r.ok ? r.json() : null).then(d => {
+    if (d) { _autoUpdateStatus = d; _renderAutoUpdateModal(); }
+  }).catch(() => {});
+}
+
+// _renderAutoUpdateModal paints the configure popup from _autoUpdateStatus.
+function _renderAutoUpdateModal() {
+  const d = _autoUpdateStatus;
+  const notInst = document.getElementById('autoupdate-cfg-notinstalled');
+  const body    = document.getElementById('autoupdate-cfg-body');
+  if (!d || !notInst || !body) return;
+  if (!d.installed) {
+    notInst.classList.remove('hidden');
+    body.classList.add('hidden');
+    return;
+  }
+  notInst.classList.add('hidden');
+  body.classList.remove('hidden');
+  const toggle = document.getElementById('autoupdate-cfg-toggle');
+  const state  = document.getElementById('autoupdate-cfg-state');
+  if (toggle) toggle.checked = !!d.enabled;
+  if (state) {
+    state.textContent = d.enabled
+      ? 'Currently ON — a daily timer can install updates without asking.'
+      : 'Currently off — nothing installs in the background.';
+  }
+}
+
+// setAutoUpdate enables/disables the unattended-upgrades service.
+async function setAutoUpdate(enabled) {
+  const alert  = document.getElementById('autoupdate-cfg-alert');
+  const toggle = document.getElementById('autoupdate-cfg-toggle');
+  if (alert) alert.classList.add('hidden');
+  if (toggle) toggle.disabled = true;
+  try {
+    const r = await fetch('/api/updates/unattended', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    // Refresh both the modal and the card status line.
+    _loadAutoUpdateStatus();
+  } catch (e) {
+    if (alert) {
+      alert.textContent = 'Failed to change setting: ' + (e.message || e);
+      alert.classList.remove('hidden');
+    }
+    // Revert the toggle to the last known state.
+    if (toggle && _autoUpdateStatus) toggle.checked = !!_autoUpdateStatus.enabled;
+  } finally {
+    if (toggle) toggle.disabled = false;
+  }
+}
+
 function _renderUpdatePackages(data) {
   const status    = document.getElementById('updates-status');
   const pkgList   = document.getElementById('updates-pkg-list');
@@ -27668,6 +27879,9 @@ function initUpdatesPage() {
     const el = document.getElementById('os-info-line');
     if (el) el.textContent = 'System packages via apt-get';
   });
+
+  // Load the automatic-OS-update (unattended-upgrades) service status line.
+  _loadAutoUpdateStatus();
 
   // Check if an upgrade is already running in the background (user may have
   // navigated away and come back).
