@@ -35023,7 +35023,7 @@ function runReplicationTask(id, name) {
     const vp = document.getElementById(vpId);
     if (!vp || vp.dataset.zoomWired) return;
     vp.dataset.zoomWired = '1';
-    // Mouse drag-to-pan: left-click + drag moves the canvas (Zoraxy-style)
+    // Mouse drag-to-pan: left-click + drag moves the canvas
     vp.addEventListener('mousedown', (e)=>{
       if (e.button !== 0) return;
       if (e.target.closest('.map-zoom, .map-zoom-btn, .map-layer-switch, .map-layer-btn, .map-style-toggle')) return;
@@ -35036,7 +35036,7 @@ function runReplicationTask(id, name) {
       vp.classList.add('dragging');
       e.preventDefault();
     });
-    // Wheel zoom toward cursor (plain wheel, no Ctrl needed — Zoraxy-style)
+    // Wheel zoom toward cursor (plain wheel, no Ctrl needed)
     vp.addEventListener('wheel', (e)=>{
       e.preventDefault();
       const rect = vp.getBoundingClientRect();
