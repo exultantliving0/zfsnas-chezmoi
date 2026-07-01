@@ -1470,9 +1470,9 @@
                 <button type="button" class="map-zoom-btn" onclick="mapZoom('map-svg',-1)" title="Zoom out" aria-label="Zoom out">&minus;</button>
                 <button type="button" class="map-zoom-btn map-zoom-lvl" id="map-zoom-lvl" onclick="mapZoom('map-svg',0)" title="Reset zoom">100%</button>
                 <button type="button" class="map-zoom-btn" onclick="mapZoom('map-svg',1)" title="Zoom in" aria-label="Zoom in">+</button>
+                <button type="button" class="map-zoom-btn" id="map-fs-btn" onclick="mapToggleFullscreen('map-svg')" title="Fullscreen">&#9974;</button>
               </div>
               <button id="map-style-toggle" class="map-style-toggle" onclick="toggleMapStyle()">HUD</button>
-              <button type="button" class="map-zoom-btn" id="map-fs-btn" onclick="mapToggleFullscreen('map-svg')" title="Fullscreen">&#9974;</button>
             </div>
           </div>
           <div id="map-viewport" class="map-viewport map-hud">
@@ -5134,9 +5134,9 @@ Select the Console tab to load.</pre>
                 <button type="button" class="map-zoom-btn" onclick="mapZoom('vmtopo-svg',-1)" title="Zoom out" aria-label="Zoom out">&minus;</button>
                 <button type="button" class="map-zoom-btn map-zoom-lvl" id="vmtopo-zoom-lvl" onclick="mapZoom('vmtopo-svg',0)" title="Reset zoom">100%</button>
                 <button type="button" class="map-zoom-btn" onclick="mapZoom('vmtopo-svg',1)" title="Zoom in" aria-label="Zoom in">+</button>
+                <button type="button" class="map-zoom-btn" id="vmtopo-fs-btn" onclick="mapToggleFullscreen('vmtopo-svg')" title="Fullscreen">&#9974;</button>
               </div>
               <button id="vmtopo-style-toggle" class="map-style-toggle" onclick="toggleMapStyle()">HUD</button>
-              <button type="button" class="map-zoom-btn" id="vmtopo-fs-btn" onclick="mapToggleFullscreen('vmtopo-svg')" title="Fullscreen">&#9974;</button>
             </div>
           </div>
           <div id="vmtopo-viewport" class="map-viewport map-hud">
@@ -35000,7 +35000,7 @@ function runReplicationTask(id, name) {
   function _mapSizeViewport(vp){
     if (!vp) return 0;
     const top = vp.getBoundingClientRect().top;
-    const h = Math.max(320, Math.floor(window.innerHeight - top - 14));
+    const h = Math.max(280, Math.floor(window.innerHeight - top - 28));
     vp.style.height = h + 'px';
     void vp.offsetHeight; // flush layout so a subsequent clientHeight read is fresh
     return h;
