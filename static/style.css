@@ -2906,10 +2906,18 @@ body.light, body.dawn{       /* every light-background theme uses the dark-hue s
 /* Height is set precisely in JS (_mapSizeViewport) from the element's real top
    so the map fits the visible area exactly; this calc is only a pre-JS fallback. */
 .map-viewport{position:relative;overflow:auto;height:calc(100vh - 300px);min-height:340px;
-  background:transparent;border:none;
-  /* JS owns pan + pinch-zoom on touch, so suppress the browser's own gestures
-     (page pinch-zoom / two-finger scroll). Wheel + scrollbars still work. */
+  background-color:var(--map-fill);border:none;border-radius:12px;cursor:grab;
+  background-image:
+    linear-gradient(rgba(128,128,128,0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(128,128,128,0.06) 1px, transparent 1px);
+  background-size:30px 30px;background-attachment:local;
   touch-action:none;-webkit-user-select:none;user-select:none;}
+body.light .map-viewport,
+body.dawn .map-viewport{
+  background-image:
+    linear-gradient(rgba(0,0,0,0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.07) 1px, transparent 1px);}
+.map-viewport.dragging{cursor:grabbing;}
 #map-svg{display:block;background:transparent;}
 .map-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--text-3);font-size:14px;}

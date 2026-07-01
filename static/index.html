@@ -34394,6 +34394,7 @@ function runReplicationTask(id, name) {
   let _mapTimer = null;
   let _mapSig   = '';   // topology signature; full relayout only when this changes
   let _mapData  = null; // last topology, for click dispatch
+  let _mapDragMoved = false; // set true during a pan drag so node clicks are suppressed
   const MAP = { NODE_W:122, COL_GAP:18, GROUP_GAP:48,
                 ROW_GAP:46, PAD:28, HEADER:54, MIN_W:58, MAX_W:180 };
 
@@ -34443,6 +34444,7 @@ function runReplicationTask(id, name) {
     if (!svg || svg.__wired) return;
     svg.__wired = true;
     svg.addEventListener('click', e=>{
+      if (_mapDragMoved) return; // ignore clicks that were actually drags
       const g = e.target.closest && e.target.closest('.map-node');
       if (g) mapNodeClick(g.getAttribute('data-id'));
     });
@@ -35029,6 +35031,36 @@ function runReplicationTask(id, name) {
     const endTouch = (e)=>{ if (e.touches.length < 2) pinch=null; if (e.touches.length === 0) pan=null; };
     vp.addEventListener('touchend', endTouch);
     vp.addEventListener('touchcancel', endTouch);
+
+    // Mouse drag-to-pan (like Zoraxy): left-click + drag moves the canvas
+    let _mapMouseDrag = null;
+    vp.addEventListener('mousedown', (e)=>{
+      if (e.button !== 0) return;
+      _mapMouseDrag = {
+        x: e.clientX, y: e.clientY,
+        sl: vp.scrollLeft, st: vp.scrollTop,
+        moved: false
+      };
+      vp.classList.add('dragging');
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e)=>{
+      if (!_mapMouseDrag) return;
+      const dx = e.clientX - _mapMouseDrag.x;
+      const dy = e.clientY - _mapMouseDrag.y;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) _mapMouseDrag.moved = true;
+      vp.scrollLeft = _mapMouseDrag.sl - dx;
+      vp.scrollTop  = _mapMouseDrag.st - dy;
+    });
+    document.addEventListener('mouseup', ()=>{
+      if (!_mapMouseDrag) return;
+      if (_mapMouseDrag.moved){
+        _mapDragMoved = true;
+        setTimeout(()=>{ _mapDragMoved = false; }, 0);
+      }
+      vp.classList.remove('dragging');
+      _mapMouseDrag = null;
+    });
   }
 
   async function pollMap(){
