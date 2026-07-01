@@ -35000,7 +35000,9 @@ function runReplicationTask(id, name) {
   function _mapSizeViewport(vp){
     if (!vp) return 0;
     const top = vp.getBoundingClientRect().top;
-    const h = Math.max(200, Math.floor(window.innerHeight - top - 64));
+    const bottomBar = document.querySelector('.activity-bar');
+    const barH = bottomBar ? bottomBar.offsetHeight : 38;
+    const h = Math.max(200, Math.floor(window.innerHeight - top - barH - 28));
     vp.style.height = h + 'px';
     void vp.offsetHeight; // flush layout so a subsequent clientHeight read is fresh
     return h;
