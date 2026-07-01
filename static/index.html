@@ -1475,8 +1475,11 @@
             </div>
           </div>
           <div id="map-viewport" class="map-viewport map-hud">
-            <svg id="map-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"></svg>
-            <div id="map-empty" class="map-empty hidden">No pools detected on this server.</div>
+            <div id="map-pan-container" class="map-pan-container">
+              <div class="map-grid-bg"></div>
+              <svg id="map-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"></svg>
+              <div id="map-empty" class="map-empty hidden">No pools detected on this server.</div>
+            </div>
           </div>
         </div><!-- end cap-tab-map -->
       </div>
@@ -5135,8 +5138,11 @@ Select the Console tab to load.</pre>
             </div>
           </div>
           <div id="vmtopo-viewport" class="map-viewport map-hud">
-            <svg id="vmtopo-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"></svg>
-            <div id="vmtopo-empty" class="map-empty hidden">No related storage found for this instance.</div>
+            <div id="vmtopo-pan-container" class="map-pan-container">
+              <div class="map-grid-bg"></div>
+              <svg id="vmtopo-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"></svg>
+              <div id="vmtopo-empty" class="map-empty hidden">No related storage found for this instance.</div>
+            </div>
           </div>
         </div><!-- /ci-tab-content-topology -->
 
@@ -34910,8 +34916,11 @@ function runReplicationTask(id, name) {
   // scrolling viewport. Zooming sets the SVG element's width/height to nat·z so the
   // viewport's scrollbars track the scaled content; the scroll offset is adjusted
   // to keep the focal point (cursor / pinch midpoint / viewport centre) anchored.
-  const MAP_ZMIN = 0.3, MAP_ZMAX = 4;
+  const MAP_ZMIN = 0.25, MAP_ZMAX = 4;
   const _mapZoomState = {}; // svgId → scale
+  const _mapPanX = {}; // svgId → px (transform translate X)
+  const _mapPanY = {}; // svgId → px (transform translate Y)
+  let _mapDragState = null; // {svgId, vp, startX, startY, panSX, panSY, moved}
   const _netFitted = {};    // svgId → true once the network layer has auto-fit it
   const _storeFitted = {};  // svgId → true once the storage layer has auto-fit it
   // Network placement algorithm (right-click the map background to switch).
@@ -34929,32 +34938,37 @@ function runReplicationTask(id, name) {
     const el = document.getElementById(_mapZoomLabelId(svgId));
     if (el) el.textContent = Math.round(_mapGetZoom(svgId)*100) + '%';
   }
-  // Re-apply the stored zoom to an SVG (called after every full relayout, which
-  // resets width/height to natural). Safe to call before a render has happened.
-  function _mapApplyZoom(svg){
+  // Apply CSS transform (translate + scale) to the pan-container for the given SVG.
+  function _mapApplyTransform(svg){
     if (!svg) return;
-    const nw = parseFloat(svg.dataset.natW||'0'), nh = parseFloat(svg.dataset.natH||'0');
-    const z = _mapGetZoom(svg.id);
-    if (nw>0 && nh>0){ svg.setAttribute('width', Math.round(nw*z)); svg.setAttribute('height', Math.round(nh*z)); }
-    _mapUpdateZoomLabel(svg.id);
+    const svgId = svg.id;
+    const pc = document.getElementById(svgId.replace('-svg', '-pan-container'));
+    if (!pc) return;
+    const px = _mapPanX[svgId] || 0;
+    const py = _mapPanY[svgId] || 0;
+    const z = _mapGetZoom(svgId);
+    pc.style.transform = 'translate(' + px + 'px, ' + py + 'px) scale(' + z + ')';
+    _mapUpdateZoomLabel(svgId);
   }
+  // Re-apply pan/zoom to an SVG (called after every full relayout).
+  function _mapApplyZoom(svg){ _mapApplyTransform(svg); }
   // Zoom to a target scale, anchoring on a viewport-relative focal point. focalX/Y
   // are clientX/clientY (page coords); omitted ⇒ viewport centre.
   function _mapZoomTo(svgId, newZ, focalX, focalY){
     const svg = document.getElementById(svgId); if (!svg) return;
-    const vp  = svg.closest('.map-viewport') || svg.parentElement; if (!vp) return;
+    const vp  = svg.closest('.map-viewport') || document.getElementById(svgId.replace('-svg','-viewport')); if (!vp) return;
     newZ = Math.max(MAP_ZMIN, Math.min(MAP_ZMAX, newZ));
     const old = _mapGetZoom(svgId);
     if (Math.abs(newZ-old) < 0.001) return;
     const rect = vp.getBoundingClientRect();
-    const fx = (focalX==null) ? rect.width/2  : (focalX - rect.left);
-    const fy = (focalY==null) ? rect.height/2 : (focalY - rect.top);
-    const cx = (vp.scrollLeft + fx) / old;
-    const cy = (vp.scrollTop  + fy) / old;
+    const ox = (focalX==null) ? rect.width/2  : (focalX - rect.left);
+    const oy = (focalY==null) ? rect.height/2 : (focalY - rect.top);
+    const px = _mapPanX[svgId] || 0;
+    const py = _mapPanY[svgId] || 0;
+    _mapPanX[svgId] = ox - (ox - px) * (newZ / old);
+    _mapPanY[svgId] = oy - (oy - py) * (newZ / old);
     _mapZoomState[svgId] = newZ;
-    _mapApplyZoom(svg);
-    vp.scrollLeft = cx*newZ - fx;
-    vp.scrollTop  = cy*newZ - fy;
+    _mapApplyTransform(svg);
   }
   // Toolbar buttons: dir −1 out, +1 in, 0 reset to 100%.
   window.mapZoom = function(svgId, dir){
@@ -34996,71 +35010,74 @@ function runReplicationTask(id, name) {
     const vp = document.getElementById(vpId);
     if (!vp || vp.dataset.zoomWired) return;
     vp.dataset.zoomWired = '1';
-    // Ctrl/⌘ + wheel zooms toward the cursor; trackpad pinch arrives as ctrl+wheel
-    // in every modern browser. Plain wheel keeps native scrolling.
-    vp.addEventListener('wheel', (e)=>{
-      if (!(e.ctrlKey || e.metaKey)) return;
-      e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.12 : 1/1.12;
-      _mapZoomTo(svgId, _mapGetZoom(svgId)*factor, e.clientX, e.clientY);
-    }, {passive:false});
-    // Touch: one finger pans, two fingers pinch-zoom (iPad/iPhone). touch-action:none
-    // on .map-viewport hands us full control so the page never pinch-zooms instead.
-    let pinch=null, pan=null;
-    const dist = (t)=> Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
-    const mid  = (t)=> ({x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2});
-    vp.addEventListener('touchstart', (e)=>{
-      if (e.touches.length === 2){
-        pan=null; pinch={ d0:dist(e.touches), z0:_mapGetZoom(svgId) }; e.preventDefault();
-      } else if (e.touches.length === 1){
-        const t=e.touches[0]; pan={ x:t.clientX, y:t.clientY, sl:vp.scrollLeft, st:vp.scrollTop };
-      }
-    }, {passive:false});
-    vp.addEventListener('touchmove', (e)=>{
-      if (e.touches.length === 2 && pinch){
-        e.preventDefault();
-        const m = mid(e.touches);
-        _mapZoomTo(svgId, pinch.z0 * (dist(e.touches)/pinch.d0), m.x, m.y);
-      } else if (e.touches.length === 1 && pan){
-        e.preventDefault();
-        const t=e.touches[0];
-        vp.scrollLeft = pan.sl - (t.clientX - pan.x);
-        vp.scrollTop  = pan.st - (t.clientY - pan.y);
-      }
-    }, {passive:false});
-    const endTouch = (e)=>{ if (e.touches.length < 2) pinch=null; if (e.touches.length === 0) pan=null; };
-    vp.addEventListener('touchend', endTouch);
-    vp.addEventListener('touchcancel', endTouch);
-
-    // Mouse drag-to-pan (like Zoraxy): left-click + drag moves the canvas
-    let _mapMouseDrag = null;
+    // Mouse drag-to-pan: left-click + drag moves the canvas (Zoraxy-style)
     vp.addEventListener('mousedown', (e)=>{
       if (e.button !== 0) return;
-      _mapMouseDrag = {
-        x: e.clientX, y: e.clientY,
-        sl: vp.scrollLeft, st: vp.scrollTop,
+      if (e.target.closest('.map-zoom, .map-zoom-btn, .map-layer-switch, .map-layer-btn, .map-style-toggle')) return;
+      _mapDragState = {
+        svgId, vp,
+        startX: e.clientX, startY: e.clientY,
+        panSX: _mapPanX[svgId] || 0, panSY: _mapPanY[svgId] || 0,
         moved: false
       };
       vp.classList.add('dragging');
       e.preventDefault();
     });
-    document.addEventListener('mousemove', (e)=>{
-      if (!_mapMouseDrag) return;
-      const dx = e.clientX - _mapMouseDrag.x;
-      const dy = e.clientY - _mapMouseDrag.y;
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) _mapMouseDrag.moved = true;
-      vp.scrollLeft = _mapMouseDrag.sl - dx;
-      vp.scrollTop  = _mapMouseDrag.st - dy;
-    });
-    document.addEventListener('mouseup', ()=>{
-      if (!_mapMouseDrag) return;
-      if (_mapMouseDrag.moved){
-        _mapDragMoved = true;
-        setTimeout(()=>{ _mapDragMoved = false; }, 0);
+    // Wheel zoom toward cursor (plain wheel, no Ctrl needed — Zoraxy-style)
+    vp.addEventListener('wheel', (e)=>{
+      e.preventDefault();
+      const rect = vp.getBoundingClientRect();
+      const ox = e.clientX - rect.left;
+      const oy = e.clientY - rect.top;
+      const step = 0.15;
+      _mapZoomTo(svgId, _mapGetZoom(svgId) + (e.deltaY < 0 ? step : -step), e.clientX, e.clientY);
+    }, {passive:false});
+    // Touch: one finger pans, two fingers pinch-zoom
+    let _tPan = null, _tPinch = null;
+    const tDist = (t)=> Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+    const tMid  = (t)=> ({x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2});
+    vp.addEventListener('touchstart', (e)=>{
+      if (e.touches.length === 2){
+        _tPan = null; _tPinch = { d0:tDist(e.touches), z0:_mapGetZoom(svgId) }; e.preventDefault();
+      } else if (e.touches.length === 1){
+        const t=e.touches[0];
+        _tPan = { x:t.clientX, y:t.clientY, px:_mapPanX[svgId]||0, py:_mapPanY[svgId]||0 };
       }
-      vp.classList.remove('dragging');
-      _mapMouseDrag = null;
-    });
+    }, {passive:false});
+    vp.addEventListener('touchmove', (e)=>{
+      if (e.touches.length === 2 && _tPinch){
+        e.preventDefault();
+        const m = tMid(e.touches);
+        _mapZoomTo(svgId, _tPinch.z0 * (tDist(e.touches)/_tPinch.d0), m.x, m.y);
+      } else if (e.touches.length === 1 && _tPan){
+        e.preventDefault();
+        const t=e.touches[0];
+        _mapPanX[svgId] = _tPan.px + (t.clientX - _tPan.x);
+        _mapPanY[svgId] = _tPan.py + (t.clientY - _tPan.y);
+        _mapApplyTransform(document.getElementById(svgId));
+      }
+    }, {passive:false});
+    const endTouch = (e)=>{ if (e.touches.length < 2) _tPinch=null; if (e.touches.length === 0) _tPan=null; };
+    vp.addEventListener('touchend', endTouch);
+    vp.addEventListener('touchcancel', endTouch);
+
+    // Global mouse drag document listeners (wired once)
+    if (!window.__mapDragWired){
+      window.__mapDragWired = true;
+      document.addEventListener('mousemove', (e)=>{
+        const d = _mapDragState; if (!d) return;
+        if (Math.abs(e.clientX - d.startX) > 4 || Math.abs(e.clientY - d.startY) > 4) d.moved = true;
+        _mapPanX[d.svgId] = d.panSX + (e.clientX - d.startX);
+        _mapPanY[d.svgId] = d.panSY + (e.clientY - d.startY);
+        _mapApplyTransform(document.getElementById(d.svgId));
+      });
+      document.addEventListener('mouseup', ()=>{
+        const d = _mapDragState; if (!d) return;
+        if (d.moved){ _mapDragMoved = true; setTimeout(()=>{ _mapDragMoved = false; }, 0); }
+        d.vp.classList.remove('dragging');
+        _mapDragState = null;
+      });
+    }
   }
 
   async function pollMap(){
@@ -35825,6 +35842,8 @@ function runReplicationTask(id, name) {
       if (vp && vp.clientWidth > 40 && vp.clientHeight > 40){
         const fit = Math.min((vp.clientWidth-8)/W, (vp.clientHeight-8)/H);
         _mapZoomState[svg.id] = Math.max(MAP_ZMIN, Math.min(MAP_ZMAX, fit));
+        _mapPanX[svg.id] = (vp.clientWidth - W * _mapZoomState[svg.id]) / 2;
+        _mapPanY[svg.id] = (vp.clientHeight - H * _mapZoomState[svg.id]) / 2;
         _netFitted[svg.id] = true;
       }
     }
@@ -35832,7 +35851,6 @@ function runReplicationTask(id, name) {
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svg.setAttribute('width', W);
     svg.setAttribute('height', H);
-    svg.dataset.natW = W; svg.dataset.natH = H; // base size for the zoom controller
     svg.innerHTML =
       netDefs() +
       `<g class="net-hubs">${hubsSvg}</g>` +
@@ -36090,16 +36108,15 @@ function runReplicationTask(id, name) {
       if (vp && vp.clientWidth > 40 && vp.clientHeight > 40){
         const fit = Math.min((vp.clientWidth-8)/W, (vp.clientHeight-8)/H);
         _mapZoomState[svg.id] = Math.max(MAP_ZMIN, Math.min(MAP_ZMAX, fit));
+        _mapPanX[svg.id] = (vp.clientWidth - W * _mapZoomState[svg.id]) / 2;
+        _mapPanY[svg.id] = (vp.clientHeight - H * _mapZoomState[svg.id]) / 2;
         _storeFitted[svg.id] = true; // only lock once the viewport was measurable
       }
     }
 
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    // Render at natural size and let the viewport scroll, so nodes stay legible
-    // on large topologies rather than shrinking to fit the panel width.
     svg.setAttribute('width', W);
     svg.setAttribute('height', H);
-    svg.dataset.natW = W; svg.dataset.natH = H; // base size for the zoom controller
     svg.innerHTML =
       mapDefs() +
       mapHeaderMarkup(data, W) +
