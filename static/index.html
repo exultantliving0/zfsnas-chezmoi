@@ -1472,14 +1472,15 @@
                 <button type="button" class="map-zoom-btn" onclick="mapZoom('map-svg',1)" title="Zoom in" aria-label="Zoom in">+</button>
               </div>
               <button id="map-style-toggle" class="map-style-toggle" onclick="toggleMapStyle()">HUD</button>
+              <button type="button" class="map-zoom-btn" id="map-fs-btn" onclick="mapToggleFullscreen('map-svg')" title="Fullscreen">&#9974;</button>
             </div>
           </div>
           <div id="map-viewport" class="map-viewport map-hud">
             <div id="map-pan-container" class="map-pan-container">
               <div class="map-grid-bg"></div>
               <svg id="map-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"></svg>
-              <div id="map-empty" class="map-empty hidden">No pools detected on this server.</div>
             </div>
+            <div id="map-empty" class="map-empty hidden">No pools detected on this server.</div>
           </div>
         </div><!-- end cap-tab-map -->
       </div>
@@ -5135,14 +5136,15 @@ Select the Console tab to load.</pre>
                 <button type="button" class="map-zoom-btn" onclick="mapZoom('vmtopo-svg',1)" title="Zoom in" aria-label="Zoom in">+</button>
               </div>
               <button id="vmtopo-style-toggle" class="map-style-toggle" onclick="toggleMapStyle()">HUD</button>
+              <button type="button" class="map-zoom-btn" id="vmtopo-fs-btn" onclick="mapToggleFullscreen('vmtopo-svg')" title="Fullscreen">&#9974;</button>
             </div>
           </div>
           <div id="vmtopo-viewport" class="map-viewport map-hud">
             <div id="vmtopo-pan-container" class="map-pan-container">
               <div class="map-grid-bg"></div>
               <svg id="vmtopo-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"></svg>
-              <div id="vmtopo-empty" class="map-empty hidden">No related storage found for this instance.</div>
             </div>
+            <div id="vmtopo-empty" class="map-empty hidden">No related storage found for this instance.</div>
           </div>
         </div><!-- /ci-tab-content-topology -->
 
@@ -34911,11 +34913,9 @@ function runReplicationTask(id, name) {
     document.querySelectorAll('.map-legend-net').forEach(el => el.style.display = (_mapLayer === 'network') ? '' : 'none');
   }
 
-  // ── Zoom (mouse wheel + ctrl/⌘-wheel + trackpad/touch pinch + buttons) ───────
-  // The SVG renders at its natural size (W×H stored on dataset.natW/natH) inside a
-  // scrolling viewport. Zooming sets the SVG element's width/height to nat·z so the
-  // viewport's scrollbars track the scaled content; the scroll offset is adjusted
-  // to keep the focal point (cursor / pinch midpoint / viewport centre) anchored.
+  // ── Zoom & Pan (mouse + wheel + touch) ─────────────────────────────────────
+  // The SVG renders at its natural size inside a pan-container. CSS transform
+  // translate(panX,panY) scale(zoom) on the pan-container moves the canvas.
   const MAP_ZMIN = 0.25, MAP_ZMAX = 4;
   const _mapZoomState = {}; // svgId → scale
   const _mapPanX = {}; // svgId → px (transform translate X)
@@ -34975,6 +34975,23 @@ function runReplicationTask(id, name) {
     if (dir === 0){ _mapZoomTo(svgId, 1); return; }
     _mapZoomTo(svgId, _mapGetZoom(svgId) * (dir>0 ? 1.2 : 1/1.2));
   };
+  // Fullscreen toggle for a topology viewport.
+  window.mapToggleFullscreen = function(svgId){
+    const vp = document.getElementById(svgId.replace('-svg', '-viewport'));
+    if (!vp) return;
+    if (!document.fullscreenElement){
+      vp.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  };
+  document.addEventListener('fullscreenchange', ()=>{
+    const mapBtn = document.getElementById('map-fs-btn');
+    const vmBtn  = document.getElementById('vmtopo-fs-btn');
+    const fs = !!document.fullscreenElement;
+    if (mapBtn) mapBtn.textContent = fs ? '⛶' : '⛶';
+    if (vmBtn)  vmBtn.textContent  = fs ? '⛶' : '⛶';
+  });
   // Wire wheel + touch gestures once per viewport.
   // Size a map viewport to fill from its real top edge down to (almost) the
   // window bottom. The map area sits below a variable-height topbar/io-bar +
