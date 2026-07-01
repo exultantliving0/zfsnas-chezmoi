@@ -34391,7 +34391,7 @@ function runReplicationTask(id, name) {
     const pc = document.querySelector('.pages-container');
     if (pc) pc.scrollTop = 0;
     if (tab === 'tree') capTreeOnSwitch();
-    if (tab === 'map'){ _capTopoPinned = null; setMapCtx(_MAP_CTX_CAP); startMapPoll(); } else stopMapPoll();
+    if (tab === 'map'){ _capTopoPinned = null; setMapCtx(_MAP_CTX_CAP); setTimeout(startMapPoll, 0); } else stopMapPoll();
   };
 
   /* ───────────────────────── Live Storage Map (v6.6.3) ───────────────────────── */
@@ -34995,19 +34995,11 @@ function runReplicationTask(id, name) {
     if (vmBtn)  vmBtn.textContent  = fs ? '⛶' : '⛶';
   });
   // Wire wheel + touch gestures once per viewport.
-  // Size a map viewport to fill from its real top edge down to (almost) the
-  // window bottom. The map area sits below a variable-height topbar/io-bar +
-  // tab bar + toolbar, so a fixed "100vh − N" guess either clips or overflows;
-  // measuring the live position is exact. Returns the height applied.
   function _mapSizeViewport(vp){
+    // Height is handled by CSS flexbox; this function returns the computed
+    // value so callers (resize handler, etc.) can read it.
     if (!vp) return 0;
-    const top = vp.getBoundingClientRect().top;
-    const bottomBar = document.querySelector('.activity-bar');
-    const barH = bottomBar ? bottomBar.offsetHeight : 38;
-    const h = Math.max(200, Math.floor(window.innerHeight - top - barH - 28));
-    vp.style.height = h + 'px';
-    void vp.offsetHeight; // flush layout so a subsequent clientHeight read is fresh
-    return h;
+    return Math.max(200, Math.floor(vp.clientHeight));
   }
   let _mapResizeWired = false;
   function _mapEnsureZoom(svgId, vpId){

@@ -2148,6 +2148,26 @@ body.tron-legacy .mem-tooltip-compressed {
   padding: 28px 32px;
 }
 
+/* Capacity page and its map tab use flex so the viewport fills remaining
+   space naturally (no JS height calculation needed). */
+#page-capacity {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+#cap-tab-map {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* VM instance topology tab — same flex pattern, inline display:none cleared
+   by _ciSwitchTab when the tab activates. */
+#ci-tab-content-topology {
+  display: flex;
+  flex-direction: column;
+}
+
 .page-header {
   display: flex;
   align-items: center;
@@ -2903,9 +2923,9 @@ body.light, body.dawn{       /* every light-background theme uses the dark-hue s
 .map-zoom-lvl{min-width:46px;font-variant-numeric:tabular-nums;
   font-size:11px;letter-spacing:.02em;}
 
-/* Height is set precisely in JS (_mapSizeViewport) from the element's real top
-   so the map leaves room for the activity bar + page padding below. */
-.map-viewport{position:relative;overflow:hidden;/* height set by JS */ min-height:200px;
+/* Height comes from flexbox so the viewport fills remaining space after the
+   toolbar, page padding, topbar, and activity bar — no JS timing needed. */
+.map-viewport{position:relative;overflow:hidden;flex:1;min-height:200px;
   background-color:var(--map-fill);border:none;border-radius:12px;cursor:grab;
   touch-action:none;-webkit-user-select:none;user-select:none;}
 .map-viewport.dragging{cursor:grabbing;}
