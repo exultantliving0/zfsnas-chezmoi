@@ -34426,7 +34426,9 @@ function runReplicationTask(id, name) {
   let _mapCtx = _MAP_CTX_CAP;
   function setMapCtx(ctx){ if(ctx!==_mapCtx){ _mapCtx=ctx; _mapSig=''; } }
 
-  function startMapPoll(){ stopMapPoll(); _mapSyncLayerUI(); _mapEnsureZoom(_mapCtx.svg, _mapCtx.viewport); mapWireClicks(); pollMap(); _mapTimer = setInterval(pollMap, 3000); }
+  function startMapPoll(){ stopMapPoll(); _mapSyncLayerUI(); _mapEnsureZoom(_mapCtx.svg, _mapCtx.viewport);
+    const vp = document.getElementById(_mapCtx.viewport); if (vp) _mapSizeViewport(vp);
+    mapWireClicks(); pollMap(); _mapTimer = setInterval(pollMap, 3000); }
   function stopMapPoll(){ if (_mapTimer){ clearInterval(_mapTimer); _mapTimer = null; } mapHoverHide(); }
 
   // Called on an InterLink server switch. The full Topology is "pinned" to the
