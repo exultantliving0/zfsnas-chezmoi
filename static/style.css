@@ -2925,7 +2925,7 @@ body.light, body.dawn{       /* every light-background theme uses the dark-hue s
 
 /* Height comes from flexbox so the viewport fills remaining space after the
    toolbar, page padding, topbar, and activity bar — no JS timing needed. */
-.map-viewport{position:relative;overflow:hidden;flex:1;min-height:200px;
+.map-viewport{position:relative;overflow:hidden;flex:1;min-height:200px;margin-bottom:12px;
   background-color:var(--map-fill);border:none;border-radius:12px;cursor:grab;
   touch-action:none;-webkit-user-select:none;user-select:none;}
 .map-viewport.dragging{cursor:grabbing;}
